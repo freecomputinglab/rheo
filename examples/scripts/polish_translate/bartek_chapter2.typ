@@ -1,9 +1,7 @@
 = Wojna i motłoch. Sprzeczności nowoczesne w filozofii Hegla
 
 = Antynomie wiecznego pokoju 
-<antynomie-wiecznego-pokoju>
 == Republika moralności 
-<republika-moralności>
 Wojny rewolucyjnej Francji sprowokowały w Niemczech najbardziej znaną
 filozoficzną odpowiedź na nie, czyli Kantowską teorię pokoju#footnote[W
 tym miejscu pomijamy złożoną relację pomiędzy filozofią Kanta a

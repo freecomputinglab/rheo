@@ -1,0 +1,12 @@
+* Translation
+
+** v1 
+Copy and paste the typst file to GPT 5, ask it to translate:
+
+#+begin_quote
+The following Typst file has most of its content in Polish. I want an English equivalent of the file. Keep all words that are already in English in English (especially the markup for typst).
+#+end_quote
+
+*Issues*
+- The original (pandoc-converted) typst file does not have bibliographic references properly done. A pre-processing stage that polishes the polish form and separates out a 'references.bib' file would probably be appropriate.
+- Sometimes the Typst syntax is not properly preserved by GPT.
