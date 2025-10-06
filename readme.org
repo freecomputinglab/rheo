@@ -1,5 +1,5 @@
 * rheo
-rheo is a static site engine and experimental typesetting system based on Typst.
+rheo is a static site and experimental typesetting engine based on Typst.
 It provides first-class support for both HTML and PDF, and experimental support for EPUB.
 
 ** Development 

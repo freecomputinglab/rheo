@@ -25,7 +25,6 @@
           shellHook = ''
             echo "rheo development environment loaded"
             echo "Run 'just' to compile all source files"
-            exec fish
           '';
         };
       });
