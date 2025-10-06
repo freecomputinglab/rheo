@@ -30,17 +30,20 @@ just update
 All build commands use `just` (a modern alternative to Make):
 
 ```bash
-# Compile all .typ files to both PDF and HTML
+# Build all .typ files in the chapters folder (default project)
 just
 
-# Compile a single chapter to PDF and HTML
-just convert 0.introduction.typ
+# Build a specific project folder
+just build examples/academic_book
+just build examples/blogsite
+just build examples/phd_thesis
 
-# Compile to PDF only
-just convert-pdf 0.introduction.typ
+# Advanced: Compile a single file to both PDF and HTML
+just convert path/to/file.typ [PROJECT_NAME]
 
-# Compile to HTML only
-just convert-html 0.introduction.typ
+# Advanced: Compile to PDF or HTML only
+just convert-pdf path/to/file.typ [PROJECT_NAME]
+just convert-html path/to/file.typ [PROJECT_NAME]
 
 # Clean build artifacts (preserves .gitignore)
 just clean
@@ -48,26 +51,56 @@ just clean
 
 ## Project Structure
 
-### Source Files
+### Source Organization
 
+Projects are organized in folders, each containing:
 - `*.typ` - Typst source documents
-- `references.bib` - BibTeX bibliography
+- `style.css` (optional) - CSS for HTML output (falls back to root style.css if not present)
+- `img/` (optional) - Image assets specific to this project
+- `references.bib` (optional) - BibTeX bibliography
+
+Example projects:
+- `chapters/` - Default project (built with `just`)
+- `examples/academic_book/` - Academic book chapters
+- `examples/blogsite/` - Blog posts with images
+- `examples/phd_thesis/` - PhD thesis content
+
+Shared resources:
+- `bookutils.typ` - Shared Typst template utilities (imported from project files)
 - `style.csl` - Citation Style Language definition
-- `style.css` - CSS for HTML output
-- `img/` - Image assets
-- `examples/` - Example Typst documents
+- `style.css` - Root-level CSS (fallback for projects without their own)
 
 ### Build Output
 
-The build system creates:
-- `build/pdf/*.pdf` - Compiled PDF chapters
-- `build/html/*.html` - Compiled HTML chapters (with style.css copied)
-- `build/typst/*.typ` - Intermediate Typst files
+The build system creates project-specific output directories:
+
+```
+build/
+├── {project}/
+│   ├── pdf/
+│   │   └── *.pdf
+│   └── html/
+│       ├── *.html
+│       ├── style.css (copied from project or root)
+│       └── img/ (copied from project if exists)
+└── .gitignore
+```
+
+Examples:
+- `just` → outputs to `build/pdf/` and `build/html/`
+- `just build examples/blogsite` → outputs to `build/blogsite/pdf/` and `build/blogsite/html/`
 
 ### Key Technical Details
 
 **Typst HTML Feature**: The project uses an experimental HTML compilation feature (`--features html`) that's under active development in Typst upstream. The flake tracks the main branch to access this functionality.
 
+**Asset Management**: The build system automatically copies project-specific assets to the output:
+- `style.css` is copied from the project folder, or falls back to the root `style.css` if not present
+- `img/` directories are copied to the HTML output directory if they exist in the project folder
+- This allows each project to have its own styling and images
+
 **Shell Scripts**: Justfile recipes are written in Fish shell syntax. Each multi-line recipe begins with `#!/usr/bin/env fish`.
 
 **File Naming**: Documents may use numbered prefixes (0, 1, 2, etc.) to maintain order. The Justfile strips the `.typ` extension when determining output filenames.
+
+**Project Naming**: When building a folder with `just build FOLDER`, the project name (used for the output directory) is derived from the folder's basename. For example, `just build examples/blogsite` creates output in `build/blogsite/`.

@@ -97,6 +97,6 @@ Capital craftily confines us in yet another captive subjectivity in secular mode
 #footnote[Capital's clamping-down on freedom in the context of secular modernity is precisely why there are so many religious references in Marx, such as his adoption of the term 'fetishism' in his analysis of capital-logic. Two important works exploring the import of the religious reference in Marx for the interested reader are @weberProtestantEthicSpirit2002 and @benjaminCapitalismReligion1996.]
 It is the specific paradigm of the modern subject's captivation in Marx's theory of capital's logic that we will now explore.
 
-#bibliography("../references.bib", style: "chicago-author-date")
+#bibliography("references.bib", style: "chicago-author-date")
 
 = Footnotes

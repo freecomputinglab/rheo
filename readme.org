@@ -10,16 +10,24 @@ nix develop
 
 This might take a while the first time, as Nix is installing typst from upstream and all the other necessary software.
 
-Once you have a shell prompt, you can run compile commands with [[https://github.com/casey/just][just]].
-The default command compiles all .typ files to both PDF and HTML.
+Once you have a shell prompt, you can run build commands with [[https://github.com/casey/just][just]].
+The default command builds all .typ files in the =chapters/= folder to both PDF and HTML.
 
 #+begin_src fish
-# compile all documents to PDF/HTML
+# build the default project (chapters/)
 just
 
-# compile a single document to PDF/HTML
-just convert 0.introduction.typ
+# build a specific project folder
+just build examples/academic_book
+just build examples/blogsite
+just build examples/phd_thesis
+
+# clean build artifacts
+just clean
 #+end_src
+
+Each project folder can contain its own =.typ= files, =style.css=, =img/= directory, and =references.bib=.
+Output is organized by project: =build/{project}/pdf/= and =build/{project}/html/=.
 
 The typst we are using builds directly from the upstream GitHub, as HTML generation is a feature in progress.
 To update the version of typst to the latest code on the ~main~ branch, run:

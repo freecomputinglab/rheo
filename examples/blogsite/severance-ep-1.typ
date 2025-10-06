@@ -1,11 +1,11 @@
-#import "../bookutils.typ": book_template 
+#import "../../bookutils.typ": book_template 
 #show: book_template
 
 = Good news about hell - #emph[Severance] [s1/e1]
 
 // NOTE: does not work as HTML export does not take width into account
-// #image("../img/severance-s1e1-shot1.jpg", width: 75%)
-#image("../img/severance-s1e1-shot1.jpg")
+// #image("img/severance-s1e1-shot1.jpg", width: 75%)
+#image("img/severance-s1e1-shot1.jpg")
 
 The first thing to notice is the colour palette. 
 She is dressed in blue, but her hair is chestnut red. 
@@ -36,7 +36,7 @@ Helly's instinctual reaction seems to be to try to kill the voice pointed at her
 (Helly will eventually have sex with the source of the voice, rather than murdering or fraternizing with it.) 
 In this episode, however, Mark (the voice's source) is physically assaulted by Helly, dented in his temple by the same vocalization device that mediated their first communication.
 
-#image("../img/severance-s1e1-shot2.png")
+#image("img/severance-s1e1-shot2.png")
 
 So this is the Macro Data refiner's situation. 
 On the one hand, she is affronted with a voice that compels her to abide by the rules and permits her to enjoy some small reliefs (egress from a locked room) if she concedes to it.
@@ -56,7 +56,7 @@ What each individual 'needs' is a disharmonious melange of needs and demands, op
 The real question of Lumon's smooth functioning is whether it will be able to effectively plug up these pinings, the incidental moments at work where one wonders what one is really doing with one's life, whether the company can really manage its employees' unsanctioned thoughts and the way in which those illicit ideas seep into the daily practice of their workerhood. 
 More on the plasticity of our needs and drives to satisfy them in later posts.
 
-#image("../img/severance-s1e1-shot3.jpg")
+#image("img/severance-s1e1-shot3.jpg")
 
 Ms. Cobel, in contrast to Helly's and Mark's doubtful and doubting red, is a stormy and icy blue. 
 (We must wait until season two to uncover the historical and psychological depth of this colour for Harmony Cobel.)

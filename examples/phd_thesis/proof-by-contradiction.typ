@@ -171,4 +171,4 @@ One such repressed moment, indeed the foundational repression of capital in its 
 #footnote[In Volume III in particular, Marx details at length the grave consequences of treating $M$ as an independent entity that autonomously valorizes itself to $M'$, rather than recognizing that $'$ as a surplus-value that is always produced through its movement through $C$ as an intermediary value, as a dependent rather than independent variable.
   See @bestAutomaticFetishLaw2024 for an excellent exposition of these consequences.]
 
-#bibliography("../references.bib", style: "chicago-author-date")
+#bibliography("references.bib", style: "chicago-author-date")
