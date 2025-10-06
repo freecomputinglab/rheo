@@ -1,6 +1,8 @@
 * rheo
-** Building documents
-rheo is a tool for flowing Typst documents into publishable outputs such as PDF, HTML, and EPUB.
+rheo is a static site engine and experimental typesetting system based on Typst.
+It provides first-class support for both HTML and PDF, and experimental support for EPUB.
+
+** Development 
 To install the compilation environment, first ensure that you have [[https://nixos.org/download/][Nix]] installed on your computer.
 Then run:
 
