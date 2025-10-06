@@ -1,6 +1,6 @@
-# Default recipe: build all files in chapters folder
+# Default recipe: build all files in src folder
 default:
-    just build chapters
+    just build src
 
 # Convert a single file to PDF, and HTML
 convert FILE PROJECT="":
@@ -34,11 +34,11 @@ convert-html FILE PROJECT="":
         cp -r "$FILEDIR/img" "$OUTDIR/"
     end
 
-# Convert all files in a folder (default: chapters)
+# Convert all files in a folder (default: src)
 # Usage: just convert-all [FOLDER] [PROJECT]
 # Examples: just convert-all
 #           just convert-all examples/phd_thesis phd_thesis
-convert-all FOLDER="chapters" PROJECT="":
+convert-all FOLDER="src" PROJECT="":
     #!/usr/bin/env fish
     for file in {{FOLDER}}/*.typ
         if test -f "$file"
@@ -48,7 +48,7 @@ convert-all FOLDER="chapters" PROJECT="":
 
 # Build a project folder into its own output directory
 # Usage: just build FOLDER_PATH
-# Examples: just build chapters           → outputs to build/pdf/ and build/html/
+# Examples: just build src                → outputs to build/pdf/ and build/html/
 #           just build examples/academic_book → outputs to build/academic_book/pdf/ and build/academic_book/html/
 build FOLDER:
     #!/usr/bin/env fish

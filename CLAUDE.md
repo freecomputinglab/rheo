@@ -30,7 +30,7 @@ just update
 All build commands use `just` (a modern alternative to Make):
 
 ```bash
-# Build all .typ files in the chapters folder (default project)
+# Build all .typ files in the src folder (default project)
 just
 
 # Build a specific project folder
@@ -60,7 +60,7 @@ Projects are organized in folders, each containing:
 - `references.bib` (optional) - BibTeX bibliography
 
 Example projects:
-- `chapters/` - Default project (built with `just`)
+- `src/` - Default project (built with `just`)
 - `examples/academic_book/` - Academic book chapters
 - `examples/blogsite/` - Blog posts with images
 - `examples/phd_thesis/` - PhD thesis content

@@ -11,10 +11,10 @@ nix develop
 This might take a while the first time, as Nix is installing typst from upstream and all the other necessary software.
 
 Once you have a shell prompt, you can run build commands with [[https://github.com/casey/just][just]].
-The default command builds all .typ files in the =chapters/= folder to both PDF and HTML.
+The default command builds all .typ files in the =src/= folder to both PDF and HTML.
 
 #+begin_src fish
-# build the default project (chapters/)
+# build the default project (src/)
 just
 
 # build a specific project folder
