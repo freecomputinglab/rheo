@@ -1,0 +1,29 @@
+* rheo
+** Building documents
+rheo is a tool for flowing Typst documents into publishable outputs such as PDF, HTML, and EPUB.
+To install the compilation environment, first ensure that you have [[https://nixos.org/download/][Nix]] installed on your computer.
+Then run:
+
+#+begin_src bash
+nix develop
+#+end_src
+
+This might take a while the first time, as Nix is installing typst from upstream and all the other necessary software.
+
+Once you have a shell prompt, you can run compile commands with [[https://github.com/casey/just][just]].
+The default command compiles all .typ files to both PDF and HTML.
+
+#+begin_src fish
+# compile all documents to PDF/HTML
+just
+
+# compile a single document to PDF/HTML
+just convert 0.introduction.typ
+#+end_src
+
+The typst we are using builds directly from the upstream GitHub, as HTML generation is a feature in progress.
+To update the version of typst to the latest code on the ~main~ branch, run:
+
+#+begin_src bash
+just update 
+#+end_src
