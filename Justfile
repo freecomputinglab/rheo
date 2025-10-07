@@ -15,11 +15,13 @@ convert-pdf FILE PROJECT="":
     set BASENAME (basename "{{FILE}}" .typ)
     typst compile --root . "{{FILE}}" "$OUTDIR/$BASENAME.pdf"
 
-# Convert Typst file to HTML
+# Convert Typst file to HTML and EPUB
 convert-html FILE PROJECT="":
     #!/usr/bin/env fish
     set OUTDIR (test -n "{{PROJECT}}" && echo "build/{{PROJECT}}/html" || echo "build/html")
+    set OUTDIR_EPUB (test -n "{{PROJECT}}" && echo "build/{{PROJECT}}/epub" || echo "build/epub")
     mkdir -p "$OUTDIR"
+    mkdir -p "$OUTDIR_EPUB"
     set BASENAME (basename "{{FILE}}" .typ)
     set FILEDIR (dirname "{{FILE}}")
     typst compile --root . --features html --format html "{{FILE}}" "$OUTDIR/$BASENAME.html"
@@ -33,6 +35,8 @@ convert-html FILE PROJECT="":
     if test -d "$FILEDIR/img"
         cp -r "$FILEDIR/img" "$OUTDIR/"
     end
+    # Convert to EPUB with styles
+    ebook-convert "$OUTDIR/$BASENAME.html" "$OUTDIR_EPUB/$BASENAME.epub"
 
 # Convert all files in a folder (default: src)
 # Usage: just convert-all [FOLDER] [PROJECT]

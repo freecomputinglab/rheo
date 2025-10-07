@@ -18,6 +18,7 @@
             pandoc
             fish
             just
+            calibre # for ebook-convert command
           ] ++ [
             typst.packages.${system}.default
           ];
