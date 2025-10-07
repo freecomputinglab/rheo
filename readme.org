@@ -24,7 +24,7 @@ just
 
 # build a specific project folder
 just build examples/academic_book
-just build examples/blogsite
+just build examples/blog_site
 just build examples/phd_thesis
 
 # clean build artifacts

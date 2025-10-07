@@ -59,6 +59,14 @@ build FOLDER:
     set PROJECT (basename "{{FOLDER}}")
     just convert-all "{{FOLDER}}" "$PROJECT"
 
+build-examples FOLDER="examples": 
+    #!/usr/bin/env fish
+    for subfolder in {{FOLDER}}/**
+        if test -d "$subfolder"
+            just build "$subfolder"
+        end
+    end
+
 # Clean build directory while preserving .gitignore
 clean:
     #!/usr/bin/env fish
