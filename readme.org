@@ -1,3 +1,6 @@
+#+ATTR_HTML: :alt Project header :align center :width 600px
+[[./header.png]]
+
 * rheo
 rheo is a static site and experimental typesetting engine based on Typst.
 It provides first-class support for both HTML and PDF, and experimental support for EPUB.
