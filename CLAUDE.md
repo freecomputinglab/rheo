@@ -35,7 +35,7 @@ just
 
 # Build a specific project folder
 just build examples/academic_book
-just build examples/blogsite
+just build examples/blog_site
 just build examples/phd_thesis
 
 # Advanced: Compile a single file to both PDF and HTML
@@ -62,7 +62,7 @@ Projects are organized in folders, each containing:
 Example projects:
 - `src/` - Default project (built with `just`)
 - `examples/academic_book/` - Academic book chapters
-- `examples/blogsite/` - Blog posts with images
+- `examples/blog_site/` - Blog posts with images
 - `examples/phd_thesis/` - PhD thesis content
 
 Shared resources:
@@ -88,7 +88,7 @@ build/
 
 Examples:
 - `just` → outputs to `build/pdf/` and `build/html/`
-- `just build examples/blogsite` → outputs to `build/blogsite/pdf/` and `build/blogsite/html/`
+- `just build examples/blog_site` → outputs to `build/blog_site/pdf/` and `build/blog_site/html/`
 
 ### Key Technical Details
 
@@ -103,4 +103,4 @@ Examples:
 
 **File Naming**: Documents may use numbered prefixes (0, 1, 2, etc.) to maintain order. The Justfile strips the `.typ` extension when determining output filenames.
 
-**Project Naming**: When building a folder with `just build FOLDER`, the project name (used for the output directory) is derived from the folder's basename. For example, `just build examples/blogsite` creates output in `build/blogsite/`.
+**Project Naming**: When building a folder with `just build FOLDER`, the project name (used for the output directory) is derived from the folder's basename. For example, `just build examples/blog_site` creates output in `build/blog_site/`.

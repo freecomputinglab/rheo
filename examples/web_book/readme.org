@@ -1,0 +1,5 @@
+* Capital for Tech Workers
+
+A book project emerging out of the online course [[https://cftw.ohrg.org/]].
+
+Primary target outputs: HTML, PDF.
