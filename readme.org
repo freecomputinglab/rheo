@@ -7,7 +7,12 @@ It provides first-class support for both HTML and PDF, and experimental support 
 
 ** Development 
 To install the compilation environment, first ensure that you have [[https://nixos.org/download/][Nix]] installed on your computer.
-Then run:
+You will also need to enable [[https://nixos.wiki/wiki/Flakes][Nix flakes]], which you can do by inserting the following line in your ~nix.conf~:
+#+begin_src conf
+experimental-features = nix-command flakes
+#+end_src
+
+With Nix and flakes installed, you should be able to now run:
 
 #+begin_src bash
 nix develop
