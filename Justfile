@@ -13,7 +13,7 @@ convert-pdf FILE PROJECT="":
     set OUTDIR (test -n "{{PROJECT}}" && echo "build/{{PROJECT}}/pdf" || echo "build/pdf")
     mkdir -p "$OUTDIR"
     set BASENAME (basename "{{FILE}}" .typ)
-    typst compile --root . "{{FILE}}" "$OUTDIR/$BASENAME.pdf"
+    typst compile --root . --features html "{{FILE}}" "$OUTDIR/$BASENAME.pdf"
 
 # Convert Typst file to HTML and EPUB
 convert-html FILE PROJECT="":
