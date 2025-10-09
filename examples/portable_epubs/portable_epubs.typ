@@ -1,9 +1,13 @@
-#let custom-element(name) = (attrs: (:), body) => context {
-  if target() == "html" {
+#import "@preview/bullseye:0.1.0": *
+
+#let custom-element(name) = (attrs: (:), body) => {
+  context on-target(html: {
     html.elem(name, attrs: attrs, body)
-  } else {
-    block(children)
-  }
+  })
+
+  context on-target(paged: {
+    block(body)
+  })
 }
 
 #let header = custom-element("header")
