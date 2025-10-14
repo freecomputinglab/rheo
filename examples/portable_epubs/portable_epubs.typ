@@ -1,14 +1,11 @@
-#import "@preview/bullseye:0.1.0": *
-
-#let custom-element(name) = (attrs: (:), body) => {
-  context on-target(html: {
+#let custom-element(name) = context {
+  if target() == "html" {
     html.elem(name, attrs: attrs, body)
-  })
-
-  context on-target(paged: {
-    block(body)
-  })
+  } else {
+    block(children)
+  }
 }
+
 
 #let header = custom-element("header")
 #let authors = custom-element("doc-authors")

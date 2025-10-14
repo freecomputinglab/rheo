@@ -1,7 +1,18 @@
 // Adapted from https://github.com/talal/pesha
 #let linespacing = 0.6em
+#let trackingspacing = 0.6pt
 
-#let straightforward_cv(
+// Workaround for the lack of an `std` scope.
+#let std-smallcaps = smallcaps
+#let std-upper = upper
+
+// Overwrite the default `smallcaps` and `upper` functions with increased spacing between
+// characters. We do this so that when someone uses these functions they will get spacing
+// which fits in better with the rest of the template.
+#let smallcaps(body) = std-smallcaps(text(tracking: trackingspacing, body))
+#let upper(body) = std-upper(text(tracking: trackingspacing, body))
+
+#let humanities-cv(
   name: "",
   address: "",
   contacts: (),
@@ -87,7 +98,7 @@
       top: -0.85em,
       left: 0.25em,
       bottom: 0.5em,
-      align(right)[#upper(head-text(weight: "black", size: 0.7em, tracking: 0.6pt, it))],
+      align(right)[#upper(head-text(weight: "black", size: 0.7em, tracking: trackingspacing, it))],
     )
   }
 
@@ -101,9 +112,6 @@
   body
 }
 
-
-
-// Override experience function to prevent page breaks
 #let experience(
   body,
   place: none,
@@ -115,7 +123,7 @@
     #set list(body-indent: 0.85em)
     #grid(
       columns: (4em, auto),
-      // column-gutter: 0.3em,
+      column-gutter: 0.3em,
       gutter: linespacing,
       align: (left, left),
       time, [#strong(place) #{if title != none {[-- #emph(title)]}}],
@@ -124,26 +132,19 @@
   ]
 }
 
-// Workaround for the lack of an `std` scope.
-#let std-smallcaps = smallcaps
-#let std-upper = upper
-
-// Overwrite the default `smallcaps` and `upper` functions with increased spacing between
-// characters. We do this so that when someone uses these functions they will get spacing
-// which fits in better with the rest of the template.
-#let smallcaps(body) = std-smallcaps(text(tracking: 0.6pt, body))
-#let upper(body) = std-upper(text(tracking: 0.6pt, body))
-
-// Custom function for compact publication listings
-#let paper(venue, title, time) = {
+#let paper(
+  venue: none,
+  title: none, 
+  date: none
+) = {
   block(breakable: false, above: linespacing, below: 0.2em)[
-    #set par(leading: 0.3em)
+    #set par(leading: linespacing)
     #grid(
       columns: (4em, auto),
       column-gutter: 0.3em,
+      gutter: 1em,
       align: (left + top, left + top),
-      time, [#title -- #venue.]
+      date, [#title -- #venue.]
     )
   ]
 }
-
