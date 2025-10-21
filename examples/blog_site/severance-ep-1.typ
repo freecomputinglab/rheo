@@ -1,4 +1,4 @@
-#import "../../bookutils.typ": book_template 
+#import "../../src/typst/bookutils.typ": book_template 
 #show: book_template
 
 = Good news about hell - #emph[Severance] [s1/e1]

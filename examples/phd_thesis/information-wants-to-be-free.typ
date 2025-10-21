@@ -1,4 +1,4 @@
-#import "../../bookutils.typ": book_template
+#import "../../src/typst/bookutils.typ": book_template
 #show: book_template
 
 = Information wants to be free

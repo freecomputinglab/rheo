@@ -1,4 +1,4 @@
-#import "../../bookutils.typ": book_template, lemma
+#import "../../src/typst/bookutils.typ": book_template, lemma
 #show: book_template
 
 = Proof by contradiction
