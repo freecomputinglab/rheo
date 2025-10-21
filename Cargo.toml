@@ -1,0 +1,28 @@
+[package]
+name = "rheo"
+version = "0.1.0"
+edition = "2021"
+authors = ["rheo contributors"]
+description = "A tool for flowing Typst documents into publishable outputs"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/rheo"
+
+[[bin]]
+name = "rheo"
+path = "src/rs/main.rs"
+
+[lib]
+name = "rheo"
+path = "src/rs/lib.rs"
+
+[dependencies]
+typst = { git = "https://github.com/typst/typst", branch = "main" }
+clap = { version = "4.5", features = ["derive"] }
+anyhow = "1.0"
+walkdir = "2.5"
+thiserror = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

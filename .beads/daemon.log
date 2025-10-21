@@ -10,3 +10,36 @@ error: cannot pull with rebase: You have unstaged changes.
 error: additionally, your index contains uncommitted changes.
 error: Please commit or stash them.
 
+[2025-10-21 14:48:51] Starting sync cycle...
+[2025-10-21 14:48:51] Exported to JSONL
+[2025-10-21 14:48:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 14:53:51] Starting sync cycle...
+[2025-10-21 14:53:51] Exported to JSONL
+[2025-10-21 14:53:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 14:58:51] Starting sync cycle...
+[2025-10-21 14:58:51] Exported to JSONL
+[2025-10-21 14:58:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: additionally, your index contains uncommitted changes.
+error: Please commit or stash them.
+
+[2025-10-21 15:03:51] Starting sync cycle...
+[2025-10-21 15:03:51] Exported to JSONL
+[2025-10-21 15:03:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: additionally, your index contains uncommitted changes.
+error: Please commit or stash them.
+
+[2025-10-21 15:08:51] Starting sync cycle...
+[2025-10-21 15:08:51] Exported to JSONL
+[2025-10-21 15:08:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: additionally, your index contains uncommitted changes.
+error: Please commit or stash them.
+
