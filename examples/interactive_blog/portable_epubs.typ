@@ -1,11 +1,13 @@
-#let custom-element(name) = context {
-  if target() == "html" {
-    html.elem(name, attrs: attrs, body)
-  } else {
-    block(children)
-  }
+#let html-element(body, name: "div", attrs: ()) = context {
+    if target() == "html" {
+      html.elem(name, attrs: attrs, body)
+    } else {
+      block(body)
+      [#attrs]
+    }
 }
 
+#let custom-element(name, attrs: ()) = html-element.with(name: name).with(attrs: attrs)
 
 #let header = custom-element("header")
 #let authors = custom-element("doc-authors")
@@ -16,7 +18,9 @@
 #let abstract = custom-element("doc-abstract")
 #let section = custom-element("section")
 #let definition = custom-element("dfn-container")
-#let defined-word(id, body) = custom-element("dfn")(attrs: (id: id), body)
+
+#let defined-word(id: "") = [#custom-element("dfn", attrs: (id: id))]
+
 #let callout(body) = custom-element("div")(attrs: (class: "callout"), body)
 #let def-link(id, body) = custom-element("a")(attrs: (href: "#" + id, data-target: "dfn"), body)
 #let code-description = custom-element("code-description")
@@ -60,8 +64,6 @@
 }
 
 #set document(title: "Portable EPUBs")
-#title()
-
 
 #header[
   #authors[
@@ -184,7 +186,7 @@ Overall, EPUB's structured format makes it a solid candidate for a single-file H
 For example, a major issue for self-containment is that EPUB content can embed external assets. A content document can legally include an image or font file whose `src` is a URL to a hosted server. This is not hypothetical, either; as of the time of writing, Google Doc's EPUB exporter will emit CSS that will `@include` external Google Fonts files. The problem is that such an EPUB will not render correctly without an internet connection, nor will it render correctly if Google changes the URLs of its font files.
 
 #par[#definition[
-  Hence, I will propose a new format which I call a #defined-word("portable-epub")[*portable EPUB*], which is an EPUB with additional requirements and recommendations to improve PDF-like portability. The first requirement is:
+  Hence, I will propose a new format which I call a #defined-word(id: "portable-epub")[*portable EPUB*], which is an EPUB with additional requirements and recommendations to improve PDF-like portability. The first requirement is:
 ]]
 
 #callout[
@@ -197,7 +199,7 @@ There is a fundamental tension between consistency and flexibility in document r
 
 On the other hand, flexibility is desirable because people want to read documents under different conditions. Device conditions include screen size (from phone to monitor) and screen capabilities (E-ink vs. LCD). Some readers may prefer larger fonts or higher contrasts for visibility, alternative color schemes for color blindness, or alternative font faces for #link("https://opendyslexic.org/")[dyslexia]. Sufficiently flexible documents can even permit readers to select a level of detail appropriate for their background (#link("https://tomasp.net/coeffects/")[here's an example]).
 
-Finding a balance between consistency and flexibility is arguably the most fundamental design challenge in attempting to replace PDF with EPUB. To navigate this trade-off, we first need to talk about #defined-word("reading-system")[EPUB reading systems], or the tools that render an EPUB for human consumption. To get a sense of variation between reading systems, I tried rendering this post as an EPUB (without any styling, just HTML) on four systems: #link("https://calibre-ebook.com/")[Calibre], #link("https://www.adobe.com/solutions/ebook/digital-editions.html")[Adobe Digital Editions], #link("https://www.apple.com/apple-books/")[Apple Books], and #link("https://www.amazon.com/dp/B09SWW583J")[Amazon Kindle]. This is how the first page looks on each system (omitting Calibre because it looked the same as Adobe Digital Editions):
+Finding a balance between consistency and flexibility is arguably the most fundamental design challenge in attempting to replace PDF with EPUB. To navigate this trade-off, we first need to talk about #defined-word(id: "reading-system")[EPUB reading systems], or the tools that render an EPUB for human consumption. To get a sense of variation between reading systems, I tried rendering this post as an EPUB (without any styling, just HTML) on four systems: #link("https://calibre-ebook.com/")[Calibre], #link("https://www.adobe.com/solutions/ebook/digital-editions.html")[Adobe Digital Editions], #link("https://www.apple.com/apple-books/")[Apple Books], and #link("https://www.amazon.com/dp/B09SWW583J")[Amazon Kindle]. This is how the first page looks on each system (omitting Calibre because it looked the same as Adobe Digital Editions):
 
 #figure[
   #figure(
