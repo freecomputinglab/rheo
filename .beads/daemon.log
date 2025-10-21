@@ -1,0 +1,12 @@
+[2025-10-21 14:43:51] Daemon started (interval: 5m0s, auto-commit: false, auto-push: false)
+[2025-10-21 14:43:51] Using database: /home/lox/code/rheo/.beads/rheo.db
+[2025-10-21 14:43:51] Database opened: /home/lox/code/rheo/.beads/rheo.db
+[2025-10-21 14:43:51] Starting RPC server: /home/lox/code/rheo/.beads/bd.sock
+[2025-10-21 14:43:51] RPC server ready (socket listening)
+[2025-10-21 14:43:51] Starting sync cycle...
+[2025-10-21 14:43:51] Exported to JSONL
+[2025-10-21 14:43:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: additionally, your index contains uncommitted changes.
+error: Please commit or stash them.
+
