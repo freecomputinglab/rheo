@@ -76,3 +76,87 @@ error: cannot pull with rebase: You have unstaged changes.
 error: additionally, your index contains uncommitted changes.
 error: Please commit or stash them.
 
+[2025-10-21 15:38:51] Starting sync cycle...
+[2025-10-21 15:38:51] Exported to JSONL
+[2025-10-21 15:38:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 15:43:51] Starting sync cycle...
+[2025-10-21 15:43:51] Exported to JSONL
+[2025-10-21 15:43:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 15:48:51] Starting sync cycle...
+[2025-10-21 15:48:51] Exported to JSONL
+[2025-10-21 15:48:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 15:53:51] Starting sync cycle...
+[2025-10-21 15:53:51] Exported to JSONL
+[2025-10-21 15:53:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 15:58:51] Starting sync cycle...
+[2025-10-21 15:58:51] Exported to JSONL
+[2025-10-21 15:58:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 16:03:51] Starting sync cycle...
+[2025-10-21 16:03:51] Exported to JSONL
+[2025-10-21 16:03:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 16:08:51] Starting sync cycle...
+[2025-10-21 16:08:51] Exported to JSONL
+[2025-10-21 16:08:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 16:13:51] Starting sync cycle...
+[2025-10-21 16:13:51] Exported to JSONL
+[2025-10-21 16:13:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 16:18:51] Starting sync cycle...
+[2025-10-21 16:18:51] Exported to JSONL
+[2025-10-21 16:18:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 16:23:51] Starting sync cycle...
+[2025-10-21 16:23:51] Exported to JSONL
+[2025-10-21 16:23:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 16:28:51] Starting sync cycle...
+[2025-10-21 16:28:51] Exported to JSONL
+[2025-10-21 16:28:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 16:33:51] Starting sync cycle...
+[2025-10-21 16:33:51] Exported to JSONL
+[2025-10-21 16:33:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 16:38:51] Starting sync cycle...
+[2025-10-21 16:38:51] Exported to JSONL
+[2025-10-21 16:38:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-21 16:43:51] Starting sync cycle...
+[2025-10-21 16:43:51] Exported to JSONL
+[2025-10-21 16:43:51] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+

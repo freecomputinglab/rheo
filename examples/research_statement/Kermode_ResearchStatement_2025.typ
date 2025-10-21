@@ -1,3 +1,6 @@
+#import "../../src/typst/bookutils.typ": book_template 
+#show: book_template
+
 #let department = [the School of Information at the University of Michigan]
 #let name = [Lachlan Kermode] 
 
@@ -5,44 +8,54 @@
 
 #show link: it => { text(fill: rgb("#2563eb"))[#it] }
 
-#show heading.where(level: 1): it => [ 
-  #set text(size: 12pt) 
-  #pad(bottom: 0.3em)[#it]
-]
-
-#set page(
-  margin: 1in,
-  header-ascent: 0.3in,
-  header: context {
-    if counter(page).get().first() == 1 {
-      // First page header with Brown logo
-      grid(
-        columns: (auto, 1fr),
-        column-gutter: 12pt,
-        align: bottom,
-        image("brown-logo.png", height: 0.6in),
-        block(
-          width: 100%,
-          stack(
-            spacing: 6pt,
-            [*#name* --- Research Statement],
-            text(size: subsidiarytextsize)[Department of Modern Culture and Media],
-            line(length: 100%, stroke: 0.5pt)
-          )
-        )
-      )
-    } else {
-      // Subsequent pages header
-      
-      show text: smallcaps
-      align(right)[Research Statement: #name]
-    }
-  }
-)
-
 #set par(leading: 0.5em)
 
-#text(size: subsidiarytextsize)[Note: This document contains hyperlinks to external websites that are indicated by blue, underlined text. The statement has been written to read fluidly without needing to visit any of the links: but they are included to provide further context for the interested reader.]
+#context {
+  if target() == "html" {
+  [
+    = Research Statement
+    == #name 
+  ]
+  } else {
+    show heading.where(level: 1): it => [ 
+      #set text(size: 12pt) 
+      #pad(bottom: 0.3em)[#it]
+    ]
+
+
+    set page(
+      margin: 1in,
+      header-ascent: 0.3in,
+      header: context {
+        if counter(page).get().first() == 1 {
+          // First page header with Brown logo
+          grid(
+            columns: (auto, 1fr),
+            column-gutter: 12pt,
+            align: bottom,
+            image("brown-logo.png", height: 0.6in),
+            block(
+              width: 100%,
+              stack(
+                spacing: 6pt,
+                [*#name* --- Research Statement],
+                text(size: subsidiarytextsize)[Department of Modern Culture and Media],
+                line(length: 100%, stroke: 0.5pt)
+              )
+            )
+          )
+        } else {
+          // Subsequent pages header
+          
+          show text: smallcaps
+          align(right)[Research Statement: #name]
+        }
+      }
+    )
+
+    text(size: subsidiarytextsize)[Note: This document contains hyperlinks to external websites that are indicated by blue, underlined text. The statement has been written to read fluidly without needing to visit any of the links: but they are included to provide further context for the interested reader.]
+  }
+}
 
 As an interdisciplinary scholar trained both in the humanities (PhD Modern Culture and Media, Brown) and in computer science (ScM Computer Science, Brown; AB Computer Science, Princeton), my research seeks to contribute wholeheartedly to both sets of disciplines. 
 The foremost imperative of my publications and projects is to critically understand, evaluate, and reconceptualize the role that computing plays-- and _should_ play-- in society.
@@ -156,7 +169,7 @@ I am actively working on three software projects that will be open sourced and p
   By making several #link("https://github.com/typst/typst/pulls?q=is%3Apr+is%3Aclosed+author%3Abreezykermo")[contributions to the upstream Typst codebase], I progressed Typst's capabilities to export document structure such as bibliographic entries and citations to an HTML document, a compilation target that is secondary to Typst's full-featured support for PDF.
   Rheo is a static site and experimental typesetting engine based on Typst that will eventually support PDF, HTML, EPUB, and #link("https://willcrichton.net/notes/portable-epubs/")[Portable EPUB] with a richer semantics in the latter format than standalone Typst.
   It is envisioned as a tool that will enable more freedom in the domain of document dissemination in line with the original vision of the Internet as a mechanism for lively and reasonably unfettered academic exchange idea, rather than as the densely commercial space of 'platform capitalism' that it has become. 
-  // (An early prototype of rheo is what powers the option to #link("https://ohrg.org/materials/michigan-research-statement.html")[read this statement on the web], if you prefer to do so.)
+  (An early prototype of rheo is what powers the option to #link("https://lachlankermode.com/live/mic.html")[read this statement on the web], if you prefer to do so.)
 
 // These three projects are representative of the sort of software that my research intends to develop through the ICF.
 // Though I am strongly committed to open sourcing software and making it free through permissive licensing where it is sensible to do so, my time at FA revealed that publicly available source code is not a panacea to the thorny politics of software freedom. 
@@ -179,7 +192,6 @@ An idea that I have for one such tool is a Unix-based document storage system th
 == Summary
 In summary, the Initiative for Computing Freedom-- which I intend to someday progress to becoming an Institute in its own right-- is the rubric for the research that I would be thrilled to continue at #department.
 It consists of three co-constitutive branches 1) critical theory, 2) multimodal pedagogy, and 3) practical software, which cohere to more rigorously comprehend the politics of computing freedom in the 21#super[st] century.
-
 
 As Marx famously pronounced in his _Theses on Feuerbach_: #quote[The philosophers have only _interpreted_ the world in various ways. 
 The point, however, is to _change_ it.]

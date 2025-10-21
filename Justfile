@@ -29,7 +29,7 @@ convert-html FILE PROJECT="":
     if test -f "$FILEDIR/style.css"
         cp "$FILEDIR/style.css" "$OUTDIR/style.css"
     else
-        cp style.css "$OUTDIR/style.css"
+        cp src/typst/style.css "$OUTDIR/style.css"
     end
     # Copy img directory from file's directory if it exists
     if test -d "$FILEDIR/img"
