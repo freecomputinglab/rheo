@@ -17,10 +17,15 @@ path = "src/rs/lib.rs"
 
 [dependencies]
 typst = { git = "https://github.com/typst/typst", branch = "main" }
+typst-pdf = { git = "https://github.com/typst/typst", branch = "main" }
+typst-html = { git = "https://github.com/typst/typst", branch = "main" }
+typst-kit = { git = "https://github.com/typst/typst", branch = "main", default-features = false, features = ["fonts"] }
 clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
 walkdir = "2.5"
 thiserror = "1.0"
+parking_lot = "0.12"
+chrono = "0.4"
 
 [profile.release]
 opt-level = 3

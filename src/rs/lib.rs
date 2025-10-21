@@ -4,5 +4,6 @@ pub mod project;
 pub mod output;
 pub mod assets;
 pub mod epub;
+pub mod world;
 
 pub use cli::Cli;
