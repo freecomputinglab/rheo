@@ -68,7 +68,7 @@ Example projects:
 - `examples/phd_thesis/` - PhD thesis content
 
 Shared resources:
-- `bookutils.typ` - Shared Typst template utilities (imported from project files)
+- `rheo.typ` - Shared Typst template utilities (imported from project files)
 - `style.csl` - Citation Style Language definition
 - `style.css` - Root-level CSS (fallback for projects without their own)
 

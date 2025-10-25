@@ -9,7 +9,7 @@ use crate::world::RheoWorld;
 ///
 /// Uses the typst library with:
 /// - Root set to repository root (for imports via World)
-/// - Shared resources available in src/typst/ (bookutils.typ, style.csl)
+/// - Shared resources available in src/typst/ (rheo.typ, style.csl)
 pub fn compile_pdf(input: &Path, output: &Path, root: &Path) -> Result<()> {
     // Create the compilation world
     let world = RheoWorld::new(root, input)
@@ -59,10 +59,10 @@ pub fn compile_pdf(input: &Path, output: &Path, root: &Path) -> Result<()> {
 /// - --root set to repository root (for imports)
 /// - --features html enabled
 /// - --format html
-/// - Shared resources available in src/typst/ (bookutils.typ, style.csl)
+/// - Shared resources available in src/typst/ (rheo.typ, style.csl)
 pub fn compile_html(input: &Path, output: &Path) -> Result<()> {
     // TODO: Implement HTML compilation using typst library
-    // Set root to "." so typst can find src/typst/bookutils.typ
+    // Set root to "." so typst can find src/typst/rheo.typ
     println!("Would compile {:?} to HTML at {:?}", input, output);
     Ok(())
 }

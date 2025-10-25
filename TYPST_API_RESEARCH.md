@@ -28,14 +28,14 @@ The `World` trait defines the compilation environment. It must provide:
 - `main()` - Returns the main FileId to compile
 - `source(FileId)` - Returns source code for a file
 - `library()` - Returns the Typst standard library
-- File system access for imports (bookutils.typ, etc.)
+- File system access for imports (rheo.typ, etc.)
 - Font access
 - Today's date, etc.
 
 **Implementation Strategy:**
 We need to create a custom `RheoWorld` struct that implements `World`.
 It should:
-- Set the root directory to repository root (for finding `src/typst/bookutils.typ`)
+- Set the root directory to repository root (for finding `src/typst/rheo.typ`)
 - Provide file access for .typ files and imports
 - Load fonts from the system
 
@@ -173,7 +173,7 @@ impl World for RheoWorld {
 
 **Key Implementation Details**:
 - `root` should be set to repository root (`.`)
-- This allows Typst to resolve imports like `../../src/typst/bookutils.typ`
+- This allows Typst to resolve imports like `../../src/typst/rheo.typ`
 - Need to handle file ID mapping (FileId ↔ PathBuf)
 - Can look at `typst-cli` or `typst-as-lib` for World implementation examples
 
@@ -237,7 +237,7 @@ let root = std::env::current_dir()?; // Repository root
 let world = RheoWorld::new(&root, input_file)?;
 ```
 
-This allows imports like `#import "../../src/typst/bookutils.typ"` to resolve correctly.
+This allows imports like `#import "../../src/typst/rheo.typ"` to resolve correctly.
 
 ### Step 4: Handle --features html equivalent
 

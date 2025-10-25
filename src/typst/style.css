@@ -65,3 +65,7 @@ a:hover::after {
 section[role="doc-endnotes"] ol li a[role="doc-backlink"] {
   padding-right: 0.2em;
 }
+
+video {
+  max-width: 100%;
+}
