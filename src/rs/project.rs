@@ -1,5 +1,7 @@
-use anyhow::Result;
+use anyhow::{Result, Context};
 use std::path::{Path, PathBuf};
+use std::fs;
+use walkdir::WalkDir;
 
 /// Configuration for a Typst project
 #[derive(Debug)]
@@ -26,19 +28,58 @@ pub struct ProjectConfig {
 impl ProjectConfig {
     /// Detect project configuration from a directory path
     pub fn from_path(path: &Path) -> Result<Self> {
-        // TODO: Implement project detection logic
-        println!("Would detect project at {:?}", path);
+        // Canonicalize the root path for consistent path handling
+        let root = path.canonicalize()
+            .context("Failed to canonicalize project directory")?;
+
+        // Extract project name from directory basename
+        let name = root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("Failed to get project name from directory")?
+            .to_string();
+
+        // Find all .typ files in the directory (recursive walk)
+        let typ_files: Vec<PathBuf> = WalkDir::new(&root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path().extension()
+                    .and_then(|s| s.to_str())
+                    == Some("typ")
+            })
+            .map(|e| e.path().to_path_buf())
+            .collect();
+
+        // Detect optional project-specific resources
+        let style_css = root.join("style.css");
+        let style_css = if style_css.is_file() {
+            Some(style_css)
+        } else {
+            None
+        };
+
+        let img_dir = root.join("img");
+        let img_dir = if img_dir.is_dir() {
+            Some(img_dir)
+        } else {
+            None
+        };
+
+        let references_bib = root.join("references.bib");
+        let references_bib = if references_bib.is_file() {
+            Some(references_bib)
+        } else {
+            None
+        };
 
         Ok(ProjectConfig {
-            name: path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string(),
-            root: path.to_path_buf(),
-            typ_files: Vec::new(),
-            style_css: None,
-            img_dir: None,
-            references_bib: None,
+            name,
+            root,
+            typ_files,
+            style_css,
+            img_dir,
+            references_bib,
         })
     }
 }
