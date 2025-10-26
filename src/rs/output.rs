@@ -63,12 +63,37 @@ impl OutputConfig {
     }
 
     /// Clean all build artifacts (entire build/ directory)
+    /// Preserves build/.gitignore if it exists
     pub fn clean_all() -> Result<()> {
         let build_dir = PathBuf::from("build");
 
-        if build_dir.exists() {
-            fs::remove_dir_all(&build_dir)
-                .map_err(|e| RheoError::io(e, format!("removing build directory {:?}", build_dir)))?;
+        if !build_dir.exists() {
+            return Ok(());
+        }
+
+        // Read directory contents
+        let entries = fs::read_dir(&build_dir)
+            .map_err(|e| RheoError::io(e, format!("reading build directory {:?}", build_dir)))?;
+
+        // Remove everything except .gitignore
+        for entry in entries {
+            let entry = entry
+                .map_err(|e| RheoError::io(e, "reading directory entry"))?;
+            let path = entry.path();
+
+            // Skip .gitignore
+            if path.file_name().and_then(|n| n.to_str()) == Some(".gitignore") {
+                continue;
+            }
+
+            // Remove files and directories
+            if path.is_dir() {
+                fs::remove_dir_all(&path)
+                    .map_err(|e| RheoError::io(e, format!("removing directory {:?}", path)))?;
+            } else {
+                fs::remove_file(&path)
+                    .map_err(|e| RheoError::io(e, format!("removing file {:?}", path)))?;
+            }
         }
 
         Ok(())
@@ -190,14 +215,26 @@ mod tests {
         fs::write(config1.pdf_dir.join("test.pdf"), b"dummy").expect("Failed to write");
         fs::write(config2.pdf_dir.join("test.pdf"), b"dummy").expect("Failed to write");
 
+        // Create a .gitignore file in build/
+        let build_dir = PathBuf::from("build");
+        fs::write(build_dir.join(".gitignore"), b"**/*\n!.gitignore\n").expect("Failed to write .gitignore");
+
         // Verify build directory exists
-        assert!(PathBuf::from("build").exists());
+        assert!(build_dir.exists());
+        assert!(build_dir.join(".gitignore").exists());
 
         // Clean all
         OutputConfig::clean_all().expect("Failed to clean all");
 
-        // Verify build directory is gone
-        assert!(!PathBuf::from("build").exists(), "Build directory should be removed");
+        // Verify build directory still exists
+        assert!(build_dir.exists(), "Build directory should still exist");
+
+        // Verify .gitignore is preserved
+        assert!(build_dir.join(".gitignore").exists(), ".gitignore should be preserved");
+
+        // Verify project directories are gone
+        assert!(!build_dir.join("project1").exists(), "project1 should be removed");
+        assert!(!build_dir.join("project2").exists(), "project2 should be removed");
 
         // Restore original directory
         std::env::set_current_dir(original_dir).expect("Failed to restore dir");
