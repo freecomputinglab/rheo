@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use crate::{Result, RheoError};
 use std::fs;
 use std::path::PathBuf;
 
@@ -37,13 +37,13 @@ impl OutputConfig {
     /// Create all necessary output directories
     pub fn create_dirs(&self) -> Result<()> {
         fs::create_dir_all(&self.pdf_dir)
-            .context(format!("Failed to create PDF directory: {:?}", self.pdf_dir))?;
+            .map_err(|e| RheoError::io(e, format!("creating PDF directory {:?}", self.pdf_dir)))?;
 
         fs::create_dir_all(&self.html_dir)
-            .context(format!("Failed to create HTML directory: {:?}", self.html_dir))?;
+            .map_err(|e| RheoError::io(e, format!("creating HTML directory {:?}", self.html_dir)))?;
 
         fs::create_dir_all(&self.epub_dir)
-            .context(format!("Failed to create EPUB directory: {:?}", self.epub_dir))?;
+            .map_err(|e| RheoError::io(e, format!("creating EPUB directory {:?}", self.epub_dir)))?;
 
         Ok(())
     }

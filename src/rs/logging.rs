@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::{Result, RheoError};
 use tracing::Level;
 use tracing_subscriber::{fmt, EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -51,7 +51,9 @@ pub fn init(verbosity: Verbosity) -> Result<()> {
         .with(env_filter)
         .with(fmt_layer)
         .try_init()
-        .map_err(|e| anyhow::anyhow!("Failed to initialize logging: {}", e))?;
+        .map_err(|e| RheoError::LoggingInit {
+            message: format!("{}", e),
+        })?;
 
     Ok(())
 }

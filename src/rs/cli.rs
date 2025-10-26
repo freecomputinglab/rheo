@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use tracing::{debug, info};

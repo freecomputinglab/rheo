@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use crate::{Result, RheoError};
 use std::fs;
 use std::path::Path;
 
@@ -22,10 +22,11 @@ pub fn copy_css(project_dir: &Path, output_dir: &Path) -> Result<()> {
     let dest_css = output_dir.join("style.css");
 
     fs::copy(&source_css, &dest_css)
-        .context(format!(
-            "Failed to copy CSS from {:?} to {:?}",
-            source_css, dest_css
-        ))?;
+        .map_err(|e| RheoError::AssetCopy {
+            source: source_css,
+            dest: dest_css,
+            error: e,
+        })?;
 
     Ok(())
 }
@@ -43,33 +44,36 @@ pub fn copy_images(project_dir: &Path, output_dir: &Path) -> Result<()> {
 
     // Create destination img/ directory
     fs::create_dir_all(&dest_img)
-        .context(format!("Failed to create image directory: {:?}", dest_img))?;
+        .map_err(|e| RheoError::io(e, format!("creating image directory {:?}", dest_img)))?;
 
     // Recursively copy all files from source_img to dest_img
-    copy_dir_recursive(&source_img, &dest_img)
-        .context(format!(
-            "Failed to copy images from {:?} to {:?}",
-            source_img, dest_img
-        ))?;
+    copy_dir_recursive(&source_img, &dest_img)?;
 
     Ok(())
 }
 
 /// Recursively copy a directory and all its contents
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    for entry in fs::read_dir(src).context(format!("Failed to read directory: {:?}", src))? {
-        let entry = entry.context("Failed to read directory entry")?;
+    for entry in fs::read_dir(src)
+        .map_err(|e| RheoError::io(e, format!("reading directory {:?}", src)))?
+    {
+        let entry = entry
+            .map_err(|e| RheoError::io(e, "reading directory entry"))?;
         let path = entry.path();
         let file_name = entry.file_name();
         let dest_path = dst.join(file_name);
 
         if path.is_dir() {
             fs::create_dir_all(&dest_path)
-                .context(format!("Failed to create directory: {:?}", dest_path))?;
+                .map_err(|e| RheoError::io(e, format!("creating directory {:?}", dest_path)))?;
             copy_dir_recursive(&path, &dest_path)?;
         } else {
             fs::copy(&path, &dest_path)
-                .context(format!("Failed to copy file from {:?} to {:?}", path, dest_path))?;
+                .map_err(|e| RheoError::AssetCopy {
+                    source: path.clone(),
+                    dest: dest_path.clone(),
+                    error: e,
+                })?;
         }
     }
 

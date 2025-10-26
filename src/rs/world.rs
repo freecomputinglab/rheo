@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::fs;
 
-use anyhow::{Result, Context};
+use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
 use parking_lot::Mutex;
 use typst::diag::{FileError, FileResult};
@@ -49,13 +49,13 @@ impl RheoWorld {
     pub fn new(root: &Path, main_file: &Path) -> Result<Self> {
         // Resolve paths
         let root = root.canonicalize()
-            .context("Failed to canonicalize root directory")?;
+            .map_err(|e| RheoError::path(root, format!("failed to canonicalize root directory: {}", e)))?;
         let main_path = main_file.canonicalize()
-            .context("Failed to canonicalize main file")?;
+            .map_err(|e| RheoError::path(main_file, format!("failed to canonicalize main file: {}", e)))?;
 
         // Create virtual path for main file
         let main_vpath = VirtualPath::within_root(&main_path, &root)
-            .context("Main file must be within root directory")?;
+            .ok_or_else(|| RheoError::path(&main_path, "main file must be within root directory"))?;
         let main = FileId::new(None, main_vpath);
 
         // Build library

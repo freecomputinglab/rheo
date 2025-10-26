@@ -1,5 +1,4 @@
-use anyhow::Result;
-use rheo::cli::Cli;
+use rheo::{Cli, Result};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();

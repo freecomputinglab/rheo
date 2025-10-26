@@ -1,11 +1,10 @@
-use anyhow::{Result, Context};
+use crate::{Result, RheoError};
+use crate::world::RheoWorld;
 use std::path::Path;
 use tracing::{debug, error, info, instrument, warn};
 use typst::layout::PagedDocument;
 use typst_html::HtmlDocument;
 use typst_pdf::PdfOptions;
-
-use crate::world::RheoWorld;
 
 /// Compile a Typst document to PDF
 ///
@@ -15,8 +14,7 @@ use crate::world::RheoWorld;
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 pub fn compile_pdf(input: &Path, output: &Path, root: &Path) -> Result<()> {
     // Create the compilation world
-    let world = RheoWorld::new(root, input)
-        .context("Failed to create compilation world")?;
+    let world = RheoWorld::new(root, input)?;
 
     // Compile the document
     info!(input = %input.display(), "compiling to PDF");
@@ -34,7 +32,11 @@ pub fn compile_pdf(input: &Path, output: &Path, root: &Path) -> Result<()> {
             for err in &errors {
                 error!(message = %err.message, "compilation error");
             }
-            anyhow::bail!("Compilation failed with {} error(s)", errors.len());
+            let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+            return Err(RheoError::Compilation {
+                count: errors.len(),
+                errors: error_messages.join("\n"),
+            });
         }
     };
 
@@ -45,13 +47,17 @@ pub fn compile_pdf(input: &Path, output: &Path, root: &Path) -> Result<()> {
             for err in &errors {
                 error!(message = %err.message, "PDF export error");
             }
-            anyhow::anyhow!("PDF export failed with {} error(s)", errors.len())
+            let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+            RheoError::PdfExport {
+                count: errors.len(),
+                errors: error_messages.join("\n"),
+            }
         })?;
 
     // Write to file
     debug!(size = pdf_bytes.len(), "writing PDF file");
-    std::fs::write(output, pdf_bytes)
-        .context("Failed to write PDF file")?;
+    std::fs::write(output, &pdf_bytes)
+        .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output)))?;
 
     info!(output = %output.display(), "successfully compiled to PDF");
     Ok(())
@@ -65,8 +71,7 @@ pub fn compile_pdf(input: &Path, output: &Path, root: &Path) -> Result<()> {
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 pub fn compile_html(input: &Path, output: &Path, root: &Path) -> Result<()> {
     // Create the compilation world
-    let world = RheoWorld::new(root, input)
-        .context("Failed to create compilation world")?;
+    let world = RheoWorld::new(root, input)?;
 
     // Compile the document to HtmlDocument
     info!(input = %input.display(), "compiling to HTML");
@@ -84,7 +89,11 @@ pub fn compile_html(input: &Path, output: &Path, root: &Path) -> Result<()> {
             for err in &errors {
                 error!(message = %err.message, "compilation error");
             }
-            anyhow::bail!("Compilation failed with {} error(s)", errors.len());
+            let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+            return Err(RheoError::Compilation {
+                count: errors.len(),
+                errors: error_messages.join("\n"),
+            });
         }
     };
 
@@ -95,13 +104,17 @@ pub fn compile_html(input: &Path, output: &Path, root: &Path) -> Result<()> {
             for err in &errors {
                 error!(message = %err.message, "HTML export error");
             }
-            anyhow::anyhow!("HTML export failed with {} error(s)", errors.len())
+            let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+            RheoError::HtmlExport {
+                count: errors.len(),
+                errors: error_messages.join("\n"),
+            }
         })?;
 
     // Write to file
     debug!(size = html_string.len(), "writing HTML file");
-    std::fs::write(output, html_string)
-        .context("Failed to write HTML file")?;
+    std::fs::write(output, &html_string)
+        .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
 
     info!(output = %output.display(), "successfully compiled to HTML");
     Ok(())

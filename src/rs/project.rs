@@ -1,4 +1,4 @@
-use anyhow::{Result, Context};
+use crate::{Result, RheoError};
 use std::path::{Path, PathBuf};
 use std::fs;
 use walkdir::WalkDir;
@@ -30,13 +30,13 @@ impl ProjectConfig {
     pub fn from_path(path: &Path) -> Result<Self> {
         // Canonicalize the root path for consistent path handling
         let root = path.canonicalize()
-            .context("Failed to canonicalize project directory")?;
+            .map_err(|e| RheoError::path(path, format!("failed to canonicalize project directory: {}", e)))?;
 
         // Extract project name from directory basename
         let name = root
             .file_name()
             .and_then(|n| n.to_str())
-            .context("Failed to get project name from directory")?
+            .ok_or_else(|| RheoError::project_config("failed to get project name from directory"))?
             .to_string();
 
         // Find all .typ files in the directory (recursive walk)
