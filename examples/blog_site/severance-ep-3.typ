@@ -1,5 +1,3 @@
-#show: book_template
-
 = In Perpetuity - #emph[Severance] [s1/e3]
 
 #image("img/severance-s1e3-shot1.png")

@@ -6,7 +6,7 @@
   #strong[Lemma #context lemmacount.display()]: #it
 ])
 
-#let book_template(doc) = [
+#let rheo_template(doc) = [
   // #show: show-target(html: doc => {
   //   html.elem("html")[
   //     #html.elem("head")[

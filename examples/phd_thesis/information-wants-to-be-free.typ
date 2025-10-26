@@ -1,5 +1,3 @@
-#show: book_template
-
 = Information wants to be free
 
 It is well-known that Marx's project in his critique of political economy, a project for which we have the most studied attempt in the first (and only published in his own lifetime) volume of #emph[Capital] {#emph[Das Kapital]}, is to critique a particular ossification of the relation between labor and value that emerges in an historically specific social condition of commodity exchange.

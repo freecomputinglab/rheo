@@ -1,4 +1,3 @@
-#show: book_template
 #import "@preview/blinky:0.2.0": link-bib-urls
 
 #let department = [the School of Information at the University of Michigan]

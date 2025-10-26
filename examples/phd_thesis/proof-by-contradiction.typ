@@ -1,5 +1,3 @@
-#show: book_template
-
 = Proof by contradiction
 
 Let us more carefully examine the argument in #emph[Capital] to observe how it forecloses modern freedom through the movement of its forms.

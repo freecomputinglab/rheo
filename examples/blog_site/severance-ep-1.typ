@@ -1,5 +1,3 @@
-#show: book_template
-
 = Good news about hell - #emph[Severance] [s1/e1]
 
 // NOTE: does not work as HTML export does not take width into account

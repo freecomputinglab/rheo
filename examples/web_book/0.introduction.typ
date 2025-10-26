@@ -1,5 +1,3 @@
-#show: book_template
-
 Welcome!
 
 CfTW is a book designed for those actively engaged in the operational edifice of 'big tech' who seek to reflect on the ethics and politics of working in that space.

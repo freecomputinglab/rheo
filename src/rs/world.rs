@@ -124,9 +124,9 @@ impl World for RheoWorld {
         let mut text = fs::read_to_string(&path)
             .map_err(|e| FileError::from_io(e, &path))?;
 
-        // For the main file, inject the rheo.typ import automatically
+        // For the main file, inject the rheo.typ import and template automatically
         if id == self.main {
-            let import_statement = "#import \"/src/typst/rheo.typ\": *\n\n";
+            let import_statement = "#import \"/src/typst/rheo.typ\": *\n#show: rheo_template\n\n";
             text = format!("{}{}", import_statement, text);
         }
 
