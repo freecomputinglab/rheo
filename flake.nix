@@ -49,7 +49,7 @@
             # Typst and document tools
             pandoc
             just
-            calibre # for ebook-convert command
+            # calibre # for ebook-convert command
 
             # Shell
             fish
