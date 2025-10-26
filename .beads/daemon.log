@@ -587,3 +587,21 @@ error: cannot pull with rebase: You have unstaged changes.
 error: Please commit or stash them.
 
 [2025-10-21 22:39:37] Received signal terminated, shutting down gracefully...
+[2025-10-26 16:26:33] Daemon started (interval: 5m0s, auto-commit: false, auto-push: false)
+[2025-10-26 16:26:33] Using database: /home/alice/code/rheo/.beads/rheo.db
+[2025-10-26 16:26:33] Database opened: /home/alice/code/rheo/.beads/rheo.db
+[2025-10-26 16:26:33] Starting RPC server: /home/alice/code/rheo/.beads/bd.sock
+[2025-10-26 16:26:33] RPC server ready (socket listening)
+[2025-10-26 16:26:33] Starting sync cycle...
+[2025-10-26 16:26:33] Exported to JSONL
+[2025-10-26 16:26:33] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-26 16:31:33] Starting sync cycle...
+[2025-10-26 16:31:33] Exported to JSONL
+[2025-10-26 16:31:33] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: additionally, your index contains uncommitted changes.
+error: Please commit or stash them.
+
