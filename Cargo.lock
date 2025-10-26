@@ -1842,6 +1842,7 @@ dependencies = [
  "typst",
  "typst-html",
  "typst-kit",
+ "typst-library",
  "typst-pdf",
  "walkdir",
 ]

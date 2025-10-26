@@ -12,6 +12,7 @@ use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
 use typst_kit::fonts::{FontSlot, Fonts};
+use typst_library::{Feature, Features};
 
 /// A simple World implementation for rheo compilation.
 pub struct RheoWorld {
@@ -58,8 +59,9 @@ impl RheoWorld {
             .ok_or_else(|| RheoError::path(&main_path, "main file must be within root directory"))?;
         let main = FileId::new(None, main_vpath);
 
-        // Build library
-        let library = Library::builder().build();
+        // Build library with HTML feature enabled
+        let features: Features = [Feature::Html].into_iter().collect();
+        let library = Library::builder().with_features(features).build();
 
         // Search for fonts using typst-kit
         let font_search = Fonts::searcher()
