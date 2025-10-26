@@ -1,25 +1,12 @@
-#import "@preview/bullseye:0.1.0": *
-
 #let lemmacount = counter("lemmas")
 #let lemma(it) = block(inset: 8pt, [
   #lemmacount.step()
   #strong[Lemma #context lemmacount.display()]: #it
 ])
 
-#let rheo_template(doc) = [
-  // #show: show-target(html: doc => {
-  //   html.elem("html")[
-  //     #html.elem("head")[
-  //       #html.elem("link", attrs: (rel: "stylesheet", type: "text/css", href: "style.css"))
-  //     ]
-  //     #html.elem("body")[
-  //       #doc
-  //     ]
-  //   ]
-  // })
-  //
-
-  #context on-target(html: {
+#let rheo_template(doc) = context {
+  // Inject CSS and font links for HTML target
+  if target() == "html" {
     // FIX: very hacky way to get the styles
     html.elem("script", attrs: (type: "text/javascript"))[
       var cssLink = document.createElement(\"link\");
@@ -33,7 +20,7 @@
       document.head.appendChild(fontLink);
       console.log(\"CSS and font inserted.\");
     ]
-  })
+  }
 
-  #doc
-]
+  doc
+}
