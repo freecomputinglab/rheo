@@ -1,4 +1,3 @@
-#import "../../src/typst/rheo.typ": book_template
 #show: book_template
 
 = Information wants to be free

@@ -1,4 +1,3 @@
-#import "../../src/typst/rheo.typ": book_template 
 #show: book_template
 
 = In Perpetuity - #emph[Severance] [s1/e3]

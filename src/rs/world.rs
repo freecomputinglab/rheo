@@ -121,8 +121,14 @@ impl World for RheoWorld {
 
         // Load from file system
         let path = self.path_for_id(id)?;
-        let text = fs::read_to_string(&path)
+        let mut text = fs::read_to_string(&path)
             .map_err(|e| FileError::from_io(e, &path))?;
+
+        // For the main file, inject the rheo.typ import automatically
+        if id == self.main {
+            let import_statement = "#import \"/src/typst/rheo.typ\": *\n\n";
+            text = format!("{}{}", import_statement, text);
+        }
 
         let source = Source::new(id, text);
 

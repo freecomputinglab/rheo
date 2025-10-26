@@ -1,4 +1,3 @@
-#import "../../src/typst/rheo.typ": book_template, lemma
 #show: book_template
 
 = Proof by contradiction
