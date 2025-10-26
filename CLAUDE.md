@@ -1,4 +1,4 @@
-# AGENTS.md
+# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -6,15 +6,87 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project-Specific Configuration
 
-**Instructions:** This section should contain project-specific commands, workflows, and conventions. Customize this section for each repository while keeping the generic tooling sections below unchanged.
+### Project Description
+
+**rheo** is a tool for flowing Typst documents into publishable outputs. It compiles Typst files to multiple output formats including PDF, HTML, and (planned) EPUB.
+
+**Architecture:**
+- Written in Rust using the Typst compiler as a library
+- CLI tool built with clap for command-line argument parsing
+- Implements custom `World` trait for Typst compilation with automatic `rheo.typ` import injection
+- Uses typst-kit for font discovery and management
+
+**Key Features:**
+- Multi-format compilation (PDF and HTML currently supported)
+- Project-based compilation (compiles all .typ files in a directory)
+- Automatic asset copying (CSS, images) for HTML output
+- Clean command for removing build artifacts
+- Template injection for consistent document formatting
+
+**Project Structure:**
+- `src/rs/` - Rust source code
+  - `main.rs` - CLI entry point
+  - `lib.rs` - Library root
+  - `cli.rs` - Command-line interface and argument parsing
+  - `compile.rs` - PDF and HTML compilation logic
+  - `world.rs` - Typst World implementation for file access
+  - `project.rs` - Project detection and configuration
+  - `output.rs` - Output directory management
+  - `assets.rs` - Asset copying utilities
+  - `logging.rs` - Logging configuration
+  - `error.rs` - Error types
+- `src/typst/` - Typst template files
+  - `rheo.typ` - Core template and utilities
+- `build/` - Output directory (gitignored)
+  - `{project-name}/` - Project-specific outputs
+    - `pdf/` - PDF outputs
+    - `html/` - HTML outputs
 
 ### Development Commands
 
-<!-- Add project-specific build, test, and development server commands here -->
+**Build the project:**
+```bash
+cargo build
+```
+
+**Run rheo:**
+```bash
+cargo run -- compile <project-path>
+cargo run -- compile <project-path> --pdf    # PDF only
+cargo run -- compile <project-path> --html   # HTML only
+```
+
+**Clean build artifacts:**
+```bash
+cargo run -- clean              # Clean current project
+cargo run -- clean --all        # Clean all projects
+```
+
+**Run with debug logging:**
+```bash
+RUST_LOG=rheo=trace cargo run -- compile <project-path>
+```
+
+**Run tests:**
+```bash
+cargo test
+```
 
 ### Project-Specific Conventions
 
-<!-- Add any project-specific commit message guidelines, file structure notes, or other conventions here -->
+**Commit Messages:**
+- Follow the jj commit message guidelines (present tense, user-focused)
+- Examples: "Compiles Typst to PDF and HTML", "Injects rheo.typ automatically"
+
+**Code Style:**
+- Use `cargo fmt` before committing
+- Fix all clippy warnings: `cargo clippy`
+- Errors use thiserror for consistent error handling
+- Logging uses tracing macros (info!, warn!, error!)
+
+**Dependencies:**
+- Typst libraries are pulled from git main branch
+- Keep dependencies minimal and well-justified
 
 ---
 
@@ -168,9 +240,11 @@ Then use `mcp__beads__*` functions instead of CLI commands.
 
 ---
 
-## Combined Workflow: bd Tasks with jj Squash
+## The bd/jj workflow 
 
-When working through multiple bd (beads) tasks that should be combined into a single commit, use the jj squash workflow. This creates a clean commit history where related work is grouped together.
+**IMPORTANT**: ALWAYS use the jj squash workflow when working on bd tasks, even if you're only implementing a single task. This workflow should be your default approach.
+
+When working through bd (beads) tasks, use the jj squash workflow. This creates a clean commit history where related work is grouped together.
 
 ### The Squash Pattern
 
@@ -225,11 +299,13 @@ For each bd task, follow this sequence:
 
 ### When to Use This Workflow
 
-Use this workflow when:
-- Working through a set of related bd tasks
-- The tasks together implement one logical feature or change
-- You want a single clean commit rather than many small commits
+**ALWAYS use this workflow** when working on bd tasks. This is the standard approach for this project.
 
-Don't use for:
-- Unrelated changes that should be separate commits
-- When user explicitly wants granular commit history
+The workflow works for:
+- Single bd tasks (one task = one commit)
+- Multiple related bd tasks (multiple tasks = one commit)
+- Any feature or bug fix tracked in bd
+
+Only skip this workflow when:
+- User explicitly requests a different approach
+- Working on unrelated changes that must be separate commits
