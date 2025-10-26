@@ -1,7 +1,7 @@
 use crate::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 /// Output format for compilation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

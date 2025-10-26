@@ -37,8 +37,6 @@ pub struct RheoWorld {
 
 /// Holds the processed data for a file ID.
 struct FileSlot {
-    /// The path of the file.
-    path: PathBuf,
     /// The loaded source file (for .typ files).
     source: Option<Source>,
     /// The loaded binary data (for other files).
@@ -76,13 +74,6 @@ impl RheoWorld {
             fonts: font_search.fonts,
             slots: Mutex::new(HashMap::new()),
         })
-    }
-
-    /// Resolve a path to a file ID.
-    fn resolve_path(&self, path: &Path) -> FileResult<FileId> {
-        let vpath = VirtualPath::within_root(path, &self.root)
-            .ok_or_else(|| FileError::NotFound(path.display().to_string().into()))?;
-        Ok(FileId::new(None, vpath))
     }
 
     /// Get the absolute path for a file ID.
@@ -136,7 +127,6 @@ impl World for RheoWorld {
 
         // Cache the source
         self.slots.lock().entry(id).or_insert_with(|| FileSlot {
-            path,
             source: Some(source.clone()),
             file: None,
         });
@@ -161,7 +151,6 @@ impl World for RheoWorld {
 
         // Cache the file
         self.slots.lock().entry(id).or_insert_with(|| FileSlot {
-            path,
             source: None,
             file: Some(bytes.clone()),
         });

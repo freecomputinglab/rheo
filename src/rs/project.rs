@@ -1,6 +1,5 @@
 use crate::{Result, RheoError};
 use std::path::{Path, PathBuf};
-use std::fs;
 use walkdir::WalkDir;
 
 /// Configuration for a Typst project
