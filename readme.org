@@ -5,7 +5,9 @@
 rheo is a static site and experimental typesetting engine based on Typst.
 It provides first-class support for both HTML and PDF, and experimental support for EPUB.
 
-** Development 
+** Installation
+
+*** Using Nix Flakes (Recommended)
 To install the compilation environment, first ensure that you have [[https://nixos.org/download/][Nix]] installed on your computer.
 You will also need to enable [[https://nixos.wiki/wiki/Flakes][Nix flakes]], which you can do by inserting the following line in your ~nix.conf~:
 #+begin_src conf
@@ -15,33 +17,114 @@ experimental-features = nix-command flakes
 With Nix and flakes installed, you should be able to now run:
 
 #+begin_src bash
+# Enter development environment
 nix develop
+
+# Or build the package
+nix build
 #+end_src
 
 This might take a while the first time, as Nix is installing typst from upstream and all the other necessary software.
 
-Once you have a shell prompt, you can run build commands with [[https://github.com/casey/just][just]].
-The default command builds all .typ files in the =src/= folder to both PDF and HTML.
-
-#+begin_src fish
-# build the default project (src/)
-just
-
-# build a specific project folder
-just build examples/academic_book
-just build examples/blog_site
-just build examples/phd_thesis
-
-# clean build artifacts
-just clean
-#+end_src
-
-Each project folder can contain its own =.typ= files, =style.css=, =img/= directory, and =references.bib=.
-Output is organized by project: =build/{project}/pdf/= and =build/{project}/html/=.
-
-The typst we are using builds directly from the upstream GitHub, as HTML generation is a feature in progress.
-To update the version of typst to the latest code on the ~main~ branch, run:
+*** Using Cargo
+rheo requires Rust and Cargo. Install from [[https://rustup.rs/][rustup.rs]].
 
 #+begin_src bash
-just update 
+# Build the project
+cargo build --release
+
+# Install locally
+cargo install --path .
 #+end_src
+
+** Usage
+
+rheo is a command-line tool for compiling Typst documents to PDF and HTML.
+
+*** Compile a Project
+
+Compile all =.typ= files in a directory to both PDF and HTML:
+
+#+begin_src bash
+rheo compile examples/web_book
+#+end_src
+
+Compile to specific formats:
+
+#+begin_src bash
+# PDF only
+rheo compile examples/web_book --pdf
+
+# HTML only
+rheo compile examples/web_book --html
+#+end_src
+
+Output is organized by project: =build/{project}/pdf/= and =build/{project}/html/=.
+
+*** Clean Build Artifacts
+
+Remove build artifacts for the current project:
+
+#+begin_src bash
+rheo clean
+#+end_src
+
+Remove all build artifacts:
+
+#+begin_src bash
+rheo clean --all
+#+end_src
+
+Note: The =build/.gitignore= file is preserved during cleanup.
+
+*** Logging
+
+Control output verbosity:
+
+#+begin_src bash
+# Quiet mode (errors only)
+rheo compile examples/web_book --quiet
+
+# Verbose mode (debug information)
+rheo compile examples/web_book --verbose
+
+# Trace-level logging with RUST_LOG
+RUST_LOG=rheo=trace rheo compile examples/web_book
+#+end_src
+
+** Project Structure
+
+Each project folder can contain its own =.typ= files, =style.css=, =img/= directory, and =references.bib=.
+All =.typ= files in the project directory (and subdirectories) will be compiled.
+
+rheo automatically injects the following at the beginning of each main =.typ= file:
+
+#+begin_src typst
+#import "/src/typst/rheo.typ": *
+#show: rheo_template
+#+end_src
+
+** Development
+
+The typst we are using builds directly from the upstream GitHub, as HTML generation is a feature in progress.
+
+*** Development Commands
+
+#+begin_src bash
+# Build the project
+cargo build
+
+# Run tests
+cargo test
+
+# Format code
+cargo fmt
+
+# Check for issues
+cargo clippy
+#+end_src
+
+See [[file:CLAUDE.md][CLAUDE.md]] for detailed development workflow, including:
+- Version control with Jujutsu (jj)
+- Issue tracking with Beads (bd)
+- Development conventions
