@@ -47,6 +47,32 @@ impl OutputConfig {
 
         Ok(())
     }
+
+    /// Clean this project's build artifacts
+    pub fn clean_project(&self) -> Result<()> {
+        // Determine the project's root build directory (parent of pdf/html/epub dirs)
+        let project_build_dir = self.pdf_dir.parent()
+            .ok_or_else(|| RheoError::path(&self.pdf_dir, "no parent directory"))?;
+
+        if project_build_dir.exists() {
+            fs::remove_dir_all(project_build_dir)
+                .map_err(|e| RheoError::io(e, format!("removing directory {:?}", project_build_dir)))?;
+        }
+
+        Ok(())
+    }
+
+    /// Clean all build artifacts (entire build/ directory)
+    pub fn clean_all() -> Result<()> {
+        let build_dir = PathBuf::from("build");
+
+        if build_dir.exists() {
+            fs::remove_dir_all(&build_dir)
+                .map_err(|e| RheoError::io(e, format!("removing build directory {:?}", build_dir)))?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -105,5 +131,90 @@ mod tests {
         assert_eq!(config.pdf_dir, PathBuf::from("build/pdf"));
         assert_eq!(config.html_dir, PathBuf::from("build/html"));
         assert_eq!(config.epub_dir, PathBuf::from("build/epub"));
+    }
+
+    #[test]
+    fn test_clean_project() {
+        let temp_dir = std::env::temp_dir().join("rheo_test_clean_project");
+
+        // Clean up any previous test runs
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        // Create a test configuration in the temp directory
+        let config = OutputConfig {
+            pdf_dir: temp_dir.join("my-book").join("pdf"),
+            html_dir: temp_dir.join("my-book").join("html"),
+            epub_dir: temp_dir.join("my-book").join("epub"),
+        };
+
+        // Create directories and some dummy files
+        config.create_dirs().expect("Failed to create directories");
+        fs::write(config.pdf_dir.join("test.pdf"), b"dummy pdf").expect("Failed to write test file");
+        fs::write(config.html_dir.join("test.html"), b"dummy html").expect("Failed to write test file");
+
+        // Verify directories exist
+        assert!(config.pdf_dir.exists());
+        assert!(config.html_dir.exists());
+
+        // Clean project
+        config.clean_project().expect("Failed to clean project");
+
+        // Verify project directory is gone
+        assert!(!temp_dir.join("my-book").exists(), "Project directory should be removed");
+
+        // Clean up
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_clean_all() {
+        let temp_dir = std::env::temp_dir().join("rheo_test_clean_all");
+
+        // Clean up any previous test runs
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        // Create temp directory
+        fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
+
+        // Change to temp directory
+        let original_dir = std::env::current_dir().expect("Failed to get current dir");
+        std::env::set_current_dir(&temp_dir).expect("Failed to change dir");
+
+        // Create multiple project directories
+        let config1 = OutputConfig::new("project1");
+        let config2 = OutputConfig::new("project2");
+
+        config1.create_dirs().expect("Failed to create project1 dirs");
+        config2.create_dirs().expect("Failed to create project2 dirs");
+
+        fs::write(config1.pdf_dir.join("test.pdf"), b"dummy").expect("Failed to write");
+        fs::write(config2.pdf_dir.join("test.pdf"), b"dummy").expect("Failed to write");
+
+        // Verify build directory exists
+        assert!(PathBuf::from("build").exists());
+
+        // Clean all
+        OutputConfig::clean_all().expect("Failed to clean all");
+
+        // Verify build directory is gone
+        assert!(!PathBuf::from("build").exists(), "Build directory should be removed");
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir).expect("Failed to restore dir");
+
+        // Clean up
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_clean_nonexistent_directory() {
+        let config = OutputConfig {
+            pdf_dir: PathBuf::from("/tmp/rheo_nonexistent_test_xyz/pdf"),
+            html_dir: PathBuf::from("/tmp/rheo_nonexistent_test_xyz/html"),
+            epub_dir: PathBuf::from("/tmp/rheo_nonexistent_test_xyz/epub"),
+        };
+
+        // Should not error when cleaning non-existent directory
+        assert!(config.clean_project().is_ok());
     }
 }
