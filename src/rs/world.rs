@@ -167,13 +167,20 @@ impl World for RheoWorld {
 
     fn today(&self, offset: Option<i64>) -> Option<Datetime> {
         let now = Local::now();
-        let offset_duration = chrono::Duration::hours(offset.unwrap_or(0));
-        let adjusted = now + offset_duration;
 
-        Some(Datetime::Date(typst::foundations::Date::from_ymd(
-            adjusted.year(),
-            adjusted.month() as u8,
-            adjusted.day() as u8,
-        ).ok()?))
+        // The time with the specified UTC offset, or within the local time zone.
+        let with_offset = match offset {
+            None => now,
+            Some(hours) => {
+                let offset_duration = chrono::Duration::hours(hours);
+                now + offset_duration
+            }
+        };
+
+        Datetime::from_ymd(
+            with_offset.year(),
+            with_offset.month().try_into().ok()?,
+            with_offset.day().try_into().ok()?,
+        )
     }
 }

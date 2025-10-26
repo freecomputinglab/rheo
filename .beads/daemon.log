@@ -623,3 +623,15 @@ error: Please commit or stash them.
 error: cannot pull with rebase: You have unstaged changes.
 error: Please commit or stash them.
 
+[2025-10-26 16:51:33] Starting sync cycle...
+[2025-10-26 16:51:33] Exported to JSONL
+[2025-10-26 16:51:33] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-10-26 16:56:33] Starting sync cycle...
+[2025-10-26 16:56:33] Exported to JSONL
+[2025-10-26 16:56:33] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
