@@ -1,5 +1,6 @@
 use anyhow::{Result, Context};
 use std::path::Path;
+use tracing::{debug, error, info, instrument, warn};
 use typst::layout::PagedDocument;
 use typst_html::HtmlDocument;
 use typst_pdf::PdfOptions;
@@ -11,46 +12,48 @@ use crate::world::RheoWorld;
 /// Uses the typst library with:
 /// - Root set to repository root (for imports via World)
 /// - Shared resources available in src/typst/ (rheo.typ, style.csl)
+#[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 pub fn compile_pdf(input: &Path, output: &Path, root: &Path) -> Result<()> {
     // Create the compilation world
     let world = RheoWorld::new(root, input)
         .context("Failed to create compilation world")?;
 
     // Compile the document
-    eprintln!("Compiling {} to PDF...", input.display());
+    info!(input = %input.display(), "compiling to PDF");
     let result = typst::compile::<PagedDocument>(&world);
 
     // Print warnings
     for warning in &result.warnings {
-        eprintln!("Warning: {}", warning.message);
+        warn!(message = %warning.message, "compilation warning");
     }
 
     // Get the document or return errors
     let document = match result.output {
         Ok(doc) => doc,
         Err(errors) => {
-            for error in &errors {
-                eprintln!("Error: {}", error.message);
+            for err in &errors {
+                error!(message = %err.message, "compilation error");
             }
             anyhow::bail!("Compilation failed with {} error(s)", errors.len());
         }
     };
 
     // Export to PDF
-    eprintln!("Exporting to {}...", output.display());
+    debug!(output = %output.display(), "exporting to PDF");
     let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default())
         .map_err(|errors| {
-            for error in &errors {
-                eprintln!("PDF export error: {}", error.message);
+            for err in &errors {
+                error!(message = %err.message, "PDF export error");
             }
             anyhow::anyhow!("PDF export failed with {} error(s)", errors.len())
         })?;
 
     // Write to file
+    debug!(size = pdf_bytes.len(), "writing PDF file");
     std::fs::write(output, pdf_bytes)
         .context("Failed to write PDF file")?;
 
-    eprintln!("Successfully compiled to {}", output.display());
+    info!(output = %output.display(), "successfully compiled to PDF");
     Ok(())
 }
 
@@ -59,45 +62,47 @@ pub fn compile_pdf(input: &Path, output: &Path, root: &Path) -> Result<()> {
 /// Uses the typst library with:
 /// - Root set to repository root (for imports via World)
 /// - Shared resources available in src/typst/ (rheo.typ, style.csl)
+#[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 pub fn compile_html(input: &Path, output: &Path, root: &Path) -> Result<()> {
     // Create the compilation world
     let world = RheoWorld::new(root, input)
         .context("Failed to create compilation world")?;
 
     // Compile the document to HtmlDocument
-    eprintln!("Compiling {} to HTML...", input.display());
+    info!(input = %input.display(), "compiling to HTML");
     let result = typst::compile::<HtmlDocument>(&world);
 
     // Print warnings
     for warning in &result.warnings {
-        eprintln!("Warning: {}", warning.message);
+        warn!(message = %warning.message, "compilation warning");
     }
 
     // Get the document or return errors
     let document = match result.output {
         Ok(doc) => doc,
         Err(errors) => {
-            for error in &errors {
-                eprintln!("Error: {}", error.message);
+            for err in &errors {
+                error!(message = %err.message, "compilation error");
             }
             anyhow::bail!("Compilation failed with {} error(s)", errors.len());
         }
     };
 
     // Export to HTML string
-    eprintln!("Exporting to {}...", output.display());
+    debug!(output = %output.display(), "exporting to HTML");
     let html_string = typst_html::html(&document)
         .map_err(|errors| {
-            for error in &errors {
-                eprintln!("HTML export error: {}", error.message);
+            for err in &errors {
+                error!(message = %err.message, "HTML export error");
             }
             anyhow::anyhow!("HTML export failed with {} error(s)", errors.len())
         })?;
 
     // Write to file
+    debug!(size = html_string.len(), "writing HTML file");
     std::fs::write(output, html_string)
         .context("Failed to write HTML file")?;
 
-    eprintln!("Successfully compiled to {}", output.display());
+    info!(output = %output.display(), "successfully compiled to HTML");
     Ok(())
 }

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use tracing::{debug, info};
 
 /// Output format for compilation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +16,14 @@ pub enum OutputFormat {
 #[command(about = "A tool for flowing Typst documents into publishable outputs", long_about = None)]
 #[command(version)]
 pub struct Cli {
+    /// Decrease output verbosity (errors only)
+    #[arg(short, long, global = true, conflicts_with = "verbose")]
+    pub quiet: bool,
+
+    /// Increase output verbosity (show debug information)
+    #[arg(short, long, global = true, conflicts_with = "quiet")]
+    pub verbose: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -65,6 +74,17 @@ impl Cli {
         Parser::parse()
     }
 
+    /// Get the verbosity level from CLI flags
+    pub fn verbosity(&self) -> crate::logging::Verbosity {
+        if self.quiet {
+            crate::logging::Verbosity::Quiet
+        } else if self.verbose {
+            crate::logging::Verbosity::Verbose
+        } else {
+            crate::logging::Verbosity::Normal
+        }
+    }
+
     pub fn run(self) -> Result<()> {
         match self.command {
             Commands::Compile { path, pdf, html, epub } => {
@@ -86,23 +106,23 @@ impl Cli {
                     formats
                 };
 
-                println!("Compiling project at: {:?}", path);
-                println!("Output formats: {:?}", formats);
+                info!(path = %path.display(), formats = ?formats, "compiling project");
+                debug!("compilation orchestration will be implemented in rheo-12");
                 // TODO: Actual compilation orchestration will be implemented in rheo-12
                 Ok(())
             }
             Commands::Clean { all } => {
-                println!("Clean command called (all: {})", all);
+                info!(all, "cleaning build artifacts");
                 // TODO: Implement clean logic
                 Ok(())
             }
             Commands::Init { name, template } => {
-                println!("Init command called with name: {}, template: {}", name, template);
+                info!(name, template, "initializing new project");
                 // TODO: Implement init logic
                 Ok(())
             }
             Commands::ListExamples => {
-                println!("Listing available example projects...");
+                info!("listing available example projects");
                 // TODO: Implement list-examples logic
                 Ok(())
             }
