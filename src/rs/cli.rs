@@ -2,6 +2,14 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+/// Output format for compilation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Pdf,
+    Html,
+    Epub,
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "rheo")]
 #[command(about = "A tool for flowing Typst documents into publishable outputs", long_about = None)]
@@ -60,9 +68,27 @@ impl Cli {
     pub fn run(self) -> Result<()> {
         match self.command {
             Commands::Compile { path, pdf, html, epub } => {
-                println!("Compile command called with path: {:?}", path);
-                println!("Flags - PDF: {}, HTML: {}, EPUB: {}", pdf, html, epub);
-                // TODO: Implement compilation logic
+                // Determine which formats to compile
+                // If no flags specified, compile all formats (default behavior)
+                let formats = if !pdf && !html && !epub {
+                    vec![OutputFormat::Pdf, OutputFormat::Html, OutputFormat::Epub]
+                } else {
+                    let mut formats = Vec::new();
+                    if pdf {
+                        formats.push(OutputFormat::Pdf);
+                    }
+                    if html {
+                        formats.push(OutputFormat::Html);
+                    }
+                    if epub {
+                        formats.push(OutputFormat::Epub);
+                    }
+                    formats
+                };
+
+                println!("Compiling project at: {:?}", path);
+                println!("Output formats: {:?}", formats);
+                // TODO: Actual compilation orchestration will be implemented in rheo-12
                 Ok(())
             }
             Commands::Clean { all } => {
@@ -76,7 +102,7 @@ impl Cli {
                 Ok(())
             }
             Commands::ListExamples => {
-                println!("Listing examples...");
+                println!("Listing available example projects...");
                 // TODO: Implement list-examples logic
                 Ok(())
             }
