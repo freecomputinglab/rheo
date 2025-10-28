@@ -64,6 +64,7 @@ impl RheoWorld {
         // Search for fonts using typst-kit
         let font_search = Fonts::searcher()
             .include_system_fonts(true)
+            .include_embedded_fonts(true)
             .search();
 
         Ok(Self {
