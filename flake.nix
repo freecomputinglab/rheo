@@ -46,20 +46,17 @@
             rustToolchain
             pkg-config
 
-            # Typst and document tools
+            # Temporary dev tools for comparison 
             pandoc
             just
-            # calibre # for ebook-convert command
-
-            # Shell
-            fish
+            # calibre # first example of ebook-convert command
+            # fish # was needed for Justfile scripts in early phases, shouldn't be relevant now
           ] ++ [
             typst.packages.${system}.default
           ];
 
           shellHook = ''
             echo "rheo development environment loaded"
-            echo "Run 'just' to compile all source files"
             echo "Run 'cargo build' to build the Rust binary"
           '';
         };
