@@ -1,5 +1,6 @@
-use crate::{Result, RheoError};
+use crate::{Result, RheoConfig, RheoError};
 use std::path::{Path, PathBuf};
+use tracing::{debug, info};
 use walkdir::WalkDir;
 
 /// Configuration for a Typst project
@@ -38,8 +39,12 @@ impl ProjectConfig {
             .ok_or_else(|| RheoError::project_config("failed to get project name from directory"))?
             .to_string();
 
+        // Load configuration and build exclusion set
+        let config = RheoConfig::load(&root)?;
+        let exclusions = config.build_exclusion_set()?;
+
         // Find all .typ files in the directory (recursive walk)
-        let typ_files: Vec<PathBuf> = WalkDir::new(&root)
+        let all_typ_files: Vec<PathBuf> = WalkDir::new(&root)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| {
@@ -49,6 +54,31 @@ impl ProjectConfig {
             })
             .map(|e| e.path().to_path_buf())
             .collect();
+
+        let total_count = all_typ_files.len();
+
+        // Apply exclusions - filter out files matching exclusion patterns
+        let typ_files: Vec<PathBuf> = all_typ_files
+            .into_iter()
+            .filter(|path| {
+                // Make path relative to root for glob matching
+                let relative_path = match path.strip_prefix(&root) {
+                    Ok(rel) => rel,
+                    Err(_) => return true, // Keep file if we can't make it relative
+                };
+
+                let is_excluded = exclusions.is_match(relative_path);
+                if is_excluded {
+                    debug!(file = %relative_path.display(), "excluding file from compilation");
+                }
+                !is_excluded
+            })
+            .collect();
+
+        let excluded_count = total_count - typ_files.len();
+        if excluded_count > 0 {
+            info!(excluded = excluded_count, included = typ_files.len(), "applied exclusion filters");
+        }
 
         // Detect optional project-specific resources
         let style_css = root.join("style.css");
