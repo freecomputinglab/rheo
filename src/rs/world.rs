@@ -105,7 +105,7 @@ impl RheoWorld {
     /// Calculate relative path from root to repo_root for rheo.typ import.
     #[allow(dead_code)]
     fn rheo_import_path(&self) -> Result<String> {
-        let rheo_typ = self.repo_root.join("src/typst/rheo.typ");
+        let rheo_typ = self.repo_root.join("src/typ/rheo.typ");
 
         // Calculate relative path from root to rheo.typ
         let rel_path = pathdiff::diff_paths(&rheo_typ, &self.root)
@@ -200,7 +200,7 @@ impl World for RheoWorld {
         // For the main file, inject the rheo.typ template automatically
         if id == self.main {
             // Embed rheo.typ content directly (it's small and avoids path issues)
-            let rheo_content = include_str!("../typst/rheo.typ");
+            let rheo_content = include_str!("../typ/rheo.typ");
             let template_inject = format!("{}\n#show: rheo_template\n\n", rheo_content);
             text = format!("{}{}", template_inject, text);
         }
