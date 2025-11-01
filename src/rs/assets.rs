@@ -2,16 +2,16 @@ use crate::{Result, RheoError};
 use std::fs;
 use std::path::Path;
 
-/// Path to the shared Typst resources directory
-pub const TYPST_RESOURCES_DIR: &str = "src/typst";
+/// Path to the CSS resources directory
+pub const CSS_RESOURCES_DIR: &str = "src/css";
 
 /// Copy CSS files to output directory
 ///
 /// Looks for style.css in the project directory first,
-/// falls back to src/typst/style.css if not found
+/// falls back to src/css/style.css if not found
 pub fn copy_css(project_dir: &Path, output_dir: &Path) -> Result<()> {
     let project_css = project_dir.join("style.css");
-    let fallback_css = Path::new(TYPST_RESOURCES_DIR).join("style.css");
+    let fallback_css = Path::new(CSS_RESOURCES_DIR).join("style.css");
 
     let source_css = if project_css.exists() {
         project_css

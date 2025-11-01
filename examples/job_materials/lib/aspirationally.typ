@@ -50,11 +50,10 @@
         }
       }
     )
+
+    set par(leading: 0.5em)
+    text(size: subsidiarytextsize)[#leader]
   }
-
-  set par(leading: 0.5em)
-
-  text(size: subsidiarytextsize)[#leader]
 
   body
 
