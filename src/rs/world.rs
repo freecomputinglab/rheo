@@ -104,7 +104,7 @@ impl RheoWorld {
         if let Some(spec) = id.package() {
             // Download and prepare the package if needed
             buf = self.package_storage
-                .prepare_package(spec, &mut SilentProgress)?;
+                .prepare_package(spec, &mut PrintDownload::new(spec))?;
             root = &buf;
         }
 
@@ -221,5 +221,51 @@ impl typst_kit::download::Progress for SilentProgress {
 
     fn print_finish(&mut self, _state: &typst_kit::download::DownloadState) {
         // Silent - no output
+    }
+}
+
+/// Progress tracker that logs package downloads using tracing.
+struct PrintDownload {
+    package_name: String,
+}
+
+impl PrintDownload {
+    fn new(spec: &typst::syntax::package::PackageSpec) -> Self {
+        Self {
+            package_name: format!("{}@{}", spec.name, spec.version),
+        }
+    }
+}
+
+impl typst_kit::download::Progress for PrintDownload {
+    fn print_start(&mut self) {
+        tracing::info!("downloading package {}", self.package_name);
+    }
+
+    fn print_progress(&mut self, state: &typst_kit::download::DownloadState) {
+        if let Some(total) = state.content_len {
+            let percent = (state.total_downloaded as f64 / total as f64 * 100.0) as u32;
+            tracing::debug!(
+                "downloading package {} - {}% ({}/{})",
+                self.package_name,
+                percent,
+                state.total_downloaded,
+                total
+            );
+        } else {
+            tracing::debug!(
+                "downloading package {} - {} bytes",
+                self.package_name,
+                state.total_downloaded
+            );
+        }
+    }
+
+    fn print_finish(&mut self, state: &typst_kit::download::DownloadState) {
+        tracing::info!(
+            "downloaded package {} ({} bytes)",
+            self.package_name,
+            state.total_downloaded
+        );
     }
 }

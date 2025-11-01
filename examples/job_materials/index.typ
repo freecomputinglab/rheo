@@ -5,3 +5,6 @@
 
 // Saturate each file with rheo.state: dictionary 
 // rheo.state.filemap
+#for f in rheo.filemap [
+  - #link(f.link)[f.title]
+]
