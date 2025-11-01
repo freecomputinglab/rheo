@@ -1,5 +1,4 @@
-// rheo: no-html
-#import "@preview/humanistically:0.1.0": humanistically, experience, paper
+#import "./lib/humanistically.typ": humanistically, experience, paper
 
 #show: humanistically.with(
   name: "Lachlan John Kermode",

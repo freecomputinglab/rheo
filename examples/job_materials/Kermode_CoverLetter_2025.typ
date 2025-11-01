@@ -1,4 +1,4 @@
-#import "@preview/aspirationally:0.1.0": aspirationally
+#import "./lib/aspirationally.typ": aspirationally
 
 #let role = [Tenure Track Assistant Professor in Technology, Society, and Power]
 #let department = [the School of Information at the University of Michigan]
