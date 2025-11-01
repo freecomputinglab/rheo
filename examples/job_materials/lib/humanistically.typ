@@ -36,30 +36,32 @@
   // Text settings used across the template.
   let head-text = text.with(font: "Cantarell", weight: "medium")
 
-  // Set page properties.
-  set page(
-    paper: paper-size,
-    margin: (
-      x: 14%,
-      top: if profile-picture == none {9%} else {5.6%},
-      bottom: 10%,
-    ),
-    // Display page number in footer only if there is more than one page.
-    footer: context {
-      set align(center)
-      show text: it => head-text(size: 0.85em, tracking: 1.2pt, it)
-      let total = counter(page).final().first()
-      if total > 1 {
-        let i = counter(page).at(here()).first()
-        upper[#footer-text #counter(page).display(page-numbering-format, both: true)]
-      } else {
-        upper[#footer-text]
+
+  context if target() != "html" {
+    set page(
+      paper: paper-size,
+      margin: (
+        x: 14%,
+        top: if profile-picture == none {9%} else {5.6%},
+        bottom: 10%,
+      ),
+      // Display page number in footer only if there is more than one page.
+      footer: context {
+        set align(center)
+        show text: it => head-text(size: 0.85em, tracking: 1.2pt, it)
+        let total = counter(page).final().first()
+        if total > 1 {
+          let i = counter(page).at(here()).first()
+          upper[#footer-text #counter(page).display(page-numbering-format, both: true)]
+        } else {
+          upper[#footer-text]
+        }
+      },
+      header: context {
+        align(right)[Updated: #updated]
       }
-    },
-    header: context {
-      align(right)[Updated: #updated]
-    }
-  )
+    )
+  }
 
   // Display title and contact info.
   block(width: 100%, below: 1.5em)[

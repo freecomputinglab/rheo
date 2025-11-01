@@ -10,7 +10,6 @@
   current-department: [Department of Modern Culture and Media | Computer Science],
   has-references: true,
   bib-references: "./references.bib",
-  logo: "brown-logo.png",
   leader: [Note: This document contains hyperlinks to external websites that are indicated by blue, underlined text. The statement has been written to read fluidly without needing to visit any of the links, but they are included to provide further context for the interested reader.],
 )[
   The central aim of my research and publications is to understand, evaluate, and reconceptualize the role that computing plays---and _should_ play---in society.

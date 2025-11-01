@@ -7,7 +7,6 @@
   title: [Teaching Statement],
   current-department: [Department of Modern Culture and Media | Computer Science],
   has-references: false,
-  logo: "brown-logo.png",
   leader: [],
 )[
   My teaching and mentorship across the humanities and computer science are anchored in a commitment to *interdisciplinarity*.

@@ -8,7 +8,6 @@
   title: [Cover Letter],
   current-department: [Department of Modern Culture and Media | Computer Science],
   has-references: false,
-  logo: "brown-logo.png",
   leader: [],
 )[
   Dear Search Committee,
