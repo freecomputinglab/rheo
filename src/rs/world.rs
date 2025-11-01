@@ -134,26 +134,35 @@ impl RheoWorld {
         // Handle package imports
         let mut root = &self.root;
         let mut buf = PathBuf::new();
-        let mut is_package = false;
 
         if let Some(spec) = id.package() {
             // Download and prepare the package if needed
             buf = self.package_storage
                 .prepare_package(spec, &mut PrintDownload::new(spec))?;
             root = &buf;
-            is_package = true;
         }
 
         // Construct path relative to root (or package root)
         let path = id.vpath().resolve(root)
             .ok_or_else(|| FileError::NotFound(id.vpath().as_rooted_path().display().to_string().into()))?;
 
-        // If we're in a package and the file doesn't exist, try the document directory
-        // This handles cases where package templates reference user files (like references.bib)
-        if is_package && !path.exists() {
+        // If the file doesn't exist at the resolved location, try the document directory
+        // This handles cases where templates in subdirectories (or packages) reference
+        // user files that are in the document root (like references.bib)
+        if !path.exists() {
+            // Try resolving relative to document root
             if let Some(doc_path) = id.vpath().resolve(&self.root) {
                 if doc_path.exists() {
                     return Ok(doc_path);
+                }
+            }
+
+            // If still not found, try just the filename in the document root
+            // This handles "./references.bib" in lib/template.typ referring to ../references.bib
+            if let Some(filename) = id.vpath().as_rooted_path().file_name() {
+                let filename_path = self.root.join(filename);
+                if filename_path.exists() {
+                    return Ok(filename_path);
                 }
             }
         }
