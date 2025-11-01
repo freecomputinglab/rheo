@@ -12,6 +12,8 @@ use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
 use typst_kit::fonts::{FontSlot, Fonts};
+use typst_kit::package::PackageStorage;
+use typst_kit::download::Downloader;
 use typst_library::{Feature, Features};
 
 /// A simple World implementation for rheo compilation.
@@ -33,6 +35,9 @@ pub struct RheoWorld {
 
     /// Maps file ids to source files.
     slots: Mutex<HashMap<FileId, FileSlot>>,
+
+    /// Package storage for downloading and caching packages.
+    package_storage: PackageStorage,
 }
 
 /// Holds the processed data for a file ID.
@@ -67,6 +72,13 @@ impl RheoWorld {
             .include_embedded_fonts(true)
             .search();
 
+        // Create package storage with default paths and downloader
+        let package_storage = PackageStorage::new(
+            None,  // Use default cache directory
+            None,  // Use default data directory
+            Downloader::new("rheo/0.1.0"),
+        );
+
         Ok(Self {
             root,
             main,
@@ -74,6 +86,7 @@ impl RheoWorld {
             book: LazyHash::new(font_search.book),
             fonts: font_search.fonts,
             slots: Mutex::new(HashMap::new()),
+            package_storage,
         })
     }
 
@@ -84,8 +97,19 @@ impl RheoWorld {
             return Err(FileError::NotFound(id.vpath().as_rooted_path().display().to_string().into()));
         }
 
-        // Construct path relative to root
-        let path = id.vpath().resolve(&self.root)
+        // Handle package imports
+        let mut root = &self.root;
+        let mut buf = PathBuf::new();
+
+        if let Some(spec) = id.package() {
+            // Download and prepare the package if needed
+            buf = self.package_storage
+                .prepare_package(spec, &mut SilentProgress)?;
+            root = &buf;
+        }
+
+        // Construct path relative to root (or package root)
+        let path = id.vpath().resolve(root)
             .ok_or_else(|| FileError::NotFound(id.vpath().as_rooted_path().display().to_string().into()))?;
 
         Ok(path)
@@ -180,5 +204,22 @@ impl World for RheoWorld {
             with_offset.month().try_into().ok()?,
             with_offset.day().try_into().ok()?,
         )
+    }
+}
+
+/// Silent progress tracker for package downloads.
+struct SilentProgress;
+
+impl typst_kit::download::Progress for SilentProgress {
+    fn print_start(&mut self) {
+        // Silent - no output
+    }
+
+    fn print_progress(&mut self, _state: &typst_kit::download::DownloadState) {
+        // Silent - no output
+    }
+
+    fn print_finish(&mut self, _state: &typst_kit::download::DownloadState) {
+        // Silent - no output
     }
 }
