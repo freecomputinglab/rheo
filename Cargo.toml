@@ -30,6 +30,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
 atty = "0.2"
 pathdiff = "0.2"
+toml = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+globset = "0.4"
 
 [profile.release]
 opt-level = 3
