@@ -5,8 +5,8 @@
 #show: aspirationally(
   name: [Lachlan Kermode],
   title: [Teaching Statement],
-  current_department: [Department of Modern Culture and Media | Computer Science],
-  has_references: false,
+  current-department: [Department of Modern Culture and Media | Computer Science],
+  has-references: false,
   logo: "brown-logo.png",
   leader: [],
 )[

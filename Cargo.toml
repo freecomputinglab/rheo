@@ -29,6 +29,7 @@ chrono = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
 atty = "0.2"
+pathdiff = "0.2"
 
 [profile.release]
 opt-level = 3

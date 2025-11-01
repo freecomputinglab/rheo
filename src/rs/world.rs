@@ -18,8 +18,12 @@ use typst_library::{Feature, Features};
 
 /// A simple World implementation for rheo compilation.
 pub struct RheoWorld {
-    /// The root directory for resolving imports.
+    /// The root directory for resolving imports (document directory).
     root: PathBuf,
+
+    /// The repository root directory (for future use).
+    #[allow(dead_code)]
+    repo_root: PathBuf,
 
     /// The main file to compile.
     main: FileId,
@@ -50,12 +54,19 @@ struct FileSlot {
 
 impl RheoWorld {
     /// Create a new world for compiling the given file.
-    pub fn new(root: &Path, main_file: &Path) -> Result<Self> {
+    ///
+    /// # Arguments
+    /// * `root` - The root directory for resolving imports (document directory)
+    /// * `main_file` - The main .typ file to compile
+    /// * `repo_root` - The repository root directory (for rheo.typ imports)
+    pub fn new(root: &Path, main_file: &Path, repo_root: &Path) -> Result<Self> {
         // Resolve paths
         let root = root.canonicalize()
             .map_err(|e| RheoError::path(root, format!("failed to canonicalize root directory: {}", e)))?;
         let main_path = main_file.canonicalize()
             .map_err(|e| RheoError::path(main_file, format!("failed to canonicalize main file: {}", e)))?;
+        let repo_root = repo_root.canonicalize()
+            .map_err(|e| RheoError::path(repo_root, format!("failed to canonicalize repo root: {}", e)))?;
 
         // Create virtual path for main file
         let main_vpath = VirtualPath::within_root(&main_path, &root)
@@ -81,6 +92,7 @@ impl RheoWorld {
 
         Ok(Self {
             root,
+            repo_root,
             main,
             library: LazyHash::new(library),
             book: LazyHash::new(font_search.book),
@@ -88,6 +100,28 @@ impl RheoWorld {
             slots: Mutex::new(HashMap::new()),
             package_storage,
         })
+    }
+
+    /// Calculate relative path from root to repo_root for rheo.typ import.
+    #[allow(dead_code)]
+    fn rheo_import_path(&self) -> Result<String> {
+        let rheo_typ = self.repo_root.join("src/typst/rheo.typ");
+
+        // Calculate relative path from root to rheo.typ
+        let rel_path = pathdiff::diff_paths(&rheo_typ, &self.root)
+            .ok_or_else(|| RheoError::path(&rheo_typ, "failed to calculate relative path to rheo.typ"))?;
+
+        // Convert to Typst import format (forward slashes, must start with ./)
+        let mut path_str = rel_path.to_str()
+            .ok_or_else(|| RheoError::path(&rel_path, "path contains invalid UTF-8"))?
+            .replace('\\', "/");
+
+        // Ensure path starts with ./ for relative imports
+        if !path_str.starts_with("./") && !path_str.starts_with("../") {
+            path_str = format!("./{}", path_str);
+        }
+
+        Ok(path_str)
     }
 
     /// Get the absolute path for a file ID.
@@ -100,17 +134,29 @@ impl RheoWorld {
         // Handle package imports
         let mut root = &self.root;
         let mut buf = PathBuf::new();
+        let mut is_package = false;
 
         if let Some(spec) = id.package() {
             // Download and prepare the package if needed
             buf = self.package_storage
                 .prepare_package(spec, &mut PrintDownload::new(spec))?;
             root = &buf;
+            is_package = true;
         }
 
         // Construct path relative to root (or package root)
         let path = id.vpath().resolve(root)
             .ok_or_else(|| FileError::NotFound(id.vpath().as_rooted_path().display().to_string().into()))?;
+
+        // If we're in a package and the file doesn't exist, try the document directory
+        // This handles cases where package templates reference user files (like references.bib)
+        if is_package && !path.exists() {
+            if let Some(doc_path) = id.vpath().resolve(&self.root) {
+                if doc_path.exists() {
+                    return Ok(doc_path);
+                }
+            }
+        }
 
         Ok(path)
     }
@@ -142,10 +188,12 @@ impl World for RheoWorld {
         let mut text = fs::read_to_string(&path)
             .map_err(|e| FileError::from_io(e, &path))?;
 
-        // For the main file, inject the rheo.typ import and template automatically
+        // For the main file, inject the rheo.typ template automatically
         if id == self.main {
-            let import_statement = "#import \"/src/typst/rheo.typ\": *\n#show: rheo_template\n\n";
-            text = format!("{}{}", import_statement, text);
+            // Embed rheo.typ content directly (it's small and avoids path issues)
+            let rheo_content = include_str!("../typst/rheo.typ");
+            let template_inject = format!("{}\n#show: rheo_template\n\n", rheo_content);
+            text = format!("{}{}", template_inject, text);
         }
 
         let source = Source::new(id, text);
@@ -207,7 +255,8 @@ impl World for RheoWorld {
     }
 }
 
-/// Silent progress tracker for package downloads.
+/// Silent progress tracker for package downloads (kept for future use).
+#[allow(dead_code)]
 struct SilentProgress;
 
 impl typst_kit::download::Progress for SilentProgress {
