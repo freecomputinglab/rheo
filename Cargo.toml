@@ -20,7 +20,7 @@ typst = { git = "https://github.com/typst/typst", branch = "main" }
 typst-library = { git = "https://github.com/typst/typst", branch = "main" }
 typst-pdf = { git = "https://github.com/typst/typst", branch = "main" }
 typst-html = { git = "https://github.com/typst/typst", branch = "main" }
-typst-kit = { git = "https://github.com/typst/typst", branch = "main", default-features = false, features = ["fonts", "embed-fonts"] }
+typst-kit = { git = "https://github.com/typst/typst", branch = "main", default-features = false, features = ["fonts", "embed-fonts", "packages", "vendor-openssl"] }
 clap = { version = "4.5", features = ["derive"] }
 walkdir = "2.5"
 thiserror = "1.0"
