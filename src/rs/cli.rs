@@ -75,9 +75,9 @@ fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
         .file_stem()
         .and_then(|s| s.to_str())
         .map(|s| s.to_string())
-        .ok_or_else(|| crate::RheoError::project_config(
-            format!("invalid .typ filename: {:?}", typ_file)
-        ))
+        .ok_or_else(|| {
+            crate::RheoError::project_config(format!("invalid .typ filename: {:?}", typ_file))
+        })
 }
 
 impl Cli {
@@ -98,7 +98,12 @@ impl Cli {
 
     pub fn run(self) -> Result<()> {
         match self.command {
-            Commands::Compile { path, pdf, html, epub } => {
+            Commands::Compile {
+                path,
+                pdf,
+                html,
+                epub,
+            } => {
                 // Warn if EPUB requested
                 if epub {
                     warn!("EPUB format is not yet supported and will be ignored");
@@ -130,12 +135,17 @@ impl Cli {
 
                 // 3. Check for .typ files
                 if project.typ_files.is_empty() {
-                    return Err(crate::RheoError::project_config("no .typ files found in project"));
+                    return Err(crate::RheoError::project_config(
+                        "no .typ files found in project",
+                    ));
                 }
 
                 // 4. Compile each file
-                let mut compiled_count = 0;
-                let mut failed_count = 0;
+                // Track success/failure per format for graceful degradation
+                let mut pdf_succeeded = 0;
+                let mut pdf_failed = 0;
+                let mut html_succeeded = 0;
+                let mut html_failed = 0;
 
                 // Use current working directory as root for Typst world
                 // This allows absolute imports like /src/typst/rheo.typ to work
@@ -146,29 +156,44 @@ impl Cli {
                     let filename = get_output_filename(typ_file)?;
 
                     // Get the document directory (parent of the typ file) as root
-                    let file_root = typ_file.parent()
-                        .ok_or_else(|| crate::RheoError::path(typ_file, "file has no parent directory"))?;
+                    let file_root = typ_file.parent().ok_or_else(|| {
+                        crate::RheoError::path(typ_file, "file has no parent directory")
+                    })?;
 
                     // Compile to PDF
                     if formats.contains(&OutputFormat::Pdf) {
-                        let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-                        match crate::compile::compile_pdf(typ_file, &output_path, file_root, &repo_root) {
-                            Ok(_) => compiled_count += 1,
+                        let output_path =
+                            output_config.pdf_dir.join(&filename).with_extension("pdf");
+                        match crate::compile::compile_pdf(
+                            typ_file,
+                            &output_path,
+                            file_root,
+                            &repo_root,
+                        ) {
+                            Ok(_) => pdf_succeeded += 1,
                             Err(e) => {
                                 error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
-                                failed_count += 1;
+                                pdf_failed += 1;
                             }
                         }
                     }
 
                     // Compile to HTML
                     if formats.contains(&OutputFormat::Html) {
-                        let output_path = output_config.html_dir.join(&filename).with_extension("html");
-                        match crate::compile::compile_html(typ_file, &output_path, file_root, &repo_root) {
-                            Ok(_) => compiled_count += 1,
+                        let output_path = output_config
+                            .html_dir
+                            .join(&filename)
+                            .with_extension("html");
+                        match crate::compile::compile_html(
+                            typ_file,
+                            &output_path,
+                            file_root,
+                            &repo_root,
+                        ) {
+                            Ok(_) => html_succeeded += 1,
                             Err(e) => {
                                 error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
-                                failed_count += 1;
+                                html_failed += 1;
                             }
                         }
                     }
@@ -177,24 +202,77 @@ impl Cli {
                 // 5. Copy assets for HTML
                 if formats.contains(&OutputFormat::Html) {
                     info!("copying assets for HTML output");
-                    if let Err(e) = crate::assets::copy_css(&project.root, &output_config.html_dir) {
+                    if let Err(e) = crate::assets::copy_css(&project.root, &output_config.html_dir)
+                    {
                         warn!(error = %e, "failed to copy CSS, continuing");
                     }
-                    if let Err(e) = crate::assets::copy_images(&project.root, &output_config.html_dir) {
+                    if let Err(e) =
+                        crate::assets::copy_images(&project.root, &output_config.html_dir)
+                    {
                         warn!(error = %e, "failed to copy images, continuing");
                     }
                 }
 
-                // 6. Report results
-                info!(compiled = compiled_count, failed = failed_count, "compilation complete");
+                // 6. Report results with per-format summary
+                let total_files = project.typ_files.len();
 
-                if failed_count > 0 {
-                    return Err(crate::RheoError::project_config(
-                        format!("{} file(s) failed to compile", failed_count)
-                    ));
+                // Log format-specific results
+                if formats.contains(&OutputFormat::Pdf) {
+                    if pdf_failed > 0 {
+                        warn!(
+                            failed = pdf_failed,
+                            succeeded = pdf_succeeded,
+                            total = total_files,
+                            "PDF compilation"
+                        );
+                    } else {
+                        info!(
+                            succeeded = pdf_succeeded,
+                            total = total_files,
+                            "PDF compilation complete"
+                        );
+                    }
                 }
 
-                Ok(())
+                if formats.contains(&OutputFormat::Html) {
+                    if html_failed > 0 {
+                        warn!(
+                            failed = html_failed,
+                            succeeded = html_succeeded,
+                            total = total_files,
+                            "HTML compilation"
+                        );
+                    } else {
+                        info!(
+                            succeeded = html_succeeded,
+                            total = total_files,
+                            "HTML compilation complete"
+                        );
+                    }
+                }
+
+                // Graceful degradation: succeed if ANY format fully succeeded
+                let pdf_fully_succeeded =
+                    formats.contains(&OutputFormat::Pdf) && pdf_failed == 0 && pdf_succeeded > 0;
+                let html_fully_succeeded =
+                    formats.contains(&OutputFormat::Html) && html_failed == 0 && html_succeeded > 0;
+
+                if pdf_fully_succeeded || html_fully_succeeded {
+                    // At least one format succeeded completely
+                    if pdf_failed > 0 || html_failed > 0 {
+                        info!("compilation succeeded with warnings (some formats failed)");
+                    } else {
+                        info!("compilation succeeded");
+                    }
+                    Ok(())
+                } else {
+                    // All requested formats had failures
+                    let total_failed = pdf_failed + html_failed;
+                    Err(crate::RheoError::project_config(format!(
+                        "all formats failed: {} file(s) could not be compiled",
+                        total_failed
+                    )))
+                }
             }
             Commands::Clean { all } => {
                 if all {
