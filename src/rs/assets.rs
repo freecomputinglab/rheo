@@ -122,7 +122,7 @@ mod tests {
         fs::create_dir_all(&output_dir).unwrap();
 
         // Don't create project CSS, so it should use fallback
-        // The fallback CSS should exist in the repo at src/typst/style.css
+        // The fallback CSS should exist in the repo at src/css/style.css
 
         // Copy CSS
         copy_css(&project_dir, &output_dir).expect("Failed to copy CSS");
