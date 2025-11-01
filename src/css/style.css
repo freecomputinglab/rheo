@@ -41,25 +41,15 @@ blockquote::before {
 }
 
 a {
-  text-decoration: none;
   color: var(--link-color);
-  position: relative;
-  transition: color 0.3s ease;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-decoration-thickness: 1px;
+  transition: text-decoration-color 0.3s ease;
 }
 
-a::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  bottom: -1px;
-  width: 0;
-  height: 1px;
-  background-color: var(--link-color);
-  transition: width 0.3s ease;
-}
-
-a:hover::after {
-  width: 100%;
+a:hover {
+  text-decoration-color: var(--link-color);
 }
 
 section[role="doc-endnotes"] ol li a[role="doc-backlink"] {

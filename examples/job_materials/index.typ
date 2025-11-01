@@ -9,7 +9,8 @@
 //   - #link(f.link)[f.title]
 // ]
 
-- #link("https://ohrg.org/materials/Kermode_CoverLetter_2025")[Cover Letter]
-- #link("https://ohrg.org/materials/Kermode_CV_2025")[Curriculum Vitae]
-- #link("https://ohrg.org/materials/Kermode_ResearchStatement_2025")[Research Statement]
-- #link("https://ohrg.org/materials/Kermode_TeachingStatement_2025")[Teaching Statement]
+- #link("/Kermode_CoverLetter_2025")[Cover Letter] [#link("/pdf/Kermode_CoverLetter_2025.pdf")[pdf]]
+- #link("/pdf/Kermode_CV_2025.pdf")[Curriculum Vitae]
+- #link("/Kermode_ResearchStatement_2025")[Research Statement] [#link("/pdf/Kermode_ResearchStatement_2025.pdf")[pdf]]
+- #link("/Kermode_TeachingStatement_2025")[Teaching Statement] [#link("/pdf/Kermode_TeachingStatement_2025.pdf")[pdf]]
+
