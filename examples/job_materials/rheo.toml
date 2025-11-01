@@ -1,0 +1,15 @@
+# rheo.toml - Configuration for rheo compilation
+#
+# This file configures how rheo compiles Typst documents in this project.
+
+[compile]
+# Exclude patterns for files that should not be compiled to output
+# Supports glob patterns like "lib/**/*.typ" or "_*/**"
+#
+# Default: ["lib/**/*.typ"]
+#
+# Library/template files in the lib/ directory should be excluded since they:
+# - Define reusable functions and templates
+# - Are imported by other .typ files
+# - Should not be compiled as standalone documents
+exclude = ["lib/**/*.typ"]
