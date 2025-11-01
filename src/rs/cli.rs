@@ -145,10 +145,14 @@ impl Cli {
                 for typ_file in &project.typ_files {
                     let filename = get_output_filename(typ_file)?;
 
+                    // Get the document directory (parent of the typ file) as root
+                    let file_root = typ_file.parent()
+                        .ok_or_else(|| crate::RheoError::path(typ_file, "file has no parent directory"))?;
+
                     // Compile to PDF
                     if formats.contains(&OutputFormat::Pdf) {
                         let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-                        match crate::compile::compile_pdf(typ_file, &output_path, &repo_root) {
+                        match crate::compile::compile_pdf(typ_file, &output_path, file_root, &repo_root) {
                             Ok(_) => compiled_count += 1,
                             Err(e) => {
                                 error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
@@ -160,7 +164,7 @@ impl Cli {
                     // Compile to HTML
                     if formats.contains(&OutputFormat::Html) {
                         let output_path = output_config.html_dir.join(&filename).with_extension("html");
-                        match crate::compile::compile_html(typ_file, &output_path, &repo_root) {
+                        match crate::compile::compile_html(typ_file, &output_path, file_root, &repo_root) {
                             Ok(_) => compiled_count += 1,
                             Err(e) => {
                                 error!(file = %typ_file.display(), error = %e, "HTML compilation failed");

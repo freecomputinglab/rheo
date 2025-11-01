@@ -9,12 +9,12 @@ use typst_pdf::PdfOptions;
 /// Compile a Typst document to PDF
 ///
 /// Uses the typst library with:
-/// - Root set to repository root (for imports via World)
-/// - Shared resources available in src/typst/ (rheo.typ, style.csl)
+/// - Root set to document directory (for local file imports)
+/// - Shared resources available via repo_root in src/typst/ (rheo.typ, style.csl)
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-pub fn compile_pdf(input: &Path, output: &Path, root: &Path) -> Result<()> {
+pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
     // Create the compilation world
-    let world = RheoWorld::new(root, input)?;
+    let world = RheoWorld::new(root, input, repo_root)?;
 
     // Compile the document
     info!(input = %input.display(), "compiling to PDF");
@@ -66,12 +66,12 @@ pub fn compile_pdf(input: &Path, output: &Path, root: &Path) -> Result<()> {
 /// Compile a Typst document to HTML
 ///
 /// Uses the typst library with:
-/// - Root set to repository root (for imports via World)
-/// - Shared resources available in src/typst/ (rheo.typ, style.csl)
+/// - Root set to document directory (for local file imports)
+/// - Shared resources available via repo_root in src/typst/ (rheo.typ, style.csl)
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-pub fn compile_html(input: &Path, output: &Path, root: &Path) -> Result<()> {
+pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
     // Create the compilation world
-    let world = RheoWorld::new(root, input)?;
+    let world = RheoWorld::new(root, input, repo_root)?;
 
     // Compile the document to HtmlDocument
     info!(input = %input.display(), "compiling to HTML");
