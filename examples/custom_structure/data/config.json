@@ -1,0 +1,9 @@
+{
+  "site_name": "Custom Structure Example",
+  "version": "1.0.0",
+  "features": [
+    "content_dir",
+    "static_files",
+    "cross_directory_imports"
+  ]
+}
