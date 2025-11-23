@@ -5,4 +5,6 @@ Contact us at #link("mailto:info@ohrg.org")[info\@ohrg.org] for enquiries.
 
 Be alerted of new content by subscribing to the #link("https://screening-the-subject.ohrg.org/feed.xml")[RSS feed].
 
-// TODO: rheo logic for blog
+- #link("./severance-ep-1.typ")[Severance, s1/e1]
+- #link("./severance-ep-2.typ")[Severance, s1/e2]
+- #link("./severance-ep-3.typ")[Severance, s1/e3]
