@@ -901,3 +901,91 @@ error: Please commit or stash them.
 
 [2025-11-01 09:51:16] Received reload signal, ignoring (daemon continues running)
 [2025-11-01 09:51:16] Received signal terminated, shutting down gracefully...
+[2025-11-23 21:13:19] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:13:19] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:13:19] Expected: beads.db
+[2025-11-23 21:13:19] 
+[2025-11-23 21:13:19] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:13:29] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:13:29] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:13:29] Expected: beads.db
+[2025-11-23 21:13:29] 
+[2025-11-23 21:13:29] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:20:05] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:20:05] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:20:05] Expected: beads.db
+[2025-11-23 21:20:05] 
+[2025-11-23 21:20:05] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:20:11] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:20:11] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:20:11] Expected: beads.db
+[2025-11-23 21:20:11] 
+[2025-11-23 21:20:11] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:20:16] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:20:16] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:20:16] Expected: beads.db
+[2025-11-23 21:20:16] 
+[2025-11-23 21:20:16] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:20:21] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:20:21] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:20:21] Expected: beads.db
+[2025-11-23 21:20:21] 
+[2025-11-23 21:20:21] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:20:33] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:20:33] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:20:33] Expected: beads.db
+[2025-11-23 21:20:33] 
+[2025-11-23 21:20:33] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:20:38] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:20:38] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:20:38] Expected: beads.db
+[2025-11-23 21:20:38] 
+[2025-11-23 21:20:38] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:20:44] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:20:44] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:20:44] Expected: beads.db
+[2025-11-23 21:20:44] 
+[2025-11-23 21:20:44] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:20:53] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:20:53] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:20:53] Expected: beads.db
+[2025-11-23 21:20:53] 
+[2025-11-23 21:20:53] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:21:04] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:21:04] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:21:04] Expected: beads.db
+[2025-11-23 21:21:04] 
+[2025-11-23 21:21:04] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:21:14] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:21:14] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:21:14] Expected: beads.db
+[2025-11-23 21:21:14] 
+[2025-11-23 21:21:14] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:21:27] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:21:27] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:21:27] Expected: beads.db
+[2025-11-23 21:21:27] 
+[2025-11-23 21:21:27] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:21:38] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:21:38] Error: Non-canonical database name: rheo.db
+[2025-11-23 21:21:38] Expected: beads.db
+[2025-11-23 21:21:38] 
+[2025-11-23 21:21:38] Run 'bd init' to migrate to canonical name
+[2025-11-23 21:22:17] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-23 21:22:17] Using database: /home/lox/code/rheo/.beads/beads.db
+[2025-11-23 21:22:17] Database opened: /home/lox/code/rheo/.beads/beads.db
+[2025-11-23 21:22:17] Upgrading .beads/.gitignore...
+[2025-11-23 21:22:17] Warning: failed to upgrade .gitignore: open .beads/.gitignore: no such file or directory
+[2025-11-23 21:22:17] Repository fingerprint validated: 2a548dad
+[2025-11-23 21:22:17] Starting RPC server: /home/lox/code/rheo/.beads/bd.sock
+[2025-11-23 21:22:17] RPC server ready (socket listening)
+[2025-11-23 21:22:17] Registered in global registry
+[2025-11-23 21:22:17] Starting sync cycle...
+[2025-11-23 21:22:17] Exported to JSONL
+[2025-11-23 21:22:17] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: additionally, your index contains uncommitted changes.
+error: Please commit or stash them.
+
+[2025-11-23 21:22:17] Monitoring parent process (PID 0)
+[2025-11-23 21:22:17] Using event-driven mode
