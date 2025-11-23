@@ -1,0 +1,7 @@
+content_dir = "content"
+
+[html]
+static_files = [
+  "img/**"
+] 
+
