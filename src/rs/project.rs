@@ -12,6 +12,9 @@ pub struct ProjectConfig {
     /// Root directory of the project
     pub root: PathBuf,
 
+    /// Rheo configuration from rheo.toml
+    pub config: RheoConfig,
+
     /// List of .typ files in the project
     pub typ_files: Vec<PathBuf>,
 
@@ -109,6 +112,7 @@ impl ProjectConfig {
         Ok(ProjectConfig {
             name,
             root,
+            config,
             typ_files,
             style_css,
             img_dir,

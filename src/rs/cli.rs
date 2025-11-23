@@ -186,15 +186,29 @@ fn perform_compilation(
 
     // Copy assets for HTML
     if formats.contains(&OutputFormat::Html) {
-        info!("copying assets for HTML output");
-        if let Err(e) = crate::assets::copy_css(&project.root, &output_config.html_dir)
-        {
-            warn!(error = %e, "failed to copy CSS, continuing");
-        }
-        if let Err(e) =
-            crate::assets::copy_images(&project.root, &output_config.html_dir)
-        {
-            warn!(error = %e, "failed to copy images, continuing");
+        // Use new glob-based static file copying if patterns are configured
+        let static_patterns = project.config.get_static_files_patterns();
+        if !static_patterns.is_empty() {
+            info!("copying static files using configured patterns");
+            if let Err(e) = crate::assets::copy_static_files(
+                &project.root,
+                &output_config.html_dir,
+                static_patterns,
+            ) {
+                warn!(error = %e, "failed to copy static files, continuing");
+            }
+        } else {
+            // Fall back to legacy behavior for backward compatibility
+            info!("copying assets for HTML output");
+            if let Err(e) = crate::assets::copy_css(&project.root, &output_config.html_dir)
+            {
+                warn!(error = %e, "failed to copy CSS, continuing");
+            }
+            if let Err(e) =
+                crate::assets::copy_images(&project.root, &output_config.html_dir)
+            {
+                warn!(error = %e, "failed to copy images, continuing");
+            }
         }
     }
 

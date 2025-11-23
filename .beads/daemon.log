@@ -1316,3 +1316,21 @@ error: Please commit or stash them.
 [2025-11-23 22:23:36] Import triggered by file change
 [2025-11-23 22:23:36] Starting auto-import...
 [2025-11-23 22:23:36] Skipping import: JSONL content unchanged
+[2025-11-23 22:28:49] Mutation detected: update rheo-272
+[2025-11-23 22:28:50] Export triggered by mutation events
+[2025-11-23 22:28:50] Starting export...
+[2025-11-23 22:28:50] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-23 22:28:50] Exported to JSONL
+[2025-11-23 22:28:50] Export complete
+[2025-11-23 22:28:51] Import triggered by file change
+[2025-11-23 22:28:51] Starting auto-import...
+[2025-11-23 22:28:51] Skipping import: JSONL content unchanged
+[2025-11-23 22:28:55] Mutation detected: update rheo-272
+[2025-11-23 22:28:55] Export triggered by mutation events
+[2025-11-23 22:28:55] Starting export...
+[2025-11-23 22:28:55] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-23 22:28:55] Exported to JSONL
+[2025-11-23 22:28:55] Export complete
+[2025-11-23 22:28:56] Import triggered by file change
+[2025-11-23 22:28:56] Starting auto-import...
+[2025-11-23 22:28:56] Skipping import: JSONL content unchanged

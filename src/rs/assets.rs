@@ -1,6 +1,9 @@
 use crate::{Result, RheoError};
+use globset::{Glob, GlobSetBuilder};
 use std::fs;
 use std::path::Path;
+use tracing::{debug, info, warn};
+use walkdir::WalkDir;
 
 /// Path to the CSS resources directory
 pub const CSS_RESOURCES_DIR: &str = "src/css";
@@ -48,6 +51,84 @@ pub fn copy_images(project_dir: &Path, output_dir: &Path) -> Result<()> {
 
     // Recursively copy all files from source_img to dest_img
     copy_dir_recursive(&source_img, &dest_img)?;
+
+    Ok(())
+}
+
+/// Copy static files matching glob patterns from project to output directory
+///
+/// Glob patterns are relative to project_dir
+/// Files maintain their relative directory structure in the output
+pub fn copy_static_files(
+    project_dir: &Path,
+    output_dir: &Path,
+    patterns: &[String],
+) -> Result<()> {
+    if patterns.is_empty() {
+        debug!("no static file patterns configured");
+        return Ok(());
+    }
+
+    // Build glob set from patterns
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        match Glob::new(pattern) {
+            Ok(glob) => {
+                builder.add(glob);
+                debug!(pattern = %pattern, "added static file pattern");
+            }
+            Err(e) => {
+                warn!(pattern = %pattern, error = %e, "invalid glob pattern, skipping");
+            }
+        }
+    }
+
+    let globset = builder
+        .build()
+        .map_err(|e| RheoError::project_config(format!("failed to build static file patterns: {}", e)))?;
+
+    let mut copied_count = 0;
+
+    // Walk project directory and copy matching files
+    for entry in WalkDir::new(project_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        let path = entry.path();
+
+        // Get relative path for glob matching
+        let relative_path = match path.strip_prefix(project_dir) {
+            Ok(rel) => rel,
+            Err(_) => continue,
+        };
+
+        // Check if file matches any pattern
+        if globset.is_match(relative_path) {
+            let dest_path = output_dir.join(relative_path);
+
+            // Create parent directory if needed
+            if let Some(parent) = dest_path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| RheoError::io(e, format!("creating directory {:?}", parent)))?;
+            }
+
+            // Copy file
+            fs::copy(path, &dest_path)
+                .map_err(|e| RheoError::AssetCopy {
+                    source: path.to_path_buf(),
+                    dest: dest_path.clone(),
+                    error: e,
+                })?;
+
+            debug!(file = %relative_path.display(), "copied static file");
+            copied_count += 1;
+        }
+    }
+
+    if copied_count > 0 {
+        info!(count = copied_count, "copied static files");
+    }
 
     Ok(())
 }
@@ -188,6 +269,85 @@ mod tests {
 
         // Verify no img/ directory was created in output
         assert!(!output_dir.join("img").exists());
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn test_copy_static_files_with_patterns() {
+        let temp_dir = std::env::temp_dir().join("rheo_test_static_files");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let project_dir = temp_dir.join("project");
+        let output_dir = temp_dir.join("output");
+
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        // Create test files in various directories
+        let css_dir = project_dir.join("css");
+        fs::create_dir_all(&css_dir).unwrap();
+        fs::write(css_dir.join("style.css"), b"/* css */").unwrap();
+        fs::write(css_dir.join("theme.css"), b"/* theme */").unwrap();
+
+        let img_dir = project_dir.join("img");
+        fs::create_dir_all(&img_dir).unwrap();
+        fs::write(img_dir.join("photo.jpg"), b"jpeg data").unwrap();
+
+        let data_dir = project_dir.join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::write(data_dir.join("config.json"), b"{}").unwrap();
+        fs::write(data_dir.join("readme.txt"), b"text file").unwrap();
+
+        // Copy with glob patterns
+        let patterns = vec![
+            "css/**".to_string(),
+            "img/**".to_string(),
+            "data/*.json".to_string(),
+        ];
+
+        copy_static_files(&project_dir, &output_dir, &patterns)
+            .expect("Failed to copy static files");
+
+        // Verify CSS files were copied
+        assert!(output_dir.join("css/style.css").exists());
+        assert!(output_dir.join("css/theme.css").exists());
+
+        // Verify image was copied
+        assert!(output_dir.join("img/photo.jpg").exists());
+
+        // Verify only .json was copied from data/
+        assert!(output_dir.join("data/config.json").exists());
+        assert!(!output_dir.join("data/readme.txt").exists());
+
+        // Verify content
+        let css_content = fs::read(output_dir.join("css/style.css")).unwrap();
+        assert_eq!(css_content, b"/* css */");
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn test_copy_static_files_empty_patterns() {
+        let temp_dir = std::env::temp_dir().join("rheo_test_static_empty");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let project_dir = temp_dir.join("project");
+        let output_dir = temp_dir.join("output");
+
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        // Create a test file
+        fs::write(project_dir.join("test.txt"), b"test").unwrap();
+
+        // Copy with empty patterns
+        let patterns: Vec<String> = vec![];
+        copy_static_files(&project_dir, &output_dir, &patterns)
+            .expect("Should succeed with empty patterns");
+
+        // Verify no files were copied
+        assert!(!output_dir.join("test.txt").exists());
 
         fs::remove_dir_all(&temp_dir).unwrap();
     }
