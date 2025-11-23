@@ -1,7 +1,7 @@
 [compile]
 content_dir = "content"
+html_only = ["content/index.typ"]
 
 [html]
-html_only = ["content/index.typ"]
 static_files = ["content/img/**"]
 

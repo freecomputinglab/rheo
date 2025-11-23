@@ -1,6 +1,6 @@
 = In Perpetuity - #emph[Severance] [s1/e3]
 
-#image("../img/severance-s1e3-shot1.png")
+#image("img/severance-s1e3-shot1.png")
 
 == We need to talk about Ms. Cobel
 As we noted in #link("./severance-ep-1.org")[analysis of S1E1], she typically storms the screen with an icy blue, a temper (the significance of this word we shall unpack shortly) that seeks to quell the fiery red that flickers in and out of the consciousness of workers on the severed floor.
@@ -111,7 +111,7 @@ Okay: we now return from this Freudian digression to the stuff of #emph[Severanc
 What bearing do the Oedipus complex and the myth of the Primal Father have on the structure of the subject on display in the show? 
 Let's go now to the scene in S1E3 at the crossroads, where MDR runs into two employees in Optics and Design (O&D).
 
-#image("../img/severance-s1e3-shot2.png")
+#image("img/severance-s1e3-shot2.png")
 
 The composition of this shot puts the reflective axis down the center, and the encounter is suggestively Oedipean in its structure (at a crossroads, unknowing of the Other at play). 
 Note that Irving is compositionally mirrored by Burt, played by Christopher Walken, and we will explore this suggestive symmetry in detail in later episodes. 
@@ -167,7 +167,7 @@ If there was any doubt that Kier Eagan embodies the Freudian Primal Father, the 
 Kier's 'philosophy' seeks to conquer death by quantifying life, sorting its myriadic nature into a #quote[precise ratio] of character that can be counted (completely, it seems) in four distinct tempers. 
 Indeed, we saw the pictorial representation of this taming in s1e2, in the scene where Irving meets Burt:
 
-#image("../img/severance-s1e3-tamingtempers.png")
+#image("img/severance-s1e3-tamingtempers.png")
 
 In the post-Platonic cave of his own mind, Kier is the master of his passions. 
 He admits no unconscious contours that sneak up on him unbeknowst in Freudian slips of the tongue or unwanted symptoms. 
@@ -185,4 +185,4 @@ The second, and the closing scene of the epsiode, is Petey's psychotic demise at
 Ravaged by the failure of his complete quantification inside Lumon, Petey seems no longer to have a firm footing in either his innie's or outie's reality. 
 Mark looks on from a distance as he collapses outside the store, escorted by police, attempting (it seems) to account for his disintegration.
 
-#bibliography("references.bib", style: "chicago-author-date")
+#bibliography("../references.bib", style: "chicago-author-date")

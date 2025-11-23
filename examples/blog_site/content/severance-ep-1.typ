@@ -33,7 +33,7 @@ Helly's instinctual reaction seems to be to try to kill the voice pointed at her
 (Helly will eventually have sex with the source of the voice, rather than murdering or fraternizing with it.) 
 In this episode, however, Mark (the voice's source) is physically assaulted by Helly, dented in his temple by the same vocalization device that mediated their first communication.
 
-#image("../img/severance-s1e1-shot2.png")
+#image("img/severance-s1e1-shot2.png")
 
 So this is the Macro Data refiner's situation. 
 On the one hand, she is affronted with a voice that compels her to abide by the rules and permits her to enjoy some small reliefs (egress from a locked room) if she concedes to it.
