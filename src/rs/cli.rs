@@ -48,6 +48,24 @@ pub enum Commands {
         epub: bool,
     },
 
+    /// Watch Typst documents and recompile on changes
+    Watch {
+        /// Path to the project directory
+        path: PathBuf,
+
+        /// Watch and compile to PDF only
+        #[arg(long)]
+        pdf: bool,
+
+        /// Watch and compile to HTML only
+        #[arg(long)]
+        html: bool,
+
+        /// Watch and compile to EPUB only
+        #[arg(long)]
+        epub: bool,
+    },
+
     /// Clean build artifacts
     Clean {
         /// Clean all build artifacts (not just for a specific project)
@@ -293,6 +311,79 @@ impl Cli {
 
                 // Perform compilation
                 perform_compilation(&project, &output_config, &formats)
+            }
+            Commands::Watch {
+                path,
+                pdf,
+                html,
+                epub,
+            } => {
+                // Warn if EPUB requested
+                if epub {
+                    warn!("EPUB format is not yet supported and will be ignored");
+                }
+
+                // Determine which formats to compile
+                // Default = PDF + HTML (EPUB not yet supported)
+                let formats = if !pdf && !html {
+                    vec![OutputFormat::Pdf, OutputFormat::Html]
+                } else {
+                    let mut formats = Vec::new();
+                    if pdf {
+                        formats.push(OutputFormat::Pdf);
+                    }
+                    if html {
+                        formats.push(OutputFormat::Html);
+                    }
+                    formats
+                };
+
+                // Detect project configuration
+                info!(path = %path.display(), "detecting project configuration");
+                let project = crate::project::ProjectConfig::from_path(&path)?;
+                info!(name = %project.name, files = project.typ_files.len(), "detected project");
+
+                // Create output directories
+                let output_config = crate::output::OutputConfig::new(&project.name);
+                output_config.create_dirs()?;
+
+                // Perform initial compilation
+                info!("performing initial compilation");
+                if let Err(e) = perform_compilation(&project, &output_config, &formats) {
+                    warn!(error = %e, "initial compilation failed, continuing to watch");
+                }
+
+                // Set up file watcher with interior mutability for project updates
+                use std::cell::RefCell;
+                let project_cell = RefCell::new(project);
+
+                info!("starting file watcher");
+                crate::watch::watch_project(&project_cell.borrow(), |event| {
+                    match event {
+                        crate::watch::WatchEvent::FilesChanged => {
+                            info!("files changed, recompiling");
+                            perform_compilation(&project_cell.borrow(), &output_config, &formats)
+                        }
+                        crate::watch::WatchEvent::ConfigChanged => {
+                            info!("config changed, reloading project");
+                            // Reload project configuration
+                            match crate::project::ProjectConfig::from_path(&path) {
+                                Ok(new_project) => {
+                                    *project_cell.borrow_mut() = new_project;
+                                    let borrowed = project_cell.borrow();
+                                    info!(name = %borrowed.name, files = borrowed.typ_files.len(), "reloaded project");
+                                    perform_compilation(&borrowed, &output_config, &formats)
+                                }
+                                Err(e) => {
+                                    error!(error = %e, "failed to reload project config");
+                                    Err(e)
+                                }
+                            }
+                        }
+                    }
+                })?;
+
+                Ok(())
             }
             Commands::Clean { all } => {
                 if all {
