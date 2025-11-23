@@ -9,6 +9,7 @@ pub mod world;
 pub mod logging;
 pub mod error;
 pub mod watch;
+pub mod server;
 
 pub use cli::Cli;
 pub use config::RheoConfig;

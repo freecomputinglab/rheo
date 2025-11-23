@@ -34,7 +34,13 @@ toml = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 globset = "0.4"
 notify = "6.1"
-tokio = { version = "1", features = ["rt", "sync", "time", "signal"] }
+tokio = { version = "1", features = ["rt", "sync", "time", "signal", "rt-multi-thread", "macros"] }
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["fs", "trace"] }
+webbrowser = "1.0"
+mime_guess = "2.0"
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 [profile.release]
 opt-level = 3
