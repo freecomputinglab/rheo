@@ -43,8 +43,12 @@ impl ProjectConfig {
         let config = RheoConfig::load(&root)?;
         let exclusions = config.build_exclusion_set()?;
 
-        // Find all .typ files in the directory (recursive walk)
-        let all_typ_files: Vec<PathBuf> = WalkDir::new(&root)
+        // Determine search directory: content_dir if configured, otherwise project root
+        let search_dir = config.resolve_content_dir(&root).unwrap_or_else(|| root.clone());
+        debug!(search_dir = %search_dir.display(), "searching for .typ files");
+
+        // Find all .typ files in the search directory (recursive walk)
+        let all_typ_files: Vec<PathBuf> = WalkDir::new(&search_dir)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| {
