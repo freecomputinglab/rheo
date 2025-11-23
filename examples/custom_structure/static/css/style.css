@@ -1,0 +1,16 @@
+/* Custom styles for the example */
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  line-height: 1.6;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  background: #fafafa;
+}
+
+.highlight {
+  background: #f0f0f0;
+  padding: 1rem;
+  border-radius: 4px;
+  border-left: 4px solid #0066cc;
+}

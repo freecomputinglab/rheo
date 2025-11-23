@@ -102,7 +102,7 @@ It was one of the features that got lost in my move from writing Orgmode in Emac
 I use #link("https://github.com/nvim-telescope/telescope.nvim")[telescope.nvim] for general search and file-picking when coding in Neovim, and I figured that I could use a customized pop-up to dynamically pick available citations from the relevant #link("https://www.overleaf.com/learn/latex/Bibliography_management_with_bibtex")[BibTeX] file, too.
 After a few minutes of #link("https://simonwillison.net/2025/Oct/7/vibe-engineering/")[vibe-engineering], I have the following: 
 
-#video("./img/typst-links-citations-demo.mp4")
+#video("../img/typst-links-citations-demo.mp4")
 
 When I am writing in Typst, and I want to bring in a reference, I can open a panel.
 Note that the search is full-text, not just using the reference ID.

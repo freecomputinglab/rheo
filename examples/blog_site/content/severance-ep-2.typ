@@ -7,7 +7,7 @@ S1E2 opens with a rewind on how innie Helly R came to be: how Milchick handed he
 
 == Lumon Industries
 
-#image("./img/severance-s1e2-lumon-logo.png")
+#image("../img/severance-s1e2-lumon-logo.png")
 
 Lumon is a corporate pastiche, and not only of technology companies.
 Lumon seems to have its hands in surgical hardware (the operating room equipment), digital technology ('Macrodata Refinement'), and medicines and topical salves (as discussed at the dinner party in S1E1 - #quote[What don\'t they make?]).
@@ -28,7 +28,7 @@ It is futuristic in the framing of its bio-technological project of perceptual m
 Recall, for example, Milchick's handheld camcorder, and the tube-activated (vacuum-tube?) camera he uses to snap the official photo
 of the new group of refiners.
 
-#image("./img/severance-s1e2-bell-works.png")
+#image("../img/severance-s1e2-bell-works.png")
 
 The overhead of Lumon Industries itself depicts a sketchy graph of a brain, one can't help but think. 
 Its upper floors all operate above board with normally conscious workers, whereas underground there is something sensitive enough happening so as to require extra precautions.
