@@ -8,6 +8,7 @@ pub mod epub;
 pub mod world;
 pub mod logging;
 pub mod error;
+pub mod watch;
 
 pub use cli::Cli;
 pub use config::RheoConfig;

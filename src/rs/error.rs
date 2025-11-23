@@ -44,6 +44,14 @@ pub enum RheoError {
         #[source]
         error: std::io::Error,
     },
+
+    /// File watcher error
+    #[error("File watcher error while {context}: {source}")]
+    FileWatcher {
+        #[source]
+        source: notify::Error,
+        context: String,
+    },
 }
 
 impl RheoError {
@@ -67,6 +75,14 @@ impl RheoError {
     pub fn project_config(message: impl Into<String>) -> Self {
         RheoError::ProjectConfig {
             message: message.into(),
+        }
+    }
+
+    /// Helper to create a file watcher error with context
+    pub fn file_watcher(source: notify::Error, context: impl Into<String>) -> Self {
+        RheoError::FileWatcher {
+            source,
+            context: context.into(),
         }
     }
 }
