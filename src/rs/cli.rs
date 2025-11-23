@@ -64,6 +64,10 @@ pub enum Commands {
         /// Watch and compile to EPUB only
         #[arg(long)]
         epub: bool,
+
+        /// Open output in appropriate viewer (HTML opens in browser with live reload)
+        #[arg(long)]
+        open: bool,
     },
 
     /// Clean build artifacts
@@ -317,14 +321,27 @@ impl Cli {
                 pdf,
                 html,
                 epub,
+                open,
             } => {
                 // Warn if EPUB requested
                 if epub {
                     warn!("EPUB format is not yet supported and will be ignored");
                 }
 
+                // Log TODOs for --open with formats that aren't ready yet
+                if open {
+                    if pdf || (!pdf && !html) {
+                        info!("TODO: PDF opening not yet implemented (need to decide on multi-file handling)");
+                    }
+                    if epub {
+                        info!("TODO: EPUB opening not yet implemented (need bene viewer integration)");
+                    }
+                }
+
                 // Determine which formats to compile
-                // Default = PDF + HTML (EPUB not yet supported)
+                // --open alone compiles ALL formats (PDF + HTML)
+                // --open with specific flags only compiles those formats
+                // Without --open, default = PDF + HTML
                 let formats = if !pdf && !html {
                     vec![OutputFormat::Pdf, OutputFormat::Html]
                 } else {
