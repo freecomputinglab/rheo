@@ -2,4 +2,6 @@
 content_dir = "content"
 
 [html]
-static_files = ["img/**"]
+html_only = ["content/index.typ"]
+static_files = ["content/img/**"]
+
