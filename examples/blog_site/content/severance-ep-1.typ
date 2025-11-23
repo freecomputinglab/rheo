@@ -2,7 +2,7 @@
 
 // NOTE: does not work as HTML export does not take width into account
 // #image("../img/severance-s1e1-shot1.jpg", width: 75%)
-#image("../img/severance-s1e1-shot1.jpg")
+#image("img/severance-s1e1-shot1.jpg")
 
 The first thing to notice is the colour palette. 
 She is dressed in blue, but her hair is chestnut red. 
@@ -53,7 +53,7 @@ What each individual 'needs' is a disharmonious melange of needs and demands, op
 The real question of Lumon's smooth functioning is whether it will be able to effectively plug up these pinings, the incidental moments at work where one wonders what one is really doing with one's life, whether the company can really manage its employees' unsanctioned thoughts and the way in which those illicit ideas seep into the daily practice of their workerhood. 
 More on the plasticity of our needs and drives to satisfy them in later posts.
 
-#image("../img/severance-s1e1-shot3.jpg")
+#image("img/severance-s1e1-shot3.jpg")
 
 Ms. Cobel, in contrast to Helly's and Mark's doubtful and doubting red, is a stormy and icy blue. 
 (We must wait until season two to uncover the historical and psychological depth of this colour for Harmony Cobel.)
