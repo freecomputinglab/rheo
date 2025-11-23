@@ -989,3 +989,12 @@ error: Please commit or stash them.
 
 [2025-11-23 21:22:17] Monitoring parent process (PID 0)
 [2025-11-23 21:22:17] Using event-driven mode
+[2025-11-23 21:23:11] Mutation detected: update rheo-2pt
+[2025-11-23 21:23:11] Export triggered by mutation events
+[2025-11-23 21:23:11] Starting export...
+[2025-11-23 21:23:11] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-23 21:23:11] Exported to JSONL
+[2025-11-23 21:23:11] Export complete
+[2025-11-23 21:23:12] Import triggered by file change
+[2025-11-23 21:23:12] Starting auto-import...
+[2025-11-23 21:23:12] Skipping import: JSONL content unchanged
