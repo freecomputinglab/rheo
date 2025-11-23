@@ -59,10 +59,15 @@ pub fn copy_images(project_dir: &Path, output_dir: &Path) -> Result<()> {
 ///
 /// Glob patterns are relative to project_dir
 /// Files maintain their relative directory structure in the output
+///
+/// If content_dir is provided, it will be stripped from the output path for files
+/// that are matched inside that directory. This prevents the content_dir from
+/// appearing in the output structure.
 pub fn copy_static_files(
     project_dir: &Path,
     output_dir: &Path,
     patterns: &[String],
+    content_dir: Option<&Path>,
 ) -> Result<()> {
     if patterns.is_empty() {
         debug!("no static file patterns configured");
@@ -105,7 +110,14 @@ pub fn copy_static_files(
 
         // Check if file matches any pattern
         if globset.is_match(relative_path) {
-            let dest_path = output_dir.join(relative_path);
+            // Strip content_dir prefix if the file is inside it
+            let output_relative_path = if let Some(content_dir) = content_dir {
+                relative_path.strip_prefix(content_dir).unwrap_or(relative_path)
+            } else {
+                relative_path
+            };
+
+            let dest_path = output_dir.join(output_relative_path);
 
             // Create parent directory if needed
             if let Some(parent) = dest_path.parent() {
@@ -306,7 +318,7 @@ mod tests {
             "data/*.json".to_string(),
         ];
 
-        copy_static_files(&project_dir, &output_dir, &patterns)
+        copy_static_files(&project_dir, &output_dir, &patterns, None)
             .expect("Failed to copy static files");
 
         // Verify CSS files were copied
@@ -343,7 +355,7 @@ mod tests {
 
         // Copy with empty patterns
         let patterns: Vec<String> = vec![];
-        copy_static_files(&project_dir, &output_dir, &patterns)
+        copy_static_files(&project_dir, &output_dir, &patterns, None)
             .expect("Should succeed with empty patterns");
 
         // Verify no files were copied

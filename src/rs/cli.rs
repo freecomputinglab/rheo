@@ -1,6 +1,6 @@
 use crate::Result;
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
 
 /// Output format for compilation
@@ -190,10 +190,12 @@ fn perform_compilation(
         let static_patterns = project.config.get_static_files_patterns();
         if !static_patterns.is_empty() {
             info!("copying static files using configured patterns");
+            let content_dir = project.config.compile.content_dir.as_deref().map(Path::new);
             if let Err(e) = crate::assets::copy_static_files(
                 &project.root,
                 &output_config.html_dir,
                 static_patterns,
+                content_dir,
             ) {
                 warn!(error = %e, "failed to copy static files, continuing");
             }
