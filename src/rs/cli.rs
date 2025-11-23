@@ -370,13 +370,34 @@ impl Cli {
                     warn!(error = %e, "initial compilation failed, continuing to watch");
                 }
 
+                // Start web server if --open and HTML is in formats
+                let server_info = if open && formats.contains(&OutputFormat::Html) {
+                    // Need tokio runtime for async server
+                    let runtime = tokio::runtime::Runtime::new()
+                        .map_err(|e| crate::RheoError::io(e, "creating tokio runtime"))?;
+
+                    let html_dir = output_config.html_dir.clone();
+                    let (server_handle, reload_tx, server_url) = runtime.block_on(async {
+                        crate::server::start_server(html_dir, 3000).await
+                    })?;
+
+                    // Open browser
+                    if let Err(e) = crate::server::open_browser(&server_url) {
+                        warn!(error = %e, "failed to open browser, but server is running");
+                    }
+
+                    Some((runtime, server_handle, reload_tx))
+                } else {
+                    None
+                };
+
                 // Set up file watcher with interior mutability for project updates
                 use std::cell::RefCell;
                 let project_cell = RefCell::new(project);
 
                 info!("starting file watcher");
                 crate::watch::watch_project(&project_cell.borrow(), |event| {
-                    match event {
+                    let result = match event {
                         crate::watch::WatchEvent::FilesChanged => {
                             info!("files changed, recompiling");
                             perform_compilation(&project_cell.borrow(), &output_config, &formats)
@@ -397,8 +418,20 @@ impl Cli {
                                 }
                             }
                         }
+                    };
+
+                    // Send reload event if compilation succeeded and we have a server
+                    if result.is_ok() {
+                        if let Some((_, _, reload_tx)) = &server_info {
+                            // Ignore errors if no clients are connected
+                            let _ = reload_tx.send(());
+                        }
                     }
+
+                    result
                 })?;
+
+                // Server will be dropped and cleaned up automatically here
 
                 Ok(())
             }
