@@ -9,7 +9,7 @@ use typst_pdf::PdfOptions;
 /// Compile a Typst document to PDF
 ///
 /// Uses the typst library with:
-/// - Root set to document directory (for local file imports)
+/// - Root set to content_dir or project root (for local file imports across directories)
 /// - Shared resources available via repo_root in src/typst/ (rheo.typ, style.csl)
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
@@ -66,7 +66,7 @@ pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -
 /// Compile a Typst document to HTML
 ///
 /// Uses the typst library with:
-/// - Root set to document directory (for local file imports)
+/// - Root set to content_dir or project root (for local file imports across directories)
 /// - Shared resources available via repo_root in src/typst/ (rheo.typ, style.csl)
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {

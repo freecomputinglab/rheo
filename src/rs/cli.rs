@@ -137,13 +137,13 @@ fn perform_compilation(
     let repo_root = std::env::current_dir()
         .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
 
+    // Use content_dir as compilation root if configured, otherwise use project root
+    // This allows files in subdirectories to reference files in parent directories
+    let compilation_root = project.config.resolve_content_dir(&project.root)
+        .unwrap_or_else(|| project.root.clone());
+
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
-
-        // Get the document directory (parent of the typ file) as root
-        let file_root = typ_file.parent().ok_or_else(|| {
-            crate::RheoError::path(typ_file, "file has no parent directory")
-        })?;
 
         // Compile to PDF
         if formats.contains(&OutputFormat::Pdf) {
@@ -152,7 +152,7 @@ fn perform_compilation(
             match crate::compile::compile_pdf(
                 typ_file,
                 &output_path,
-                file_root,
+                &compilation_root,
                 &repo_root,
             ) {
                 Ok(_) => pdf_succeeded += 1,
@@ -172,7 +172,7 @@ fn perform_compilation(
             match crate::compile::compile_html(
                 typ_file,
                 &output_path,
-                file_root,
+                &compilation_root,
                 &repo_root,
             ) {
                 Ok(_) => html_succeeded += 1,
