@@ -102,6 +102,59 @@ fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
         })
 }
 
+/// Determine which formats should be compiled for a given file
+/// based on format-specific patterns and requested formats
+fn get_file_formats(
+    file: &Path,
+    project_root: &Path,
+    filter_sets: &crate::config::FormatFilterSets,
+    requested_formats: &[OutputFormat],
+) -> Result<Vec<OutputFormat>> {
+    // Make path relative to project root for matching
+    let relative_path = file.strip_prefix(project_root)
+        .map_err(|_| crate::RheoError::path(
+            file,
+            format!("file is not within project root {}", project_root.display())
+        ))?;
+
+    let mut formats = Vec::new();
+
+    for &format in requested_formats {
+        let should_compile = match format {
+            OutputFormat::Pdf => {
+                // Compile to PDF if:
+                // - File matches pdf_only pattern, OR
+                // - File doesn't match any format-specific pattern
+                filter_sets.pdf_only.is_match(relative_path) ||
+                    (!filter_sets.html_only.is_match(relative_path) &&
+                     !filter_sets.epub_only.is_match(relative_path))
+            }
+            OutputFormat::Html => {
+                // Compile to HTML if:
+                // - File matches html_only pattern, OR
+                // - File doesn't match any format-specific pattern
+                filter_sets.html_only.is_match(relative_path) ||
+                    (!filter_sets.pdf_only.is_match(relative_path) &&
+                     !filter_sets.epub_only.is_match(relative_path))
+            }
+            OutputFormat::Epub => {
+                // Compile to EPUB if:
+                // - File matches epub_only pattern, OR
+                // - File doesn't match any format-specific pattern
+                filter_sets.epub_only.is_match(relative_path) ||
+                    (!filter_sets.pdf_only.is_match(relative_path) &&
+                     !filter_sets.html_only.is_match(relative_path))
+            }
+        };
+
+        if should_compile {
+            formats.push(format);
+        }
+    }
+
+    Ok(formats)
+}
+
 /// Perform compilation for a project with specified formats
 ///
 /// This is the core compilation logic used by both `compile` and `watch` commands.
@@ -145,8 +198,16 @@ fn perform_compilation(
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
 
+        // Determine which formats this file should be compiled to
+        let file_formats = get_file_formats(
+            typ_file,
+            &project.root,
+            &project.format_filters,
+            formats,
+        )?;
+
         // Compile to PDF
-        if formats.contains(&OutputFormat::Pdf) {
+        if file_formats.contains(&OutputFormat::Pdf) {
             let output_path =
                 output_config.pdf_dir.join(&filename).with_extension("pdf");
             match crate::compile::compile_pdf(
@@ -164,7 +225,7 @@ fn perform_compilation(
         }
 
         // Compile to HTML
-        if formats.contains(&OutputFormat::Html) {
+        if file_formats.contains(&OutputFormat::Html) {
             let output_path = output_config
                 .html_dir
                 .join(&filename)
