@@ -545,3 +545,154 @@ impl Cli {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use globset::{Glob, GlobSetBuilder};
+    use crate::config::FormatFilterSets;
+
+    fn build_test_filter_sets(
+        html_only: &[&str],
+        pdf_only: &[&str],
+        epub_only: &[&str],
+    ) -> FormatFilterSets {
+        let mut html_builder = GlobSetBuilder::new();
+        for pattern in html_only {
+            html_builder.add(Glob::new(pattern).unwrap());
+        }
+
+        let mut pdf_builder = GlobSetBuilder::new();
+        for pattern in pdf_only {
+            pdf_builder.add(Glob::new(pattern).unwrap());
+        }
+
+        let mut epub_builder = GlobSetBuilder::new();
+        for pattern in epub_only {
+            epub_builder.add(Glob::new(pattern).unwrap());
+        }
+
+        FormatFilterSets {
+            html_only: html_builder.build().unwrap(),
+            pdf_only: pdf_builder.build().unwrap(),
+            epub_only: epub_builder.build().unwrap(),
+        }
+    }
+
+    #[test]
+    fn test_no_filters_compiles_all_formats() {
+        let filter_sets = build_test_filter_sets(&[], &[], &[]);
+        let project_root = std::path::PathBuf::from("/tmp/project");
+        let file = project_root.join("content/test.typ");
+        let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
+
+        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+
+        assert_eq!(formats.len(), 2);
+        assert!(formats.contains(&OutputFormat::Pdf));
+        assert!(formats.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_html_only_pattern_excludes_pdf() {
+        let filter_sets = build_test_filter_sets(&["content/index.typ"], &[], &[]);
+        let project_root = std::path::PathBuf::from("/tmp/project");
+        let file = project_root.join("content/index.typ");
+        let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
+
+        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+
+        assert_eq!(formats.len(), 1);
+        assert!(formats.contains(&OutputFormat::Html));
+        assert!(!formats.contains(&OutputFormat::Pdf));
+    }
+
+    #[test]
+    fn test_pdf_only_pattern_excludes_html() {
+        let filter_sets = build_test_filter_sets(&[], &["content/print/**/*.typ"], &[]);
+        let project_root = std::path::PathBuf::from("/tmp/project");
+        let file = project_root.join("content/print/document.typ");
+        let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
+
+        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+
+        assert_eq!(formats.len(), 1);
+        assert!(formats.contains(&OutputFormat::Pdf));
+        assert!(!formats.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_epub_only_pattern_excludes_other_formats() {
+        let filter_sets = build_test_filter_sets(&[], &[], &["content/ebook/**/*.typ"]);
+        let project_root = std::path::PathBuf::from("/tmp/project");
+        let file = project_root.join("content/ebook/chapter1.typ");
+        let requested = vec![OutputFormat::Pdf, OutputFormat::Html, OutputFormat::Epub];
+
+        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+
+        assert_eq!(formats.len(), 1);
+        assert!(formats.contains(&OutputFormat::Epub));
+        assert!(!formats.contains(&OutputFormat::Pdf));
+        assert!(!formats.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_file_not_matching_pattern_gets_all_formats() {
+        let filter_sets = build_test_filter_sets(&["content/index.typ"], &["content/print/**/*.typ"], &[]);
+        let project_root = std::path::PathBuf::from("/tmp/project");
+        let file = project_root.join("content/other/document.typ");
+        let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
+
+        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+
+        assert_eq!(formats.len(), 2);
+        assert!(formats.contains(&OutputFormat::Pdf));
+        assert!(formats.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_respects_requested_formats() {
+        let filter_sets = build_test_filter_sets(&[], &[], &[]);
+        let project_root = std::path::PathBuf::from("/tmp/project");
+        let file = project_root.join("content/test.typ");
+        let requested = vec![OutputFormat::Pdf]; // Only PDF requested
+
+        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+
+        assert_eq!(formats.len(), 1);
+        assert!(formats.contains(&OutputFormat::Pdf));
+        assert!(!formats.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_html_only_file_with_pdf_requested() {
+        let filter_sets = build_test_filter_sets(&["content/index.typ"], &[], &[]);
+        let project_root = std::path::PathBuf::from("/tmp/project");
+        let file = project_root.join("content/index.typ");
+        let requested = vec![OutputFormat::Pdf]; // Only PDF requested, but file is html_only
+
+        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+
+        // File is html_only, so it shouldn't compile to PDF even if requested
+        assert_eq!(formats.len(), 0);
+    }
+
+    #[test]
+    fn test_glob_pattern_matching() {
+        let filter_sets = build_test_filter_sets(&["content/web/**/*.typ"], &[], &[]);
+        let project_root = std::path::PathBuf::from("/tmp/project");
+
+        // File matching the pattern
+        let file1 = project_root.join("content/web/blog/post.typ");
+        let formats1 = get_file_formats(&file1, &project_root, &filter_sets, &[OutputFormat::Pdf, OutputFormat::Html]).unwrap();
+        assert_eq!(formats1.len(), 1);
+        assert!(formats1.contains(&OutputFormat::Html));
+
+        // File not matching the pattern
+        let file2 = project_root.join("content/print/document.typ");
+        let formats2 = get_file_formats(&file2, &project_root, &filter_sets, &[OutputFormat::Pdf, OutputFormat::Html]).unwrap();
+        assert_eq!(formats2.len(), 2);
+        assert!(formats2.contains(&OutputFormat::Pdf));
+        assert!(formats2.contains(&OutputFormat::Html));
+    }
+}
