@@ -499,6 +499,10 @@ impl Cli {
 
                     // Send reload event if compilation succeeded and we have a server
                     if result.is_ok() {
+                        // Evict old entries from the comemo cache to prevent unbounded memory growth
+                        // during long watch sessions. This matches Typst CLI's behavior.
+                        comemo::evict(10);
+
                         if let Some((_, _, reload_tx)) = &server_info {
                             // Ignore errors if no clients are connected
                             let _ = reload_tx.send(());
