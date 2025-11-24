@@ -57,12 +57,10 @@ pub fn copy_images(project_dir: &Path, output_dir: &Path) -> Result<()> {
 
 /// Copy static files matching glob patterns from project to output directory
 ///
-/// Glob patterns are relative to project_dir
-/// Files maintain their relative directory structure in the output
+/// If content_dir is provided, glob patterns are evaluated relative to project_dir/content_dir
+/// and files are searched only within that directory. Otherwise, patterns are relative to project_dir.
 ///
-/// If content_dir is provided, it will be stripped from the output path for files
-/// that are matched inside that directory. This prevents the content_dir from
-/// appearing in the output structure.
+/// Files maintain their relative directory structure in the output.
 pub fn copy_static_files(
     project_dir: &Path,
     output_dir: &Path,
@@ -73,6 +71,13 @@ pub fn copy_static_files(
         debug!("no static file patterns configured");
         return Ok(());
     }
+
+    // Determine the root directory to search
+    let search_root = if let Some(content_dir) = content_dir {
+        project_dir.join(content_dir)
+    } else {
+        project_dir.to_path_buf()
+    };
 
     // Build glob set from patterns
     let mut builder = GlobSetBuilder::new();
@@ -94,30 +99,23 @@ pub fn copy_static_files(
 
     let mut copied_count = 0;
 
-    // Walk project directory and copy matching files
-    for entry in WalkDir::new(project_dir)
+    // Walk search root directory and copy matching files
+    for entry in WalkDir::new(&search_root)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
     {
         let path = entry.path();
 
-        // Get relative path for glob matching
-        let relative_path = match path.strip_prefix(project_dir) {
+        // Get relative path for glob matching (relative to search_root)
+        let relative_path = match path.strip_prefix(&search_root) {
             Ok(rel) => rel,
             Err(_) => continue,
         };
 
         // Check if file matches any pattern
         if globset.is_match(relative_path) {
-            // Strip content_dir prefix if the file is inside it
-            let output_relative_path = if let Some(content_dir) = content_dir {
-                relative_path.strip_prefix(content_dir).unwrap_or(relative_path)
-            } else {
-                relative_path
-            };
-
-            let dest_path = output_dir.join(output_relative_path);
+            let dest_path = output_dir.join(relative_path);
 
             // Create parent directory if needed
             if let Some(parent) = dest_path.parent() {
@@ -360,6 +358,49 @@ mod tests {
 
         // Verify no files were copied
         assert!(!output_dir.join("test.txt").exists());
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn test_copy_static_files_with_content_dir() {
+        let temp_dir = std::env::temp_dir().join("rheo_test_static_content_dir");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let project_dir = temp_dir.join("project");
+        let output_dir = temp_dir.join("output");
+
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        // Create content directory structure
+        let content_dir = project_dir.join("content");
+        let img_dir = content_dir.join("img");
+        fs::create_dir_all(&img_dir).unwrap();
+        fs::write(img_dir.join("photo.jpg"), b"jpeg data").unwrap();
+        fs::write(img_dir.join("logo.png"), b"png data").unwrap();
+
+        // Create subdirectory in img
+        let subdir = img_dir.join("icons");
+        fs::create_dir_all(&subdir).unwrap();
+        fs::write(subdir.join("star.svg"), b"svg data").unwrap();
+
+        // Copy with content_dir - patterns are relative to content_dir
+        let patterns = vec!["img/**".to_string()];
+        copy_static_files(&project_dir, &output_dir, &patterns, Some(Path::new("content")))
+            .expect("Failed to copy static files");
+
+        // Verify files were copied to output_dir/img/ (NOT output_dir/content/img/)
+        assert!(output_dir.join("img/photo.jpg").exists());
+        assert!(output_dir.join("img/logo.png").exists());
+        assert!(output_dir.join("img/icons/star.svg").exists());
+
+        // Verify content_dir is NOT in the output path
+        assert!(!output_dir.join("content").exists());
+
+        // Verify content
+        let jpg_content = fs::read(output_dir.join("img/photo.jpg")).unwrap();
+        assert_eq!(jpg_content, b"jpeg data");
 
         fs::remove_dir_all(&temp_dir).unwrap();
     }
