@@ -642,7 +642,11 @@ impl Cli {
                 // Use first .typ file as initial main (will be updated for each compilation)
                 let initial_main = borrowed_project.typ_files.first()
                     .ok_or_else(|| crate::RheoError::project_config("no .typ files found"))?;
-                let world = crate::world::RheoWorld::new(&compilation_root, initial_main, &repo_root)?;
+
+                // For watch mode: if compiling HTML, keep .typ links for transformation
+                // If compiling only PDF/EPUB, remove .typ links at source level
+                let remove_typ_links = !formats.contains(&OutputFormat::Html);
+                let world = crate::world::RheoWorld::new(&compilation_root, initial_main, &repo_root, remove_typ_links)?;
                 drop(borrowed_project);  // Release borrow before moving into RefCell
 
                 let world_cell = RefCell::new(world);
@@ -674,7 +678,9 @@ impl Cli {
                                     let new_initial_main = borrowed.typ_files.first()
                                         .ok_or_else(|| crate::RheoError::project_config("no .typ files found"))?;
 
-                                    match crate::world::RheoWorld::new(&new_compilation_root, new_initial_main, &repo_root) {
+                                    // Use same remove_typ_links setting as initial World creation
+                                    let remove_typ_links = !formats.contains(&OutputFormat::Html);
+                                    match crate::world::RheoWorld::new(&new_compilation_root, new_initial_main, &repo_root, remove_typ_links) {
                                         Ok(new_world) => {
                                             *world_cell.borrow_mut() = new_world;
                                             perform_compilation_incremental(

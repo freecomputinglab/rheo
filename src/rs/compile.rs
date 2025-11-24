@@ -15,7 +15,8 @@ use typst_pdf::PdfOptions;
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
     // Create the compilation world
-    let world = RheoWorld::new(root, input, repo_root)?;
+    // For standalone PDF compilation, remove relative .typ links from source
+    let world = RheoWorld::new(root, input, repo_root, true)?;
 
     // Compile the document
     info!(input = %input.display(), "compiling to PDF");
@@ -72,7 +73,8 @@ pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
     // Create the compilation world
-    let world = RheoWorld::new(root, input, repo_root)?;
+    // For HTML compilation, keep .typ links so we can transform them to .html
+    let world = RheoWorld::new(root, input, repo_root, false)?;
 
     // Compile the document to HtmlDocument
     info!(input = %input.display(), "compiling to HTML");
