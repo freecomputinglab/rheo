@@ -1,6 +1,6 @@
 = Half Loop - _Severance_ [s1/e2]
 
-In #link("https://screening-the-subject.ohrg.org/severance-ep-1.html")[the first episode], we were introduced to the two-sided subject at Lumon. 
+In #link("./severance-ep-1.typ")[the first episode], we were introduced to the two-sided subject at Lumon. 
 On the one hand, there is Mark S, the innie, who is screened for the first and major part of the episode.
 On the other, Mark Scout, the outie, to whose predicament we are introduced in the concluding scenes.
 S1E2 opens with a rewind on how innie Helly R came to be: how Milchick handed her flowers at end of her first day (which we glimpsed in S1E1 when Mark almost ran her over), a glimpse of her confidence gliding into the operating room on a higher floor of the same Lumon complex we saw Mark leave, a stereoscopic view of the implant procedure by which she becomes an android whose existence is #quote[spatially dictated] by Lumon's mysterious machinations.
@@ -32,7 +32,7 @@ of the new group of refiners.
 
 The overhead of Lumon Industries itself depicts a sketchy graph of a brain, one can't help but think. 
 Its upper floors all operate above board with normally conscious workers, whereas underground there is something sensitive enough happening so as to require extra precautions.
-In #link("./severance-ep-1.org")[S1E1's analysis], we introduced the idea that Lumon's interest in severing workers has to do with the mechanics of capital, in that surplus value can only ever be produced (in Marx's account) through the structural theft of time from its laborers.#footnote[#link("https://fi2.zrc-sazu.si/en/sodelavci/bostjan-nedoh-en")[Boštjan Nedoh] has evocatively called this operation #quote[theft without a thief].]
+In #link("./severance-ep-1.typ")[S1E1's analysis], we introduced the idea that Lumon's interest in severing workers has to do with the mechanics of capital, in that surplus value can only ever be produced (in Marx's account) through the structural theft of time from its laborers.#footnote[#link("https://fi2.zrc-sazu.si/en/sodelavci/bostjan-nedoh-en")[Boštjan Nedoh] has evocatively called this operation #quote[theft without a thief].]
 Lumon's spatial layout suggests that there might also be a psychoanalytic metaphor at stake in severance as an operation, where the happenings that occur in the business brain's basement are essential to what it really is, why it does what it does.
 
 Though Freud's theory has been popularized as a topographical notion, wherein the unconscious is the submerged part of the mind's iceberg of which we only see the tip, there is good reason to believe that this spatial description misrepresents how the unconscious should be properly understood. 
