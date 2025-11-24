@@ -1,6 +1,5 @@
 [compile]
 content_dir = "content"
-html_only = ["content/index.typ"]
 
 [html]
 static_files = ["img/**"]
