@@ -77,8 +77,12 @@ pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) 
     info!(input = %input.display(), "compiling to HTML");
     let result = typst::compile::<HtmlDocument>(&world);
 
-    // Print warnings
+    // Print warnings (filter out known Typst HTML development warning)
     for warning in &result.warnings {
+        // Skip the "html export is under active development" warning from Typst
+        if warning.message.contains("html export is under active development and incomplete") {
+            continue;
+        }
         warn!(message = %warning.message, "compilation warning");
     }
 
