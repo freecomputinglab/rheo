@@ -116,6 +116,9 @@ pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) 
             }
         })?;
 
+    // Transform .typ links to .html links
+    let html_string = transform_html_links(&html_string, input, root)?;
+
     // Write to file
     debug!(size = html_string.len(), "writing HTML file");
     std::fs::write(output, &html_string)
@@ -191,9 +194,11 @@ pub fn compile_pdf_incremental(world: &RheoWorld, output: &Path) -> Result<()> {
 ///
 /// # Arguments
 /// * `world` - Existing RheoWorld instance with main file already set
+/// * `input` - Path to the source .typ file (for link transformation)
 /// * `output` - Path where the HTML should be written
-#[instrument(skip_all, fields(output = %output.display()))]
-pub fn compile_html_incremental(world: &RheoWorld, output: &Path) -> Result<()> {
+/// * `root` - Project root path (for link validation)
+#[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
+pub fn compile_html_incremental(world: &RheoWorld, input: &Path, output: &Path, root: &Path) -> Result<()> {
     // Compile the document to HtmlDocument
     info!("compiling to HTML");
     let result = typst::compile::<HtmlDocument>(world);
@@ -236,6 +241,9 @@ pub fn compile_html_incremental(world: &RheoWorld, output: &Path) -> Result<()> 
             }
         })?;
 
+    // Transform .typ links to .html links
+    let html_string = transform_html_links(&html_string, input, root)?;
+
     // Write to file
     debug!(size = html_string.len(), "writing HTML file");
     std::fs::write(output, &html_string)
@@ -257,7 +265,7 @@ pub fn compile_html_incremental(world: &RheoWorld, output: &Path) -> Result<()> 
 /// * `Ok(String)` - Transformed HTML with .typ links changed to .html
 /// * `Err(RheoError)` - If a linked .typ file doesn't exist
 #[instrument(skip(html), fields(source = %source_file.display()))]
-fn transform_html_links(html: &str, source_file: &Path, root: &Path) -> Result<String> {
+pub fn transform_html_links(html: &str, source_file: &Path, root: &Path) -> Result<String> {
     // Regex to match href="..." attributes
     // Captures the href value in group 1
     let re = Regex::new(r#"href="([^"]*)""#)

@@ -405,7 +405,7 @@ fn perform_compilation_incremental(
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            match crate::compile::compile_html_incremental(world, &output_path) {
+            match crate::compile::compile_html_incremental(world, typ_file, &output_path, &project.root) {
                 Ok(_) => html_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
