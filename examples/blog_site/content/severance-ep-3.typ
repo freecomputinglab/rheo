@@ -3,7 +3,7 @@
 #image("img/severance-s1e3-shot1.png")
 
 == We need to talk about Ms. Cobel
-As we noted in #link("https://screening-the-subject.ohrg.org/severance-ep-1.html")[analysis of S1E1], she typically storms the screen with an icy blue, a temper (the significance of this word we shall unpack shortly) that seeks to quell the fiery red that flickers in and out of the consciousness of workers on the severed floor.
+As we noted in #link("./severance-ep-1.typ")[analysis of S1E1], she typically storms the screen with an icy blue, a temper (the significance of this word we shall unpack shortly) that seeks to quell the fiery red that flickers in and out of the consciousness of workers on the severed floor.
 The ominous ending to that first episode intimated that, while her wintery business has its office underground, it also warrants her prying into Mark's outie's personal life in Baird Creek's subsidized Lumon housing. 
 Indeed, it seems that Miss Cobel lives in Mark's housing complex, too. 
 From the state of her fridge, though, which we see in the foreground of a shot that implies surreptitious surveillance at work in her intimate space-- a sense that has already been produced in Mark's home with objects littered in the frame's foreground-- it doesn't appear that she spends very much time making a home there.
@@ -58,7 +58,7 @@ But the father energy on display in this episode is, by contrast, loudly and pro
   There is foreshadowing, too, of a fourth father figure in Rickon, Mark's brother-in-law.
   While reading his confiscated book, Milchick quietly remarks to himself a thought that will become an important refrain for many other characters with respect to Rickon later in the season: #quote[This is… Jesus.]
 ]
-Before tackling these fathers one by one, it is instructive to straightforwardly and schematically lay out the #strong[Oedipus complex], an 'absolute fiction' that nonetheless, Freud claims, depicts something foundational about the graph of the speaking subject, the graph in which we took interest in #link("./severance-ep-1.org")[our analysis of S1E1].
+Before tackling these fathers one by one, it is instructive to straightforwardly and schematically lay out the #strong[Oedipus complex], an 'absolute fiction' that nonetheless, Freud claims, depicts something foundational about the graph of the speaking subject, the graph in which we took interest in #link("./severance-ep-1.typ")[our analysis of S1E1].
 
 The Oedipus complex is so-named because it takes its architecture from the figure of Oedipus as he appears in the ancient Greek playwright #link("https://www.cliffsnotes.com/literature/o/the-oedipus-trilogy/about-the-oedipus-trilogy")[Sophocles' trilogy], which consists of the plays #emph[Oedipus Rex], #emph[Oedipus at Colonus], and #emph[Antigone].
 (Oedipus' tragic tale is drawn from a mythology that predates these plays, but the story is nonetheless usually traced to its Sophoclean production.) 
