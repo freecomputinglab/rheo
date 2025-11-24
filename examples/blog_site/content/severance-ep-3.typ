@@ -3,7 +3,7 @@
 #image("img/severance-s1e3-shot1.png")
 
 == We need to talk about Ms. Cobel
-As we noted in #link("./severance-ep-1.org")[analysis of S1E1], she typically storms the screen with an icy blue, a temper (the significance of this word we shall unpack shortly) that seeks to quell the fiery red that flickers in and out of the consciousness of workers on the severed floor.
+As we noted in #link("https://screening-the-subject.ohrg.org/severance-ep-1.html")[analysis of S1E1], she typically storms the screen with an icy blue, a temper (the significance of this word we shall unpack shortly) that seeks to quell the fiery red that flickers in and out of the consciousness of workers on the severed floor.
 The ominous ending to that first episode intimated that, while her wintery business has its office underground, it also warrants her prying into Mark's outie's personal life in Baird Creek's subsidized Lumon housing. 
 Indeed, it seems that Miss Cobel lives in Mark's housing complex, too. 
 From the state of her fridge, though, which we see in the foreground of a shot that implies surreptitious surveillance at work in her intimate space-- a sense that has already been produced in Mark's home with objects littered in the frame's foreground-- it doesn't appear that she spends very much time making a home there.
@@ -185,4 +185,4 @@ The second, and the closing scene of the epsiode, is Petey's psychotic demise at
 Ravaged by the failure of his complete quantification inside Lumon, Petey seems no longer to have a firm footing in either his innie's or outie's reality. 
 Mark looks on from a distance as he collapses outside the store, escorted by police, attempting (it seems) to account for his disintegration.
 
-#bibliography("../references.bib", style: "chicago-author-date")
+#bibliography("./references.bib", style: "chicago-author-date")

@@ -102,6 +102,36 @@ impl RheoWorld {
         })
     }
 
+    /// Reset the file cache for incremental compilation.
+    ///
+    /// This clears the cached source files and binary files, forcing them to be
+    /// reloaded on the next access. Fonts, library, and package storage are preserved.
+    ///
+    /// This should be called before each recompilation in watch mode to ensure
+    /// changed files are picked up while allowing Typst's comemo system to cache
+    /// compilation results based on the actual file contents.
+    pub fn reset(&self) {
+        self.slots.lock().clear();
+    }
+
+    /// Change the main file for this world.
+    ///
+    /// This allows reusing the same World instance to compile different files
+    /// in watch mode, which is more efficient than creating a new World for each file.
+    ///
+    /// # Arguments
+    /// * `main_file` - The new main .typ file to compile
+    pub fn set_main(&mut self, main_file: &Path) -> Result<()> {
+        let main_path = main_file.canonicalize()
+            .map_err(|e| RheoError::path(main_file, format!("failed to canonicalize main file: {}", e)))?;
+
+        let main_vpath = VirtualPath::within_root(&main_path, &self.root)
+            .ok_or_else(|| RheoError::path(&main_path, "main file must be within root directory"))?;
+
+        self.main = FileId::new(None, main_vpath);
+        Ok(())
+    }
+
     /// Calculate relative path from root to repo_root for rheo.typ import.
     #[allow(dead_code)]
     fn rheo_import_path(&self) -> Result<String> {

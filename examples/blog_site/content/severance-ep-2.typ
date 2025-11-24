@@ -1,6 +1,6 @@
 = Half Loop - _Severance_ [s1/e2]
 
-In #link("./severance-ep-1.typ")[the first episode], we were introduced to the two-sided subject at Lumon. 
+In #link("https://screening-the-subject.ohrg.org/severance-ep-1.html")[the first episode], we were introduced to the two-sided subject at Lumon. 
 On the one hand, there is Mark S, the innie, who is screened for the first and major part of the episode.
 On the other, Mark Scout, the outie, to whose predicament we are introduced in the concluding scenes.
 S1E2 opens with a rewind on how innie Helly R came to be: how Milchick handed her flowers at end of her first day (which we glimpsed in S1E1 when Mark almost ran her over), a glimpse of her confidence gliding into the operating room on a higher floor of the same Lumon complex we saw Mark leave, a stereoscopic view of the implant procedure by which she becomes an android whose existence is #quote[spatially dictated] by Lumon's mysterious machinations.
