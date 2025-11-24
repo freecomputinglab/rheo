@@ -40,6 +40,22 @@ exclude = ["content/lib/**/*.typ", "content/_*.typ"]
 
 Excludes library/template files from compilation.
 
+### Format-specific filtering
+```toml
+[compile]
+html_only = ["content/index.typ", "content/web/**/*.typ"]
+pdf_only = ["content/print/**/*.typ"]
+epub_only = ["content/ebook/**/*.typ"]
+```
+
+Controls which formats each file is compiled to:
+- `html_only`: Files matching these patterns will only be compiled to HTML
+- `pdf_only`: Files matching these patterns will only be compiled to PDF
+- `epub_only`: Files matching these patterns will only be compiled to EPUB
+- Files not matching any pattern will be compiled to all requested formats
+
+**Note**: A file cannot match multiple format-specific patterns - this will cause a configuration error during project setup.
+
 ### static_files
 ```toml
 [html]
@@ -58,6 +74,7 @@ Copies matching files to HTML output directory using glob patterns.
 2. **Compilation root**: The compilation root is set to `content/`, allowing proper path resolution
 3. **Static file copying**: CSS, images, and data files are copied to output using glob patterns
 4. **Exclusion patterns**: Library files in `content/lib/` are excluded from compilation
+5. **Format-specific filtering**: Control which files get compiled to which output formats (see blog_site example for usage)
 
 ## Compiling
 
