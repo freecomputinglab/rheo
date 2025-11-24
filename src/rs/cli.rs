@@ -337,6 +337,166 @@ fn perform_compilation(
     }
 }
 
+/// Perform compilation for a project with specified formats using an existing World (for watch mode).
+///
+/// This version reuses an existing RheoWorld instance, enabling incremental compilation
+/// through Typst's comemo caching system. The World is updated for each file via set_main()
+/// and reset() before compilation.
+///
+/// # Arguments
+/// * `world` - Mutable reference to RheoWorld for reuse across compilations
+/// * `project` - Project configuration with source files and assets
+/// * `output_config` - Output directory configuration
+/// * `formats` - List of formats to compile to
+///
+/// # Returns
+/// * `Ok(())` if at least one format fully succeeded
+/// * `Err` if all formats failed
+fn perform_compilation_incremental(
+    world: &mut crate::world::RheoWorld,
+    project: &crate::project::ProjectConfig,
+    output_config: &crate::output::OutputConfig,
+    formats: &[OutputFormat],
+) -> Result<()> {
+    // Check for .typ files
+    if project.typ_files.is_empty() {
+        return Err(crate::RheoError::project_config(
+            "no .typ files found in project",
+        ));
+    }
+
+    // Track success/failure per format for graceful degradation
+    let mut pdf_succeeded = 0;
+    let mut pdf_failed = 0;
+    let mut html_succeeded = 0;
+    let mut html_failed = 0;
+
+    for typ_file in &project.typ_files {
+        let filename = get_output_filename(typ_file)?;
+
+        // Determine which formats this file should be compiled to
+        let file_formats = get_file_formats(
+            typ_file,
+            &project.root,
+            &project.format_filters,
+            formats,
+        )?;
+
+        // Update world for this file and reset cache
+        world.set_main(typ_file)?;
+        world.reset();
+
+        // Compile to PDF
+        if file_formats.contains(&OutputFormat::Pdf) {
+            let output_path =
+                output_config.pdf_dir.join(&filename).with_extension("pdf");
+            match crate::compile::compile_pdf_incremental(world, &output_path) {
+                Ok(_) => pdf_succeeded += 1,
+                Err(e) => {
+                    error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
+                    pdf_failed += 1;
+                }
+            }
+        }
+
+        // Compile to HTML
+        if file_formats.contains(&OutputFormat::Html) {
+            let output_path = output_config
+                .html_dir
+                .join(&filename)
+                .with_extension("html");
+            match crate::compile::compile_html_incremental(world, &output_path) {
+                Ok(_) => html_succeeded += 1,
+                Err(e) => {
+                    error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
+                    html_failed += 1;
+                }
+            }
+        }
+    }
+
+    // Copy assets for HTML
+    if formats.contains(&OutputFormat::Html) {
+        // Use new glob-based static file copying if patterns are configured
+        let static_patterns = project.config.get_static_files_patterns();
+        if !static_patterns.is_empty() {
+            info!("copying static files using configured patterns");
+            let content_dir = project.config.compile.content_dir.as_deref().map(Path::new);
+            if let Err(e) = crate::assets::copy_static_files(
+                &project.root,
+                &output_config.html_dir,
+                static_patterns,
+                content_dir,
+            ) {
+                error!(error = %e, "failed to copy static files");
+            } else {
+                let count = static_patterns.len();
+                info!(count, "copied static files");
+            }
+        }
+    }
+
+    let total_files = project.typ_files.len();
+
+    // Log format-specific results
+    if formats.contains(&OutputFormat::Pdf) {
+        if pdf_failed > 0 {
+            warn!(
+                failed = pdf_failed,
+                succeeded = pdf_succeeded,
+                total = total_files,
+                "PDF compilation"
+            );
+        } else {
+            info!(
+                succeeded = pdf_succeeded,
+                total = total_files,
+                "PDF compilation complete"
+            );
+        }
+    }
+
+    if formats.contains(&OutputFormat::Html) {
+        if html_failed > 0 {
+            warn!(
+                failed = html_failed,
+                succeeded = html_succeeded,
+                total = total_files,
+                "HTML compilation"
+            );
+        } else {
+            info!(
+                succeeded = html_succeeded,
+                total = total_files,
+                "HTML compilation complete"
+            );
+        }
+    }
+
+    // Graceful degradation: succeed if ANY format fully succeeded
+    let pdf_fully_succeeded =
+        formats.contains(&OutputFormat::Pdf) && pdf_failed == 0 && pdf_succeeded > 0;
+    let html_fully_succeeded =
+        formats.contains(&OutputFormat::Html) && html_failed == 0 && html_succeeded > 0;
+
+    if pdf_fully_succeeded || html_fully_succeeded {
+        // At least one format succeeded completely
+        if pdf_failed > 0 || html_failed > 0 {
+            info!("compilation succeeded with warnings (some formats failed)");
+        } else {
+            info!("compilation succeeded");
+        }
+        Ok(())
+    } else {
+        // All requested formats had failures
+        let total_failed = pdf_failed + html_failed;
+        Err(crate::RheoError::project_config(format!(
+            "all formats failed: {} file(s) could not be compiled",
+            total_failed
+        )))
+    }
+}
+
 impl Cli {
     pub fn parse() -> Self {
         Parser::parse()
@@ -468,16 +628,36 @@ impl Cli {
                     None
                 };
 
-                // Set up file watcher with interior mutability for project updates
+                // Set up file watcher with interior mutability for project and world updates
                 use std::cell::RefCell;
                 let project_cell = RefCell::new(project);
+
+                // Create RheoWorld for incremental compilation (reused across file changes)
+                let repo_root = std::env::current_dir()
+                    .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
+                let borrowed_project = project_cell.borrow();
+                let compilation_root = borrowed_project.config.resolve_content_dir(&borrowed_project.root)
+                    .unwrap_or_else(|| borrowed_project.root.clone());
+
+                // Use first .typ file as initial main (will be updated for each compilation)
+                let initial_main = borrowed_project.typ_files.first()
+                    .ok_or_else(|| crate::RheoError::project_config("no .typ files found"))?;
+                let world = crate::world::RheoWorld::new(&compilation_root, initial_main, &repo_root)?;
+                drop(borrowed_project);  // Release borrow before moving into RefCell
+
+                let world_cell = RefCell::new(world);
 
                 info!("starting file watcher");
                 crate::watch::watch_project(&project_cell.borrow(), |event| {
                     let result = match event {
                         crate::watch::WatchEvent::FilesChanged => {
                             info!("files changed, recompiling");
-                            perform_compilation(&project_cell.borrow(), &output_config, &formats)
+                            perform_compilation_incremental(
+                                &mut world_cell.borrow_mut(),
+                                &project_cell.borrow(),
+                                &output_config,
+                                &formats
+                            )
                         }
                         crate::watch::WatchEvent::ConfigChanged => {
                             info!("config changed, reloading project");
@@ -487,7 +667,28 @@ impl Cli {
                                     *project_cell.borrow_mut() = new_project;
                                     let borrowed = project_cell.borrow();
                                     info!(name = %borrowed.name, files = borrowed.typ_files.len(), "reloaded project");
-                                    perform_compilation(&borrowed, &output_config, &formats)
+
+                                    // Recreate World with new configuration
+                                    let new_compilation_root = borrowed.config.resolve_content_dir(&borrowed.root)
+                                        .unwrap_or_else(|| borrowed.root.clone());
+                                    let new_initial_main = borrowed.typ_files.first()
+                                        .ok_or_else(|| crate::RheoError::project_config("no .typ files found"))?;
+
+                                    match crate::world::RheoWorld::new(&new_compilation_root, new_initial_main, &repo_root) {
+                                        Ok(new_world) => {
+                                            *world_cell.borrow_mut() = new_world;
+                                            perform_compilation_incremental(
+                                                &mut world_cell.borrow_mut(),
+                                                &borrowed,
+                                                &output_config,
+                                                &formats
+                                            )
+                                        }
+                                        Err(e) => {
+                                            error!(error = %e, "failed to recreate World after config change");
+                                            Err(e)
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     error!(error = %e, "failed to reload project config");
