@@ -42,6 +42,9 @@ pub struct RheoWorld {
 
     /// Package storage for downloading and caching packages.
     package_storage: PackageStorage,
+
+    /// Whether to remove relative .typ links from the main file (for PDF/EPUB).
+    remove_typ_links: bool,
 }
 
 /// Holds the processed data for a file ID.
@@ -59,7 +62,8 @@ impl RheoWorld {
     /// * `root` - The root directory for resolving imports (document directory)
     /// * `main_file` - The main .typ file to compile
     /// * `repo_root` - The repository root directory (for rheo.typ imports)
-    pub fn new(root: &Path, main_file: &Path, repo_root: &Path) -> Result<Self> {
+    /// * `remove_typ_links` - Whether to remove relative .typ links (for PDF/EPUB)
+    pub fn new(root: &Path, main_file: &Path, repo_root: &Path, remove_typ_links: bool) -> Result<Self> {
         // Resolve paths
         let root = root.canonicalize()
             .map_err(|e| RheoError::path(root, format!("failed to canonicalize root directory: {}", e)))?;
@@ -99,6 +103,7 @@ impl RheoWorld {
             fonts: font_search.fonts,
             slots: Mutex::new(HashMap::new()),
             package_storage,
+            remove_typ_links,
         })
     }
 
@@ -233,6 +238,11 @@ impl World for RheoWorld {
             let rheo_content = include_str!("../typ/rheo.typ");
             let template_inject = format!("{}\n#show: rheo_template\n\n", rheo_content);
             text = format!("{}{}", template_inject, text);
+
+            // Remove relative .typ links if requested (for PDF/EPUB)
+            if self.remove_typ_links {
+                text = crate::compile::remove_relative_typ_links(&text);
+            }
         }
 
         let source = Source::new(id, text);
