@@ -235,7 +235,7 @@ fn perform_compilation(
         let static_patterns = project.config.get_static_files_patterns();
         if !static_patterns.is_empty() {
             info!("copying static files using configured patterns");
-            let content_dir = project.config.compile.content_dir.as_deref().map(Path::new);
+            let content_dir = project.config.content_dir.as_deref().map(Path::new);
             if let Err(e) = crate::assets::copy_static_files(
                 &project.root,
                 &output_config.html_dir,
@@ -405,7 +405,7 @@ fn perform_compilation_incremental(
         let static_patterns = project.config.get_static_files_patterns();
         if !static_patterns.is_empty() {
             info!("copying static files using configured patterns");
-            let content_dir = project.config.compile.content_dir.as_deref().map(Path::new);
+            let content_dir = project.config.content_dir.as_deref().map(Path::new);
             if let Err(e) = crate::assets::copy_static_files(
                 &project.root,
                 &output_config.html_dir,

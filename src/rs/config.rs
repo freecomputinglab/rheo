@@ -7,6 +7,11 @@ use tracing::{debug, info, warn};
 /// Configuration for rheo compilation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RheoConfig {
+    /// Directory containing .typ content files (relative to project root)
+    /// If not specified, searches entire project root
+    /// Example: "content"
+    pub content_dir: Option<String>,
+
     #[serde(default)]
     pub compile: CompileConfig,
 
@@ -30,11 +35,6 @@ pub struct CompileConfig {
     /// Example: ["lib/**/*.typ", "_*/**"]
     #[serde(default = "default_exclude_patterns")]
     pub exclude: Vec<String>,
-
-    /// Directory containing .typ content files (relative to project root)
-    /// If not specified, searches entire project root
-    /// Example: "content"
-    pub content_dir: Option<String>,
 }
 
 /// HTML output configuration
@@ -79,8 +79,6 @@ impl Default for CompileConfig {
     fn default() -> Self {
         Self {
             exclude: default_exclude_patterns(),
-            content_dir: None,
-            
         }
     }
 }
@@ -93,6 +91,7 @@ fn default_exclude_patterns() -> Vec<String> {
 impl Default for RheoConfig {
     fn default() -> Self {
         Self {
+            content_dir: None,
             compile: CompileConfig::default(),
             html: HtmlConfig::default(),
             pdf: PdfConfig::default(),
@@ -146,7 +145,7 @@ impl RheoConfig {
     /// Resolve content_dir to an absolute path if configured
     /// Returns None if content_dir is not set or doesn't exist
     pub fn resolve_content_dir(&self, project_root: &Path) -> Option<std::path::PathBuf> {
-        self.compile.content_dir.as_ref().map(|dir| {
+        self.content_dir.as_ref().map(|dir| {
             let path = project_root.join(dir);
             debug!(content_dir = %path.display(), "resolved content directory");
             path
