@@ -1456,3 +1456,55 @@ error: Please commit or stash them.
 [2025-11-25 04:06:03] Import triggered by file change
 [2025-11-25 04:06:03] Starting auto-import...
 [2025-11-25 04:06:03] Skipping import: JSONL content unchanged
+[2025-11-25 04:10:38] Mutation detected: update rheo-3bv
+[2025-11-25 04:10:38] Mutation detected: update rheo-exo
+[2025-11-25 04:10:38] Mutation detected: update rheo-9dp
+[2025-11-25 04:10:38] Mutation detected: update rheo-rm8
+[2025-11-25 04:10:38] Mutation detected: update rheo-yq9
+[2025-11-25 04:10:38] Mutation detected: update rheo-t19
+[2025-11-25 04:10:39] Export triggered by mutation events
+[2025-11-25 04:10:39] Starting export...
+[2025-11-25 04:10:39] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-25 04:10:39] Exported to JSONL
+[2025-11-25 04:10:39] Export complete
+[2025-11-25 04:10:40] Import triggered by file change
+[2025-11-25 04:10:40] Starting auto-import...
+[2025-11-25 04:10:40] Skipping import: JSONL content unchanged
+[2025-11-25 04:12:54] Mutation detected: update rheo-fm7
+[2025-11-25 04:12:54] Mutation detected: update rheo-7zk
+[2025-11-25 04:12:54] Mutation detected: update rheo-h9c
+[2025-11-25 04:12:55] Export triggered by mutation events
+[2025-11-25 04:12:55] Starting export...
+[2025-11-25 04:12:55] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-25 04:12:55] Exported to JSONL
+[2025-11-25 04:12:55] Export complete
+[2025-11-25 04:12:56] Import triggered by file change
+[2025-11-25 04:12:56] Starting auto-import...
+[2025-11-25 04:12:56] Skipping import: JSONL content unchanged
+[2025-11-25 04:14:13] Mutation detected: update rheo-7zk
+[2025-11-25 04:14:13] Export triggered by mutation events
+[2025-11-25 04:14:13] Starting export...
+[2025-11-25 04:14:14] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-25 04:14:14] Exported to JSONL
+[2025-11-25 04:14:14] Export complete
+[2025-11-25 04:14:15] Import triggered by file change
+[2025-11-25 04:14:15] Starting auto-import...
+[2025-11-25 04:14:15] Skipping import: JSONL content unchanged
+[2025-11-25 04:15:10] Mutation detected: update rheo-7zk
+[2025-11-25 04:15:11] Export triggered by mutation events
+[2025-11-25 04:15:11] Starting export...
+[2025-11-25 04:15:11] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-25 04:15:11] Exported to JSONL
+[2025-11-25 04:15:11] Export complete
+[2025-11-25 04:15:12] Import triggered by file change
+[2025-11-25 04:15:12] Starting auto-import...
+[2025-11-25 04:15:12] Skipping import: JSONL content unchanged
+[2025-11-25 04:15:34] Mutation detected: update rheo-h9c
+[2025-11-25 04:15:34] Export triggered by mutation events
+[2025-11-25 04:15:34] Starting export...
+[2025-11-25 04:15:34] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-25 04:15:34] Exported to JSONL
+[2025-11-25 04:15:34] Export complete
+[2025-11-25 04:15:35] Import triggered by file change
+[2025-11-25 04:15:35] Starting auto-import...
+[2025-11-25 04:15:35] Skipping import: JSONL content unchanged
