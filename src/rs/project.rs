@@ -1,5 +1,4 @@
 use crate::{Result, RheoConfig, RheoError};
-use crate::config::FormatFilterSets;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 use walkdir::WalkDir;
@@ -16,8 +15,6 @@ pub struct ProjectConfig {
     /// Rheo configuration from rheo.toml
     pub config: RheoConfig,
 
-    /// Compiled format filter sets for efficient matching
-    pub format_filters: FormatFilterSets,
 
     /// List of .typ files in the project
     pub typ_files: Vec<PathBuf>,
@@ -50,9 +47,6 @@ impl ProjectConfig {
         let config = RheoConfig::load(&root)?;
         let exclusions = config.build_exclusion_set()?;
 
-        // Build format filter sets for per-file format filtering
-        let format_filters = config.build_format_filter_sets()?;
-
         // Determine search directory: content_dir if configured, otherwise project root
         let search_dir = config.resolve_content_dir(&root).unwrap_or_else(|| root.clone());
         debug!(search_dir = %search_dir.display(), "searching for .typ files");
@@ -75,8 +69,8 @@ impl ProjectConfig {
         let typ_files: Vec<PathBuf> = all_typ_files
             .into_iter()
             .filter(|path| {
-                // Make path relative to root for glob matching
-                let relative_path = match path.strip_prefix(&root) {
+                // Make path relative to search_dir for glob matching
+                let relative_path = match path.strip_prefix(&search_dir) {
                     Ok(rel) => rel,
                     Err(_) => return true, // Keep file if we can't make it relative
                 };
@@ -92,11 +86,6 @@ impl ProjectConfig {
         let excluded_count = total_count - typ_files.len();
         if excluded_count > 0 {
             info!(excluded = excluded_count, included = typ_files.len(), "applied exclusion filters");
-        }
-
-        // Check for format conflicts on all included files
-        for typ_file in &typ_files {
-            config.check_format_conflicts(typ_file, &format_filters, &root)?;
         }
 
         // Detect optional project-specific resources
@@ -125,7 +114,6 @@ impl ProjectConfig {
             name,
             root,
             config,
-            format_filters,
             typ_files,
             style_css,
             img_dir,

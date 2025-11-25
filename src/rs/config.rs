@@ -7,64 +7,79 @@ use tracing::{debug, info, warn};
 /// Configuration for rheo compilation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RheoConfig {
+    /// Directory containing .typ content files (relative to project root)
+    /// If not specified, searches entire project root
+    /// Example: "content"
+    pub content_dir: Option<String>,
+
     #[serde(default)]
     pub compile: CompileConfig,
 
     /// HTML-specific configuration
     #[serde(default)]
     pub html: HtmlConfig,
+
+    /// PDF-specific configuration
+    #[serde(default)]
+    pub pdf: PdfConfig,
+
+    /// EPUB-specific configuration
+    #[serde(default)]
+    pub epub: EpubConfig,
 }
 
 /// Compilation-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompileConfig {
     /// Glob patterns for files to exclude from compilation
+    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
     /// Example: ["lib/**/*.typ", "_*/**"]
     #[serde(default = "default_exclude_patterns")]
     pub exclude: Vec<String>,
-
-    /// Directory containing .typ content files (relative to project root)
-    /// If not specified, searches entire project root
-    /// Example: "content"
-    pub content_dir: Option<String>,
-
-    /// Glob patterns for files that should only be compiled to HTML
-    /// Example: ["web/**/*.typ", "index.typ"]
-    #[serde(default)]
-    #[serde(deserialize_with = "validate_glob_patterns")]
-    pub html_only: Vec<String>,
-
-    /// Glob patterns for files that should only be compiled to PDF
-    /// Example: ["print/**/*.typ"]
-    #[serde(default)]
-    #[serde(deserialize_with = "validate_glob_patterns")]
-    pub pdf_only: Vec<String>,
-
-    /// Glob patterns for files that should only be compiled to EPUB
-    /// Example: ["ebook/**/*.typ"]
-    #[serde(default)]
-    #[serde(deserialize_with = "validate_glob_patterns")]
-    pub epub_only: Vec<String>,
 }
 
 /// HTML output configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HtmlConfig {
     /// Glob patterns for static files to copy to HTML output
-    /// Patterns are evaluated relative to project root
+    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
     /// Example: ["img/**", "css/**", "data/*.json"]
     #[serde(default)]
     pub static_files: Vec<String>,
+
+
+    /// Glob patterns for files to exclude from HTML compilation
+    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
+    /// Example: ["index.typ", "pdf-only/**"]
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
+
+/// PDF output configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PdfConfig {
+    /// Glob patterns for files to exclude from PDF compilation
+    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
+    /// Example: ["index.typ", "web-only/**"]
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
+/// EPUB output configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EpubConfig {
+    /// Glob patterns for files to exclude from EPUB compilation
+    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
+    /// Example: ["index.typ", "web-only/**"]
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
 
 impl Default for CompileConfig {
     fn default() -> Self {
         Self {
             exclude: default_exclude_patterns(),
-            content_dir: None,
-            html_only: Vec::new(),
-            pdf_only: Vec::new(),
-            epub_only: Vec::new(),
         }
     }
 }
@@ -74,37 +89,14 @@ fn default_exclude_patterns() -> Vec<String> {
     vec!["lib/**/*.typ".to_string()]
 }
 
-/// Strict validation for glob patterns - fails deserialization if any pattern is invalid
-fn validate_glob_patterns<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::Error;
-    let patterns: Vec<String> = Vec::deserialize(deserializer)?;
-
-    // Validate each pattern
-    for pattern in &patterns {
-        Glob::new(pattern).map_err(|e| {
-            D::Error::custom(format!("invalid glob pattern '{}': {}", pattern, e))
-        })?;
-    }
-
-    Ok(patterns)
-}
-
-/// Holds compiled GlobSets for each format-specific filter
-#[derive(Debug)]
-pub struct FormatFilterSets {
-    pub html_only: GlobSet,
-    pub pdf_only: GlobSet,
-    pub epub_only: GlobSet,
-}
-
 impl Default for RheoConfig {
     fn default() -> Self {
         Self {
+            content_dir: None,
             compile: CompileConfig::default(),
             html: HtmlConfig::default(),
+            pdf: PdfConfig::default(),
+            epub: EpubConfig::default(),
         }
     }
 }
@@ -154,7 +146,7 @@ impl RheoConfig {
     /// Resolve content_dir to an absolute path if configured
     /// Returns None if content_dir is not set or doesn't exist
     pub fn resolve_content_dir(&self, project_root: &Path) -> Option<std::path::PathBuf> {
-        self.compile.content_dir.as_ref().map(|dir| {
+        self.content_dir.as_ref().map(|dir| {
             let path = project_root.join(dir);
             debug!(content_dir = %path.display(), "resolved content directory");
             path
@@ -167,18 +159,19 @@ impl RheoConfig {
         &self.html.static_files
     }
 
-    /// Build GlobSets for format-specific file patterns
-    /// Note: Patterns were already validated during deserialization
-    pub fn build_format_filter_sets(&self) -> Result<FormatFilterSets> {
-        let html_only = Self::build_globset(&self.compile.html_only, "html_only")?;
-        let pdf_only = Self::build_globset(&self.compile.pdf_only, "pdf_only")?;
-        let epub_only = Self::build_globset(&self.compile.epub_only, "epub_only")?;
+    /// Build GlobSet for HTML exclusions
+    pub fn build_html_exclusion_set(&self) -> Result<GlobSet> {
+        Self::build_globset(&self.html.exclude, "html.exclude")
+    }
 
-        Ok(FormatFilterSets {
-            html_only,
-            pdf_only,
-            epub_only,
-        })
+    /// Build GlobSet for PDF exclusions
+    pub fn build_pdf_exclusion_set(&self) -> Result<GlobSet> {
+        Self::build_globset(&self.pdf.exclude, "pdf.exclude")
+    }
+
+    /// Build GlobSet for EPUB exclusions
+    pub fn build_epub_exclusion_set(&self) -> Result<GlobSet> {
+        Self::build_globset(&self.epub.exclude, "epub.exclude")
     }
 
     /// Helper to build a GlobSet from validated patterns
@@ -201,45 +194,8 @@ impl RheoConfig {
             ))
     }
 
-    /// Check if a file matches multiple format-specific patterns (which is an error)
-    /// Returns an error if the file matches more than one format filter
-    pub fn check_format_conflicts(
-        &self,
-        file_path: &Path,
-        filter_sets: &FormatFilterSets,
-        project_root: &Path,
-    ) -> Result<()> {
-        // Make path relative to project root for matching
-        let relative_path = file_path.strip_prefix(project_root)
-            .map_err(|_| crate::RheoError::path(
-                file_path,
-                format!("file is not within project root {}", project_root.display())
-            ))?;
 
-        let mut matched_formats = Vec::new();
-
-        if filter_sets.html_only.is_match(relative_path) {
-            matched_formats.push("html_only");
-        }
-        if filter_sets.pdf_only.is_match(relative_path) {
-            matched_formats.push("pdf_only");
-        }
-        if filter_sets.epub_only.is_match(relative_path) {
-            matched_formats.push("epub_only");
-        }
-
-        if matched_formats.len() > 1 {
-            return Err(crate::RheoError::project_config(format!(
-                "file '{}' matches multiple format-specific patterns: {}",
-                relative_path.display(),
-                matched_formats.join(", ")
-            )));
-        }
-
-        Ok(())
-    }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,171 +220,54 @@ mod tests {
         assert!(!exclusions.is_match("src/main.typ"));
     }
 
-    #[test]
-    fn test_format_specific_patterns_default_empty() {
-        let config = RheoConfig::default();
-        assert!(config.compile.html_only.is_empty());
-        assert!(config.compile.pdf_only.is_empty());
-        assert!(config.compile.epub_only.is_empty());
-    }
-
-    #[test]
-    fn test_valid_format_patterns() {
-        let toml = r#"
-            [compile]
-            html_only = ["web/**/*.typ", "index.typ"]
-            pdf_only = ["print/**/*.typ"]
-            epub_only = ["ebook/**/*.typ"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.compile.html_only, vec!["web/**/*.typ", "index.typ"]);
-        assert_eq!(config.compile.pdf_only, vec!["print/**/*.typ"]);
-        assert_eq!(config.compile.epub_only, vec!["ebook/**/*.typ"]);
-    }
-
-    #[test]
-    fn test_invalid_glob_pattern_fails() {
-        let toml = r#"
-            [compile]
-            html_only = ["web/[invalid.typ"]
-        "#;
-
-        let result: std::result::Result<RheoConfig, _> = toml::from_str(toml);
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("invalid glob pattern"));
-        assert!(err_msg.contains("web/[invalid.typ"));
-    }
-
-    #[test]
-    fn test_mixed_valid_and_invalid_pattern_fails() {
-        let toml = r#"
-            [compile]
-            html_only = ["valid/**/*.typ", "invalid/[*.typ"]
-        "#;
-
-        let result: std::result::Result<RheoConfig, _> = toml::from_str(toml);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_build_format_filter_sets() {
-        let toml = r#"
-            [compile]
-            html_only = ["web/**/*.typ"]
-            pdf_only = ["print/**/*.typ"]
-            epub_only = ["ebook/**/*.typ"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
-        let filter_sets = config.build_format_filter_sets().unwrap();
-
-        // Test HTML only patterns
-        assert!(filter_sets.html_only.is_match("web/index.typ"));
-        assert!(filter_sets.html_only.is_match("web/sub/page.typ"));
-        assert!(!filter_sets.html_only.is_match("print/doc.typ"));
-
-        // Test PDF only patterns
-        assert!(filter_sets.pdf_only.is_match("print/doc.typ"));
-        assert!(!filter_sets.pdf_only.is_match("web/index.typ"));
-
-        // Test EPUB only patterns
-        assert!(filter_sets.epub_only.is_match("ebook/chapter.typ"));
-        assert!(!filter_sets.epub_only.is_match("web/index.typ"));
-    }
-
-    #[test]
-    fn test_no_conflict_when_different_files() {
-        let toml = r#"
-            [compile]
-            html_only = ["web/**/*.typ"]
-            pdf_only = ["print/**/*.typ"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
-        let filter_sets = config.build_format_filter_sets().unwrap();
-        let project_root = std::path::PathBuf::from("/tmp/project");
-
-        // Different files - no conflict
-        let web_file = project_root.join("web/index.typ");
-        assert!(config.check_format_conflicts(&web_file, &filter_sets, &project_root).is_ok());
-
-        let print_file = project_root.join("print/doc.typ");
-        assert!(config.check_format_conflicts(&print_file, &filter_sets, &project_root).is_ok());
-    }
-
-    #[test]
-    fn test_conflict_detected_html_and_pdf() {
-        let toml = r#"
-            [compile]
-            html_only = ["**/*.typ"]
-            pdf_only = ["docs/**/*.typ"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
-        let filter_sets = config.build_format_filter_sets().unwrap();
-        let project_root = std::path::PathBuf::from("/tmp/project");
-
-        // File matches both patterns
-        let conflicting_file = project_root.join("docs/guide.typ");
-        let result = config.check_format_conflicts(&conflicting_file, &filter_sets, &project_root);
-
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("matches multiple format-specific patterns"));
-        assert!(err_msg.contains("html_only"));
-        assert!(err_msg.contains("pdf_only"));
-    }
-
-    #[test]
-    fn test_conflict_detected_all_three_formats() {
-        let toml = r#"
-            [compile]
-            html_only = ["**/*.typ"]
-            pdf_only = ["**/*.typ"]
-            epub_only = ["**/*.typ"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
-        let filter_sets = config.build_format_filter_sets().unwrap();
-        let project_root = std::path::PathBuf::from("/tmp/project");
-
-        let file = project_root.join("any.typ");
-        let result = config.check_format_conflicts(&file, &filter_sets, &project_root);
-
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("html_only"));
-        assert!(err_msg.contains("pdf_only"));
-        assert!(err_msg.contains("epub_only"));
-    }
-
-    #[test]
-    fn test_no_conflict_when_no_patterns_match() {
-        let toml = r#"
-            [compile]
-            html_only = ["web/**/*.typ"]
-            pdf_only = ["print/**/*.typ"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
-        let filter_sets = config.build_format_filter_sets().unwrap();
-        let project_root = std::path::PathBuf::from("/tmp/project");
-
-        // File doesn't match any pattern - no conflict
-        let other_file = project_root.join("other/file.typ");
-        assert!(config.check_format_conflicts(&other_file, &filter_sets, &project_root).is_ok());
-    }
-
-    #[test]
-    fn test_empty_filter_sets() {
-        let config = RheoConfig::default();
-        let filter_sets = config.build_format_filter_sets().unwrap();
-        let project_root = std::path::PathBuf::from("/tmp/project");
-
-        // No patterns configured - should never conflict
-        let file = project_root.join("any.typ");
-        assert!(config.check_format_conflicts(&file, &filter_sets, &project_root).is_ok());
-    }
 }
+
+    #[test]
+    fn test_per_format_exclusions_default_empty() {
+        let config = RheoConfig::default();
+        assert!(config.html.exclude.is_empty());
+        assert!(config.pdf.exclude.is_empty());
+        assert!(config.epub.exclude.is_empty());
+    }
+
+    #[test]
+    fn test_per_format_exclusion_patterns() {
+        let toml = r#"
+            [html]
+            exclude = ["pdf-only/**/*.typ"]
+            
+            [pdf]
+            exclude = ["index.typ", "web/**/*.typ"]
+            
+            [epub]
+            exclude = ["index.typ"]
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.html.exclude, vec!["pdf-only/**/*.typ"]);
+        assert_eq!(config.pdf.exclude, vec!["index.typ", "web/**/*.typ"]);
+        assert_eq!(config.epub.exclude, vec!["index.typ"]);
+    }
+
+    #[test]
+    fn test_build_per_format_exclusion_sets() {
+        let toml = r#"
+            [html]
+            exclude = ["pdf-only/**/*.typ"]
+            
+            [pdf]
+            exclude = ["web/**/*.typ"]
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let html_exclusions = config.build_html_exclusion_set().unwrap();
+        let pdf_exclusions = config.build_pdf_exclusion_set().unwrap();
+
+        // Test HTML exclusions
+        assert!(html_exclusions.is_match("pdf-only/doc.typ"));
+        assert!(!html_exclusions.is_match("web/index.typ"));
+
+        // Test PDF exclusions
+        assert!(pdf_exclusions.is_match("web/index.typ"));
+        assert!(!pdf_exclusions.is_match("pdf-only/doc.typ"));
+    }

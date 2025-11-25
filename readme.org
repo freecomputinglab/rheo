@@ -92,6 +92,59 @@ rheo compile examples/web_book --verbose
 RUST_LOG=rheo=trace rheo compile examples/web_book
 #+end_src
 
+** Link Transformation
+
+rheo automatically transforms cross-document links based on the output format to ensure they work correctly in each context.
+
+*** PDF Output
+
+Relative =.typ= links are *removed* from the compiled PDF, preserving only the link text. This prevents broken links in the PDF output since Typst files don't exist in the PDF context.
+
+Example Typst source:
+#+begin_src typst
+See the #link("./about.typ")[about page] for more information.
+#+end_src
+
+Compiles to PDF as:
+#+begin_example
+See the about page for more information.
+#+end_example
+
+*** HTML Output
+
+Relative =.typ= links are *transformed* to =.html= links with validation. rheo verifies that the linked files exist and are within the project boundaries.
+
+Example Typst source:
+#+begin_src typst
+See the #link("./about.typ")[about page] for more information.
+#+end_src
+
+Compiles to HTML as:
+#+begin_src html
+See the <a href="./about.html">about page</a> for more information.
+#+end_src
+
+If a linked file doesn't exist, rheo will report a detailed error during compilation.
+
+*** External Links
+
+External links (HTTP, HTTPS, mailto) are *preserved* in all output formats:
+
+#+begin_src typst
+Visit #link("https://example.com")[our website] or
+email us at #link("mailto:hello@example.com")[hello@example.com].
+#+end_src
+
+This works identically in both PDF and HTML output.
+
+*** Fragment Links
+
+Fragment-only links (anchors within the same document) are preserved:
+
+#+begin_src typst
+See the #link("#introduction")[introduction] section.
+#+end_src
+
 ** Project Structure
 
 Each project folder can contain its own =.typ= files, =style.css=, =img/= directory, and =references.bib=.

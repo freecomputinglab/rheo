@@ -103,48 +103,39 @@ fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
 }
 
 /// Determine which formats should be compiled for a given file
-/// based on format-specific patterns and requested formats
+/// based on per-format exclusion patterns and requested formats
 fn get_file_formats(
     file: &Path,
     project_root: &Path,
-    filter_sets: &crate::config::FormatFilterSets,
+    config: &crate::RheoConfig,
     requested_formats: &[OutputFormat],
 ) -> Result<Vec<OutputFormat>> {
-    // Make path relative to project root for matching
-    let relative_path = file.strip_prefix(project_root)
+    // Determine the base path for relative pattern matching
+    let base_path = if let Some(content_dir) = config.resolve_content_dir(project_root) {
+        content_dir
+    } else {
+        project_root.to_path_buf()
+    };
+
+    // Make path relative to base_path for matching
+    let relative_path = file.strip_prefix(&base_path)
         .map_err(|_| crate::RheoError::path(
             file,
-            format!("file is not within project root {}", project_root.display())
+            format!("file is not within base path {}", base_path.display())
         ))?;
+
+    // Build exclusion sets for each format
+    let html_exclusions = config.build_html_exclusion_set()?;
+    let pdf_exclusions = config.build_pdf_exclusion_set()?;
+    let epub_exclusions = config.build_epub_exclusion_set()?;
 
     let mut formats = Vec::new();
 
     for &format in requested_formats {
         let should_compile = match format {
-            OutputFormat::Pdf => {
-                // Compile to PDF if:
-                // - File matches pdf_only pattern, OR
-                // - File doesn't match any format-specific pattern
-                filter_sets.pdf_only.is_match(relative_path) ||
-                    (!filter_sets.html_only.is_match(relative_path) &&
-                     !filter_sets.epub_only.is_match(relative_path))
-            }
-            OutputFormat::Html => {
-                // Compile to HTML if:
-                // - File matches html_only pattern, OR
-                // - File doesn't match any format-specific pattern
-                filter_sets.html_only.is_match(relative_path) ||
-                    (!filter_sets.pdf_only.is_match(relative_path) &&
-                     !filter_sets.epub_only.is_match(relative_path))
-            }
-            OutputFormat::Epub => {
-                // Compile to EPUB if:
-                // - File matches epub_only pattern, OR
-                // - File doesn't match any format-specific pattern
-                filter_sets.epub_only.is_match(relative_path) ||
-                    (!filter_sets.pdf_only.is_match(relative_path) &&
-                     !filter_sets.html_only.is_match(relative_path))
-            }
+            OutputFormat::Pdf => !pdf_exclusions.is_match(relative_path),
+            OutputFormat::Html => !html_exclusions.is_match(relative_path),
+            OutputFormat::Epub => !epub_exclusions.is_match(relative_path),
         };
 
         if should_compile {
@@ -202,7 +193,7 @@ fn perform_compilation(
         let file_formats = get_file_formats(
             typ_file,
             &project.root,
-            &project.format_filters,
+            &project.config,
             formats,
         )?;
 
@@ -251,7 +242,7 @@ fn perform_compilation(
         let static_patterns = project.config.get_static_files_patterns();
         if !static_patterns.is_empty() {
             info!("copying static files using configured patterns");
-            let content_dir = project.config.compile.content_dir.as_deref().map(Path::new);
+            let content_dir = project.config.content_dir.as_deref().map(Path::new);
             if let Err(e) = crate::assets::copy_static_files(
                 &project.root,
                 &output_config.html_dir,
@@ -378,7 +369,7 @@ fn perform_compilation_incremental(
         let file_formats = get_file_formats(
             typ_file,
             &project.root,
-            &project.format_filters,
+            &project.config,
             formats,
         )?;
 
@@ -421,7 +412,7 @@ fn perform_compilation_incremental(
         let static_patterns = project.config.get_static_files_patterns();
         if !static_patterns.is_empty() {
             info!("copying static files using configured patterns");
-            let content_dir = project.config.compile.content_dir.as_deref().map(Path::new);
+            let content_dir = project.config.content_dir.as_deref().map(Path::new);
             if let Err(e) = crate::assets::copy_static_files(
                 &project.root,
                 &output_config.html_dir,
@@ -760,44 +751,27 @@ impl Cli {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use globset::{Glob, GlobSetBuilder};
-    use crate::config::FormatFilterSets;
 
-    fn build_test_filter_sets(
-        html_only: &[&str],
-        pdf_only: &[&str],
-        epub_only: &[&str],
-    ) -> FormatFilterSets {
-        let mut html_builder = GlobSetBuilder::new();
-        for pattern in html_only {
-            html_builder.add(Glob::new(pattern).unwrap());
-        }
-
-        let mut pdf_builder = GlobSetBuilder::new();
-        for pattern in pdf_only {
-            pdf_builder.add(Glob::new(pattern).unwrap());
-        }
-
-        let mut epub_builder = GlobSetBuilder::new();
-        for pattern in epub_only {
-            epub_builder.add(Glob::new(pattern).unwrap());
-        }
-
-        FormatFilterSets {
-            html_only: html_builder.build().unwrap(),
-            pdf_only: pdf_builder.build().unwrap(),
-            epub_only: epub_builder.build().unwrap(),
-        }
+    fn build_test_config(
+        html_exclude: &[&str],
+        pdf_exclude: &[&str],
+        epub_exclude: &[&str],
+    ) -> crate::RheoConfig {
+        let mut config = crate::RheoConfig::default();
+        config.html.exclude = html_exclude.iter().map(|s| s.to_string()).collect();
+        config.pdf.exclude = pdf_exclude.iter().map(|s| s.to_string()).collect();
+        config.epub.exclude = epub_exclude.iter().map(|s| s.to_string()).collect();
+        config
     }
 
     #[test]
-    fn test_no_filters_compiles_all_formats() {
-        let filter_sets = build_test_filter_sets(&[], &[], &[]);
+    fn test_no_exclusions_compiles_all_formats() {
+        let config = build_test_config(&[], &[], &[]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/test.typ");
         let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
 
-        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
 
         assert_eq!(formats.len(), 2);
         assert!(formats.contains(&OutputFormat::Pdf));
@@ -805,13 +779,13 @@ mod tests {
     }
 
     #[test]
-    fn test_html_only_pattern_excludes_pdf() {
-        let filter_sets = build_test_filter_sets(&["content/index.typ"], &[], &[]);
+    fn test_pdf_exclusion_excludes_pdf() {
+        let config = build_test_config(&[], &["content/index.typ"], &[]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/index.typ");
         let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
 
-        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
 
         assert_eq!(formats.len(), 1);
         assert!(formats.contains(&OutputFormat::Html));
@@ -819,13 +793,13 @@ mod tests {
     }
 
     #[test]
-    fn test_pdf_only_pattern_excludes_html() {
-        let filter_sets = build_test_filter_sets(&[], &["content/print/**/*.typ"], &[]);
+    fn test_html_exclusion_excludes_html() {
+        let config = build_test_config(&["content/print/**/*.typ"], &[], &[]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/print/document.typ");
         let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
 
-        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
 
         assert_eq!(formats.len(), 1);
         assert!(formats.contains(&OutputFormat::Pdf));
@@ -833,13 +807,13 @@ mod tests {
     }
 
     #[test]
-    fn test_epub_only_pattern_excludes_other_formats() {
-        let filter_sets = build_test_filter_sets(&[], &[], &["content/ebook/**/*.typ"]);
+    fn test_html_and_pdf_exclusions_leave_only_epub() {
+        let config = build_test_config(&["content/ebook/**/*.typ"], &["content/ebook/**/*.typ"], &[]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/ebook/chapter1.typ");
         let requested = vec![OutputFormat::Pdf, OutputFormat::Html, OutputFormat::Epub];
 
-        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
 
         assert_eq!(formats.len(), 1);
         assert!(formats.contains(&OutputFormat::Epub));
@@ -848,13 +822,13 @@ mod tests {
     }
 
     #[test]
-    fn test_file_not_matching_pattern_gets_all_formats() {
-        let filter_sets = build_test_filter_sets(&["content/index.typ"], &["content/print/**/*.typ"], &[]);
+    fn test_file_not_matching_exclusions_gets_all_formats() {
+        let config = build_test_config(&["content/index.typ"], &["content/print/**/*.typ"], &[]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/other/document.typ");
         let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
 
-        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
 
         assert_eq!(formats.len(), 2);
         assert!(formats.contains(&OutputFormat::Pdf));
@@ -863,12 +837,12 @@ mod tests {
 
     #[test]
     fn test_respects_requested_formats() {
-        let filter_sets = build_test_filter_sets(&[], &[], &[]);
+        let config = build_test_config(&[], &[], &[]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/test.typ");
         let requested = vec![OutputFormat::Pdf]; // Only PDF requested
 
-        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
 
         assert_eq!(formats.len(), 1);
         assert!(formats.contains(&OutputFormat::Pdf));
@@ -876,32 +850,32 @@ mod tests {
     }
 
     #[test]
-    fn test_html_only_file_with_pdf_requested() {
-        let filter_sets = build_test_filter_sets(&["content/index.typ"], &[], &[]);
+    fn test_html_excluded_file_with_html_requested() {
+        let config = build_test_config(&["content/index.typ"], &[], &[]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/index.typ");
-        let requested = vec![OutputFormat::Pdf]; // Only PDF requested, but file is html_only
+        let requested = vec![OutputFormat::Html]; // Only HTML requested, but file is html-excluded
 
-        let formats = get_file_formats(&file, &project_root, &filter_sets, &requested).unwrap();
+        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
 
-        // File is html_only, so it shouldn't compile to PDF even if requested
+        // File is excluded from HTML, so it shouldn't compile to HTML even if requested
         assert_eq!(formats.len(), 0);
     }
 
     #[test]
     fn test_glob_pattern_matching() {
-        let filter_sets = build_test_filter_sets(&["content/web/**/*.typ"], &[], &[]);
+        let config = build_test_config(&[], &["content/web/**/*.typ"], &[]);
         let project_root = std::path::PathBuf::from("/tmp/project");
 
-        // File matching the pattern
+        // File matching the PDF exclusion pattern
         let file1 = project_root.join("content/web/blog/post.typ");
-        let formats1 = get_file_formats(&file1, &project_root, &filter_sets, &[OutputFormat::Pdf, OutputFormat::Html]).unwrap();
+        let formats1 = get_file_formats(&file1, &project_root, &config, &[OutputFormat::Pdf, OutputFormat::Html]).unwrap();
         assert_eq!(formats1.len(), 1);
         assert!(formats1.contains(&OutputFormat::Html));
 
-        // File not matching the pattern
+        // File not matching the exclusion pattern
         let file2 = project_root.join("content/print/document.typ");
-        let formats2 = get_file_formats(&file2, &project_root, &filter_sets, &[OutputFormat::Pdf, OutputFormat::Html]).unwrap();
+        let formats2 = get_file_formats(&file2, &project_root, &config, &[OutputFormat::Pdf, OutputFormat::Html]).unwrap();
         assert_eq!(formats2.len(), 2);
         assert!(formats2.contains(&OutputFormat::Pdf));
         assert!(formats2.contains(&OutputFormat::Html));

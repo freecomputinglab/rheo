@@ -1,7 +1,7 @@
 {
-  "pid": 25646,
-  "parent_pid": 25633,
+  "pid": 48860,
+  "parent_pid": 48847,
   "database": "/home/lox/code/rheo/.beads/beads.db",
   "version": "0.24.0",
-  "started_at": "2025-11-23T20:22:17.374817952Z"
+  "started_at": "2025-11-25T02:38:28.349560896Z"
 }
