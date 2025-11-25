@@ -19,15 +19,16 @@ blog_site/
 ## Configuration (rheo.toml)
 
 ```toml
-[compile]
 content_dir = "content"
 
 [html]
 static_files = ["img/**"]
 
 [pdf]
-exclude = ["content/index.typ"]
+exclude = ["index.typ"]
 ```
+
+**Note:** All patterns (`static_files` and `exclude`) are relative to `content_dir`, not the project root. This means `exclude = ["index.typ"]` matches `content/index.typ`.
 
 ### Format-Specific Filtering
 
