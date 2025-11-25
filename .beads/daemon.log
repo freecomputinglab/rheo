@@ -1353,3 +1353,21 @@ error: Please commit or stash them.
 [2025-11-23 22:31:45] Import triggered by file change
 [2025-11-23 22:31:45] Starting auto-import...
 [2025-11-23 22:31:45] Skipping import: JSONL content unchanged
+[2025-11-25 03:38:28] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-25 03:38:28] Using database: /home/lox/code/rheo/.beads/beads.db
+[2025-11-25 03:38:28] Database opened: /home/lox/code/rheo/.beads/beads.db
+[2025-11-25 03:38:28] Upgrading .beads/.gitignore...
+[2025-11-25 03:38:28] Warning: failed to upgrade .gitignore: open .beads/.gitignore: no such file or directory
+[2025-11-25 03:38:28] Repository fingerprint validated: 2a548dad
+[2025-11-25 03:38:28] Starting RPC server: /home/lox/code/rheo/.beads/bd.sock
+[2025-11-25 03:38:28] RPC server ready (socket listening)
+[2025-11-25 03:38:28] Registered in global registry
+[2025-11-25 03:38:28] Starting sync cycle...
+[2025-11-25 03:38:28] Exported to JSONL
+[2025-11-25 03:38:28] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: additionally, your index contains uncommitted changes.
+error: Please commit or stash them.
+
+[2025-11-25 03:38:28] Monitoring parent process (PID 0)
+[2025-11-25 03:38:28] Using event-driven mode
