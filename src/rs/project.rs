@@ -69,8 +69,8 @@ impl ProjectConfig {
         let typ_files: Vec<PathBuf> = all_typ_files
             .into_iter()
             .filter(|path| {
-                // Make path relative to root for glob matching
-                let relative_path = match path.strip_prefix(&root) {
+                // Make path relative to search_dir for glob matching
+                let relative_path = match path.strip_prefix(&search_dir) {
                     Ok(rel) => rel,
                     Err(_) => return true, // Keep file if we can't make it relative
                 };

@@ -32,6 +32,7 @@ pub struct RheoConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompileConfig {
     /// Glob patterns for files to exclude from compilation
+    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
     /// Example: ["lib/**/*.typ", "_*/**"]
     #[serde(default = "default_exclude_patterns")]
     pub exclude: Vec<String>,

@@ -110,11 +110,18 @@ fn get_file_formats(
     config: &crate::RheoConfig,
     requested_formats: &[OutputFormat],
 ) -> Result<Vec<OutputFormat>> {
-    // Make path relative to project root for matching
-    let relative_path = file.strip_prefix(project_root)
+    // Determine the base path for relative pattern matching
+    let base_path = if let Some(content_dir) = config.resolve_content_dir(project_root) {
+        content_dir
+    } else {
+        project_root.to_path_buf()
+    };
+
+    // Make path relative to base_path for matching
+    let relative_path = file.strip_prefix(&base_path)
         .map_err(|_| crate::RheoError::path(
             file,
-            format!("file is not within project root {}", project_root.display())
+            format!("file is not within base path {}", base_path.display())
         ))?;
 
     // Build exclusion sets for each format

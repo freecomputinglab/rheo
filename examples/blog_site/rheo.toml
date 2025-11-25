@@ -4,4 +4,4 @@ content_dir = "content"
 static_files = ["img/**"]
 
 [pdf]
-exclude = ["content/index.typ"]
+exclude = ["index.typ"]
