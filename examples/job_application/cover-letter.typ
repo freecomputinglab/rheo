@@ -49,11 +49,6 @@ When applying, please focus on crafting a compelling cover letter. This document
 
 #import "lib.typ": aspirationally
 
-#let role = [Assistant Professor of Digital Media]
-#let department = [the School of Literature, Media, and Communication at Georgia Tech]
-#let name = [Lachlan Kermode] 
-// #let online-materials-link = "https://ohrg.org/materials/michigan"
-
 #show: aspirationally(
   name: [Lachlan Kermode],
   title: [Cover Letter],

@@ -13,14 +13,6 @@ pub struct RheoConfig {
     /// HTML-specific configuration
     #[serde(default)]
     pub html: HtmlConfig,
-
-    /// PDF-specific configuration
-    #[serde(default)]
-    pub pdf: PdfConfig,
-
-    /// EPUB-specific configuration
-    #[serde(default)]
-    pub epub: EpubConfig,
 }
 
 /// Compilation-specific configuration
@@ -59,39 +51,11 @@ pub struct CompileConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HtmlConfig {
     /// Glob patterns for static files to copy to HTML output
-    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
+    /// Patterns are evaluated relative to project root
     /// Example: ["img/**", "css/**", "data/*.json"]
     #[serde(default)]
     pub static_files: Vec<String>,
-
-
-    /// Glob patterns for files to exclude from HTML compilation
-    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
-    /// Example: ["index.typ", "pdf-only/**"]
-    #[serde(default)]
-    pub exclude: Vec<String>,
 }
-
-/// PDF output configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PdfConfig {
-    /// Glob patterns for files to exclude from PDF compilation
-    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
-    /// Example: ["index.typ", "web-only/**"]
-    #[serde(default)]
-    pub exclude: Vec<String>,
-}
-
-/// EPUB output configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct EpubConfig {
-    /// Glob patterns for files to exclude from EPUB compilation
-    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
-    /// Example: ["index.typ", "web-only/**"]
-    #[serde(default)]
-    pub exclude: Vec<String>,
-}
-
 
 impl Default for CompileConfig {
     fn default() -> Self {
@@ -141,8 +105,6 @@ impl Default for RheoConfig {
         Self {
             compile: CompileConfig::default(),
             html: HtmlConfig::default(),
-            pdf: PdfConfig::default(),
-            epub: EpubConfig::default(),
         }
     }
 }
@@ -217,21 +179,6 @@ impl RheoConfig {
             pdf_only,
             epub_only,
         })
-    }
-
-    /// Build GlobSet for HTML exclusions
-    pub fn build_html_exclusion_set(&self) -> Result<GlobSet> {
-        Self::build_globset(&self.html.exclude, "html.exclude")
-    }
-
-    /// Build GlobSet for PDF exclusions
-    pub fn build_pdf_exclusion_set(&self) -> Result<GlobSet> {
-        Self::build_globset(&self.pdf.exclude, "pdf.exclude")
-    }
-
-    /// Build GlobSet for EPUB exclusions
-    pub fn build_epub_exclusion_set(&self) -> Result<GlobSet> {
-        Self::build_globset(&self.epub.exclude, "epub.exclude")
     }
 
     /// Helper to build a GlobSet from validated patterns
@@ -485,53 +432,3 @@ mod tests {
         assert!(config.check_format_conflicts(&file, &filter_sets, &project_root).is_ok());
     }
 }
-
-    #[test]
-    fn test_per_format_exclusions_default_empty() {
-        let config = RheoConfig::default();
-        assert!(config.html.exclude.is_empty());
-        assert!(config.pdf.exclude.is_empty());
-        assert!(config.epub.exclude.is_empty());
-    }
-
-    #[test]
-    fn test_per_format_exclusion_patterns() {
-        let toml = r#"
-            [html]
-            exclude = ["pdf-only/**/*.typ"]
-            
-            [pdf]
-            exclude = ["index.typ", "web/**/*.typ"]
-            
-            [epub]
-            exclude = ["index.typ"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.html.exclude, vec!["pdf-only/**/*.typ"]);
-        assert_eq!(config.pdf.exclude, vec!["index.typ", "web/**/*.typ"]);
-        assert_eq!(config.epub.exclude, vec!["index.typ"]);
-    }
-
-    #[test]
-    fn test_build_per_format_exclusion_sets() {
-        let toml = r#"
-            [html]
-            exclude = ["pdf-only/**/*.typ"]
-            
-            [pdf]
-            exclude = ["web/**/*.typ"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
-        let html_exclusions = config.build_html_exclusion_set().unwrap();
-        let pdf_exclusions = config.build_pdf_exclusion_set().unwrap();
-
-        // Test HTML exclusions
-        assert!(html_exclusions.is_match("pdf-only/doc.typ"));
-        assert!(!html_exclusions.is_match("web/index.typ"));
-
-        // Test PDF exclusions
-        assert!(pdf_exclusions.is_match("web/index.typ"));
-        assert!(!pdf_exclusions.is_match("pdf-only/doc.typ"));
-    }
