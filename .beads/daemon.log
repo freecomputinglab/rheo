@@ -1420,3 +1420,39 @@ error: Please commit or stash them.
 [2025-11-25 04:02:59] Starting auto-import...
 [2025-11-25 04:02:59] Skipping import: JSONL content unchanged
 [2025-11-25 04:04:47] Mutation detected: update rheo-yq9
+[2025-11-25 04:04:47] Export triggered by mutation events
+[2025-11-25 04:04:47] Starting export...
+[2025-11-25 04:04:47] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-25 04:04:47] Exported to JSONL
+[2025-11-25 04:04:47] Export complete
+[2025-11-25 04:04:48] Import triggered by file change
+[2025-11-25 04:04:48] Starting auto-import...
+[2025-11-25 04:04:48] Skipping import: JSONL content unchanged
+[2025-11-25 04:04:55] Mutation detected: update rheo-t19
+[2025-11-25 04:04:56] Export triggered by mutation events
+[2025-11-25 04:04:56] Starting export...
+[2025-11-25 04:04:56] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-25 04:04:56] Exported to JSONL
+[2025-11-25 04:04:56] Export complete
+[2025-11-25 04:04:57] Import triggered by file change
+[2025-11-25 04:04:57] Starting auto-import...
+[2025-11-25 04:04:57] Skipping import: JSONL content unchanged
+[2025-11-25 04:05:11] Mutation detected: update rheo-t19
+[2025-11-25 04:05:12] Export triggered by mutation events
+[2025-11-25 04:05:12] Starting export...
+[2025-11-25 04:05:12] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-25 04:05:12] File change detected: /home/lox/code/rheo/.beads/beads.left.jsonl (op: CHMOD)
+[2025-11-25 04:05:12] Exported to JSONL
+[2025-11-25 04:05:12] Export complete
+[2025-11-25 04:05:13] Import triggered by file change
+[2025-11-25 04:05:13] Starting auto-import...
+[2025-11-25 04:05:13] Skipping import: JSONL content unchanged
+[2025-11-25 04:06:01] Mutation detected: update rheo-t19
+[2025-11-25 04:06:02] Export triggered by mutation events
+[2025-11-25 04:06:02] Starting export...
+[2025-11-25 04:06:02] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-25 04:06:02] Exported to JSONL
+[2025-11-25 04:06:02] Export complete
+[2025-11-25 04:06:03] Import triggered by file change
+[2025-11-25 04:06:03] Starting auto-import...
+[2025-11-25 04:06:03] Skipping import: JSONL content unchanged
