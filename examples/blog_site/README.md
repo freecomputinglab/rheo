@@ -21,28 +21,30 @@ blog_site/
 ```toml
 [compile]
 content_dir = "content"
-html_only = ["content/index.typ"]
 
 [html]
-static_files = ["content/img/**"]
+static_files = ["img/**"]
+
+[pdf]
+exclude = ["content/index.typ"]
 ```
 
 ### Format-Specific Filtering
 
-This example demonstrates the `html_only` pattern:
+This example demonstrates per-format exclusions:
 
-- **index.typ**: Compiled to HTML only (not PDF)
+- **index.typ**: Excluded from PDF compilation
   - This is a landing page meant for web viewing
-  - PDF compilation would be unnecessary for this file
+  - PDF compilation is unnecessary for this file
 
 - **Blog posts**: Compiled to both PDF and HTML
   - Individual blog posts can be read on the web or downloaded as PDFs
-  - No format-specific pattern, so they compile to all requested formats
+  - No exclusions, so they compile to all requested formats
 
 ## Use Case
 
 This configuration is ideal for blogs or documentation sites where:
-- The landing page/index is only needed in HTML
+- The landing page/index should only be in HTML
 - Content pages should be available in multiple formats
 
 ## Compiling
@@ -73,4 +75,4 @@ Output will be in `build/blog_site/`:
 - `pdf/` - Contains PDF files for blog posts only
   - `severance-ep-1.pdf`, `severance-ep-2.pdf`, `severance-ep-3.pdf`
   - `writing-in-typst.pdf`
-  - (no `index.pdf` - excluded by `html_only` pattern)
+  - (no `index.pdf` - excluded by `pdf.exclude` pattern)

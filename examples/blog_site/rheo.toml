@@ -4,3 +4,5 @@ content_dir = "content"
 [html]
 static_files = ["img/**"]
 
+[pdf]
+exclude = ["content/index.typ"]
