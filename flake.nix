@@ -12,35 +12,31 @@
   outputs = { self, nixpkgs, flake-utils, typst, rust-overlay, crane }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
-          inherit system overlays;
+          inherit system;
         };
 
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-          extensions = [ "rustfmt" "clippy" "rust-analyzer" ];
+        # Create crane library with default stable rust
+        craneLib = crane.mkLib pkgs;
+
+        # Source filtering to include Cargo files and resources in src/
+        src = pkgs.lib.cleanSourceWith {
+          src = craneLib.path ./.;
+          filter = path: type:
+            (craneLib.filterCargoSources path type) ||
+            (pkgs.lib.hasInfix "/src/" path);
         };
-
-
-        # Create crane library with our custom toolchain
-        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
-
-        # Custom source filter to include all files in src/ (typ, css, csl, etc.)
-        srcFilter = path: _type: builtins.match ".*/src/.*" path != null;
-        srcOrCargo = path: type:
-          (srcFilter path type) || (craneLib.filterCargoSources path type);
 
         # Build *just* the cargo dependencies (for caching)
         cargoArtifacts = craneLib.buildDepsOnly {
-          src = craneLib.cleanCargoSource ./.;
+          inherit src;
           buildInputs = with pkgs; [ openssl ];
           nativeBuildInputs = with pkgs; [ pkg-config perl ];
         };
       in
       {
         packages.default = craneLib.buildPackage {
-          inherit cargoArtifacts;
-          src = craneLib.cleanCargoSource ./.;
+          inherit cargoArtifacts src;
 
           buildInputs = with pkgs; [
             openssl
@@ -55,10 +51,15 @@
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             # Rust toolchain
-            rustToolchain
+            cargo
+            rustc
+            rustfmt
+            clippy
+            rust-analyzer
             pkg-config
+            openssl
 
-            # Temporary dev tools for comparison 
+            # Temporary dev tools for comparison
             pandoc
             just
             # calibre # first example of ebook-convert command
