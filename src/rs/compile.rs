@@ -1,5 +1,5 @@
-use crate::{Result, RheoError};
 use crate::world::RheoWorld;
+use crate::{Result, RheoError};
 use regex::Regex;
 use std::path::Path;
 use tracing::{debug, error, info, instrument, warn};
@@ -34,7 +34,8 @@ pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -
             for err in &errors {
                 error!(message = %err.message, "compilation error");
             }
-            let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+            let error_messages: Vec<String> =
+                errors.iter().map(|e| e.message.to_string()).collect();
             return Err(RheoError::Compilation {
                 count: errors.len(),
                 errors: error_messages.join("\n"),
@@ -44,17 +45,16 @@ pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -
 
     // Export to PDF
     debug!(output = %output.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default())
-        .map_err(|errors| {
-            for err in &errors {
-                error!(message = %err.message, "PDF export error");
-            }
-            let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-            RheoError::PdfExport {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            }
-        })?;
+    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default()).map_err(|errors| {
+        for err in &errors {
+            error!(message = %err.message, "PDF export error");
+        }
+        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+        RheoError::PdfExport {
+            count: errors.len(),
+            errors: error_messages.join("\n"),
+        }
+    })?;
 
     // Write to file
     debug!(size = pdf_bytes.len(), "writing PDF file");
@@ -83,7 +83,10 @@ pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) 
     // Print warnings (filter out known Typst HTML development warning)
     for warning in &result.warnings {
         // Skip the "html export is under active development" warning from Typst
-        if warning.message.contains("html export is under active development and incomplete") {
+        if warning
+            .message
+            .contains("html export is under active development and incomplete")
+        {
             continue;
         }
         warn!(message = %warning.message, "compilation warning");
@@ -96,7 +99,8 @@ pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) 
             for err in &errors {
                 error!(message = %err.message, "compilation error");
             }
-            let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+            let error_messages: Vec<String> =
+                errors.iter().map(|e| e.message.to_string()).collect();
             return Err(RheoError::Compilation {
                 count: errors.len(),
                 errors: error_messages.join("\n"),
@@ -106,17 +110,16 @@ pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) 
 
     // Export to HTML string
     debug!(output = %output.display(), "exporting to HTML");
-    let html_string = typst_html::html(&document)
-        .map_err(|errors| {
-            for err in &errors {
-                error!(message = %err.message, "HTML export error");
-            }
-            let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-            RheoError::HtmlExport {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            }
-        })?;
+    let html_string = typst_html::html(&document).map_err(|errors| {
+        for err in &errors {
+            error!(message = %err.message, "HTML export error");
+        }
+        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+        RheoError::HtmlExport {
+            count: errors.len(),
+            errors: error_messages.join("\n"),
+        }
+    })?;
 
     // Transform .typ links to .html links
     let html_string = transform_html_links(&html_string, input, root)?;
@@ -157,7 +160,8 @@ pub fn compile_pdf_incremental(world: &RheoWorld, output: &Path) -> Result<()> {
             for err in &errors {
                 error!(message = %err.message, "compilation error");
             }
-            let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+            let error_messages: Vec<String> =
+                errors.iter().map(|e| e.message.to_string()).collect();
             return Err(RheoError::Compilation {
                 count: errors.len(),
                 errors: error_messages.join("\n"),
@@ -167,17 +171,16 @@ pub fn compile_pdf_incremental(world: &RheoWorld, output: &Path) -> Result<()> {
 
     // Export to PDF
     debug!(output = %output.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default())
-        .map_err(|errors| {
-            for err in &errors {
-                error!(message = %err.message, "PDF export error");
-            }
-            let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-            RheoError::PdfExport {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            }
-        })?;
+    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default()).map_err(|errors| {
+        for err in &errors {
+            error!(message = %err.message, "PDF export error");
+        }
+        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+        RheoError::PdfExport {
+            count: errors.len(),
+            errors: error_messages.join("\n"),
+        }
+    })?;
 
     // Write to file
     debug!(size = pdf_bytes.len(), "writing PDF file");
@@ -200,7 +203,12 @@ pub fn compile_pdf_incremental(world: &RheoWorld, output: &Path) -> Result<()> {
 /// * `output` - Path where the HTML should be written
 /// * `root` - Project root path (for link validation)
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-pub fn compile_html_incremental(world: &RheoWorld, input: &Path, output: &Path, root: &Path) -> Result<()> {
+pub fn compile_html_incremental(
+    world: &RheoWorld,
+    input: &Path,
+    output: &Path,
+    root: &Path,
+) -> Result<()> {
     // Compile the document to HtmlDocument
     info!("compiling to HTML");
     let result = typst::compile::<HtmlDocument>(world);
@@ -208,7 +216,10 @@ pub fn compile_html_incremental(world: &RheoWorld, input: &Path, output: &Path, 
     // Print warnings (filter out known Typst HTML development warning)
     for warning in &result.warnings {
         // Skip the "html export is under active development" warning from Typst
-        if warning.message.contains("html export is under active development and incomplete") {
+        if warning
+            .message
+            .contains("html export is under active development and incomplete")
+        {
             continue;
         }
         warn!(message = %warning.message, "compilation warning");
@@ -221,7 +232,8 @@ pub fn compile_html_incremental(world: &RheoWorld, input: &Path, output: &Path, 
             for err in &errors {
                 error!(message = %err.message, "compilation error");
             }
-            let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+            let error_messages: Vec<String> =
+                errors.iter().map(|e| e.message.to_string()).collect();
             return Err(RheoError::Compilation {
                 count: errors.len(),
                 errors: error_messages.join("\n"),
@@ -231,17 +243,16 @@ pub fn compile_html_incremental(world: &RheoWorld, input: &Path, output: &Path, 
 
     // Export to HTML string
     debug!(output = %output.display(), "exporting to HTML");
-    let html_string = typst_html::html(&document)
-        .map_err(|errors| {
-            for err in &errors {
-                error!(message = %err.message, "HTML export error");
-            }
-            let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-            RheoError::HtmlExport {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            }
-        })?;
+    let html_string = typst_html::html(&document).map_err(|errors| {
+        for err in &errors {
+            error!(message = %err.message, "HTML export error");
+        }
+        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+        RheoError::HtmlExport {
+            count: errors.len(),
+            errors: error_messages.join("\n"),
+        }
+    })?;
 
     // Transform .typ links to .html links
     let html_string = transform_html_links(&html_string, input, root)?;
@@ -291,18 +302,18 @@ pub fn remove_relative_typ_links(source: &str) -> String {
     // 3. #link("/abs/path.typ")[text] -> [text]
     // 4. #link("https://example.com")[text] -> preserve
 
-    let re = Regex::new(r#"#link\("([^"]+)"\)(\[[^\]]+\]|,\s*[^)]+)"#)
-        .expect("invalid regex pattern");
+    let re =
+        Regex::new(r#"#link\("([^"]+)"\)(\[[^\]]+\]|,\s*[^)]+)"#).expect("invalid regex pattern");
 
     let result = re.replace_all(source, |caps: &regex::Captures| {
         let url = &caps[1];
         let body = &caps[2];
 
         // Check if this is a relative .typ link
-        let is_relative_typ = url.ends_with(".typ") &&
-            !url.starts_with("http://") &&
-            !url.starts_with("https://") &&
-            !url.starts_with("mailto:");
+        let is_relative_typ = url.ends_with(".typ")
+            && !url.starts_with("http://")
+            && !url.starts_with("https://")
+            && !url.starts_with("mailto:");
 
         if is_relative_typ {
             // Remove the link, keep just the body
@@ -337,17 +348,18 @@ pub fn remove_relative_typ_links(source: &str) -> String {
 pub fn transform_html_links(html: &str, source_file: &Path, root: &Path) -> Result<String> {
     // Regex to match href="..." attributes
     // Captures the href value in group 1
-    let re = Regex::new(r#"href="([^"]*)""#)
-        .expect("invalid regex pattern");
+    let re = Regex::new(r#"href="([^"]*)""#).expect("invalid regex pattern");
 
-    let source_dir = source_file.parent()
+    let source_dir = source_file
+        .parent()
         .ok_or_else(|| RheoError::path(source_file, "source file has no parent directory"))?;
 
     let mut errors = Vec::new();
     let mut result = html.to_string();
 
     // Find all matches and collect them (to avoid borrowing issues)
-    let matches: Vec<_> = re.captures_iter(html)
+    let matches: Vec<_> = re
+        .captures_iter(html)
         .map(|cap| cap[1].to_string())
         .collect();
 
@@ -356,7 +368,8 @@ pub fn transform_html_links(html: &str, source_file: &Path, root: &Path) -> Resu
         if href.starts_with("http://")
             || href.starts_with("https://")
             || href.starts_with("mailto:")
-            || href.starts_with("//") {
+            || href.starts_with("//")
+        {
             continue;
         }
 
@@ -392,7 +405,8 @@ pub fn transform_html_links(html: &str, source_file: &Path, root: &Path) -> Resu
             };
 
             // Check if the resolved path is within the project
-            let root_canonical = root.canonicalize()
+            let root_canonical = root
+                .canonicalize()
                 .map_err(|e| RheoError::io(e, format!("canonicalizing root path {:?}", root)))?;
 
             if !linked_path.starts_with(&root_canonical) {
@@ -407,7 +421,10 @@ pub fn transform_html_links(html: &str, source_file: &Path, root: &Path) -> Resu
 
             // Transform the link from .typ to .html
             let new_href = href.replace(".typ", ".html");
-            result = result.replace(&format!(r#"href="{}""#, href), &format!(r#"href="{}""#, new_href));
+            result = result.replace(
+                &format!(r#"href="{}""#, href),
+                &format!(r#"href="{}""#, new_href),
+            );
             debug!(from = %href, to = %new_href, "transformed link");
         }
     }
@@ -523,9 +540,13 @@ mod tests {
 
     #[test]
     fn test_remove_relative_typ_links_mixed() {
-        let source = r#"See #link("./local.typ")[local] and #link("https://example.com")[external]."#;
+        let source =
+            r#"See #link("./local.typ")[local] and #link("https://example.com")[external]."#;
         let result = remove_relative_typ_links(source);
-        assert_eq!(result, r#"See [local] and #link("https://example.com")[external]."#);
+        assert_eq!(
+            result,
+            r#"See [local] and #link("https://example.com")[external]."#
+        );
     }
 
     #[test]

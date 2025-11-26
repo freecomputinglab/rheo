@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
@@ -11,9 +11,9 @@ use typst::syntax::{FileId, Source, VirtualPath};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
+use typst_kit::download::Downloader;
 use typst_kit::fonts::{FontSlot, Fonts};
 use typst_kit::package::PackageStorage;
-use typst_kit::download::Downloader;
 use typst_library::{Feature, Features};
 
 /// A simple World implementation for rheo compilation.
@@ -63,18 +63,36 @@ impl RheoWorld {
     /// * `main_file` - The main .typ file to compile
     /// * `repo_root` - The repository root directory (for rheo.typ imports)
     /// * `remove_typ_links` - Whether to remove relative .typ links (for PDF/EPUB)
-    pub fn new(root: &Path, main_file: &Path, repo_root: &Path, remove_typ_links: bool) -> Result<Self> {
+    pub fn new(
+        root: &Path,
+        main_file: &Path,
+        repo_root: &Path,
+        remove_typ_links: bool,
+    ) -> Result<Self> {
         // Resolve paths
-        let root = root.canonicalize()
-            .map_err(|e| RheoError::path(root, format!("failed to canonicalize root directory: {}", e)))?;
-        let main_path = main_file.canonicalize()
-            .map_err(|e| RheoError::path(main_file, format!("failed to canonicalize main file: {}", e)))?;
-        let repo_root = repo_root.canonicalize()
-            .map_err(|e| RheoError::path(repo_root, format!("failed to canonicalize repo root: {}", e)))?;
+        let root = root.canonicalize().map_err(|e| {
+            RheoError::path(
+                root,
+                format!("failed to canonicalize root directory: {}", e),
+            )
+        })?;
+        let main_path = main_file.canonicalize().map_err(|e| {
+            RheoError::path(
+                main_file,
+                format!("failed to canonicalize main file: {}", e),
+            )
+        })?;
+        let repo_root = repo_root.canonicalize().map_err(|e| {
+            RheoError::path(
+                repo_root,
+                format!("failed to canonicalize repo root: {}", e),
+            )
+        })?;
 
         // Create virtual path for main file
-        let main_vpath = VirtualPath::within_root(&main_path, &root)
-            .ok_or_else(|| RheoError::path(&main_path, "main file must be within root directory"))?;
+        let main_vpath = VirtualPath::within_root(&main_path, &root).ok_or_else(|| {
+            RheoError::path(&main_path, "main file must be within root directory")
+        })?;
         let main = FileId::new(None, main_vpath);
 
         // Build library with HTML feature enabled
@@ -89,8 +107,8 @@ impl RheoWorld {
 
         // Create package storage with default paths and downloader
         let package_storage = PackageStorage::new(
-            None,  // Use default cache directory
-            None,  // Use default data directory
+            None, // Use default cache directory
+            None, // Use default data directory
             Downloader::new("rheo/0.1.0"),
         );
 
@@ -127,11 +145,16 @@ impl RheoWorld {
     /// # Arguments
     /// * `main_file` - The new main .typ file to compile
     pub fn set_main(&mut self, main_file: &Path) -> Result<()> {
-        let main_path = main_file.canonicalize()
-            .map_err(|e| RheoError::path(main_file, format!("failed to canonicalize main file: {}", e)))?;
+        let main_path = main_file.canonicalize().map_err(|e| {
+            RheoError::path(
+                main_file,
+                format!("failed to canonicalize main file: {}", e),
+            )
+        })?;
 
-        let main_vpath = VirtualPath::within_root(&main_path, &self.root)
-            .ok_or_else(|| RheoError::path(&main_path, "main file must be within root directory"))?;
+        let main_vpath = VirtualPath::within_root(&main_path, &self.root).ok_or_else(|| {
+            RheoError::path(&main_path, "main file must be within root directory")
+        })?;
 
         self.main = FileId::new(None, main_vpath);
         Ok(())
@@ -143,11 +166,13 @@ impl RheoWorld {
         let rheo_typ = self.repo_root.join("src/typ/rheo.typ");
 
         // Calculate relative path from root to rheo.typ
-        let rel_path = pathdiff::diff_paths(&rheo_typ, &self.root)
-            .ok_or_else(|| RheoError::path(&rheo_typ, "failed to calculate relative path to rheo.typ"))?;
+        let rel_path = pathdiff::diff_paths(&rheo_typ, &self.root).ok_or_else(|| {
+            RheoError::path(&rheo_typ, "failed to calculate relative path to rheo.typ")
+        })?;
 
         // Convert to Typst import format (forward slashes, must start with ./)
-        let mut path_str = rel_path.to_str()
+        let mut path_str = rel_path
+            .to_str()
             .ok_or_else(|| RheoError::path(&rel_path, "path contains invalid UTF-8"))?
             .replace('\\', "/");
 
@@ -163,23 +188,27 @@ impl RheoWorld {
     fn path_for_id(&self, id: FileId) -> FileResult<PathBuf> {
         // Special handling for stdin (which we don't support)
         if id.vpath().as_rooted_path().starts_with("<") {
-            return Err(FileError::NotFound(id.vpath().as_rooted_path().display().to_string().into()));
+            return Err(FileError::NotFound(
+                id.vpath().as_rooted_path().display().to_string().into(),
+            ));
         }
 
         // Handle package imports
         let mut root = &self.root;
-        let mut buf = PathBuf::new();
 
+        let buf;
         if let Some(spec) = id.package() {
             // Download and prepare the package if needed
-            buf = self.package_storage
+            buf = self
+                .package_storage
                 .prepare_package(spec, &mut PrintDownload::new(spec))?;
             root = &buf;
         }
 
         // Construct path relative to root (or package root)
-        let path = id.vpath().resolve(root)
-            .ok_or_else(|| FileError::NotFound(id.vpath().as_rooted_path().display().to_string().into()))?;
+        let path = id.vpath().resolve(root).ok_or_else(|| {
+            FileError::NotFound(id.vpath().as_rooted_path().display().to_string().into())
+        })?;
 
         // If the file doesn't exist at the resolved location, try the document directory
         // This handles cases where templates in subdirectories (or packages) reference
@@ -229,8 +258,7 @@ impl World for RheoWorld {
 
         // Load from file system
         let path = self.path_for_id(id)?;
-        let mut text = fs::read_to_string(&path)
-            .map_err(|e| FileError::from_io(e, &path))?;
+        let mut text = fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
 
         // For the main file, inject the rheo.typ template automatically
         if id == self.main {
@@ -266,8 +294,7 @@ impl World for RheoWorld {
 
         // Load from file system
         let path = self.path_for_id(id)?;
-        let data = fs::read(&path)
-            .map_err(|e| FileError::from_io(e, &path))?;
+        let data = fs::read(&path).map_err(|e| FileError::from_io(e, &path))?;
 
         let bytes = Bytes::new(data);
 

@@ -118,11 +118,12 @@ fn get_file_formats(
     };
 
     // Make path relative to base_path for matching
-    let relative_path = file.strip_prefix(&base_path)
-        .map_err(|_| crate::RheoError::path(
+    let relative_path = file.strip_prefix(&base_path).map_err(|_| {
+        crate::RheoError::path(
             file,
-            format!("file is not within base path {}", base_path.display())
-        ))?;
+            format!("file is not within base path {}", base_path.display()),
+        )
+    })?;
 
     // Build exclusion sets for each format
     let html_exclusions = config.build_html_exclusion_set()?;
@@ -183,30 +184,22 @@ fn perform_compilation(
 
     // Use content_dir as compilation root if configured, otherwise use project root
     // This allows files in subdirectories to reference files in parent directories
-    let compilation_root = project.config.resolve_content_dir(&project.root)
+    let compilation_root = project
+        .config
+        .resolve_content_dir(&project.root)
         .unwrap_or_else(|| project.root.clone());
 
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
 
         // Determine which formats this file should be compiled to
-        let file_formats = get_file_formats(
-            typ_file,
-            &project.root,
-            &project.config,
-            formats,
-        )?;
+        let file_formats = get_file_formats(typ_file, &project.root, &project.config, formats)?;
 
         // Compile to PDF
         if file_formats.contains(&OutputFormat::Pdf) {
-            let output_path =
-                output_config.pdf_dir.join(&filename).with_extension("pdf");
-            match crate::compile::compile_pdf(
-                typ_file,
-                &output_path,
-                &compilation_root,
-                &repo_root,
-            ) {
+            let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
+            match crate::compile::compile_pdf(typ_file, &output_path, &compilation_root, &repo_root)
+            {
                 Ok(_) => pdf_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
@@ -254,13 +247,10 @@ fn perform_compilation(
         } else {
             // Fall back to legacy behavior for backward compatibility
             info!("copying assets for HTML output");
-            if let Err(e) = crate::assets::copy_css(&project.root, &output_config.html_dir)
-            {
+            if let Err(e) = crate::assets::copy_css(&project.root, &output_config.html_dir) {
                 warn!(error = %e, "failed to copy CSS, continuing");
             }
-            if let Err(e) =
-                crate::assets::copy_images(&project.root, &output_config.html_dir)
-            {
+            if let Err(e) = crate::assets::copy_images(&project.root, &output_config.html_dir) {
                 warn!(error = %e, "failed to copy images, continuing");
             }
         }
@@ -366,12 +356,7 @@ fn perform_compilation_incremental(
         let filename = get_output_filename(typ_file)?;
 
         // Determine which formats this file should be compiled to
-        let file_formats = get_file_formats(
-            typ_file,
-            &project.root,
-            &project.config,
-            formats,
-        )?;
+        let file_formats = get_file_formats(typ_file, &project.root, &project.config, formats)?;
 
         // Update world for this file and reset cache
         world.set_main(typ_file)?;
@@ -379,8 +364,7 @@ fn perform_compilation_incremental(
 
         // Compile to PDF
         if file_formats.contains(&OutputFormat::Pdf) {
-            let output_path =
-                output_config.pdf_dir.join(&filename).with_extension("pdf");
+            let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
             match crate::compile::compile_pdf_incremental(world, &output_path) {
                 Ok(_) => pdf_succeeded += 1,
                 Err(e) => {
@@ -396,7 +380,12 @@ fn perform_compilation_incremental(
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            match crate::compile::compile_html_incremental(world, typ_file, &output_path, &project.root) {
+            match crate::compile::compile_html_incremental(
+                world,
+                typ_file,
+                &output_path,
+                &project.root,
+            ) {
                 Ok(_) => html_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
@@ -558,11 +547,13 @@ impl Cli {
 
                 // Log TODOs for --open with formats that aren't ready yet
                 if open {
-                    if pdf || (!pdf && !html) {
+                    if pdf || !html {
                         info!("TODO: PDF opening not yet implemented (need to decide on multi-file handling)");
                     }
                     if epub {
-                        info!("TODO: EPUB opening not yet implemented (need bene viewer integration)");
+                        info!(
+                            "TODO: EPUB opening not yet implemented (need bene viewer integration)"
+                        );
                     }
                 }
 
@@ -605,9 +596,8 @@ impl Cli {
                         .map_err(|e| crate::RheoError::io(e, "creating tokio runtime"))?;
 
                     let html_dir = output_config.html_dir.clone();
-                    let (server_handle, reload_tx, server_url) = runtime.block_on(async {
-                        crate::server::start_server(html_dir, 3000).await
-                    })?;
+                    let (server_handle, reload_tx, server_url) = runtime
+                        .block_on(async { crate::server::start_server(html_dir, 3000).await })?;
 
                     // Open browser
                     if let Err(e) = crate::server::open_browser(&server_url) {
@@ -627,18 +617,27 @@ impl Cli {
                 let repo_root = std::env::current_dir()
                     .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
                 let borrowed_project = project_cell.borrow();
-                let compilation_root = borrowed_project.config.resolve_content_dir(&borrowed_project.root)
+                let compilation_root = borrowed_project
+                    .config
+                    .resolve_content_dir(&borrowed_project.root)
                     .unwrap_or_else(|| borrowed_project.root.clone());
 
                 // Use first .typ file as initial main (will be updated for each compilation)
-                let initial_main = borrowed_project.typ_files.first()
+                let initial_main = borrowed_project
+                    .typ_files
+                    .first()
                     .ok_or_else(|| crate::RheoError::project_config("no .typ files found"))?;
 
                 // For watch mode: if compiling HTML, keep .typ links for transformation
                 // If compiling only PDF/EPUB, remove .typ links at source level
                 let remove_typ_links = !formats.contains(&OutputFormat::Html);
-                let world = crate::world::RheoWorld::new(&compilation_root, initial_main, &repo_root, remove_typ_links)?;
-                drop(borrowed_project);  // Release borrow before moving into RefCell
+                let world = crate::world::RheoWorld::new(
+                    &compilation_root,
+                    initial_main,
+                    &repo_root,
+                    remove_typ_links,
+                )?;
+                drop(borrowed_project); // Release borrow before moving into RefCell
 
                 let world_cell = RefCell::new(world);
 
@@ -651,7 +650,7 @@ impl Cli {
                                 &mut world_cell.borrow_mut(),
                                 &project_cell.borrow(),
                                 &output_config,
-                                &formats
+                                &formats,
                             )
                         }
                         crate::watch::WatchEvent::ConfigChanged => {
@@ -664,21 +663,30 @@ impl Cli {
                                     info!(name = %borrowed.name, files = borrowed.typ_files.len(), "reloaded project");
 
                                     // Recreate World with new configuration
-                                    let new_compilation_root = borrowed.config.resolve_content_dir(&borrowed.root)
+                                    let new_compilation_root = borrowed
+                                        .config
+                                        .resolve_content_dir(&borrowed.root)
                                         .unwrap_or_else(|| borrowed.root.clone());
-                                    let new_initial_main = borrowed.typ_files.first()
-                                        .ok_or_else(|| crate::RheoError::project_config("no .typ files found"))?;
+                                    let new_initial_main =
+                                        borrowed.typ_files.first().ok_or_else(|| {
+                                            crate::RheoError::project_config("no .typ files found")
+                                        })?;
 
                                     // Use same remove_typ_links setting as initial World creation
                                     let remove_typ_links = !formats.contains(&OutputFormat::Html);
-                                    match crate::world::RheoWorld::new(&new_compilation_root, new_initial_main, &repo_root, remove_typ_links) {
+                                    match crate::world::RheoWorld::new(
+                                        &new_compilation_root,
+                                        new_initial_main,
+                                        &repo_root,
+                                        remove_typ_links,
+                                    ) {
                                         Ok(new_world) => {
                                             *world_cell.borrow_mut() = new_world;
                                             perform_compilation_incremental(
                                                 &mut world_cell.borrow_mut(),
                                                 &borrowed,
                                                 &output_config,
-                                                &formats
+                                                &formats,
                                             )
                                         }
                                         Err(e) => {
@@ -808,7 +816,11 @@ mod tests {
 
     #[test]
     fn test_html_and_pdf_exclusions_leave_only_epub() {
-        let config = build_test_config(&["content/ebook/**/*.typ"], &["content/ebook/**/*.typ"], &[]);
+        let config = build_test_config(
+            &["content/ebook/**/*.typ"],
+            &["content/ebook/**/*.typ"],
+            &[],
+        );
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/ebook/chapter1.typ");
         let requested = vec![OutputFormat::Pdf, OutputFormat::Html, OutputFormat::Epub];
@@ -869,13 +881,25 @@ mod tests {
 
         // File matching the PDF exclusion pattern
         let file1 = project_root.join("content/web/blog/post.typ");
-        let formats1 = get_file_formats(&file1, &project_root, &config, &[OutputFormat::Pdf, OutputFormat::Html]).unwrap();
+        let formats1 = get_file_formats(
+            &file1,
+            &project_root,
+            &config,
+            &[OutputFormat::Pdf, OutputFormat::Html],
+        )
+        .unwrap();
         assert_eq!(formats1.len(), 1);
         assert!(formats1.contains(&OutputFormat::Html));
 
         // File not matching the exclusion pattern
         let file2 = project_root.join("content/print/document.typ");
-        let formats2 = get_file_formats(&file2, &project_root, &config, &[OutputFormat::Pdf, OutputFormat::Html]).unwrap();
+        let formats2 = get_file_formats(
+            &file2,
+            &project_root,
+            &config,
+            &[OutputFormat::Pdf, OutputFormat::Html],
+        )
+        .unwrap();
         assert_eq!(formats2.len(), 2);
         assert!(formats2.contains(&OutputFormat::Pdf));
         assert!(formats2.contains(&OutputFormat::Html));

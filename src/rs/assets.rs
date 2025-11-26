@@ -91,9 +91,9 @@ pub fn copy_static_files(
         }
     }
 
-    let globset = builder
-        .build()
-        .map_err(|e| RheoError::project_config(format!("failed to build static file patterns: {}", e)))?;
+    let globset = builder.build().map_err(|e| {
+        RheoError::project_config(format!("failed to build static file patterns: {}", e))
+    })?;
 
     let mut copied_count = 0;
 
@@ -122,12 +122,11 @@ pub fn copy_static_files(
             }
 
             // Copy file
-            fs::copy(path, &dest_path)
-                .map_err(|e| RheoError::AssetCopy {
-                    source: path.to_path_buf(),
-                    dest: dest_path.clone(),
-                    error: e,
-                })?;
+            fs::copy(path, &dest_path).map_err(|e| RheoError::AssetCopy {
+                source: path.to_path_buf(),
+                dest: dest_path.clone(),
+                error: e,
+            })?;
 
             debug!(file = %relative_path.display(), "copied static file");
             copied_count += 1;
@@ -143,11 +142,10 @@ pub fn copy_static_files(
 
 /// Recursively copy a directory and all its contents
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    for entry in fs::read_dir(src)
-        .map_err(|e| RheoError::io(e, format!("reading directory {:?}", src)))?
+    for entry in
+        fs::read_dir(src).map_err(|e| RheoError::io(e, format!("reading directory {:?}", src)))?
     {
-        let entry = entry
-            .map_err(|e| RheoError::io(e, "reading directory entry"))?;
+        let entry = entry.map_err(|e| RheoError::io(e, "reading directory entry"))?;
         let path = entry.path();
         let file_name = entry.file_name();
         let dest_path = dst.join(file_name);
@@ -157,12 +155,11 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
                 .map_err(|e| RheoError::io(e, format!("creating directory {:?}", dest_path)))?;
             copy_dir_recursive(&path, &dest_path)?;
         } else {
-            fs::copy(&path, &dest_path)
-                .map_err(|e| RheoError::AssetCopy {
-                    source: path.clone(),
-                    dest: dest_path.clone(),
-                    error: e,
-                })?;
+            fs::copy(&path, &dest_path).map_err(|e| RheoError::AssetCopy {
+                source: path.clone(),
+                dest: dest_path.clone(),
+                error: e,
+            })?;
         }
     }
 
@@ -392,8 +389,13 @@ mod tests {
 
         // Copy with content_dir - patterns are relative to content_dir
         let patterns = vec!["img/**".to_string()];
-        copy_static_files(&project_dir, &output_dir, &patterns, Some(Path::new("content")))
-            .expect("Failed to copy static files");
+        copy_static_files(
+            &project_dir,
+            &output_dir,
+            &patterns,
+            Some(Path::new("content")),
+        )
+        .expect("Failed to copy static files");
 
         // Verify files were copied to output_dir/img/ (NOT output_dir/content/img/)
         assert!(output_dir.join("img/photo.jpg").exists());
