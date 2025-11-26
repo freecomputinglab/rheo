@@ -5,31 +5,29 @@ use std::path::Path;
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
 
-/// Path to the CSS resources directory
-pub const CSS_RESOURCES_DIR: &str = "src/css";
+/// Default CSS embedded at compile time
+const DEFAULT_CSS: &str = include_str!("../css/style.css");
 
 /// Copy CSS files to output directory
 ///
 /// Looks for style.css in the project directory first,
-/// falls back to src/css/style.css if not found
+/// falls back to embedded default CSS if not found
 pub fn copy_css(project_dir: &Path, output_dir: &Path) -> Result<()> {
     let project_css = project_dir.join("style.css");
-    let fallback_css = Path::new(CSS_RESOURCES_DIR).join("style.css");
 
-    let source_css = if project_css.exists() {
-        project_css
+    let css_content = if project_css.exists() {
+        // User provided custom CSS - read from file
+        fs::read_to_string(&project_css)
+            .map_err(|e| RheoError::io(e, format!("reading project CSS {:?}", project_css)))?
     } else {
-        fallback_css
+        // Use embedded default CSS
+        DEFAULT_CSS.to_string()
     };
 
     let dest_css = output_dir.join("style.css");
 
-    fs::copy(&source_css, &dest_css)
-        .map_err(|e| RheoError::AssetCopy {
-            source: source_css,
-            dest: dest_css,
-            error: e,
-        })?;
+    fs::write(&dest_css, css_content)
+        .map_err(|e| RheoError::io(e, format!("writing CSS to {:?}", dest_css)))?;
 
     Ok(())
 }
@@ -212,14 +210,21 @@ mod tests {
         fs::create_dir_all(&project_dir).unwrap();
         fs::create_dir_all(&output_dir).unwrap();
 
-        // Don't create project CSS, so it should use fallback
-        // The fallback CSS should exist in the repo at src/css/style.css
+        // Don't create project CSS, so it should use embedded default
 
         // Copy CSS
         copy_css(&project_dir, &output_dir).expect("Failed to copy CSS");
 
-        // Verify some CSS was copied
+        // Verify CSS file was created
         assert!(output_dir.join("style.css").exists());
+
+        // Verify it contains the embedded default CSS (should match DEFAULT_CSS constant)
+        let copied_content = fs::read_to_string(output_dir.join("style.css")).unwrap();
+        assert_eq!(copied_content, DEFAULT_CSS);
+
+        // Sanity check: embedded CSS should contain some expected content
+        assert!(copied_content.contains(":root"));
+        assert!(copied_content.contains("--max-width"));
 
         fs::remove_dir_all(&temp_dir).unwrap();
     }

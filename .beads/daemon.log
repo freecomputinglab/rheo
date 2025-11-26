@@ -1602,3 +1602,75 @@ error: Please commit or stash them.
 [2025-11-25 04:34:01] Import triggered by file change
 [2025-11-25 04:34:01] Starting auto-import...
 [2025-11-25 04:34:01] Skipping import: JSONL content unchanged
+[2025-11-26 03:52:19] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-26 03:52:19] Using database: /home/lox/code/rheo/.beads/beads.db
+[2025-11-26 03:52:19] Database opened: /home/lox/code/rheo/.beads/beads.db
+[2025-11-26 03:52:19] Upgrading .beads/.gitignore...
+[2025-11-26 03:52:19] Warning: failed to upgrade .gitignore: open .beads/.gitignore: no such file or directory
+[2025-11-26 03:52:19] Repository fingerprint validated: 2a548dad
+[2025-11-26 03:52:19] Starting RPC server: /home/lox/code/rheo/.beads/bd.sock
+[2025-11-26 03:52:19] RPC server ready (socket listening)
+[2025-11-26 03:52:19] Registered in global registry
+[2025-11-26 03:52:19] Starting sync cycle...
+[2025-11-26 03:52:19] Exported to JSONL
+[2025-11-26 03:52:19] Pull failed: git pull failed: exit status 128
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+
+[2025-11-26 03:52:19] Monitoring parent process (PID 0)
+[2025-11-26 03:52:19] Using event-driven mode
+[2025-11-26 03:53:45] Mutation detected: create rheo-43i
+[2025-11-26 03:53:46] Export triggered by mutation events
+[2025-11-26 03:53:46] Starting export...
+[2025-11-26 03:53:46] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-26 03:53:46] Exported to JSONL
+[2025-11-26 03:53:46] File change detected: /home/lox/code/rheo/.beads/beads.left.jsonl (op: CHMOD)
+[2025-11-26 03:53:46] Export complete
+[2025-11-26 03:53:47] Import triggered by file change
+[2025-11-26 03:53:47] Starting auto-import...
+[2025-11-26 03:53:47] Skipping import: JSONL content unchanged
+[2025-11-26 03:53:52] Mutation detected: create rheo-y8i
+[2025-11-26 03:53:52] Export triggered by mutation events
+[2025-11-26 03:53:52] Starting export...
+[2025-11-26 03:53:52] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-26 03:53:52] Exported to JSONL
+[2025-11-26 03:53:52] Export complete
+[2025-11-26 03:53:53] Import triggered by file change
+[2025-11-26 03:53:53] Starting auto-import...
+[2025-11-26 03:53:53] Skipping import: JSONL content unchanged
+[2025-11-26 03:53:55] Mutation detected: create rheo-a5q
+[2025-11-26 03:53:56] Export triggered by mutation events
+[2025-11-26 03:53:56] Starting export...
+[2025-11-26 03:53:56] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-26 03:53:56] Exported to JSONL
+[2025-11-26 03:53:56] Export complete
+[2025-11-26 03:53:57] Import triggered by file change
+[2025-11-26 03:53:57] Starting auto-import...
+[2025-11-26 03:53:57] Skipping import: JSONL content unchanged
+[2025-11-26 03:53:58] Mutation detected: create rheo-0wb
+[2025-11-26 03:53:59] Export triggered by mutation events
+[2025-11-26 03:53:59] Starting export...
+[2025-11-26 03:53:59] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-26 03:53:59] Exported to JSONL
+[2025-11-26 03:53:59] Export complete
+[2025-11-26 03:54:00] Import triggered by file change
+[2025-11-26 03:54:00] Starting auto-import...
+[2025-11-26 03:54:00] Skipping import: JSONL content unchanged
+[2025-11-26 03:54:02] Mutation detected: create rheo-09d
+[2025-11-26 03:54:02] Export triggered by mutation events
+[2025-11-26 03:54:02] Starting export...
+[2025-11-26 03:54:02] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-26 03:54:02] Exported to JSONL
+[2025-11-26 03:54:02] Export complete
+[2025-11-26 03:54:03] Import triggered by file change
+[2025-11-26 03:54:03] Starting auto-import...
+[2025-11-26 03:54:03] Skipping import: JSONL content unchanged
+[2025-11-26 03:54:42] Mutation detected: update rheo-y8i
+[2025-11-26 03:54:42] Export triggered by mutation events
+[2025-11-26 03:54:42] Starting export...
+[2025-11-26 03:54:42] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-26 03:54:42] Exported to JSONL
+[2025-11-26 03:54:42] Export complete
+[2025-11-26 03:54:43] Import triggered by file change
+[2025-11-26 03:54:43] Starting auto-import...
+[2025-11-26 03:54:43] Skipping import: JSONL content unchanged
