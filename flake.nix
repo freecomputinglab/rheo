@@ -30,7 +30,7 @@
 
         # Build *just* the cargo dependencies (for caching)
         cargoArtifacts = craneLib.buildDepsOnly {
-          src = craneLib.path ./.; # Simplified src
+          src = craneLib.cleanCargoSource ./.;
           buildInputs = with pkgs; [ openssl ];
           nativeBuildInputs = with pkgs; [ pkg-config perl ];
         };
@@ -38,7 +38,7 @@
       {
         packages.default = craneLib.buildPackage {
           inherit cargoArtifacts;
-          src = craneLib.path ./.;
+          src = craneLib.cleanCargoSource ./.;
 
           buildInputs = with pkgs; [
             openssl
