@@ -18,7 +18,8 @@
         };
 
         # Get Rust toolchain from rust-toolchain.toml
-        rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+        rustToolchain = pkgs.rust-bin.fromRustupToolchainFile (self + "/rust-toolchain.toml");
+
 
         # Create crane library with our custom toolchain
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
