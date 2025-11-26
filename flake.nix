@@ -17,8 +17,9 @@
           inherit system overlays;
         };
 
-        # Get Rust toolchain from rust-toolchain.toml
-        rustToolchain = pkgs.rust-bin.fromRustupToolchainFile (self + "/rust-toolchain.toml");
+        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+          extensions = [ "rustfmt" "clippy" "rust-analyzer" ];
+        };
 
 
         # Create crane library with our custom toolchain
