@@ -11,7 +11,7 @@ use typst_pdf::PdfOptions;
 ///
 /// Uses the typst library with:
 /// - Root set to content_dir or project root (for local file imports across directories)
-/// - Shared resources available via repo_root in src/typst/ (rheo.typ, style.csl)
+/// - Shared resources available via repo_root in src/typst/ (rheo.typ)
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
     // Create the compilation world
@@ -69,7 +69,7 @@ pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -
 ///
 /// Uses the typst library with:
 /// - Root set to content_dir or project root (for local file imports across directories)
-/// - Shared resources available via repo_root in src/typst/ (rheo.typ, style.csl)
+/// - Shared resources available via repo_root in src/typst/ (rheo.typ)
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
     // Create the compilation world
