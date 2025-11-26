@@ -5,7 +5,7 @@ use std::path::Path;
 use tracing::{debug, info, warn};
 
 /// Configuration for rheo compilation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RheoConfig {
     /// Directory containing .typ content files (relative to project root)
     /// If not specified, searches entire project root
@@ -47,7 +47,6 @@ pub struct HtmlConfig {
     #[serde(default)]
     pub static_files: Vec<String>,
 
-
     /// Glob patterns for files to exclude from HTML compilation
     /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
     /// Example: ["index.typ", "pdf-only/**"]
@@ -75,7 +74,6 @@ pub struct EpubConfig {
     pub exclude: Vec<String>,
 }
 
-
 impl Default for CompileConfig {
     fn default() -> Self {
         Self {
@@ -87,18 +85,6 @@ impl Default for CompileConfig {
 /// Default exclusion patterns
 fn default_exclude_patterns() -> Vec<String> {
     vec!["lib/**/*.typ".to_string()]
-}
-
-impl Default for RheoConfig {
-    fn default() -> Self {
-        Self {
-            content_dir: None,
-            compile: CompileConfig::default(),
-            html: HtmlConfig::default(),
-            pdf: PdfConfig::default(),
-            epub: EpubConfig::default(),
-        }
-    }
 }
 
 impl RheoConfig {
@@ -139,8 +125,9 @@ impl RheoConfig {
             }
         }
 
-        builder.build()
-            .map_err(|e| crate::RheoError::project_config(format!("failed to build exclusion set: {}", e)))
+        builder.build().map_err(|e| {
+            crate::RheoError::project_config(format!("failed to build exclusion set: {}", e))
+        })
     }
 
     /// Resolve content_dir to an absolute path if configured
@@ -180,21 +167,20 @@ impl RheoConfig {
 
         for pattern in patterns {
             // Patterns are already validated, so this should not fail
-            let glob = Glob::new(pattern)
-                .map_err(|e| crate::RheoError::project_config(
-                    format!("failed to build {} glob from validated pattern '{}': {}", name, pattern, e)
-                ))?;
+            let glob = Glob::new(pattern).map_err(|e| {
+                crate::RheoError::project_config(format!(
+                    "failed to build {} glob from validated pattern '{}': {}",
+                    name, pattern, e
+                ))
+            })?;
             builder.add(glob);
             debug!(pattern = %pattern, filter = %name, "added format-specific pattern");
         }
 
-        builder.build()
-            .map_err(|e| crate::RheoError::project_config(
-                format!("failed to build {} globset: {}", name, e)
-            ))
+        builder.build().map_err(|e| {
+            crate::RheoError::project_config(format!("failed to build {} globset: {}", name, e))
+        })
     }
-
-
 }
 #[cfg(test)]
 mod tests {
@@ -219,20 +205,19 @@ mod tests {
         assert!(!exclusions.is_match("main.typ"));
         assert!(!exclusions.is_match("src/main.typ"));
     }
-
 }
 
-    #[test]
-    fn test_per_format_exclusions_default_empty() {
-        let config = RheoConfig::default();
-        assert!(config.html.exclude.is_empty());
-        assert!(config.pdf.exclude.is_empty());
-        assert!(config.epub.exclude.is_empty());
-    }
+#[test]
+fn test_per_format_exclusions_default_empty() {
+    let config = RheoConfig::default();
+    assert!(config.html.exclude.is_empty());
+    assert!(config.pdf.exclude.is_empty());
+    assert!(config.epub.exclude.is_empty());
+}
 
-    #[test]
-    fn test_per_format_exclusion_patterns() {
-        let toml = r#"
+#[test]
+fn test_per_format_exclusion_patterns() {
+    let toml = r#"
             [html]
             exclude = ["pdf-only/**/*.typ"]
             
@@ -243,15 +228,15 @@ mod tests {
             exclude = ["index.typ"]
         "#;
 
-        let config: RheoConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.html.exclude, vec!["pdf-only/**/*.typ"]);
-        assert_eq!(config.pdf.exclude, vec!["index.typ", "web/**/*.typ"]);
-        assert_eq!(config.epub.exclude, vec!["index.typ"]);
-    }
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    assert_eq!(config.html.exclude, vec!["pdf-only/**/*.typ"]);
+    assert_eq!(config.pdf.exclude, vec!["index.typ", "web/**/*.typ"]);
+    assert_eq!(config.epub.exclude, vec!["index.typ"]);
+}
 
-    #[test]
-    fn test_build_per_format_exclusion_sets() {
-        let toml = r#"
+#[test]
+fn test_build_per_format_exclusion_sets() {
+    let toml = r#"
             [html]
             exclude = ["pdf-only/**/*.typ"]
             
@@ -259,15 +244,15 @@ mod tests {
             exclude = ["web/**/*.typ"]
         "#;
 
-        let config: RheoConfig = toml::from_str(toml).unwrap();
-        let html_exclusions = config.build_html_exclusion_set().unwrap();
-        let pdf_exclusions = config.build_pdf_exclusion_set().unwrap();
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    let html_exclusions = config.build_html_exclusion_set().unwrap();
+    let pdf_exclusions = config.build_pdf_exclusion_set().unwrap();
 
-        // Test HTML exclusions
-        assert!(html_exclusions.is_match("pdf-only/doc.typ"));
-        assert!(!html_exclusions.is_match("web/index.typ"));
+    // Test HTML exclusions
+    assert!(html_exclusions.is_match("pdf-only/doc.typ"));
+    assert!(!html_exclusions.is_match("web/index.typ"));
 
-        // Test PDF exclusions
-        assert!(pdf_exclusions.is_match("web/index.typ"));
-        assert!(!pdf_exclusions.is_match("pdf-only/doc.typ"));
-    }
+    // Test PDF exclusions
+    assert!(pdf_exclusions.is_match("web/index.typ"));
+    assert!(!pdf_exclusions.is_match("pdf-only/doc.typ"));
+}

@@ -9,7 +9,7 @@ use axum::{
 };
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::sync::broadcast;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tracing::{info, warn};
@@ -68,11 +68,10 @@ async fn sse_handler(
     State(state): State<ServerState>,
 ) -> Sse<impl tokio_stream::Stream<Item = std::result::Result<Event, Infallible>>> {
     let rx = state.reload_tx.subscribe();
-    let stream = BroadcastStream::new(rx)
-        .filter_map(|result| match result {
-            Ok(_) => Some(Ok(Event::default().event("reload").data("refresh"))),
-            Err(_) => None, // Ignore lagged messages
-        });
+    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
+        Ok(_) => Some(Ok(Event::default().event("reload").data("refresh"))),
+        Err(_) => None, // Ignore lagged messages
+    });
 
     Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
@@ -82,10 +81,7 @@ async fn sse_handler(
 }
 
 /// Static file handler with HTML injection for live reload script
-async fn static_handler(
-    State(state): State<ServerState>,
-    uri: axum::http::Uri,
-) -> Response {
+async fn static_handler(State(state): State<ServerState>, uri: axum::http::Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
 
     // Determine the file to serve
@@ -110,7 +106,9 @@ async fn static_handler(
     // Read file
     let content = match tokio::fs::read(&file_path).await {
         Ok(content) => content,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to read file").into_response(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to read file").into_response()
+        }
     };
 
     // If it's an HTML file, inject the live reload script
@@ -177,7 +175,7 @@ eventSource.onerror = function(e) {
 }
 
 /// Generate a simple directory listing HTML page
-fn directory_listing(html_dir: &PathBuf, path: &str) -> Response {
+fn directory_listing(html_dir: &Path, path: &str) -> Response {
     let dir_path = html_dir.join(path);
 
     let entries = match std::fs::read_dir(&dir_path) {
@@ -248,7 +246,6 @@ fn directory_listing(html_dir: &PathBuf, path: &str) -> Response {
 /// Open a URL in the default browser
 pub fn open_browser(url: &str) -> Result<()> {
     info!(url = %url, "opening browser");
-    webbrowser::open(url).map_err(|e| {
-        crate::RheoError::project_config(format!("failed to open browser: {}", e))
-    })
+    webbrowser::open(url)
+        .map_err(|e| crate::RheoError::project_config(format!("failed to open browser: {}", e)))
 }

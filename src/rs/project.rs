@@ -15,7 +15,6 @@ pub struct ProjectConfig {
     /// Rheo configuration from rheo.toml
     pub config: RheoConfig,
 
-
     /// List of .typ files in the project
     pub typ_files: Vec<PathBuf>,
 
@@ -33,8 +32,12 @@ impl ProjectConfig {
     /// Detect project configuration from a directory path
     pub fn from_path(path: &Path) -> Result<Self> {
         // Canonicalize the root path for consistent path handling
-        let root = path.canonicalize()
-            .map_err(|e| RheoError::path(path, format!("failed to canonicalize project directory: {}", e)))?;
+        let root = path.canonicalize().map_err(|e| {
+            RheoError::path(
+                path,
+                format!("failed to canonicalize project directory: {}", e),
+            )
+        })?;
 
         // Extract project name from directory basename
         let name = root
@@ -48,18 +51,16 @@ impl ProjectConfig {
         let exclusions = config.build_exclusion_set()?;
 
         // Determine search directory: content_dir if configured, otherwise project root
-        let search_dir = config.resolve_content_dir(&root).unwrap_or_else(|| root.clone());
+        let search_dir = config
+            .resolve_content_dir(&root)
+            .unwrap_or_else(|| root.clone());
         debug!(search_dir = %search_dir.display(), "searching for .typ files");
 
         // Find all .typ files in the search directory (recursive walk)
         let all_typ_files: Vec<PathBuf> = WalkDir::new(&search_dir)
             .into_iter()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path().extension()
-                    .and_then(|s| s.to_str())
-                    == Some("typ")
-            })
+            .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("typ"))
             .map(|e| e.path().to_path_buf())
             .collect();
 
@@ -85,7 +86,11 @@ impl ProjectConfig {
 
         let excluded_count = total_count - typ_files.len();
         if excluded_count > 0 {
-            info!(excluded = excluded_count, included = typ_files.len(), "applied exclusion filters");
+            info!(
+                excluded = excluded_count,
+                included = typ_files.len(),
+                "applied exclusion filters"
+            );
         }
 
         // Detect optional project-specific resources

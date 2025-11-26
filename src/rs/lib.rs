@@ -1,15 +1,15 @@
+pub mod assets;
 pub mod cli;
 pub mod compile;
 pub mod config;
-pub mod project;
-pub mod output;
-pub mod assets;
 pub mod epub;
-pub mod world;
-pub mod logging;
 pub mod error;
-pub mod watch;
+pub mod logging;
+pub mod output;
+pub mod project;
 pub mod server;
+pub mod watch;
+pub mod world;
 
 pub use cli::Cli;
 pub use config::RheoConfig;
