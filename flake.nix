@@ -6,10 +6,10 @@
     flake-utils.url = "github:numtide/flake-utils";
     typst.url = "github:typst/typst/main";
     rust-overlay.url = "github:oxalica/rust-overlay";
-    naersk.url = "github:nix-community/naersk";
+    crane.url = "github:ipetkov/crane";
   };
 
-  outputs = { self, nixpkgs, flake-utils, typst, rust-overlay, naersk }:
+  outputs = { self, nixpkgs, flake-utils, typst, rust-overlay, crane }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
@@ -20,23 +20,41 @@
         # Get Rust toolchain from rust-toolchain.toml
         rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
-        # Create naersk builder with our Rust toolchain
-        naersk' = pkgs.callPackage naersk {
-          cargo = rustToolchain;
-          rustc = rustToolchain;
+        # Create crane library with our custom toolchain
+        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+
+        # Custom source filter to include all files in src/ (typ, css, csl, etc.)
+        srcFilter = path: _type: builtins.match ".*/src/.*" path != null;
+        srcOrCargo = path: type:
+          (srcFilter path type) || (craneLib.filterCargoSources path type);
+
+        # Build *just* the cargo dependencies (for caching)
+        cargoArtifacts = craneLib.buildDepsOnly {
+          src = pkgs.lib.cleanSourceWith {
+            src = craneLib.path ./.;
+            filter = srcOrCargo;
+            name = "source";
+          };
+          buildInputs = with pkgs; [ openssl ];
+          nativeBuildInputs = with pkgs; [ pkg-config perl ];
         };
       in
       {
-        packages.default = naersk'.buildPackage {
-          src = ./.;
+        packages.default = craneLib.buildPackage {
+          inherit cargoArtifacts;
+          src = pkgs.lib.cleanSourceWith {
+            src = craneLib.path ./.;
+            filter = srcOrCargo;
+            name = "source";
+          };
 
-          # Build from src/rs directory
           buildInputs = with pkgs; [
-            pkg-config
+            openssl
           ];
 
           nativeBuildInputs = with pkgs; [
             pkg-config
+            perl
           ];
         };
 
