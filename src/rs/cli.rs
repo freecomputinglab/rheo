@@ -32,7 +32,7 @@ pub struct Cli {
 pub enum Commands {
     /// Compile Typst documents to PDF, HTML, and/or EPUB
     Compile {
-        /// Path to the project directory
+        /// Path to project directory or single .typ file
         path: PathBuf,
 
         /// Compile to PDF only
@@ -50,7 +50,7 @@ pub enum Commands {
 
     /// Watch Typst documents and recompile on changes
     Watch {
-        /// Path to the project directory
+        /// Path to project directory or single .typ file
         path: PathBuf,
 
         /// Watch and compile to PDF only

@@ -1,4 +1,7 @@
-use crate::{project::ProjectConfig, Result};
+use crate::{
+    project::{ProjectConfig, ProjectMode},
+    Result,
+};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
@@ -43,11 +46,28 @@ where
     )
     .map_err(|e| crate::RheoError::file_watcher(e, "creating file watcher"))?;
 
-    // Watch project root for .typ files and rheo.toml
-    info!(path = %project.root.display(), "watching project directory");
-    watcher
-        .watch(&project.root, RecursiveMode::Recursive)
-        .map_err(|e| crate::RheoError::file_watcher(e, "watching project directory"))?;
+    // Watch based on project mode
+    match project.mode {
+        ProjectMode::SingleFile => {
+            // Watch only the single file's parent directory (non-recursive)
+            let file_to_watch = &project.typ_files[0];
+            let watch_dir = file_to_watch
+                .parent()
+                .ok_or_else(|| crate::RheoError::project_config("file has no parent directory"))?;
+
+            info!(file = %file_to_watch.display(), "watching single file");
+            watcher
+                .watch(watch_dir, RecursiveMode::NonRecursive)
+                .map_err(|e| crate::RheoError::file_watcher(e, "watching file directory"))?;
+        }
+        ProjectMode::Directory => {
+            // Existing behavior: recursive watch of project root
+            info!(path = %project.root.display(), "watching project directory");
+            watcher
+                .watch(&project.root, RecursiveMode::Recursive)
+                .map_err(|e| crate::RheoError::file_watcher(e, "watching project directory"))?;
+        }
+    }
 
     // Debounce logic: collect events for 1 second before triggering
     let debounce_duration = Duration::from_secs(1);
@@ -125,41 +145,82 @@ where
 
 /// Check if a path is relevant for triggering recompilation
 fn is_relevant_path(path: &Path, project: &ProjectConfig) -> bool {
-    // Check if it's a .typ file
-    if path.extension().and_then(|e| e.to_str()) == Some("typ") {
-        return true;
-    }
+    match project.mode {
+        ProjectMode::SingleFile => {
+            // Only the exact file is relevant (and assets in parent directory)
+            let target_file = &project.typ_files[0];
 
-    // Check if it's rheo.toml
-    if path.file_name().and_then(|n| n.to_str()) == Some("rheo.toml") {
-        return true;
-    }
-
-    // Check if it's style.css
-    if path.file_name().and_then(|n| n.to_str()) == Some("style.css") {
-        // Only if it's in the project root
-        if let Some(parent) = path.parent() {
-            if parent == project.root {
+            // Check if it's the specific .typ file
+            if path == target_file {
                 return true;
             }
-        }
-    }
 
-    // Check if it's in the img/ directory
-    if let Some(img_dir) = &project.img_dir {
-        if path.starts_with(img_dir) {
-            return true;
-        }
-    }
+            // Check if it's style.css in the same directory
+            if path.file_name().and_then(|n| n.to_str()) == Some("style.css") {
+                if let Some(parent) = path.parent() {
+                    if parent == project.root {
+                        return true;
+                    }
+                }
+            }
 
-    // Check if it's references.bib
-    if path.file_name().and_then(|n| n.to_str()) == Some("references.bib") {
-        if let Some(parent) = path.parent() {
-            if parent == project.root {
+            // Check if it's in the img/ directory
+            if let Some(img_dir) = &project.img_dir {
+                if path.starts_with(img_dir) {
+                    return true;
+                }
+            }
+
+            // Check if it's references.bib
+            if path.file_name().and_then(|n| n.to_str()) == Some("references.bib") {
+                if let Some(parent) = path.parent() {
+                    if parent == project.root {
+                        return true;
+                    }
+                }
+            }
+
+            false
+        }
+        ProjectMode::Directory => {
+            // Existing logic for directory mode
+            // Check if it's a .typ file
+            if path.extension().and_then(|e| e.to_str()) == Some("typ") {
                 return true;
             }
+
+            // Check if it's rheo.toml
+            if path.file_name().and_then(|n| n.to_str()) == Some("rheo.toml") {
+                return true;
+            }
+
+            // Check if it's style.css
+            if path.file_name().and_then(|n| n.to_str()) == Some("style.css") {
+                // Only if it's in the project root
+                if let Some(parent) = path.parent() {
+                    if parent == project.root {
+                        return true;
+                    }
+                }
+            }
+
+            // Check if it's in the img/ directory
+            if let Some(img_dir) = &project.img_dir {
+                if path.starts_with(img_dir) {
+                    return true;
+                }
+            }
+
+            // Check if it's references.bib
+            if path.file_name().and_then(|n| n.to_str()) == Some("references.bib") {
+                if let Some(parent) = path.parent() {
+                    if parent == project.root {
+                        return true;
+                    }
+                }
+            }
+
+            false
         }
     }
-
-    false
 }

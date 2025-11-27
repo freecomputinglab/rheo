@@ -52,9 +52,19 @@ cargo build
 
 **Run rheo:**
 ```bash
+# Compile a project directory
 cargo run -- compile <project-path>
 cargo run -- compile <project-path> --pdf    # PDF only
 cargo run -- compile <project-path> --html   # HTML only
+
+# Compile a single .typ file
+cargo run -- compile <file.typ>              # All formats
+cargo run -- compile <file.typ> --pdf        # PDF only
+cargo run -- compile <file.typ> --html       # HTML only
+
+# Examples
+cargo run -- compile examples/blog_site                      # Directory mode
+cargo run -- compile examples/blog_site/content/index.typ    # Single file mode
 ```
 
 **Clean build artifacts:**
@@ -93,8 +103,11 @@ Rheo's watch mode uses incremental compilation to achieve 3x-100x faster recompi
 
 **Testing Incremental Compilation:**
 ```bash
-# Start watch mode
+# Start watch mode - directory
 cargo run -- watch examples/blog_site --html
+
+# Start watch mode - single file
+cargo run -- watch examples/blog_site/content/index.typ --html
 
 # In another terminal, make a small edit to a file
 echo "\n// Test change" >> examples/blog_site/content/index.typ
@@ -158,12 +171,41 @@ echo "\n// Test change" >> examples/blog_site/content/index.typ
 - `jj git push -c @-` - Push current change and create bookmark (@- refers to the parent of the current change, as the current change is generally empty)
 
 **Pull Request Workflow:**
-1. `jj new main` - Create new change from main
-2. Make your changes and test them
-3. `jj commit -m "descriptive message"` - Commit changes
-4. `jj git push -c @` - Push to remote and create bookmark (note the bookmark name from output)
-5. `gh pr create --head <bookmark-name-from-step-4>` - Create pull request using the bookmark name shown in previous step
-6. After review: `jj git fetch && jj rebase -d main` if needed
+
+When you're ready to create a PR from your completed work:
+
+1. **Create bookmark from commit message** - Automatically derive bookmark name from `@-` commit:
+   ```bash
+   # Example: "Supports single-file compilation" → feat/supports-single-file-compilation
+   jj bookmark create feat/<kebab-case-message> -r @-
+   ```
+
+2. **Push to GitHub**:
+   ```bash
+   jj git push --allow-new
+   ```
+
+3. **Create PR with gh CLI**:
+   ```bash
+   gh pr create --base main --head feat/<bookmark-name> \
+     --title "<commit-message>" \
+     --body "- Bullet point 1
+   - Bullet point 2
+   - Bullet point 3"
+   ```
+
+**Bookmark naming:**
+- Prefix: `feat/` for features, `fix/` for bug fixes
+- Name: Convert commit message to kebab-case (lowercase, spaces → hyphens)
+- Example: "Fixes compilation error" → `fix/fixes-compilation-error`
+
+**PR message format:**
+- Title: Use commit message as-is (present tense)
+- Body: 3-5 concise bullet points summarizing changes
+- Each bullet: verb + what changed (Adds, Updates, Fixes, Implements, etc.)
+
+**After review:**
+- `jj git fetch && jj rebase -d main` if needed
 
 **Pull Request Message Guidelines:**
 - Keep descriptions concise and technical, avoid LLM-style verbosity

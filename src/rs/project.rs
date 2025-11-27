@@ -3,6 +3,15 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 use walkdir::WalkDir;
 
+/// Mode for project compilation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectMode {
+    /// Compiling all .typ files in a directory
+    Directory,
+    /// Compiling a single specified .typ file
+    SingleFile,
+}
+
 /// Configuration for a Typst project
 #[derive(Debug)]
 pub struct ProjectConfig {
@@ -26,11 +35,30 @@ pub struct ProjectConfig {
 
     /// Project references.bib if it exists
     pub references_bib: Option<PathBuf>,
+
+    /// Compilation mode (directory or single file)
+    pub mode: ProjectMode,
 }
 
 impl ProjectConfig {
-    /// Detect project configuration from a directory path
+    /// Detect project configuration from a path (file or directory)
     pub fn from_path(path: &Path) -> Result<Self> {
+        // Check if path exists and determine if it's a file or directory
+        let metadata = path
+            .metadata()
+            .map_err(|e| RheoError::path(path, format!("path does not exist: {}", e)))?;
+
+        if metadata.is_file() {
+            Self::from_single_file(path)
+        } else if metadata.is_dir() {
+            Self::from_directory(path)
+        } else {
+            Err(RheoError::path(path, "path must be a file or directory"))
+        }
+    }
+
+    /// Detect project configuration from a directory path
+    fn from_directory(path: &Path) -> Result<Self> {
         // Canonicalize the root path for consistent path handling
         let root = path.canonicalize().map_err(|e| {
             RheoError::path(
@@ -123,6 +151,176 @@ impl ProjectConfig {
             style_css,
             img_dir,
             references_bib,
+            mode: ProjectMode::Directory,
         })
+    }
+
+    /// Detect project configuration from a single .typ file
+    fn from_single_file(file_path: &Path) -> Result<Self> {
+        // Validate .typ extension
+        if file_path.extension().and_then(|s| s.to_str()) != Some("typ") {
+            return Err(RheoError::path(file_path, "file must have .typ extension"));
+        }
+
+        // Root = parent directory (for relative imports to work)
+        let root = file_path
+            .parent()
+            .ok_or_else(|| RheoError::path(file_path, "file has no parent directory"))?
+            .to_path_buf();
+
+        // Canonicalize both paths
+        let root = root.canonicalize().map_err(|e| {
+            RheoError::path(
+                &root,
+                format!("failed to canonicalize parent directory: {}", e),
+            )
+        })?;
+
+        let file_path = file_path.canonicalize().map_err(|e| {
+            RheoError::path(
+                file_path,
+                format!("failed to canonicalize file path: {}", e),
+            )
+        })?;
+
+        // Project name = file stem
+        let name = file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| RheoError::path(&file_path, "invalid filename"))?
+            .to_string();
+
+        // Use default config (skip rheo.toml entirely)
+        let config = RheoConfig::default();
+
+        // Single file in typ_files list
+        let typ_files = vec![file_path.clone()];
+
+        // Check for optional resources in root directory
+        let style_css = root.join("style.css");
+        let style_css = if style_css.is_file() {
+            Some(style_css)
+        } else {
+            None
+        };
+
+        let img_dir = root.join("img");
+        let img_dir = if img_dir.is_dir() {
+            Some(img_dir)
+        } else {
+            None
+        };
+
+        let references_bib = root.join("references.bib");
+        let references_bib = if references_bib.is_file() {
+            Some(references_bib)
+        } else {
+            None
+        };
+
+        Ok(ProjectConfig {
+            name,
+            root,
+            config,
+            typ_files,
+            style_css,
+            img_dir,
+            references_bib,
+            mode: ProjectMode::SingleFile,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_single_file_basic() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.path().join("document.typ");
+        fs::write(&file, "#heading[Test]").unwrap();
+
+        let project = ProjectConfig::from_path(&file).unwrap();
+
+        assert_eq!(project.name, "document");
+        assert_eq!(project.mode, ProjectMode::SingleFile);
+        assert_eq!(project.typ_files.len(), 1);
+        assert_eq!(project.root, temp.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_single_file_non_typ_extension_fails() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.path().join("document.txt");
+        fs::write(&file, "test").unwrap();
+
+        let result = ProjectConfig::from_path(&file);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains(".typ extension"));
+    }
+
+    #[test]
+    fn test_single_file_nonexistent_fails() {
+        let path = PathBuf::from("/tmp/nonexistent_file_12345_rheo_test.typ");
+        let result = ProjectConfig::from_path(&path);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("does not exist"));
+    }
+
+    #[test]
+    fn test_single_file_uses_default_config() {
+        let temp = TempDir::new().unwrap();
+
+        // Create rheo.toml in parent directory with custom exclusions
+        let config_content = r#"
+[compile]
+exclude = ["*.typ"]
+"#;
+        fs::write(temp.path().join("rheo.toml"), config_content).unwrap();
+
+        let file = temp.path().join("document.typ");
+        fs::write(&file, "#heading[Test]").unwrap();
+
+        let project = ProjectConfig::from_path(&file).unwrap();
+
+        // Should use default config, not load rheo.toml
+        // Default exclusion is "lib/**/*.typ"
+        assert_eq!(project.config.compile.exclude, vec!["lib/**/*.typ"]);
+    }
+
+    #[test]
+    fn test_single_file_discovers_assets() {
+        let temp = TempDir::new().unwrap();
+
+        // Create assets in parent directory
+        fs::write(temp.path().join("style.css"), "body {}").unwrap();
+        fs::create_dir(temp.path().join("img")).unwrap();
+        fs::write(temp.path().join("references.bib"), "@article{}").unwrap();
+
+        let file = temp.path().join("document.typ");
+        fs::write(&file, "#heading[Test]").unwrap();
+
+        let project = ProjectConfig::from_path(&file).unwrap();
+
+        assert!(project.style_css.is_some());
+        assert!(project.img_dir.is_some());
+        assert!(project.references_bib.is_some());
+    }
+
+    #[test]
+    fn test_directory_mode_unchanged() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("doc1.typ"), "#heading[1]").unwrap();
+        fs::write(temp.path().join("doc2.typ"), "#heading[2]").unwrap();
+
+        let project = ProjectConfig::from_path(temp.path()).unwrap();
+
+        assert_eq!(project.mode, ProjectMode::Directory);
+        assert_eq!(project.typ_files.len(), 2);
     }
 }
