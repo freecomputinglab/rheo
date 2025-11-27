@@ -52,9 +52,19 @@ cargo build
 
 **Run rheo:**
 ```bash
+# Compile a project directory
 cargo run -- compile <project-path>
 cargo run -- compile <project-path> --pdf    # PDF only
 cargo run -- compile <project-path> --html   # HTML only
+
+# Compile a single .typ file
+cargo run -- compile <file.typ>              # All formats
+cargo run -- compile <file.typ> --pdf        # PDF only
+cargo run -- compile <file.typ> --html       # HTML only
+
+# Examples
+cargo run -- compile examples/blog_site                      # Directory mode
+cargo run -- compile examples/blog_site/content/index.typ    # Single file mode
 ```
 
 **Clean build artifacts:**
@@ -93,8 +103,11 @@ Rheo's watch mode uses incremental compilation to achieve 3x-100x faster recompi
 
 **Testing Incremental Compilation:**
 ```bash
-# Start watch mode
+# Start watch mode - directory
 cargo run -- watch examples/blog_site --html
+
+# Start watch mode - single file
+cargo run -- watch examples/blog_site/content/index.typ --html
 
 # In another terminal, make a small edit to a file
 echo "\n// Test change" >> examples/blog_site/content/index.typ

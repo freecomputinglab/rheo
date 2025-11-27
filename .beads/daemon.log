@@ -1843,3 +1843,13 @@ error: Please commit or stash them.
 [2025-11-27 22:40:48] Import triggered by file change
 [2025-11-27 22:40:48] Starting auto-import...
 [2025-11-27 22:40:48] Skipping import: JSONL content unchanged
+[2025-11-27 22:42:40] Mutation detected: update rheo-s5r
+[2025-11-27 22:42:41] Export triggered by mutation events
+[2025-11-27 22:42:41] Starting export...
+[2025-11-27 22:42:41] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-27 22:42:41] Exported to JSONL
+[2025-11-27 22:42:41] File change detected: /home/lox/code/rheo/.beads/beads.left.jsonl (op: CHMOD)
+[2025-11-27 22:42:41] Export complete
+[2025-11-27 22:42:42] Import triggered by file change
+[2025-11-27 22:42:42] Starting auto-import...
+[2025-11-27 22:42:42] Skipping import: JSONL content unchanged
