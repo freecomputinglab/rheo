@@ -44,9 +44,9 @@ impl ProjectConfig {
     /// Detect project configuration from a path (file or directory)
     pub fn from_path(path: &Path) -> Result<Self> {
         // Check if path exists and determine if it's a file or directory
-        let metadata = path.metadata().map_err(|e| {
-            RheoError::path(path, format!("path does not exist: {}", e))
-        })?;
+        let metadata = path
+            .metadata()
+            .map_err(|e| RheoError::path(path, format!("path does not exist: {}", e)))?;
 
         if metadata.is_file() {
             Self::from_single_file(path)
@@ -159,10 +159,7 @@ impl ProjectConfig {
     fn from_single_file(file_path: &Path) -> Result<Self> {
         // Validate .typ extension
         if file_path.extension().and_then(|s| s.to_str()) != Some("typ") {
-            return Err(RheoError::path(
-                file_path,
-                "file must have .typ extension",
-            ));
+            return Err(RheoError::path(file_path, "file must have .typ extension"));
         }
 
         // Root = parent directory (for relative imports to work)
@@ -173,11 +170,17 @@ impl ProjectConfig {
 
         // Canonicalize both paths
         let root = root.canonicalize().map_err(|e| {
-            RheoError::path(&root, format!("failed to canonicalize parent directory: {}", e))
+            RheoError::path(
+                &root,
+                format!("failed to canonicalize parent directory: {}", e),
+            )
         })?;
 
         let file_path = file_path.canonicalize().map_err(|e| {
-            RheoError::path(file_path, format!("failed to canonicalize file path: {}", e))
+            RheoError::path(
+                file_path,
+                format!("failed to canonicalize file path: {}", e),
+            )
         })?;
 
         // Project name = file stem
@@ -245,10 +248,7 @@ mod tests {
         assert_eq!(project.name, "document");
         assert_eq!(project.mode, ProjectMode::SingleFile);
         assert_eq!(project.typ_files.len(), 1);
-        assert_eq!(
-            project.root,
-            temp.path().canonicalize().unwrap()
-        );
+        assert_eq!(project.root, temp.path().canonicalize().unwrap());
     }
 
     #[test]

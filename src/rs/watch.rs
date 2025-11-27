@@ -1,4 +1,7 @@
-use crate::{project::{ProjectConfig, ProjectMode}, Result};
+use crate::{
+    project::{ProjectConfig, ProjectMode},
+    Result,
+};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
