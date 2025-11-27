@@ -3,3 +3,6 @@
 # Nix build artifacts
 result
 result-*
+
+# Beads database and daemon files
+.beads/

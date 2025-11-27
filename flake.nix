@@ -20,11 +20,16 @@
         craneLib = crane.mkLib pkgs;
 
         # Source filtering to include Cargo files and resources in src/
+        # Exclude .beads directory to avoid socket file issues
         src = pkgs.lib.cleanSourceWith {
           src = craneLib.path ./.;
           filter = path: type:
-            (craneLib.filterCargoSources path type) ||
-            (pkgs.lib.hasInfix "/src/" path);
+            let
+              baseName = baseNameOf path;
+            in
+            (baseName != ".beads") &&
+            ((craneLib.filterCargoSources path type) ||
+            (pkgs.lib.hasInfix "/src/" path));
         };
 
         # Build *just* the cargo dependencies (for caching)
