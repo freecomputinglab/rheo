@@ -1720,3 +1720,61 @@ error: Please commit or stash them.
 [2025-11-26 04:01:52] Import triggered by file change
 [2025-11-26 04:01:52] Starting auto-import...
 [2025-11-26 04:01:52] Skipping import: JSONL content unchanged
+[2025-11-27 22:29:10] Daemon started (interval: 5s, auto-commit: false, auto-push: false)
+[2025-11-27 22:29:10] Using database: /home/lox/code/rheo/.beads/beads.db
+[2025-11-27 22:29:10] Database opened: /home/lox/code/rheo/.beads/beads.db
+[2025-11-27 22:29:10] Upgrading .beads/.gitignore...
+[2025-11-27 22:29:10] Warning: failed to upgrade .gitignore: open .beads/.gitignore: no such file or directory
+[2025-11-27 22:29:10] Repository fingerprint validated: 2a548dad
+[2025-11-27 22:29:10] Warning: Database schema version mismatch
+[2025-11-27 22:29:10]   Database version: 0.24.0
+[2025-11-27 22:29:10]   Daemon version: 0.25.1
+[2025-11-27 22:29:10]   Auto-upgrading database to daemon version...
+[2025-11-27 22:29:10]   Database version updated to 0.25.1
+[2025-11-27 22:29:10] Starting RPC server: /home/lox/code/rheo/.beads/bd.sock
+[2025-11-27 22:29:10] RPC server ready (socket listening)
+[2025-11-27 22:29:10] Registered in global registry
+[2025-11-27 22:29:10] Starting sync cycle...
+[2025-11-27 22:29:10] Exported to JSONL
+[2025-11-27 22:29:10] Pull failed: failed to get current branch: exit status 128
+[2025-11-27 22:29:10] Monitoring parent process (PID 0)
+[2025-11-27 22:29:10] Using event-driven mode
+[2025-11-27 22:29:10] Mutation detected: create rheo-j9g
+[2025-11-27 22:29:10] Mutation detected: create rheo-qti
+[2025-11-27 22:29:10] Mutation detected: create rheo-ctd
+[2025-11-27 22:29:10] Mutation detected: create rheo-c36
+[2025-11-27 22:29:11] Mutation detected: create rheo-s5r
+[2025-11-27 22:29:11] Mutation detected: create rheo-5y8
+[2025-11-27 22:29:11] Export triggered by mutation events
+[2025-11-27 22:29:11] Starting export...
+[2025-11-27 22:29:11] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-27 22:29:11] Exported to JSONL
+[2025-11-27 22:29:11] Export complete
+[2025-11-27 22:29:12] Import triggered by file change
+[2025-11-27 22:29:12] Starting auto-import...
+[2025-11-27 22:29:12] Skipping import: JSONL content unchanged
+[2025-11-27 22:29:19] Mutation detected: update rheo-qti
+[2025-11-27 22:29:19] Mutation detected: update rheo-c36
+[2025-11-27 22:29:19] Mutation detected: update rheo-s5r
+[2025-11-27 22:29:19] Mutation detected: update rheo-s5r
+[2025-11-27 22:29:19] Mutation detected: update rheo-s5r
+[2025-11-27 22:29:19] Mutation detected: update rheo-5y8
+[2025-11-27 22:29:19] Mutation detected: update rheo-5y8
+[2025-11-27 22:29:19] Mutation detected: update rheo-5y8
+[2025-11-27 22:29:20] Export triggered by mutation events
+[2025-11-27 22:29:20] Starting export...
+[2025-11-27 22:29:20] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-27 22:29:20] Exported to JSONL
+[2025-11-27 22:29:20] Export complete
+[2025-11-27 22:29:21] Import triggered by file change
+[2025-11-27 22:29:21] Starting auto-import...
+[2025-11-27 22:29:21] Skipping import: JSONL content unchanged
+[2025-11-27 22:33:27] Mutation detected: update rheo-j9g
+[2025-11-27 22:33:28] Export triggered by mutation events
+[2025-11-27 22:33:28] Starting export...
+[2025-11-27 22:33:28] JSONL file created: /home/lox/code/rheo/.beads/beads.left.jsonl
+[2025-11-27 22:33:28] Exported to JSONL
+[2025-11-27 22:33:28] Export complete
+[2025-11-27 22:33:29] Import triggered by file change
+[2025-11-27 22:33:29] Starting auto-import...
+[2025-11-27 22:33:29] Skipping import: JSONL content unchanged
