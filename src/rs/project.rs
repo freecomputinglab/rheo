@@ -227,3 +227,100 @@ impl ProjectConfig {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_single_file_basic() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.path().join("document.typ");
+        fs::write(&file, "#heading[Test]").unwrap();
+
+        let project = ProjectConfig::from_path(&file).unwrap();
+
+        assert_eq!(project.name, "document");
+        assert_eq!(project.mode, ProjectMode::SingleFile);
+        assert_eq!(project.typ_files.len(), 1);
+        assert_eq!(
+            project.root,
+            temp.path().canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_single_file_non_typ_extension_fails() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.path().join("document.txt");
+        fs::write(&file, "test").unwrap();
+
+        let result = ProjectConfig::from_path(&file);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains(".typ extension"));
+    }
+
+    #[test]
+    fn test_single_file_nonexistent_fails() {
+        let path = PathBuf::from("/tmp/nonexistent_file_12345_rheo_test.typ");
+        let result = ProjectConfig::from_path(&path);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("does not exist"));
+    }
+
+    #[test]
+    fn test_single_file_uses_default_config() {
+        let temp = TempDir::new().unwrap();
+
+        // Create rheo.toml in parent directory with custom exclusions
+        let config_content = r#"
+[compile]
+exclude = ["*.typ"]
+"#;
+        fs::write(temp.path().join("rheo.toml"), config_content).unwrap();
+
+        let file = temp.path().join("document.typ");
+        fs::write(&file, "#heading[Test]").unwrap();
+
+        let project = ProjectConfig::from_path(&file).unwrap();
+
+        // Should use default config, not load rheo.toml
+        // Default exclusion is "lib/**/*.typ"
+        assert_eq!(project.config.compile.exclude, vec!["lib/**/*.typ"]);
+    }
+
+    #[test]
+    fn test_single_file_discovers_assets() {
+        let temp = TempDir::new().unwrap();
+
+        // Create assets in parent directory
+        fs::write(temp.path().join("style.css"), "body {}").unwrap();
+        fs::create_dir(temp.path().join("img")).unwrap();
+        fs::write(temp.path().join("references.bib"), "@article{}").unwrap();
+
+        let file = temp.path().join("document.typ");
+        fs::write(&file, "#heading[Test]").unwrap();
+
+        let project = ProjectConfig::from_path(&file).unwrap();
+
+        assert!(project.style_css.is_some());
+        assert!(project.img_dir.is_some());
+        assert!(project.references_bib.is_some());
+    }
+
+    #[test]
+    fn test_directory_mode_unchanged() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("doc1.typ"), "#heading[1]").unwrap();
+        fs::write(temp.path().join("doc2.typ"), "#heading[2]").unwrap();
+
+        let project = ProjectConfig::from_path(temp.path()).unwrap();
+
+        assert_eq!(project.mode, ProjectMode::Directory);
+        assert_eq!(project.typ_files.len(), 2);
+    }
+}
