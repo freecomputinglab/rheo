@@ -162,26 +162,19 @@ impl ProjectConfig {
             return Err(RheoError::path(file_path, "file must have .typ extension"));
         }
 
-        // Root = parent directory (for relative imports to work)
-        let root = file_path
-            .parent()
-            .ok_or_else(|| RheoError::path(file_path, "file has no parent directory"))?
-            .to_path_buf();
-
-        // Canonicalize both paths
-        let root = root.canonicalize().map_err(|e| {
-            RheoError::path(
-                &root,
-                format!("failed to canonicalize parent directory: {}", e),
-            )
-        })?;
-
+        // Canonicalize the file path first (resolves relative to absolute)
         let file_path = file_path.canonicalize().map_err(|e| {
             RheoError::path(
                 file_path,
                 format!("failed to canonicalize file path: {}", e),
             )
         })?;
+
+        // Root = parent directory (now guaranteed to be absolute)
+        let root = file_path
+            .parent()
+            .ok_or_else(|| RheoError::path(&file_path, "file has no parent directory"))?
+            .to_path_buf();
 
         // Project name = file stem
         let name = file_path
@@ -322,5 +315,29 @@ exclude = ["*.typ"]
 
         assert_eq!(project.mode, ProjectMode::Directory);
         assert_eq!(project.typ_files.len(), 2);
+    }
+
+    #[test]
+    fn test_single_file_with_relative_path() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.path().join("document.typ");
+        fs::write(&file, "#heading[Test]").unwrap();
+
+        // Save original directory and change to temp directory
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp.path()).unwrap();
+
+        // Use relative path (no directory component)
+        let result = ProjectConfig::from_path(Path::new("document.typ"));
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir).unwrap();
+
+        // Verify it succeeded
+        let project = result.unwrap();
+        assert_eq!(project.name, "document");
+        assert_eq!(project.mode, ProjectMode::SingleFile);
+        assert_eq!(project.typ_files.len(), 1);
+        assert_eq!(project.root, temp.path().canonicalize().unwrap());
     }
 }
