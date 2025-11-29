@@ -176,17 +176,54 @@ pub struct CompileConfig {
 }
 
 /// HTML output configuration
+///
+/// Supports unified exclude/include patterns via the `exclude` field.
+/// The deprecated `static_files` field is automatically migrated to negated patterns.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HtmlConfig {
-    /// Glob patterns for static files to copy to HTML output
-    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
-    /// Example: ["img/**", "css/**", "data/*.json"]
+    /// DEPRECATED: Use exclude with negated patterns instead
+    ///
+    /// This field is deprecated and will be removed in a future version.
+    /// Migration: `static_files = ["img/**"]` → `exclude = ["!**/*.typ", "!img/**"]`
+    ///
+    /// Old configs using static_files will continue to work with a deprecation warning.
     #[serde(default)]
+    #[deprecated(
+        since = "0.2.0",
+        note = "use exclude with negated patterns (e.g., exclude = [\"!**/*.typ\", \"!img/**\"])"
+    )]
     pub static_files: Vec<String>,
 
-    /// Glob patterns for files to exclude from HTML compilation
+    /// Glob patterns for files to include/exclude from HTML output
+    ///
+    /// Supports both exclude and include-only patterns:
+    /// - Regular patterns (e.g., "*.tmp") exclude matching files
+    /// - Negated patterns (e.g., "!**/*.typ") include ONLY matching files
+    ///
+    /// For .typ files: excluded files won't be compiled
+    /// For other files: excluded files won't be copied to output
+    ///
     /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
-    /// Example: ["index.typ", "pdf-only/**"]
+    ///
+    /// # Examples
+    ///
+    /// Include only .typ files and images:
+    /// ```toml
+    /// [html]
+    /// exclude = ["!**/*.typ", "!img/**"]
+    /// ```
+    ///
+    /// Exclude temps and drafts:
+    /// ```toml
+    /// [html]
+    /// exclude = ["*.tmp", "_drafts/**"]
+    /// ```
+    ///
+    /// Mixed (include .typ and images, exclude temps):
+    /// ```toml
+    /// [html]
+    /// exclude = ["!**/*.typ", "!img/**", "*.tmp"]
+    /// ```
     #[serde(default)]
     pub exclude: Vec<String>,
 }
@@ -285,8 +322,48 @@ impl RheoConfig {
 
     /// Get static files glob patterns for HTML output
     /// Returns empty slice if not configured
+    #[deprecated(
+        since = "0.2.0",
+        note = "use get_html_filter_patterns() instead"
+    )]
     pub fn get_static_files_patterns(&self) -> &[String] {
         &self.html.static_files
+    }
+
+    /// Get unified HTML filter patterns with backward compatibility
+    ///
+    /// If new `html.exclude` patterns exist, uses them.
+    /// Otherwise, migrates from deprecated `html.static_files` with a warning.
+    /// If neither exists, returns empty filter (includes everything).
+    pub fn get_html_filter_patterns(&self) -> Result<FilterPatterns> {
+        // New syntax takes precedence
+        if !self.html.exclude.is_empty() {
+            return FilterPatterns::from_patterns(&self.html.exclude);
+        }
+
+        // Backward compatibility: convert static_files to negated patterns
+        #[allow(deprecated)]
+        if !self.html.static_files.is_empty() {
+            warn!(
+                "html.static_files is deprecated, migrate to html.exclude with negated patterns"
+            );
+            warn!(
+                "Example migration: static_files = [\"img/**\"] → exclude = [\"!**/*.typ\", \"!img/**\"]"
+            );
+
+            // Convert static_files to include-only patterns
+            #[allow(deprecated)]
+            let negated: Vec<String> = self
+                .html
+                .static_files
+                .iter()
+                .map(|p| format!("!{}", p))
+                .collect();
+            return FilterPatterns::from_patterns(&negated);
+        }
+
+        // No patterns: default to "include everything"
+        FilterPatterns::from_patterns(&[])
     }
 
     /// Build GlobSet for HTML exclusions
@@ -566,4 +643,79 @@ fn test_filter_patterns_complex_scenario() {
     assert!(!filter.should_include(Path::new("temp.tmp")));
     // And not other files
     assert!(!filter.should_include(Path::new("data.json")));
+}
+
+#[test]
+fn test_html_filter_patterns_new_syntax() {
+    let toml = r#"
+        [html]
+        exclude = ["!**/*.typ", "!img/**"]
+    "#;
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    let filter = config.get_html_filter_patterns().unwrap();
+
+    assert!(filter.should_include(Path::new("doc.typ")));
+    assert!(filter.should_include(Path::new("img/photo.jpg")));
+    assert!(!filter.should_include(Path::new("data.json")));
+}
+
+#[test]
+#[allow(deprecated)]
+fn test_html_filter_patterns_legacy_static_files() {
+    let toml = r#"
+        [html]
+        static_files = ["img/**"]
+    "#;
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    let filter = config.get_html_filter_patterns().unwrap();
+
+    // Should be converted to !img/**
+    assert!(filter.should_include(Path::new("img/photo.jpg")));
+    assert!(filter.should_include(Path::new("img/icons/star.svg")));
+    assert!(!filter.should_include(Path::new("doc.typ")));
+    assert!(!filter.should_include(Path::new("data.json")));
+}
+
+#[test]
+fn test_html_filter_patterns_default_empty() {
+    let config = RheoConfig::default();
+    let filter = config.get_html_filter_patterns().unwrap();
+
+    // No patterns = include everything
+    assert!(filter.should_include(Path::new("anything.txt")));
+    assert!(filter.should_include(Path::new("doc.typ")));
+    assert!(filter.should_include(Path::new("img/photo.jpg")));
+}
+
+#[test]
+#[allow(deprecated)]
+fn test_html_filter_patterns_new_syntax_takes_precedence() {
+    let toml = r#"
+        [html]
+        static_files = ["css/**"]
+        exclude = ["!**/*.typ", "!img/**"]
+    "#;
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    let filter = config.get_html_filter_patterns().unwrap();
+
+    // New syntax (exclude) should be used, not static_files
+    assert!(filter.should_include(Path::new("doc.typ")));
+    assert!(filter.should_include(Path::new("img/photo.jpg")));
+    assert!(!filter.should_include(Path::new("css/style.css")));
+}
+
+#[test]
+#[allow(deprecated)]
+fn test_html_filter_patterns_multiple_static_files() {
+    let toml = r#"
+        [html]
+        static_files = ["img/**", "css/**"]
+    "#;
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    let filter = config.get_html_filter_patterns().unwrap();
+
+    // Both patterns should be converted to negated patterns
+    assert!(filter.should_include(Path::new("img/photo.jpg")));
+    assert!(filter.should_include(Path::new("css/style.css")));
+    assert!(!filter.should_include(Path::new("doc.typ")));
 }
