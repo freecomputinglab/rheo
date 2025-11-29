@@ -6,3 +6,6 @@ result-*
 
 # Beads database and daemon files
 .beads/
+
+# Per-project build directories
+**/build/

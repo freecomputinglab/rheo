@@ -23,6 +23,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Automatic asset copying (CSS, images) for HTML output
 - Clean command for removing build artifacts
 - Template injection for consistent document formatting
+- Configurable default output formats via rheo.toml
 
 **Project Structure:**
 - `src/rs/` - Rust source code
@@ -38,10 +39,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `error.rs` - Error types
 - `src/typst/` - Typst template files
   - `rheo.typ` - Core template and utilities
-- `build/` - Output directory (gitignored)
-  - `{project-name}/` - Project-specific outputs
-    - `pdf/` - PDF outputs
-    - `html/` - HTML outputs
+
+Each project creates its own `build/` directory (gitignored) containing:
+- `pdf/` - PDF outputs
+- `html/` - HTML outputs
+- `epub/` - EPUB outputs (planned)
 
 ### Development Commands
 
@@ -69,8 +71,9 @@ cargo run -- compile examples/blog_site/content/index.typ    # Single file mode
 
 **Clean build artifacts:**
 ```bash
-cargo run -- clean              # Clean current project
-cargo run -- clean --all        # Clean all projects
+cargo run -- clean                            # Clean current directory's project
+cargo run -- clean <project-path>             # Clean specific project
+cargo run -- clean examples/blog_site         # Example: clean blog_site project
 ```
 
 **Run with debug logging:**
@@ -82,6 +85,160 @@ RUST_LOG=rheo=trace cargo run -- compile <project-path>
 ```bash
 cargo test
 ```
+
+### Configuration (rheo.toml)
+
+Projects can include a `rheo.toml` configuration file in the project root to customize compilation behavior.
+
+**Example rheo.toml:**
+```toml
+content_dir = "content"
+
+[compile]
+# Default formats to compile when no CLI flags are specified
+# Options: "pdf", "html", "epub"
+# Default: ["pdf", "html"]
+formats = ["html", "pdf"]
+
+# Global exclude patterns - apply to ALL output formats
+# These are combined with format-specific excludes
+exclude = ["lib/**/*.typ", "**/*.bib"]
+
+[html]
+# Unified exclude/include patterns
+# - Regular patterns (e.g., "*.tmp") exclude matching files
+# - Negated patterns (e.g., "!**/*.typ") include ONLY matching files
+# Include only .typ files and images for HTML output:
+exclude = ["!**/*.typ", "!img/**", "!css/**"]
+
+[pdf]
+# Files to exclude from PDF compilation only (in addition to global excludes)
+exclude = ["web/**/*.typ", "index.typ"]
+
+[epub]
+# Files to exclude from EPUB compilation only (in addition to global excludes)
+exclude = []
+```
+
+**HTML Exclude Pattern Syntax:**
+
+The `[html] exclude` field supports both exclude and include-only patterns:
+
+- **Negated patterns** (`!pattern`): Include-only filters. File must match at least one.
+  - Example: `!**/*.typ` includes only .typ files
+  - Example: `!img/**` includes only files in img/ directory
+
+- **Regular patterns** (`pattern`): Exclude filters. File must not match any.
+  - Example: `*.tmp` excludes .tmp files
+  - Example: `_drafts/**` excludes _drafts/ directory
+
+- **Combined logic**: File included if not excluded AND (no negations OR matches a negation)
+
+**Pattern Examples:**
+
+Include only .typ files and images:
+```toml
+[html]
+exclude = ["!**/*.typ", "!img/**"]
+```
+
+Exclude temps and drafts:
+```toml
+[html]
+exclude = ["*.tmp", "_drafts/**"]
+```
+
+Include .typ and images, but exclude temps:
+```toml
+[html]
+exclude = ["!**/*.typ", "!img/**", "*.tmp"]
+```
+
+```toml
+[html]
+exclude = ["!**/*.typ", "!img/**", "!css/**", "index.typ"]
+```
+
+Explanation:
+- `!**/*.typ` - Include all .typ files for compilation
+- `!img/**` - Include all images for copying
+- `!css/**` - Include all CSS for copying
+- `index.typ` - Exclude index.typ from compilation (regular pattern)
+
+**Global Exclude Patterns:**
+
+The `[compile] exclude` field specifies patterns that apply to **ALL** output formats (HTML, PDF, and EPUB). These global patterns are combined with format-specific excludes to create the complete exclusion set for each format.
+
+**How it works:**
+- A file is excluded from a format if it matches EITHER:
+  1. A global `compile.exclude` pattern, OR
+  2. A format-specific exclude pattern (e.g., `html.exclude`, `pdf.exclude`)
+
+**Example - Global exclusion:**
+```toml
+[compile]
+exclude = ["**/*.bib", "lib/**/*.typ"]  # Excluded from ALL formats
+```
+
+**Example - Global + format-specific:**
+```toml
+[compile]
+exclude = ["**/*.bib"]  # Excluded from ALL formats
+
+[html]
+exclude = ["img/**"]    # Additionally excluded from HTML only
+
+[pdf]
+exclude = ["index.typ"] # Additionally excluded from PDF only
+```
+
+For HTML output in this example:
+- `**/*.bib` files excluded (global)
+- `img/**` files excluded (HTML-specific)
+- `index.typ` NOT excluded (that's PDF-specific)
+
+**Example - DRY configuration:**
+
+If you previously duplicated patterns across formats:
+```toml
+# Old (duplicated)
+[html]
+exclude = ["**/*.bib", "index.typ"]
+
+[pdf]
+exclude = ["**/*.bib", "web/**/*.typ"]
+```
+
+You can simplify using global patterns:
+```toml
+# New (DRY)
+[compile]
+exclude = ["**/*.bib"]  # Common exclusion
+
+[html]
+exclude = ["index.typ"]
+
+[pdf]
+exclude = ["web/**/*.typ"]
+```
+
+**Global patterns with negations:**
+
+Global excludes work with include-only patterns too:
+```toml
+[compile]
+exclude = ["**/*.bib"]  # Globally excluded
+
+[html]
+exclude = ["!**/*.typ", "!img/**"]  # Include only .typ and images
+```
+
+Result: `.bib` files are excluded even though HTML uses include-only mode (global takes precedence).
+
+**Configuration Precedence:**
+- CLI flags (`--pdf`, `--html`, `--epub`) override config file formats
+- If no CLI flags are specified, uses `compile.formats` from config
+- If `compile.formats` is empty or not specified, defaults to `["pdf", "html"]`
 
 ### Incremental Compilation
 
@@ -234,9 +391,9 @@ When you're ready to create a PR from your completed work:
 ### Why bd?
 
 - Dependency-aware: Track blockers and relationships between issues
-- Git-friendly: Auto-syncs to JSONL for version control
 - Agent-optimized: JSON output, ready work detection, discovered-from links
 - Prevents duplicate tracking systems and confusion
+- Local-only: Issues are stored locally, not shared via version control
 
 ### Quick Start
 
@@ -287,12 +444,20 @@ bd close bd-42 --reason "Completed" --json
    - `bd create "Found bug" -p 1 --deps discovered-from:<parent-id>`
 5. **Complete**: `bd close <id> --reason "Done"`
 
-### Auto-Sync
+### Local-Only Configuration
 
-bd automatically syncs with git:
-- Exports to `.beads/issues.jsonl` after changes (5s debounce)
-- Imports from JSONL when newer (e.g., after `git pull`)
-- No manual export/import needed!
+**IMPORTANT**: This project uses beads as a **local implementation detail only**. The `.beads/` directory is gitignored and NOT shared via version control.
+
+Configuration (`.beads/config.yaml`):
+- `no-auto-flush: true` - Disables automatic JSONL export (since not tracked in git)
+- `no-auto-import: true` - Disables automatic JSONL import (since not tracked in git)
+- Issues are stored in the local SQLite database only
+
+This means:
+- ✅ Use bd for local task tracking and workflow management
+- ✅ Issues are private to your local checkout
+- ❌ Do NOT commit `.beads/` files to version control
+- ❌ Issues are NOT shared between team members or machines
 
 ### MCP Server (Recommended)
 

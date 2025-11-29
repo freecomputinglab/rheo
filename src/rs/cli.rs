@@ -11,6 +11,62 @@ pub enum OutputFormat {
     Epub,
 }
 
+/// CLI format flags (what the user requested via command-line)
+#[derive(Debug, Clone, Copy)]
+struct FormatFlags {
+    pdf: bool,
+    html: bool,
+    epub: bool,
+}
+
+impl FormatFlags {
+    fn any_set(&self) -> bool {
+        self.pdf || self.html || self.epub
+    }
+}
+
+/// Determine which formats to compile based on CLI flags and config defaults
+fn determine_formats(flags: FormatFlags, config_defaults: &[String]) -> Result<Vec<OutputFormat>> {
+    // If any CLI flags are set, use those
+    if flags.any_set() {
+        let mut formats = Vec::new();
+        if flags.pdf {
+            formats.push(OutputFormat::Pdf);
+        }
+        if flags.html {
+            formats.push(OutputFormat::Html);
+        }
+        if flags.epub {
+            formats.push(OutputFormat::Epub);
+        }
+        return Ok(formats);
+    }
+
+    // Otherwise, use config defaults
+    let mut formats = Vec::new();
+    for format_str in config_defaults {
+        match format_str.to_lowercase().as_str() {
+            "pdf" => formats.push(OutputFormat::Pdf),
+            "html" => formats.push(OutputFormat::Html),
+            "epub" => formats.push(OutputFormat::Epub),
+            _ => {
+                return Err(crate::RheoError::project_config(format!(
+                    "invalid format in config: '{}' (must be 'pdf', 'html', or 'epub')",
+                    format_str
+                )));
+            }
+        }
+    }
+
+    // Fallback if config has no formats specified
+    if formats.is_empty() {
+        formats.push(OutputFormat::Pdf);
+        formats.push(OutputFormat::Html);
+    }
+
+    Ok(formats)
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "rheo")]
 #[command(about = "A tool for flowing Typst documents into publishable outputs", long_about = None)]
@@ -70,11 +126,11 @@ pub enum Commands {
         open: bool,
     },
 
-    /// Clean build artifacts
+    /// Clean build artifacts for a project
     Clean {
-        /// Clean all build artifacts (not just for a specific project)
-        #[arg(long)]
-        all: bool,
+        /// Path to project directory or single .typ file (defaults to current directory)
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
 
     /// Initialize a new Typst project from a template
@@ -125,18 +181,18 @@ fn get_file_formats(
         )
     })?;
 
-    // Build exclusion sets for each format
-    let html_exclusions = config.build_html_exclusion_set()?;
-    let pdf_exclusions = config.build_pdf_exclusion_set()?;
-    let epub_exclusions = config.build_epub_exclusion_set()?;
+    // Build filter patterns for each format (combines global + format-specific)
+    let html_filter = config.get_html_filter_patterns()?;
+    let pdf_filter = config.get_pdf_filter_patterns()?;
+    let epub_filter = config.get_epub_filter_patterns()?;
 
     let mut formats = Vec::new();
 
     for &format in requested_formats {
         let should_compile = match format {
-            OutputFormat::Pdf => !pdf_exclusions.is_match(relative_path),
-            OutputFormat::Html => !html_exclusions.is_match(relative_path),
-            OutputFormat::Epub => !epub_exclusions.is_match(relative_path),
+            OutputFormat::Pdf => pdf_filter.should_include(relative_path),
+            OutputFormat::Html => html_filter.should_include(relative_path),
+            OutputFormat::Epub => epub_filter.should_include(relative_path),
         };
 
         if should_compile {
@@ -231,28 +287,17 @@ fn perform_compilation(
 
     // Copy assets for HTML
     if formats.contains(&OutputFormat::Html) {
-        // Use new glob-based static file copying if patterns are configured
-        let static_patterns = project.config.get_static_files_patterns();
-        if !static_patterns.is_empty() {
-            info!("copying static files using configured patterns");
-            let content_dir = project.config.content_dir.as_deref().map(Path::new);
-            if let Err(e) = crate::assets::copy_static_files(
-                &project.root,
-                &output_config.html_dir,
-                static_patterns,
-                content_dir,
-            ) {
-                warn!(error = %e, "failed to copy static files, continuing");
-            }
-        } else {
-            // Fall back to legacy behavior for backward compatibility
-            info!("copying assets for HTML output");
-            if let Err(e) = crate::assets::copy_css(&project.root, &output_config.html_dir) {
-                warn!(error = %e, "failed to copy CSS, continuing");
-            }
-            if let Err(e) = crate::assets::copy_images(&project.root, &output_config.html_dir) {
-                warn!(error = %e, "failed to copy images, continuing");
-            }
+        info!("copying HTML assets");
+        let html_filter = project.config.get_html_filter_patterns()?;
+        let content_dir = project.config.content_dir.as_deref().map(Path::new);
+
+        if let Err(e) = crate::assets::copy_html_assets(
+            &project.root,
+            &output_config.html_dir,
+            &html_filter,
+            content_dir,
+        ) {
+            warn!(error = %e, "failed to copy HTML assets, continuing");
         }
     }
 
@@ -397,22 +442,17 @@ fn perform_compilation_incremental(
 
     // Copy assets for HTML
     if formats.contains(&OutputFormat::Html) {
-        // Use new glob-based static file copying if patterns are configured
-        let static_patterns = project.config.get_static_files_patterns();
-        if !static_patterns.is_empty() {
-            info!("copying static files using configured patterns");
-            let content_dir = project.config.content_dir.as_deref().map(Path::new);
-            if let Err(e) = crate::assets::copy_static_files(
-                &project.root,
-                &output_config.html_dir,
-                static_patterns,
-                content_dir,
-            ) {
-                error!(error = %e, "failed to copy static files");
-            } else {
-                let count = static_patterns.len();
-                info!(count, "copied static files");
-            }
+        info!("copying HTML assets");
+        let html_filter = project.config.get_html_filter_patterns()?;
+        let content_dir = project.config.content_dir.as_deref().map(Path::new);
+
+        if let Err(e) = crate::assets::copy_html_assets(
+            &project.root,
+            &output_config.html_dir,
+            &html_filter,
+            content_dir,
+        ) {
+            error!(error = %e, "failed to copy HTML assets");
         }
     }
 
@@ -506,28 +546,17 @@ impl Cli {
                     warn!("EPUB format is not yet supported and will be ignored");
                 }
 
-                // Determine which formats to compile
-                // Default = PDF + HTML (EPUB not yet supported)
-                let formats = if !pdf && !html {
-                    vec![OutputFormat::Pdf, OutputFormat::Html]
-                } else {
-                    let mut formats = Vec::new();
-                    if pdf {
-                        formats.push(OutputFormat::Pdf);
-                    }
-                    if html {
-                        formats.push(OutputFormat::Html);
-                    }
-                    formats
-                };
-
-                // Detect project configuration
+                // Detect project configuration first to get config defaults
                 info!(path = %path.display(), "detecting project configuration");
                 let project = crate::project::ProjectConfig::from_path(&path)?;
                 info!(name = %project.name, files = project.typ_files.len(), "detected project");
 
+                // Determine which formats to compile using CLI flags or config defaults
+                let flags = FormatFlags { pdf, html, epub };
+                let formats = determine_formats(flags, &project.config.compile.formats)?;
+
                 // Create output directories
-                let output_config = crate::output::OutputConfig::new(&project.name);
+                let output_config = crate::output::OutputConfig::new(&project.root);
                 output_config.create_dirs()?;
 
                 // Perform compilation
@@ -545,42 +574,29 @@ impl Cli {
                     warn!("EPUB format is not yet supported and will be ignored");
                 }
 
+                // Detect project configuration first to get config defaults
+                info!(path = %path.display(), "detecting project configuration");
+                let project = crate::project::ProjectConfig::from_path(&path)?;
+                info!(name = %project.name, files = project.typ_files.len(), "detected project");
+
+                // Determine which formats to compile using CLI flags or config defaults
+                let flags = FormatFlags { pdf, html, epub };
+                let formats = determine_formats(flags, &project.config.compile.formats)?;
+
                 // Log TODOs for --open with formats that aren't ready yet
                 if open {
-                    if pdf || !html {
+                    if formats.contains(&OutputFormat::Pdf) {
                         info!("TODO: PDF opening not yet implemented (need to decide on multi-file handling)");
                     }
-                    if epub {
+                    if formats.contains(&OutputFormat::Epub) {
                         info!(
                             "TODO: EPUB opening not yet implemented (need bene viewer integration)"
                         );
                     }
                 }
 
-                // Determine which formats to compile
-                // --open alone compiles ALL formats (PDF + HTML)
-                // --open with specific flags only compiles those formats
-                // Without --open, default = PDF + HTML
-                let formats = if !pdf && !html {
-                    vec![OutputFormat::Pdf, OutputFormat::Html]
-                } else {
-                    let mut formats = Vec::new();
-                    if pdf {
-                        formats.push(OutputFormat::Pdf);
-                    }
-                    if html {
-                        formats.push(OutputFormat::Html);
-                    }
-                    formats
-                };
-
-                // Detect project configuration
-                info!(path = %path.display(), "detecting project configuration");
-                let project = crate::project::ProjectConfig::from_path(&path)?;
-                info!(name = %project.name, files = project.typ_files.len(), "detected project");
-
                 // Create output directories
-                let output_config = crate::output::OutputConfig::new(&project.name);
+                let output_config = crate::output::OutputConfig::new(&project.root);
                 output_config.create_dirs()?;
 
                 // Perform initial compilation
@@ -722,24 +738,14 @@ impl Cli {
 
                 Ok(())
             }
-            Commands::Clean { all } => {
-                if all {
-                    info!("cleaning all build artifacts");
-                    crate::output::OutputConfig::clean_all()?;
-                    info!("cleaned entire build/ directory");
-                } else {
-                    // Detect project from current directory
-                    let current_dir = std::env::current_dir()
-                        .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
+            Commands::Clean { path } => {
+                info!(path = %path.display(), "detecting project for cleanup");
+                let project = crate::project::ProjectConfig::from_path(&path)?;
 
-                    info!(path = %current_dir.display(), "detecting project for cleanup");
-                    let project = crate::project::ProjectConfig::from_path(&current_dir)?;
-
-                    let output_config = crate::output::OutputConfig::new(&project.name);
-                    info!(project = %project.name, "cleaning project build artifacts");
-                    output_config.clean_project()?;
-                    info!(project = %project.name, "cleaned project build artifacts");
-                }
+                let output_config = crate::output::OutputConfig::new(&project.root);
+                info!(project = %project.name, "cleaning project build artifacts");
+                output_config.clean()?;
+                info!(project = %project.name, "cleaned project build artifacts");
                 Ok(())
             }
             Commands::Init { name, template } => {
@@ -903,5 +909,111 @@ mod tests {
         assert_eq!(formats2.len(), 2);
         assert!(formats2.contains(&OutputFormat::Pdf));
         assert!(formats2.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_determine_formats_cli_flags_override_config() {
+        // CLI flags should override config defaults
+        let config_defaults = vec!["pdf".to_string(), "html".to_string()];
+        let flags = FormatFlags {
+            pdf: true,
+            html: false,
+            epub: false,
+        };
+
+        let formats = determine_formats(flags, &config_defaults).unwrap();
+        assert_eq!(formats.len(), 1);
+        assert!(formats.contains(&OutputFormat::Pdf));
+    }
+
+    #[test]
+    fn test_determine_formats_uses_config_defaults_when_no_flags() {
+        let config_defaults = vec!["html".to_string()];
+        let flags = FormatFlags {
+            pdf: false,
+            html: false,
+            epub: false,
+        };
+
+        let formats = determine_formats(flags, &config_defaults).unwrap();
+        assert_eq!(formats.len(), 1);
+        assert!(formats.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_determine_formats_falls_back_to_pdf_html_when_empty() {
+        let config_defaults = vec![];
+        let flags = FormatFlags {
+            pdf: false,
+            html: false,
+            epub: false,
+        };
+
+        let formats = determine_formats(flags, &config_defaults).unwrap();
+        assert_eq!(formats.len(), 2);
+        assert!(formats.contains(&OutputFormat::Pdf));
+        assert!(formats.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_determine_formats_handles_case_insensitive() {
+        let config_defaults = vec!["PDF".to_string(), "HtMl".to_string()];
+        let flags = FormatFlags {
+            pdf: false,
+            html: false,
+            epub: false,
+        };
+
+        let formats = determine_formats(flags, &config_defaults).unwrap();
+        assert_eq!(formats.len(), 2);
+        assert!(formats.contains(&OutputFormat::Pdf));
+        assert!(formats.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_determine_formats_rejects_invalid_format() {
+        let config_defaults = vec!["pdf".to_string(), "invalid".to_string()];
+        let flags = FormatFlags {
+            pdf: false,
+            html: false,
+            epub: false,
+        };
+
+        let result = determine_formats(flags, &config_defaults);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("invalid format"));
+        assert!(err_msg.contains("invalid"));
+    }
+
+    #[test]
+    fn test_determine_formats_multiple_cli_flags() {
+        let config_defaults = vec!["epub".to_string()];
+        let flags = FormatFlags {
+            pdf: true,
+            html: true,
+            epub: false,
+        };
+
+        let formats = determine_formats(flags, &config_defaults).unwrap();
+        assert_eq!(formats.len(), 2);
+        assert!(formats.contains(&OutputFormat::Pdf));
+        assert!(formats.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_determine_formats_all_three_formats() {
+        let config_defaults = vec!["pdf".to_string(), "html".to_string(), "epub".to_string()];
+        let flags = FormatFlags {
+            pdf: false,
+            html: false,
+            epub: false,
+        };
+
+        let formats = determine_formats(flags, &config_defaults).unwrap();
+        assert_eq!(formats.len(), 3);
+        assert!(formats.contains(&OutputFormat::Pdf));
+        assert!(formats.contains(&OutputFormat::Html));
+        assert!(formats.contains(&OutputFormat::Epub));
     }
 }
