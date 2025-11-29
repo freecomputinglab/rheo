@@ -23,6 +23,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Automatic asset copying (CSS, images) for HTML output
 - Clean command for removing build artifacts
 - Template injection for consistent document formatting
+- Configurable default output formats via rheo.toml
 
 **Project Structure:**
 - `src/rs/` - Rust source code
@@ -82,6 +83,44 @@ RUST_LOG=rheo=trace cargo run -- compile <project-path>
 ```bash
 cargo test
 ```
+
+### Configuration (rheo.toml)
+
+Projects can include a `rheo.toml` configuration file in the project root to customize compilation behavior.
+
+**Example rheo.toml:**
+```toml
+content_dir = "content"
+
+[compile]
+# Default formats to compile when no CLI flags are specified
+# Options: "pdf", "html", "epub"
+# Default: ["pdf", "html"]
+formats = ["html", "pdf"]
+
+# Files to exclude from all compilations
+exclude = ["lib/**/*.typ"]
+
+[html]
+# Static files to copy to HTML output directory
+static_files = ["img/**", "css/**"]
+
+# Files to exclude from HTML compilation only
+exclude = ["index.typ"]
+
+[pdf]
+# Files to exclude from PDF compilation only
+exclude = ["web/**/*.typ"]
+
+[epub]
+# Files to exclude from EPUB compilation only
+exclude = []
+```
+
+**Configuration Precedence:**
+- CLI flags (`--pdf`, `--html`, `--epub`) override config file formats
+- If no CLI flags are specified, uses `compile.formats` from config
+- If `compile.formats` is empty or not specified, defaults to `["pdf", "html"]`
 
 ### Incremental Compilation
 
@@ -234,9 +273,9 @@ When you're ready to create a PR from your completed work:
 ### Why bd?
 
 - Dependency-aware: Track blockers and relationships between issues
-- Git-friendly: Auto-syncs to JSONL for version control
 - Agent-optimized: JSON output, ready work detection, discovered-from links
 - Prevents duplicate tracking systems and confusion
+- Local-only: Issues are stored locally, not shared via version control
 
 ### Quick Start
 
@@ -287,12 +326,20 @@ bd close bd-42 --reason "Completed" --json
    - `bd create "Found bug" -p 1 --deps discovered-from:<parent-id>`
 5. **Complete**: `bd close <id> --reason "Done"`
 
-### Auto-Sync
+### Local-Only Configuration
 
-bd automatically syncs with git:
-- Exports to `.beads/issues.jsonl` after changes (5s debounce)
-- Imports from JSONL when newer (e.g., after `git pull`)
-- No manual export/import needed!
+**IMPORTANT**: This project uses beads as a **local implementation detail only**. The `.beads/` directory is gitignored and NOT shared via version control.
+
+Configuration (`.beads/config.yaml`):
+- `no-auto-flush: true` - Disables automatic JSONL export (since not tracked in git)
+- `no-auto-import: true` - Disables automatic JSONL import (since not tracked in git)
+- Issues are stored in the local SQLite database only
+
+This means:
+- ✅ Use bd for local task tracking and workflow management
+- ✅ Issues are private to your local checkout
+- ❌ Do NOT commit `.beads/` files to version control
+- ❌ Issues are NOT shared between team members or machines
 
 ### MCP Server (Recommended)
 

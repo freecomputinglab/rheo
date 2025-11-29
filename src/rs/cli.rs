@@ -11,6 +11,62 @@ pub enum OutputFormat {
     Epub,
 }
 
+/// CLI format flags (what the user requested via command-line)
+#[derive(Debug, Clone, Copy)]
+struct FormatFlags {
+    pdf: bool,
+    html: bool,
+    epub: bool,
+}
+
+impl FormatFlags {
+    fn any_set(&self) -> bool {
+        self.pdf || self.html || self.epub
+    }
+}
+
+/// Determine which formats to compile based on CLI flags and config defaults
+fn determine_formats(flags: FormatFlags, config_defaults: &[String]) -> Result<Vec<OutputFormat>> {
+    // If any CLI flags are set, use those
+    if flags.any_set() {
+        let mut formats = Vec::new();
+        if flags.pdf {
+            formats.push(OutputFormat::Pdf);
+        }
+        if flags.html {
+            formats.push(OutputFormat::Html);
+        }
+        if flags.epub {
+            formats.push(OutputFormat::Epub);
+        }
+        return Ok(formats);
+    }
+
+    // Otherwise, use config defaults
+    let mut formats = Vec::new();
+    for format_str in config_defaults {
+        match format_str.to_lowercase().as_str() {
+            "pdf" => formats.push(OutputFormat::Pdf),
+            "html" => formats.push(OutputFormat::Html),
+            "epub" => formats.push(OutputFormat::Epub),
+            _ => {
+                return Err(crate::RheoError::project_config(format!(
+                    "invalid format in config: '{}' (must be 'pdf', 'html', or 'epub')",
+                    format_str
+                )));
+            }
+        }
+    }
+
+    // Fallback if config has no formats specified
+    if formats.is_empty() {
+        formats.push(OutputFormat::Pdf);
+        formats.push(OutputFormat::Html);
+    }
+
+    Ok(formats)
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "rheo")]
 #[command(about = "A tool for flowing Typst documents into publishable outputs", long_about = None)]
@@ -506,25 +562,14 @@ impl Cli {
                     warn!("EPUB format is not yet supported and will be ignored");
                 }
 
-                // Determine which formats to compile
-                // Default = PDF + HTML (EPUB not yet supported)
-                let formats = if !pdf && !html {
-                    vec![OutputFormat::Pdf, OutputFormat::Html]
-                } else {
-                    let mut formats = Vec::new();
-                    if pdf {
-                        formats.push(OutputFormat::Pdf);
-                    }
-                    if html {
-                        formats.push(OutputFormat::Html);
-                    }
-                    formats
-                };
-
-                // Detect project configuration
+                // Detect project configuration first to get config defaults
                 info!(path = %path.display(), "detecting project configuration");
                 let project = crate::project::ProjectConfig::from_path(&path)?;
                 info!(name = %project.name, files = project.typ_files.len(), "detected project");
+
+                // Determine which formats to compile using CLI flags or config defaults
+                let flags = FormatFlags { pdf, html, epub };
+                let formats = determine_formats(flags, &project.config.compile.formats)?;
 
                 // Create output directories
                 let output_config = crate::output::OutputConfig::new(&project.name);
@@ -545,39 +590,26 @@ impl Cli {
                     warn!("EPUB format is not yet supported and will be ignored");
                 }
 
+                // Detect project configuration first to get config defaults
+                info!(path = %path.display(), "detecting project configuration");
+                let project = crate::project::ProjectConfig::from_path(&path)?;
+                info!(name = %project.name, files = project.typ_files.len(), "detected project");
+
+                // Determine which formats to compile using CLI flags or config defaults
+                let flags = FormatFlags { pdf, html, epub };
+                let formats = determine_formats(flags, &project.config.compile.formats)?;
+
                 // Log TODOs for --open with formats that aren't ready yet
                 if open {
-                    if pdf || !html {
+                    if formats.contains(&OutputFormat::Pdf) {
                         info!("TODO: PDF opening not yet implemented (need to decide on multi-file handling)");
                     }
-                    if epub {
+                    if formats.contains(&OutputFormat::Epub) {
                         info!(
                             "TODO: EPUB opening not yet implemented (need bene viewer integration)"
                         );
                     }
                 }
-
-                // Determine which formats to compile
-                // --open alone compiles ALL formats (PDF + HTML)
-                // --open with specific flags only compiles those formats
-                // Without --open, default = PDF + HTML
-                let formats = if !pdf && !html {
-                    vec![OutputFormat::Pdf, OutputFormat::Html]
-                } else {
-                    let mut formats = Vec::new();
-                    if pdf {
-                        formats.push(OutputFormat::Pdf);
-                    }
-                    if html {
-                        formats.push(OutputFormat::Html);
-                    }
-                    formats
-                };
-
-                // Detect project configuration
-                info!(path = %path.display(), "detecting project configuration");
-                let project = crate::project::ProjectConfig::from_path(&path)?;
-                info!(name = %project.name, files = project.typ_files.len(), "detected project");
 
                 // Create output directories
                 let output_config = crate::output::OutputConfig::new(&project.name);
@@ -903,5 +935,111 @@ mod tests {
         assert_eq!(formats2.len(), 2);
         assert!(formats2.contains(&OutputFormat::Pdf));
         assert!(formats2.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_determine_formats_cli_flags_override_config() {
+        // CLI flags should override config defaults
+        let config_defaults = vec!["pdf".to_string(), "html".to_string()];
+        let flags = FormatFlags {
+            pdf: true,
+            html: false,
+            epub: false,
+        };
+
+        let formats = determine_formats(flags, &config_defaults).unwrap();
+        assert_eq!(formats.len(), 1);
+        assert!(formats.contains(&OutputFormat::Pdf));
+    }
+
+    #[test]
+    fn test_determine_formats_uses_config_defaults_when_no_flags() {
+        let config_defaults = vec!["html".to_string()];
+        let flags = FormatFlags {
+            pdf: false,
+            html: false,
+            epub: false,
+        };
+
+        let formats = determine_formats(flags, &config_defaults).unwrap();
+        assert_eq!(formats.len(), 1);
+        assert!(formats.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_determine_formats_falls_back_to_pdf_html_when_empty() {
+        let config_defaults = vec![];
+        let flags = FormatFlags {
+            pdf: false,
+            html: false,
+            epub: false,
+        };
+
+        let formats = determine_formats(flags, &config_defaults).unwrap();
+        assert_eq!(formats.len(), 2);
+        assert!(formats.contains(&OutputFormat::Pdf));
+        assert!(formats.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_determine_formats_handles_case_insensitive() {
+        let config_defaults = vec!["PDF".to_string(), "HtMl".to_string()];
+        let flags = FormatFlags {
+            pdf: false,
+            html: false,
+            epub: false,
+        };
+
+        let formats = determine_formats(flags, &config_defaults).unwrap();
+        assert_eq!(formats.len(), 2);
+        assert!(formats.contains(&OutputFormat::Pdf));
+        assert!(formats.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_determine_formats_rejects_invalid_format() {
+        let config_defaults = vec!["pdf".to_string(), "invalid".to_string()];
+        let flags = FormatFlags {
+            pdf: false,
+            html: false,
+            epub: false,
+        };
+
+        let result = determine_formats(flags, &config_defaults);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("invalid format"));
+        assert!(err_msg.contains("invalid"));
+    }
+
+    #[test]
+    fn test_determine_formats_multiple_cli_flags() {
+        let config_defaults = vec!["epub".to_string()];
+        let flags = FormatFlags {
+            pdf: true,
+            html: true,
+            epub: false,
+        };
+
+        let formats = determine_formats(flags, &config_defaults).unwrap();
+        assert_eq!(formats.len(), 2);
+        assert!(formats.contains(&OutputFormat::Pdf));
+        assert!(formats.contains(&OutputFormat::Html));
+    }
+
+    #[test]
+    fn test_determine_formats_all_three_formats() {
+        let config_defaults = vec!["pdf".to_string(), "html".to_string(), "epub".to_string()];
+        let flags = FormatFlags {
+            pdf: false,
+            html: false,
+            epub: false,
+        };
+
+        let formats = determine_formats(flags, &config_defaults).unwrap();
+        assert_eq!(formats.len(), 3);
+        assert!(formats.contains(&OutputFormat::Pdf));
+        assert!(formats.contains(&OutputFormat::Html));
+        assert!(formats.contains(&OutputFormat::Epub));
     }
 }

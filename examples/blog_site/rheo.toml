@@ -1,5 +1,11 @@
 content_dir = "content"
 
+[compile]
+# Default formats to compile (if not specified via CLI flags)
+# Options: "pdf", "html", "epub"
+# Default: ["pdf", "html"]
+formats = ["html", "pdf"]
+
 [html]
 static_files = ["img/**"]
 

@@ -36,6 +36,11 @@ pub struct CompileConfig {
     /// Example: ["lib/**/*.typ", "_*/**"]
     #[serde(default = "default_exclude_patterns")]
     pub exclude: Vec<String>,
+
+    /// Default formats to compile (if none specified via CLI)
+    /// Example: ["pdf", "html"]
+    #[serde(default = "default_formats")]
+    pub formats: Vec<String>,
 }
 
 /// HTML output configuration
@@ -78,6 +83,7 @@ impl Default for CompileConfig {
     fn default() -> Self {
         Self {
             exclude: default_exclude_patterns(),
+            formats: default_formats(),
         }
     }
 }
@@ -85,6 +91,11 @@ impl Default for CompileConfig {
 /// Default exclusion patterns
 fn default_exclude_patterns() -> Vec<String> {
     vec!["lib/**/*.typ".to_string()]
+}
+
+/// Default output formats
+fn default_formats() -> Vec<String> {
+    vec!["pdf".to_string(), "html".to_string()]
 }
 
 impl RheoConfig {
@@ -190,6 +201,7 @@ mod tests {
     fn test_default_config() {
         let config = RheoConfig::default();
         assert_eq!(config.compile.exclude, vec!["lib/**/*.typ"]);
+        assert_eq!(config.compile.formats, vec!["pdf", "html"]);
     }
 
     #[test]
@@ -255,4 +267,37 @@ fn test_build_per_format_exclusion_sets() {
     // Test PDF exclusions
     assert!(pdf_exclusions.is_match("web/index.typ"));
     assert!(!pdf_exclusions.is_match("pdf-only/doc.typ"));
+}
+
+#[test]
+fn test_formats_from_config() {
+    let toml = r#"
+            [compile]
+            formats = ["pdf"]
+        "#;
+
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    assert_eq!(config.compile.formats, vec!["pdf"]);
+}
+
+#[test]
+fn test_formats_defaults_when_not_specified() {
+    let toml = r#"
+            [compile]
+            exclude = ["lib/**/*.typ"]
+        "#;
+
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    assert_eq!(config.compile.formats, vec!["pdf", "html"]);
+}
+
+#[test]
+fn test_formats_multiple_values() {
+    let toml = r#"
+            [compile]
+            formats = ["html", "epub"]
+        "#;
+
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    assert_eq!(config.compile.formats, vec!["html", "epub"]);
 }

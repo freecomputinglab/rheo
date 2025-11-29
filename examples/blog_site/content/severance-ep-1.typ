@@ -1,7 +1,5 @@
 = Good news about hell - #emph[Severance] [s1/e1]
 
-// NOTE: does not work as HTML export does not take width into account
-// #image("../img/severance-s1e1-shot1.jpg", width: 75%)
 #image("img/severance-s1e1-shot1.jpg")
 
 The first thing to notice is the colour palette. 
