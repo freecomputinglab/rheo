@@ -104,11 +104,11 @@ formats = ["html", "pdf"]
 exclude = ["lib/**/*.typ"]
 
 [html]
-# Static files to copy to HTML output directory
-static_files = ["img/**", "css/**"]
-
-# Files to exclude from HTML compilation only
-exclude = ["index.typ"]
+# Unified exclude/include patterns
+# - Regular patterns (e.g., "*.tmp") exclude matching files
+# - Negated patterns (e.g., "!**/*.typ") include ONLY matching files
+# Include only .typ files and images for HTML output:
+exclude = ["!**/*.typ", "!img/**", "!css/**"]
 
 [pdf]
 # Files to exclude from PDF compilation only
@@ -118,6 +118,61 @@ exclude = ["web/**/*.typ"]
 # Files to exclude from EPUB compilation only
 exclude = []
 ```
+
+**HTML Exclude Pattern Syntax:**
+
+The `[html] exclude` field supports both exclude and include-only patterns:
+
+- **Negated patterns** (`!pattern`): Include-only filters. File must match at least one.
+  - Example: `!**/*.typ` includes only .typ files
+  - Example: `!img/**` includes only files in img/ directory
+
+- **Regular patterns** (`pattern`): Exclude filters. File must not match any.
+  - Example: `*.tmp` excludes .tmp files
+  - Example: `_drafts/**` excludes _drafts/ directory
+
+- **Combined logic**: File included if not excluded AND (no negations OR matches a negation)
+
+**Pattern Examples:**
+
+Include only .typ files and images:
+```toml
+[html]
+exclude = ["!**/*.typ", "!img/**"]
+```
+
+Exclude temps and drafts:
+```toml
+[html]
+exclude = ["*.tmp", "_drafts/**"]
+```
+
+Include .typ and images, but exclude temps:
+```toml
+[html]
+exclude = ["!**/*.typ", "!img/**", "*.tmp"]
+```
+
+**Migration from static_files (deprecated):**
+
+Old syntax (deprecated but still works):
+```toml
+[html]
+static_files = ["img/**", "css/**"]
+exclude = ["index.typ"]
+```
+
+New syntax (recommended):
+```toml
+[html]
+exclude = ["!**/*.typ", "!img/**", "!css/**", "index.typ"]
+```
+
+Explanation:
+- `!**/*.typ` - Include all .typ files for compilation
+- `!img/**` - Include all images for copying
+- `!css/**` - Include all CSS for copying
+- `index.typ` - Exclude index.typ from compilation (regular pattern)
 
 **Configuration Precedence:**
 - CLI flags (`--pdf`, `--html`, `--epub`) override config file formats
