@@ -99,9 +99,18 @@ mod tests {
         let project_root = PathBuf::from("/home/user/my-book");
         let config = OutputConfig::new(&project_root);
 
-        assert_eq!(config.pdf_dir, PathBuf::from("/home/user/my-book/build/pdf"));
-        assert_eq!(config.html_dir, PathBuf::from("/home/user/my-book/build/html"));
-        assert_eq!(config.epub_dir, PathBuf::from("/home/user/my-book/build/epub"));
+        assert_eq!(
+            config.pdf_dir,
+            PathBuf::from("/home/user/my-book/build/pdf")
+        );
+        assert_eq!(
+            config.html_dir,
+            PathBuf::from("/home/user/my-book/build/html")
+        );
+        assert_eq!(
+            config.epub_dir,
+            PathBuf::from("/home/user/my-book/build/epub")
+        );
     }
 
     #[test]
@@ -137,7 +146,6 @@ mod tests {
         // Clean up
         let _ = fs::remove_dir_all(&temp_dir);
     }
-
 
     #[test]
     fn test_clean_nonexistent_directory() {

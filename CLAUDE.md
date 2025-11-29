@@ -154,16 +154,6 @@ Include .typ and images, but exclude temps:
 exclude = ["!**/*.typ", "!img/**", "*.tmp"]
 ```
 
-**Migration from static_files (deprecated):**
-
-Old syntax (deprecated but still works):
-```toml
-[html]
-static_files = ["img/**", "css/**"]
-exclude = ["index.typ"]
-```
-
-New syntax (recommended):
 ```toml
 [html]
 exclude = ["!**/*.typ", "!img/**", "!css/**", "index.typ"]
