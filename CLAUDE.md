@@ -39,10 +39,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `error.rs` - Error types
 - `src/typst/` - Typst template files
   - `rheo.typ` - Core template and utilities
-- `build/` - Output directory (gitignored)
-  - `{project-name}/` - Project-specific outputs
-    - `pdf/` - PDF outputs
-    - `html/` - HTML outputs
+
+Each project creates its own `build/` directory (gitignored) containing:
+- `pdf/` - PDF outputs
+- `html/` - HTML outputs
+- `epub/` - EPUB outputs (planned)
 
 ### Development Commands
 
@@ -70,8 +71,9 @@ cargo run -- compile examples/blog_site/content/index.typ    # Single file mode
 
 **Clean build artifacts:**
 ```bash
-cargo run -- clean              # Clean current project
-cargo run -- clean --all        # Clean all projects
+cargo run -- clean                            # Clean current directory's project
+cargo run -- clean <project-path>             # Clean specific project
+cargo run -- clean examples/blog_site         # Example: clean blog_site project
 ```
 
 **Run with debug logging:**

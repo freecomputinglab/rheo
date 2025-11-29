@@ -59,23 +59,21 @@ rheo compile examples/web_book --pdf
 rheo compile examples/web_book --html
 #+end_src
 
-Output is organized by project: =build/{project}/pdf/= and =build/{project}/html/=.
+Output is organized in each project's =build/= directory: =build/pdf/= and =build/html/=.
 
 *** Clean Build Artifacts
 
-Remove build artifacts for the current project:
+Remove build artifacts for the current directory's project:
 
 #+begin_src bash
 rheo clean
 #+end_src
 
-Remove all build artifacts:
+Remove build artifacts for a specific project:
 
 #+begin_src bash
-rheo clean --all
+rheo clean examples/web_book
 #+end_src
-
-Note: The =build/.gitignore= file is preserved during cleanup.
 
 *** Logging
 
