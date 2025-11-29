@@ -126,11 +126,11 @@ pub enum Commands {
         open: bool,
     },
 
-    /// Clean build artifacts
+    /// Clean build artifacts for a project
     Clean {
-        /// Clean all build artifacts (not just for a specific project)
-        #[arg(long)]
-        all: bool,
+        /// Path to project directory or single .typ file (defaults to current directory)
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
 
     /// Initialize a new Typst project from a template
@@ -572,7 +572,7 @@ impl Cli {
                 let formats = determine_formats(flags, &project.config.compile.formats)?;
 
                 // Create output directories
-                let output_config = crate::output::OutputConfig::new(&project.name);
+                let output_config = crate::output::OutputConfig::new(&project.root);
                 output_config.create_dirs()?;
 
                 // Perform compilation
@@ -612,7 +612,7 @@ impl Cli {
                 }
 
                 // Create output directories
-                let output_config = crate::output::OutputConfig::new(&project.name);
+                let output_config = crate::output::OutputConfig::new(&project.root);
                 output_config.create_dirs()?;
 
                 // Perform initial compilation
@@ -754,24 +754,14 @@ impl Cli {
 
                 Ok(())
             }
-            Commands::Clean { all } => {
-                if all {
-                    info!("cleaning all build artifacts");
-                    crate::output::OutputConfig::clean_all()?;
-                    info!("cleaned entire build/ directory");
-                } else {
-                    // Detect project from current directory
-                    let current_dir = std::env::current_dir()
-                        .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
+            Commands::Clean { path } => {
+                info!(path = %path.display(), "detecting project for cleanup");
+                let project = crate::project::ProjectConfig::from_path(&path)?;
 
-                    info!(path = %current_dir.display(), "detecting project for cleanup");
-                    let project = crate::project::ProjectConfig::from_path(&current_dir)?;
-
-                    let output_config = crate::output::OutputConfig::new(&project.name);
-                    info!(project = %project.name, "cleaning project build artifacts");
-                    output_config.clean_project()?;
-                    info!(project = %project.name, "cleaned project build artifacts");
-                }
+                let output_config = crate::output::OutputConfig::new(&project.root);
+                info!(project = %project.name, "cleaning project build artifacts");
+                output_config.clean()?;
+                info!(project = %project.name, "cleaned project build artifacts");
                 Ok(())
             }
             Commands::Init { name, template } => {
