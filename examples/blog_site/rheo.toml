@@ -7,7 +7,15 @@ content_dir = "content"
 formats = ["html", "pdf"]
 
 [html]
-static_files = ["img/**"]
+# Unified exclude patterns support both exclude and include-only modes:
+# - Regular patterns (e.g., "*.tmp") exclude matching files
+# - Negated patterns (e.g., "!**/*.typ") include ONLY matching files
+#
+# The pattern below includes ONLY .typ files and img/** files for HTML output:
+exclude = ["!**/*.typ", "!img/**"]
+#
+# Old syntax (deprecated but still works):
+# static_files = ["img/**"]
 
 [pdf]
 exclude = ["index.typ"]
