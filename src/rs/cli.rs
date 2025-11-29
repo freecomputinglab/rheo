@@ -181,18 +181,18 @@ fn get_file_formats(
         )
     })?;
 
-    // Build exclusion sets for each format
-    let html_exclusions = config.build_html_exclusion_set()?;
-    let pdf_exclusions = config.build_pdf_exclusion_set()?;
-    let epub_exclusions = config.build_epub_exclusion_set()?;
+    // Build filter patterns for each format
+    let html_filter = config.get_html_filter_patterns()?;
+    let pdf_filter = crate::config::FilterPatterns::from_patterns(&config.pdf.exclude)?;
+    let epub_filter = crate::config::FilterPatterns::from_patterns(&config.epub.exclude)?;
 
     let mut formats = Vec::new();
 
     for &format in requested_formats {
         let should_compile = match format {
-            OutputFormat::Pdf => !pdf_exclusions.is_match(relative_path),
-            OutputFormat::Html => !html_exclusions.is_match(relative_path),
-            OutputFormat::Epub => !epub_exclusions.is_match(relative_path),
+            OutputFormat::Pdf => pdf_filter.should_include(relative_path),
+            OutputFormat::Html => html_filter.should_include(relative_path),
+            OutputFormat::Epub => epub_filter.should_include(relative_path),
         };
 
         if should_compile {
@@ -287,28 +287,17 @@ fn perform_compilation(
 
     // Copy assets for HTML
     if formats.contains(&OutputFormat::Html) {
-        // Use new glob-based static file copying if patterns are configured
-        let static_patterns = project.config.get_static_files_patterns();
-        if !static_patterns.is_empty() {
-            info!("copying static files using configured patterns");
-            let content_dir = project.config.content_dir.as_deref().map(Path::new);
-            if let Err(e) = crate::assets::copy_static_files(
-                &project.root,
-                &output_config.html_dir,
-                static_patterns,
-                content_dir,
-            ) {
-                warn!(error = %e, "failed to copy static files, continuing");
-            }
-        } else {
-            // Fall back to legacy behavior for backward compatibility
-            info!("copying assets for HTML output");
-            if let Err(e) = crate::assets::copy_css(&project.root, &output_config.html_dir) {
-                warn!(error = %e, "failed to copy CSS, continuing");
-            }
-            if let Err(e) = crate::assets::copy_images(&project.root, &output_config.html_dir) {
-                warn!(error = %e, "failed to copy images, continuing");
-            }
+        info!("copying HTML assets");
+        let html_filter = project.config.get_html_filter_patterns()?;
+        let content_dir = project.config.content_dir.as_deref().map(Path::new);
+
+        if let Err(e) = crate::assets::copy_html_assets(
+            &project.root,
+            &output_config.html_dir,
+            &html_filter,
+            content_dir,
+        ) {
+            warn!(error = %e, "failed to copy HTML assets, continuing");
         }
     }
 
@@ -453,22 +442,17 @@ fn perform_compilation_incremental(
 
     // Copy assets for HTML
     if formats.contains(&OutputFormat::Html) {
-        // Use new glob-based static file copying if patterns are configured
-        let static_patterns = project.config.get_static_files_patterns();
-        if !static_patterns.is_empty() {
-            info!("copying static files using configured patterns");
-            let content_dir = project.config.content_dir.as_deref().map(Path::new);
-            if let Err(e) = crate::assets::copy_static_files(
-                &project.root,
-                &output_config.html_dir,
-                static_patterns,
-                content_dir,
-            ) {
-                error!(error = %e, "failed to copy static files");
-            } else {
-                let count = static_patterns.len();
-                info!(count, "copied static files");
-            }
+        info!("copying HTML assets");
+        let html_filter = project.config.get_html_filter_patterns()?;
+        let content_dir = project.config.content_dir.as_deref().map(Path::new);
+
+        if let Err(e) = crate::assets::copy_html_assets(
+            &project.root,
+            &output_config.html_dir,
+            &html_filter,
+            content_dir,
+        ) {
+            error!(error = %e, "failed to copy HTML assets");
         }
     }
 
