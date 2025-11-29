@@ -1,3 +1,5 @@
+# Relative to the rheo folder, if you specify a `oontent_dir`, 
+# all of the `exclude` patterns become relative to this folder.
 content_dir = "content"
 
 [compile]
@@ -5,6 +7,11 @@ content_dir = "content"
 # Options: "pdf", "html", "epub"
 # Default: ["pdf", "html"]
 formats = ["html", "pdf"]
+
+# Global exclude patterns applied to ALL output formats
+# These patterns are combined with format-specific excludes
+# Example: exclude bibliography files from all formats
+# exclude = ["**/*.bib", "lib/**/*.typ"]
 
 [html]
 # Unified exclude patterns support both exclude and include-only modes:

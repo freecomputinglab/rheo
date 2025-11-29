@@ -181,10 +181,10 @@ fn get_file_formats(
         )
     })?;
 
-    // Build filter patterns for each format
+    // Build filter patterns for each format (combines global + format-specific)
     let html_filter = config.get_html_filter_patterns()?;
-    let pdf_filter = crate::config::FilterPatterns::from_patterns(&config.pdf.exclude)?;
-    let epub_filter = crate::config::FilterPatterns::from_patterns(&config.epub.exclude)?;
+    let pdf_filter = config.get_pdf_filter_patterns()?;
+    let epub_filter = config.get_epub_filter_patterns()?;
 
     let mut formats = Vec::new();
 

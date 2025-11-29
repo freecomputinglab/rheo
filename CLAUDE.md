@@ -100,8 +100,9 @@ content_dir = "content"
 # Default: ["pdf", "html"]
 formats = ["html", "pdf"]
 
-# Files to exclude from all compilations
-exclude = ["lib/**/*.typ"]
+# Global exclude patterns - apply to ALL output formats
+# These are combined with format-specific excludes
+exclude = ["lib/**/*.typ", "**/*.bib"]
 
 [html]
 # Unified exclude/include patterns
@@ -111,11 +112,11 @@ exclude = ["lib/**/*.typ"]
 exclude = ["!**/*.typ", "!img/**", "!css/**"]
 
 [pdf]
-# Files to exclude from PDF compilation only
-exclude = ["web/**/*.typ"]
+# Files to exclude from PDF compilation only (in addition to global excludes)
+exclude = ["web/**/*.typ", "index.typ"]
 
 [epub]
-# Files to exclude from EPUB compilation only
+# Files to exclude from EPUB compilation only (in addition to global excludes)
 exclude = []
 ```
 
@@ -173,6 +174,76 @@ Explanation:
 - `!img/**` - Include all images for copying
 - `!css/**` - Include all CSS for copying
 - `index.typ` - Exclude index.typ from compilation (regular pattern)
+
+**Global Exclude Patterns:**
+
+The `[compile] exclude` field specifies patterns that apply to **ALL** output formats (HTML, PDF, and EPUB). These global patterns are combined with format-specific excludes to create the complete exclusion set for each format.
+
+**How it works:**
+- A file is excluded from a format if it matches EITHER:
+  1. A global `compile.exclude` pattern, OR
+  2. A format-specific exclude pattern (e.g., `html.exclude`, `pdf.exclude`)
+
+**Example - Global exclusion:**
+```toml
+[compile]
+exclude = ["**/*.bib", "lib/**/*.typ"]  # Excluded from ALL formats
+```
+
+**Example - Global + format-specific:**
+```toml
+[compile]
+exclude = ["**/*.bib"]  # Excluded from ALL formats
+
+[html]
+exclude = ["img/**"]    # Additionally excluded from HTML only
+
+[pdf]
+exclude = ["index.typ"] # Additionally excluded from PDF only
+```
+
+For HTML output in this example:
+- `**/*.bib` files excluded (global)
+- `img/**` files excluded (HTML-specific)
+- `index.typ` NOT excluded (that's PDF-specific)
+
+**Example - DRY configuration:**
+
+If you previously duplicated patterns across formats:
+```toml
+# Old (duplicated)
+[html]
+exclude = ["**/*.bib", "index.typ"]
+
+[pdf]
+exclude = ["**/*.bib", "web/**/*.typ"]
+```
+
+You can simplify using global patterns:
+```toml
+# New (DRY)
+[compile]
+exclude = ["**/*.bib"]  # Common exclusion
+
+[html]
+exclude = ["index.typ"]
+
+[pdf]
+exclude = ["web/**/*.typ"]
+```
+
+**Global patterns with negations:**
+
+Global excludes work with include-only patterns too:
+```toml
+[compile]
+exclude = ["**/*.bib"]  # Globally excluded
+
+[html]
+exclude = ["!**/*.typ", "!img/**"]  # Include only .typ and images
+```
+
+Result: `.bib` files are excluded even though HTML uses include-only mode (global takes precedence).
 
 **Configuration Precedence:**
 - CLI flags (`--pdf`, `--html`, `--epub`) override config file formats

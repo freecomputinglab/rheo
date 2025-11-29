@@ -67,21 +67,27 @@ impl FilterPatterns {
     ///
     /// Include only .typ files:
     /// ```
+    /// # use rheo::config::FilterPatterns;
     /// let filter = FilterPatterns::from_patterns(&["!**/*.typ".to_string()])?;
+    /// # Ok::<(), rheo::RheoError>(())
     /// ```
     ///
     /// Exclude temps:
     /// ```
+    /// # use rheo::config::FilterPatterns;
     /// let filter = FilterPatterns::from_patterns(&["*.tmp".to_string()])?;
+    /// # Ok::<(), rheo::RheoError>(())
     /// ```
     ///
     /// Mixed (include .typ and images, exclude temps):
     /// ```
+    /// # use rheo::config::FilterPatterns;
     /// let filter = FilterPatterns::from_patterns(&[
     ///     "!**/*.typ".to_string(),
     ///     "!img/**".to_string(),
     ///     "*.tmp".to_string(),
     /// ])?;
+    /// # Ok::<(), rheo::RheoError>(())
     /// ```
     pub fn from_patterns(patterns: &[String]) -> Result<Self> {
         let mut exclude_builder = GlobSetBuilder::new();
@@ -330,15 +336,21 @@ impl RheoConfig {
         &self.html.static_files
     }
 
-    /// Get unified HTML filter patterns with backward compatibility
+    /// Get unified HTML filter patterns with backward compatibility and global patterns
     ///
-    /// If new `html.exclude` patterns exist, uses them.
+    /// Combines global `compile.exclude` patterns with HTML-specific patterns.
+    /// If new `html.exclude` patterns exist, combines them with global patterns.
     /// Otherwise, migrates from deprecated `html.static_files` with a warning.
-    /// If neither exists, returns empty filter (includes everything).
+    /// If neither exists, uses only global patterns.
+    ///
+    /// A file is excluded from HTML if it matches EITHER global OR HTML-specific patterns.
     pub fn get_html_filter_patterns(&self) -> Result<FilterPatterns> {
+        let mut patterns = self.compile.exclude.clone();
+
         // New syntax takes precedence
         if !self.html.exclude.is_empty() {
-            return FilterPatterns::from_patterns(&self.html.exclude);
+            patterns.extend(self.html.exclude.clone());
+            return FilterPatterns::from_patterns(&patterns);
         }
 
         // Backward compatibility: convert static_files to negated patterns
@@ -359,11 +371,32 @@ impl RheoConfig {
                 .iter()
                 .map(|p| format!("!{}", p))
                 .collect();
-            return FilterPatterns::from_patterns(&negated);
+            patterns.extend(negated);
+            return FilterPatterns::from_patterns(&patterns);
         }
 
-        // No patterns: default to "include everything"
-        FilterPatterns::from_patterns(&[])
+        // No HTML-specific patterns: use only global patterns
+        FilterPatterns::from_patterns(&patterns)
+    }
+
+    /// Get combined filter patterns for PDF (global + PDF-specific)
+    ///
+    /// Combines global `compile.exclude` patterns with `pdf.exclude` patterns.
+    /// A file is excluded from PDF if it matches EITHER global OR PDF-specific patterns.
+    pub fn get_pdf_filter_patterns(&self) -> Result<FilterPatterns> {
+        let mut patterns = self.compile.exclude.clone();
+        patterns.extend(self.pdf.exclude.clone());
+        FilterPatterns::from_patterns(&patterns)
+    }
+
+    /// Get combined filter patterns for EPUB (global + EPUB-specific)
+    ///
+    /// Combines global `compile.exclude` patterns with `epub.exclude` patterns.
+    /// A file is excluded from EPUB if it matches EITHER global OR EPUB-specific patterns.
+    pub fn get_epub_filter_patterns(&self) -> Result<FilterPatterns> {
+        let mut patterns = self.compile.exclude.clone();
+        patterns.extend(self.epub.exclude.clone());
+        FilterPatterns::from_patterns(&patterns)
     }
 
     /// Build GlobSet for HTML exclusions
@@ -718,4 +751,152 @@ fn test_html_filter_patterns_multiple_static_files() {
     assert!(filter.should_include(Path::new("img/photo.jpg")));
     assert!(filter.should_include(Path::new("css/style.css")));
     assert!(!filter.should_include(Path::new("doc.typ")));
+}
+
+// Tests for global + format-specific pattern combination
+
+#[test]
+fn test_pdf_filter_combines_global_and_specific() {
+    let toml = r#"
+        [compile]
+        exclude = ["**/*.bib"]
+
+        [pdf]
+        exclude = ["index.typ"]
+    "#;
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    let filter = config.get_pdf_filter_patterns().unwrap();
+
+    // Global pattern applies
+    assert!(!filter.should_include(Path::new("refs.bib")));
+    assert!(!filter.should_include(Path::new("lib/refs.bib")));
+
+    // PDF-specific pattern applies
+    assert!(!filter.should_include(Path::new("index.typ")));
+
+    // Other files included
+    assert!(filter.should_include(Path::new("article.typ")));
+}
+
+#[test]
+fn test_html_filter_combines_global_and_specific() {
+    let toml = r#"
+        [compile]
+        exclude = ["**/*.bib"]
+
+        [html]
+        exclude = ["img/**"]
+    "#;
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    let filter = config.get_html_filter_patterns().unwrap();
+
+    // Global pattern applies
+    assert!(!filter.should_include(Path::new("refs.bib")));
+
+    // HTML-specific pattern applies
+    assert!(!filter.should_include(Path::new("img/photo.jpg")));
+
+    // Other files included
+    assert!(filter.should_include(Path::new("article.typ")));
+}
+
+#[test]
+fn test_epub_filter_combines_global_and_specific() {
+    let toml = r#"
+        [compile]
+        exclude = ["**/*.bib"]
+
+        [epub]
+        exclude = ["index.typ"]
+    "#;
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    let filter = config.get_epub_filter_patterns().unwrap();
+
+    // Global pattern applies
+    assert!(!filter.should_include(Path::new("refs.bib")));
+
+    // EPUB-specific pattern applies
+    assert!(!filter.should_include(Path::new("index.typ")));
+
+    // Other files included
+    assert!(filter.should_include(Path::new("article.typ")));
+}
+
+#[test]
+fn test_global_excludes_all_formats() {
+    let toml = r#"
+        [compile]
+        exclude = ["**/*.bib"]
+    "#;
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+
+    let html_filter = config.get_html_filter_patterns().unwrap();
+    let pdf_filter = config.get_pdf_filter_patterns().unwrap();
+    let epub_filter = config.get_epub_filter_patterns().unwrap();
+
+    // All formats exclude .bib files
+    assert!(!html_filter.should_include(Path::new("refs.bib")));
+    assert!(!pdf_filter.should_include(Path::new("refs.bib")));
+    assert!(!epub_filter.should_include(Path::new("refs.bib")));
+}
+
+#[test]
+fn test_global_with_negated_format_patterns() {
+    let toml = r#"
+        [compile]
+        exclude = ["**/*.bib"]
+
+        [html]
+        exclude = ["!**/*.typ", "!img/**"]
+    "#;
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    let filter = config.get_html_filter_patterns().unwrap();
+
+    // Global exclude applies even with include-only HTML patterns
+    assert!(!filter.should_include(Path::new("refs.bib")));
+
+    // HTML include patterns apply
+    assert!(filter.should_include(Path::new("article.typ")));
+    assert!(filter.should_include(Path::new("img/photo.jpg")));
+
+    // Non-included files excluded
+    assert!(!filter.should_include(Path::new("data.json")));
+}
+
+#[test]
+fn test_html_filter_combines_global_with_static_files() {
+    let toml = r#"
+        [compile]
+        exclude = ["**/*.bib"]
+
+        [html]
+        static_files = ["img/**"]
+    "#;
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    let filter = config.get_html_filter_patterns().unwrap();
+
+    // Global exclude applies
+    assert!(!filter.should_include(Path::new("refs.bib")));
+
+    // Static files converted to include pattern
+    assert!(filter.should_include(Path::new("img/photo.jpg")));
+    assert!(!filter.should_include(Path::new("article.typ")));
+}
+
+#[test]
+fn test_empty_global_excludes_works() {
+    let toml = r#"
+        [compile]
+        exclude = []
+
+        [pdf]
+        exclude = ["index.typ"]
+    "#;
+    let config: RheoConfig = toml::from_str(toml).unwrap();
+    let filter = config.get_pdf_filter_patterns().unwrap();
+
+    // Only PDF-specific pattern applies
+    assert!(!filter.should_include(Path::new("index.typ")));
+    assert!(filter.should_include(Path::new("article.typ")));
+    assert!(filter.should_include(Path::new("refs.bib")));
 }

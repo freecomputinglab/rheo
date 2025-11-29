@@ -164,9 +164,15 @@ pub fn copy_static_files(
 /// # Examples
 ///
 /// Include only .typ files and images:
-/// ```
-/// let filter = FilterPatterns::from_patterns(&["!**/*.typ", "!img/**"])?;
-/// copy_html_assets(&project_dir, &output_dir, &filter, Some("content"))?;
+/// ```no_run
+/// # use rheo::config::FilterPatterns;
+/// # use rheo::assets::copy_html_assets;
+/// # use std::path::Path;
+/// # let project_dir = Path::new(".");
+/// # let output_dir = Path::new(".");
+/// let filter = FilterPatterns::from_patterns(&["!**/*.typ".to_string(), "!img/**".to_string()])?;
+/// copy_html_assets(&project_dir, &output_dir, &filter, Some(Path::new("content")))?;
+/// # Ok::<(), rheo::RheoError>(())
 /// ```
 pub fn copy_html_assets(
     project_dir: &Path,
