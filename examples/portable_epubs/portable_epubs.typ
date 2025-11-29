@@ -1,4 +1,4 @@
-#let html-element(body, name: "div", attrs: ()) = context {
+#let html-element(body, name: "div", attrs: (:)) = context {
     if target() == "html" {
       html.elem(name, attrs: attrs, body)
     } else {
@@ -7,7 +7,7 @@
     }
 }
 
-#let custom-element(name, attrs: ()) = html-element.with(name: name).with(attrs: attrs)
+#let custom-element(name, attrs: (:)) = html-element.with(name: name).with(attrs: attrs)
 
 #let header = custom-element("header")
 #let authors = custom-element("doc-authors")
@@ -19,7 +19,7 @@
 #let section = custom-element("section")
 #let definition = custom-element("dfn-container")
 
-#let defined-word(id: "") = [#custom-element("dfn", attrs: (id: id))]
+#let defined-word(id: "", body) = custom-element("dfn")(attrs: (id: id), body)
 
 #let callout(body) = custom-element("div")(attrs: (class: "callout"), body)
 #let def-link(id, body) = custom-element("a")(attrs: (href: "#" + id, data-target: "dfn"), body)
