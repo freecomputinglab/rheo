@@ -91,6 +91,10 @@ pub enum Commands {
         /// Path to project directory or single .typ file
         path: PathBuf,
 
+        /// Path to custom rheo.toml config file
+        #[arg(long, value_name = "PATH")]
+        config: Option<PathBuf>,
+
         /// Build output directory (overrides rheo.toml if set)
         #[arg(long)]
         build_dir: Option<PathBuf>,
@@ -112,6 +116,10 @@ pub enum Commands {
     Watch {
         /// Path to project directory or single .typ file
         path: PathBuf,
+
+        /// Path to custom rheo.toml config file
+        #[arg(long, value_name = "PATH")]
+        config: Option<PathBuf>,
 
         /// Build output directory (overrides rheo.toml if set)
         #[arg(long)]
@@ -139,6 +147,10 @@ pub enum Commands {
         /// Path to project directory or single .typ file (defaults to current directory)
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// Path to custom rheo.toml config file
+        #[arg(long, value_name = "PATH")]
+        config: Option<PathBuf>,
 
         /// Build output directory to clean (overrides rheo.toml if set)
         #[arg(long)]
@@ -561,6 +573,7 @@ impl Cli {
         match self.command {
             Commands::Compile {
                 path,
+                config,
                 build_dir,
                 pdf,
                 html,
@@ -573,7 +586,7 @@ impl Cli {
 
                 // Detect project configuration first to get config defaults
                 info!(path = %path.display(), "detecting project configuration");
-                let project = crate::project::ProjectConfig::from_path(&path)?;
+                let project = crate::project::ProjectConfig::from_path(&path, config.as_deref())?;
                 info!(name = %project.name, files = project.typ_files.len(), "detected project");
 
                 // Determine which formats to compile using CLI flags or config defaults
@@ -603,6 +616,7 @@ impl Cli {
             }
             Commands::Watch {
                 path,
+                config,
                 build_dir,
                 pdf,
                 html,
@@ -616,7 +630,7 @@ impl Cli {
 
                 // Detect project configuration first to get config defaults
                 info!(path = %path.display(), "detecting project configuration");
-                let project = crate::project::ProjectConfig::from_path(&path)?;
+                let project = crate::project::ProjectConfig::from_path(&path, config.as_deref())?;
                 info!(name = %project.name, files = project.typ_files.len(), "detected project");
 
                 // Determine which formats to compile using CLI flags or config defaults
@@ -726,7 +740,7 @@ impl Cli {
                         crate::watch::WatchEvent::ConfigChanged => {
                             info!("config changed, reloading project");
                             // Reload project configuration
-                            match crate::project::ProjectConfig::from_path(&path) {
+                            match crate::project::ProjectConfig::from_path(&path, config.as_deref()) {
                                 Ok(new_project) => {
                                     *project_cell.borrow_mut() = new_project;
                                     let borrowed = project_cell.borrow();
@@ -792,9 +806,13 @@ impl Cli {
 
                 Ok(())
             }
-            Commands::Clean { path, build_dir } => {
+            Commands::Clean {
+                path,
+                config,
+                build_dir,
+            } => {
                 info!(path = %path.display(), "detecting project for cleanup");
-                let project = crate::project::ProjectConfig::from_path(&path)?;
+                let project = crate::project::ProjectConfig::from_path(&path, config.as_deref())?;
 
                 // Resolve build_dir with priority: CLI > config > default
                 let resolved_build_dir = if let Some(cli_path) = build_dir {

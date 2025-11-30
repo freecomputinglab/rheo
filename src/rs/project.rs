@@ -38,27 +38,35 @@ pub struct ProjectConfig {
 
     /// Compilation mode (directory or single file)
     pub mode: ProjectMode,
+
+    /// Path to the config file that was loaded
+    /// None if using default config (single-file mode without --config)
+    pub config_path: Option<PathBuf>,
 }
 
 impl ProjectConfig {
     /// Detect project configuration from a path (file or directory)
-    pub fn from_path(path: &Path) -> Result<Self> {
+    ///
+    /// # Arguments
+    /// * `path` - Path to project directory or single .typ file
+    /// * `config_path` - Optional path to custom rheo.toml config file
+    pub fn from_path(path: &Path, config_path: Option<&Path>) -> Result<Self> {
         // Check if path exists and determine if it's a file or directory
         let metadata = path
             .metadata()
             .map_err(|e| RheoError::path(path, format!("path does not exist: {}", e)))?;
 
         if metadata.is_file() {
-            Self::from_single_file(path)
+            Self::from_single_file(path, config_path)
         } else if metadata.is_dir() {
-            Self::from_directory(path)
+            Self::from_directory(path, config_path)
         } else {
             Err(RheoError::path(path, "path must be a file or directory"))
         }
     }
 
     /// Detect project configuration from a directory path
-    fn from_directory(path: &Path) -> Result<Self> {
+    fn from_directory(path: &Path, config_path: Option<&Path>) -> Result<Self> {
         // Canonicalize the root path for consistent path handling
         let root = path.canonicalize().map_err(|e| {
             RheoError::path(
@@ -74,8 +82,22 @@ impl ProjectConfig {
             .ok_or_else(|| RheoError::project_config("failed to get project name from directory"))?
             .to_string();
 
-        // Load configuration and build exclusion set
-        let config = RheoConfig::load(&root)?;
+        // Load config: custom path takes precedence
+        let (config, loaded_config_path) = if let Some(custom_path) = config_path {
+            info!(config = %custom_path.display(), "loading custom config");
+            let config = RheoConfig::load_from_path(custom_path)?;
+            (config, Some(custom_path.to_path_buf()))
+        } else {
+            let config = RheoConfig::load(&root)?;
+            let default_path = root.join("rheo.toml");
+            let loaded_path = if default_path.exists() {
+                Some(default_path)
+            } else {
+                None
+            };
+            (config, loaded_path)
+        };
+
         let exclusions = config.build_exclusion_set()?;
 
         // Determine search directory: content_dir if configured, otherwise project root
@@ -152,11 +174,12 @@ impl ProjectConfig {
             img_dir,
             references_bib,
             mode: ProjectMode::Directory,
+            config_path: loaded_config_path,
         })
     }
 
     /// Detect project configuration from a single .typ file
-    fn from_single_file(file_path: &Path) -> Result<Self> {
+    fn from_single_file(file_path: &Path, config_path: Option<&Path>) -> Result<Self> {
         // Validate .typ extension
         if file_path.extension().and_then(|s| s.to_str()) != Some("typ") {
             return Err(RheoError::path(file_path, "file must have .typ extension"));
@@ -183,8 +206,14 @@ impl ProjectConfig {
             .ok_or_else(|| RheoError::path(&file_path, "invalid filename"))?
             .to_string();
 
-        // Use default config (skip rheo.toml entirely)
-        let config = RheoConfig::default();
+        // Load config if --config provided, otherwise use default
+        let (config, loaded_config_path) = if let Some(custom_path) = config_path {
+            info!(config = %custom_path.display(), "using custom config in single-file mode");
+            let config = RheoConfig::load_from_path(custom_path)?;
+            (config, Some(custom_path.to_path_buf()))
+        } else {
+            (RheoConfig::default(), None)
+        };
 
         // Single file in typ_files list
         let typ_files = vec![file_path.clone()];
@@ -220,6 +249,7 @@ impl ProjectConfig {
             img_dir,
             references_bib,
             mode: ProjectMode::SingleFile,
+            config_path: loaded_config_path,
         })
     }
 }
@@ -236,7 +266,7 @@ mod tests {
         let file = temp.path().join("document.typ");
         fs::write(&file, "#heading[Test]").unwrap();
 
-        let project = ProjectConfig::from_path(&file).unwrap();
+        let project = ProjectConfig::from_path(&file, None).unwrap();
 
         assert_eq!(project.name, "document");
         assert_eq!(project.mode, ProjectMode::SingleFile);
@@ -250,7 +280,7 @@ mod tests {
         let file = temp.path().join("document.txt");
         fs::write(&file, "test").unwrap();
 
-        let result = ProjectConfig::from_path(&file);
+        let result = ProjectConfig::from_path(&file, None);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains(".typ extension"));
@@ -259,7 +289,7 @@ mod tests {
     #[test]
     fn test_single_file_nonexistent_fails() {
         let path = PathBuf::from("/tmp/nonexistent_file_12345_rheo_test.typ");
-        let result = ProjectConfig::from_path(&path);
+        let result = ProjectConfig::from_path(&path, None);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("does not exist"));
@@ -279,7 +309,7 @@ exclude = ["*.typ"]
         let file = temp.path().join("document.typ");
         fs::write(&file, "#heading[Test]").unwrap();
 
-        let project = ProjectConfig::from_path(&file).unwrap();
+        let project = ProjectConfig::from_path(&file, None).unwrap();
 
         // Should use default config, not load rheo.toml
         // Default exclusion is "lib/**/*.typ"
@@ -298,7 +328,7 @@ exclude = ["*.typ"]
         let file = temp.path().join("document.typ");
         fs::write(&file, "#heading[Test]").unwrap();
 
-        let project = ProjectConfig::from_path(&file).unwrap();
+        let project = ProjectConfig::from_path(&file, None).unwrap();
 
         assert!(project.style_css.is_some());
         assert!(project.img_dir.is_some());
@@ -311,7 +341,7 @@ exclude = ["*.typ"]
         fs::write(temp.path().join("doc1.typ"), "#heading[1]").unwrap();
         fs::write(temp.path().join("doc2.typ"), "#heading[2]").unwrap();
 
-        let project = ProjectConfig::from_path(temp.path()).unwrap();
+        let project = ProjectConfig::from_path(temp.path(), None).unwrap();
 
         assert_eq!(project.mode, ProjectMode::Directory);
         assert_eq!(project.typ_files.len(), 2);
@@ -328,7 +358,7 @@ exclude = ["*.typ"]
         std::env::set_current_dir(temp.path()).unwrap();
 
         // Use relative path (no directory component)
-        let result = ProjectConfig::from_path(Path::new("document.typ"));
+        let result = ProjectConfig::from_path(Path::new("document.typ"), None);
 
         // Restore original directory
         std::env::set_current_dir(original_dir).unwrap();
@@ -339,5 +369,102 @@ exclude = ["*.typ"]
         assert_eq!(project.mode, ProjectMode::SingleFile);
         assert_eq!(project.typ_files.len(), 1);
         assert_eq!(project.root, temp.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_single_file_with_custom_config() {
+        let temp = TempDir::new().unwrap();
+
+        // Create a custom config file
+        let config_path = temp.path().join("custom.toml");
+        fs::write(
+            &config_path,
+            r#"
+[compile]
+exclude = ["custom-exclude/**/*.typ"]
+formats = ["html"]
+"#,
+        )
+        .unwrap();
+
+        let file = temp.path().join("document.typ");
+        fs::write(&file, "#heading[Test]").unwrap();
+
+        let project = ProjectConfig::from_path(&file, Some(&config_path)).unwrap();
+
+        // Should use custom config, not default
+        assert_eq!(
+            project.config.compile.exclude,
+            vec!["custom-exclude/**/*.typ"]
+        );
+        assert_eq!(project.config.compile.formats, vec!["html"]);
+        assert!(project.config_path.is_some());
+        assert_eq!(
+            project.config_path.unwrap().canonicalize().unwrap(),
+            config_path.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_directory_mode_with_custom_config() {
+        let temp = TempDir::new().unwrap();
+
+        // Create a custom config file outside the project
+        let config_path = temp.path().join("custom.toml");
+        fs::write(
+            &config_path,
+            r#"
+[compile]
+exclude = ["*.typ"]
+formats = ["pdf"]
+"#,
+        )
+        .unwrap();
+
+        // Create project files
+        fs::write(temp.path().join("doc1.typ"), "#heading[1]").unwrap();
+        fs::write(temp.path().join("doc2.typ"), "#heading[2]").unwrap();
+
+        let project = ProjectConfig::from_path(temp.path(), Some(&config_path)).unwrap();
+
+        // Should use custom config
+        assert_eq!(project.config.compile.exclude, vec!["*.typ"]);
+        assert_eq!(project.config.compile.formats, vec!["pdf"]);
+        assert!(project.config_path.is_some());
+
+        // Files should be excluded by the custom config
+        assert_eq!(project.typ_files.len(), 0); // All .typ files excluded
+    }
+
+    #[test]
+    fn test_custom_config_path_stored() {
+        let temp = TempDir::new().unwrap();
+
+        // Create a custom config file
+        let config_path = temp.path().join("config.toml");
+        fs::write(&config_path, "[compile]\n").unwrap();
+
+        let file = temp.path().join("document.typ");
+        fs::write(&file, "#heading[Test]").unwrap();
+
+        let project = ProjectConfig::from_path(&file, Some(&config_path)).unwrap();
+
+        assert!(project.config_path.is_some());
+        assert_eq!(
+            project.config_path.unwrap().canonicalize().unwrap(),
+            config_path.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_no_config_path_when_default() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.path().join("document.typ");
+        fs::write(&file, "#heading[Test]").unwrap();
+
+        let project = ProjectConfig::from_path(&file, None).unwrap();
+
+        // Single-file mode without custom config should have None
+        assert!(project.config_path.is_none());
     }
 }
