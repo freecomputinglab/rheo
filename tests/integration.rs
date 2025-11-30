@@ -26,6 +26,7 @@ fn epubcheck(path: &Path) -> Result<()> {
 }
 
 #[test]
+#[ignore] // requires epubcheck to be installed
 fn integration() -> Result<()> {
     let inputs = fs::read_dir("tests/inputs")?;
 

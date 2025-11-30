@@ -232,7 +232,6 @@ fn perform_compilation(
     let mut html_succeeded = 0;
     let mut html_failed = 0;
     let mut epub_succeeded = false;
-    let mut epub_failed = false;
 
     // Use current working directory as root for Typst world
     // This allows absolute imports like /src/typst/rheo.typ to work
@@ -319,7 +318,7 @@ fn perform_compilation(
             }
             Err(e) => {
                 error!(error = %e, "EPUB generation failed");
-                epub_failed = true;
+                epub_succeeded = false;
             }
         }
     }
@@ -363,10 +362,10 @@ fn perform_compilation(
     }
 
     if formats.contains(&OutputFormat::Epub) {
-        if epub_failed {
-            warn!("EPUB generation failed");
-        } else if epub_succeeded {
+        if epub_succeeded {
             info!("EPUB generation complete");
+        } else {
+            warn!("EPUB generation failed");
         }
     }
 
@@ -379,7 +378,7 @@ fn perform_compilation(
 
     if pdf_fully_succeeded || html_fully_succeeded || epub_fully_succeeded {
         // At least one format succeeded completely
-        if pdf_failed > 0 || html_failed > 0 || epub_failed {
+        if pdf_failed > 0 || html_failed > 0 || !epub_succeeded {
             info!("compilation succeeded with warnings (some formats failed)");
         } else {
             info!("compilation succeeded");
@@ -387,7 +386,7 @@ fn perform_compilation(
         Ok(())
     } else {
         // All requested formats had failures
-        let total_failed = pdf_failed + html_failed + if epub_failed { 1 } else { 0 };
+        let total_failed = pdf_failed + html_failed + if !epub_succeeded { 1 } else { 0 };
         Err(crate::RheoError::project_config(format!(
             "all formats failed: {} file(s) could not be compiled",
             total_failed
