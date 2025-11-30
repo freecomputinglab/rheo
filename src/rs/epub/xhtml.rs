@@ -125,7 +125,7 @@ fn test_html_to_xhtml() {
         <meta name="foo" content="bar">
     </head>
     <body>
-        <h1>Test</h1>
+        <h2>Test</h2>
         <p>Hello
         <p>World
     </body>
@@ -136,7 +136,7 @@ fn test_html_to_xhtml() {
         <meta name="foo" content="bar"></meta>
     </head>
     <body><article>
-        <h1 id="test">Test</h1>
+        <h2 id="test">Test</h2>
         <p>Hello
         </p><p>World
     
