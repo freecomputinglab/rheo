@@ -83,8 +83,23 @@ RUST_LOG=rheo=trace cargo run -- compile <project-path>
 
 **Run tests:**
 ```bash
+# Run all tests
 cargo test
+
+# Run integration tests only
+cargo test --test integration_test
+
+# Update test references (after intentional output changes)
+UPDATE_REFERENCES=1 cargo test --test integration_test
+
+# Run only HTML tests
+RUN_HTML_TESTS=1 cargo test --test integration_test
+
+# Run only PDF tests
+RUN_PDF_TESTS=1 cargo test --test integration_test
 ```
+
+See `tests/README.md` for detailed documentation on the integration test suite.
 
 ### Configuration (rheo.toml)
 

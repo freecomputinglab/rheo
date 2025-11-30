@@ -388,7 +388,7 @@ impl RheoConfig {
         })
     }
 
-    /// Get unified HTML filter patterns with backward compatibility and global patterns
+    /// Get unified HTML filter patterns
     ///
     /// Combines global `compile.exclude` patterns with HTML-specific patterns.
     /// If new `html.exclude` patterns exist, combines them with global patterns.

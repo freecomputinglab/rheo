@@ -11,7 +11,7 @@ formats = ["html", "pdf"]
 # Global exclude patterns applied to ALL output formats
 # These patterns are combined with format-specific excludes
 # Example: exclude bibliography files from all formats
-exclude = ["**/*.bib", "lib/**/*.typ"]
+exclude = ["*.org", "**/*.bib", "lib/**/*.typ"]
 
 [html]
 # Unified exclude patterns support both exclude and include-only modes:
@@ -26,4 +26,4 @@ exclude = ["index.typ"]
 
 [epub.combined]
 spine = ["severance-*.typ"]
-title = "Severance Analysis"
+title = "Severance Analysis"exclude = ["index.typ"]
