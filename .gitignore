@@ -12,3 +12,5 @@ result-*
 
 # Cargo build artifacts
 /target
+
+.rustfmt.toml

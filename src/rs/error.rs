@@ -22,14 +22,15 @@ pub enum RheoError {
 
     /// PDF export error
     #[error("PDF export failed with {count} error(s):\n{errors}")]
-    PdfExport { count: usize, errors: String },
+    PdfGeneration { count: usize, errors: String },
 
     /// HTML export error
     #[error("HTML export failed with {count} error(s):\n{errors}")]
-    HtmlExport { count: usize, errors: String },
+    HtmlGeneration { count: usize, errors: String },
 
-    #[error("HTML export failed with {count} error(s):\n{errors}")]
-    EpubExport { count: usize, errors: String },
+    /// EPUB export error
+    #[error("EPUB export failed with {count} error(s):\n{errors}")]
+    EpubGeneration { count: usize, errors: String },
 
     /// Project configuration detection error
     #[error("Project configuration error: {message}")]

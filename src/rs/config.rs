@@ -231,11 +231,16 @@ pub struct PdfConfig {
 /// EPUB output configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EpubConfig {
-    /// Glob patterns for files to exclude from EPUB compilation
+    /// Title for the entire EPUB
+    pub title: Option<String>,
+
+    /// Glob patterns for files to include in EPUB compilation
     /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
-    /// Example: ["index.typ", "web-only/**"]
+    /// Output of patterns are sorted lexicographically
+    /// If empty, root must contain exactly one `.typ` file which will be used
+    /// Example: ["cover.typ", "chapters/**"]"
     #[serde(default)]
-    pub exclude: Vec<String>,
+    pub spine: Vec<String>,
 }
 
 impl Default for CompileConfig {
@@ -339,16 +344,6 @@ impl RheoConfig {
         FilterPatterns::from_patterns(&patterns)
     }
 
-    /// Get combined filter patterns for EPUB (global + EPUB-specific)
-    ///
-    /// Combines global `compile.exclude` patterns with `epub.exclude` patterns.
-    /// A file is excluded from EPUB if it matches EITHER global OR EPUB-specific patterns.
-    pub fn get_epub_filter_patterns(&self) -> Result<FilterPatterns> {
-        let mut patterns = self.compile.exclude.clone();
-        patterns.extend(self.epub.exclude.clone());
-        FilterPatterns::from_patterns(&patterns)
-    }
-
     /// Build GlobSet for HTML exclusions
     pub fn build_html_exclusion_set(&self) -> Result<GlobSet> {
         Self::build_globset(&self.html.exclude, "html.exclude")
@@ -357,11 +352,6 @@ impl RheoConfig {
     /// Build GlobSet for PDF exclusions
     pub fn build_pdf_exclusion_set(&self) -> Result<GlobSet> {
         Self::build_globset(&self.pdf.exclude, "pdf.exclude")
-    }
-
-    /// Build GlobSet for EPUB exclusions
-    pub fn build_epub_exclusion_set(&self) -> Result<GlobSet> {
-        Self::build_globset(&self.epub.exclude, "epub.exclude")
     }
 
     /// Helper to build a GlobSet from validated patterns
@@ -416,7 +406,6 @@ fn test_per_format_exclusions_default_empty() {
     let config = RheoConfig::default();
     assert!(config.html.exclude.is_empty());
     assert!(config.pdf.exclude.is_empty());
-    assert!(config.epub.exclude.is_empty());
 }
 
 #[test]
@@ -426,16 +415,12 @@ fn test_per_format_exclusion_patterns() {
             exclude = ["pdf-only/**/*.typ"]
             
             [pdf]
-            exclude = ["index.typ", "web/**/*.typ"]
-            
-            [epub]
-            exclude = ["index.typ"]
+            exclude = ["index.typ", "web/**/*.typ"]            
         "#;
 
     let config: RheoConfig = toml::from_str(toml).unwrap();
     assert_eq!(config.html.exclude, vec!["pdf-only/**/*.typ"]);
     assert_eq!(config.pdf.exclude, vec!["index.typ", "web/**/*.typ"]);
-    assert_eq!(config.epub.exclude, vec!["index.typ"]);
 }
 
 #[test]
@@ -711,28 +696,6 @@ fn test_html_filter_combines_global_and_specific() {
 }
 
 #[test]
-fn test_epub_filter_combines_global_and_specific() {
-    let toml = r#"
-        [compile]
-        exclude = ["**/*.bib"]
-
-        [epub]
-        exclude = ["index.typ"]
-    "#;
-    let config: RheoConfig = toml::from_str(toml).unwrap();
-    let filter = config.get_epub_filter_patterns().unwrap();
-
-    // Global pattern applies
-    assert!(!filter.should_include(Path::new("refs.bib")));
-
-    // EPUB-specific pattern applies
-    assert!(!filter.should_include(Path::new("index.typ")));
-
-    // Other files included
-    assert!(filter.should_include(Path::new("article.typ")));
-}
-
-#[test]
 fn test_global_excludes_all_formats() {
     let toml = r#"
         [compile]
@@ -742,12 +705,10 @@ fn test_global_excludes_all_formats() {
 
     let html_filter = config.get_html_filter_patterns().unwrap();
     let pdf_filter = config.get_pdf_filter_patterns().unwrap();
-    let epub_filter = config.get_epub_filter_patterns().unwrap();
 
     // All formats exclude .bib files
     assert!(!html_filter.should_include(Path::new("refs.bib")));
     assert!(!pdf_filter.should_include(Path::new("refs.bib")));
-    assert!(!epub_filter.should_include(Path::new("refs.bib")));
 }
 
 #[test]

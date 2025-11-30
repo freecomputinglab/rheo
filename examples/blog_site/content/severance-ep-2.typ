@@ -1,11 +1,13 @@
-= Half Loop - _Severance_ [s1/e2]
+#set document(title: [Half Loop - _Severance_ [s1/e2]])
+
+#title()
 
 In #link("./severance-ep-1.typ")[the first episode], we were introduced to the two-sided subject at Lumon. 
 On the one hand, there is Mark S, the innie, who is screened for the first and major part of the episode.
 On the other, Mark Scout, the outie, to whose predicament we are introduced in the concluding scenes.
 S1E2 opens with a rewind on how innie Helly R came to be: how Milchick handed her flowers at end of her first day (which we glimpsed in S1E1 when Mark almost ran her over), a glimpse of her confidence gliding into the operating room on a higher floor of the same Lumon complex we saw Mark leave, a stereoscopic view of the implant procedure by which she becomes an android whose existence is #quote[spatially dictated] by Lumon's mysterious machinations.
 
-== Lumon Industries
+= Lumon Industries
 
 #image("img/severance-s1e2-lumon-logo.png")
 
@@ -61,7 +63,7 @@ So the proletariat is enslaved to a structure, not a person, and that structure 
 In capitalism, in other words, freedom is structurally reduced to the freedom to choose to whom one sells one labor-power: which is #emph[not] the same thing as freedom tout court.
 Thus is the wage laborer unfree in a way that is comparable, though not equivalent, to the slave.
 
-== Death at Lumon
+= Death at Lumon
 The death culture at Lumon should also be doubly refracted through Marx's analysis of how capital reduces its workers to shadows of themselves on the one hand, and a psychoanalytic understanding of the subject on the other. 
 When Mark gets emotional about Petey's disappearance during the game of office introductions (which tellingly involves passing around a brignt red ball), Milchick reprimands him with the following explanation:
 
@@ -86,7 +88,7 @@ There is a stronger psychoanalytic sense in which we might make sense of Milchic
 Lacan articulates a distinction between two kinds of death in his theory of the subject, a first death that is #strong[biological] and a second death that is #strong[symbolic]. 
 I will explicate this theory later in S1, when Milchick's foreshadowing of death's importance in the show bubbles clearly to the surface in a later episode.
 
-== Capturing and controlling the symbolic
+= Capturing and controlling the symbolic
 Let's talk about the #quote[symbol detectors] in the elevators, which are introduced in this episode. 
 These are the real basis of how Lumon separates innies from outies, as they supposedly ensure that no notes, no language, is passed between the two kinds of self.
 In S1E1, we saw outie Mark put the tissue he had been crying into in his car in his pocket; and we then saw innie Mark confidently strolling out of the elevator on the severed floor, quizzically discovering the tissue in his pocket, and tossing it into a bin on his walk down the hall to MDR.

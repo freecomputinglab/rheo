@@ -1,5 +1,7 @@
+use crate::config::EpubConfig;
+use crate::epub::EpubItem;
 use crate::world::RheoWorld;
-use crate::{Result, RheoError};
+use crate::{Result, RheoError, epub};
 use regex::Regex;
 use std::path::Path;
 use tracing::{debug, error, info, instrument, warn};
@@ -50,7 +52,7 @@ pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -
             error!(message = %err.message, "PDF export error");
         }
         let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::PdfExport {
+        RheoError::PdfGeneration {
             count: errors.len(),
             errors: error_messages.join("\n"),
         }
@@ -65,13 +67,11 @@ pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -
     Ok(())
 }
 
-/// Compile a Typst document to HTML
-///
-/// Uses the typst library with:
-/// - Root set to content_dir or project root (for local file imports across directories)
-/// - Shared resources available via repo_root in src/typst/ (rheo.typ)
-#[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
+pub fn compile_html_to_document(
+    input: &Path,
+    root: &Path,
+    repo_root: &Path,
+) -> Result<HtmlDocument> {
     // Create the compilation world
     // For HTML compilation, keep .typ links so we can transform them to .html
     let world = RheoWorld::new(root, input, repo_root, false)?;
@@ -93,36 +93,48 @@ pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) 
     }
 
     // Get the document or return errors
-    let document = match result.output {
-        Ok(doc) => doc,
-        Err(errors) => {
-            for err in &errors {
-                error!(message = %err.message, "compilation error");
-            }
-            let error_messages: Vec<String> =
-                errors.iter().map(|e| e.message.to_string()).collect();
-            return Err(RheoError::Compilation {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            });
+    result.output.map_err(|errors| {
+        for err in &errors {
+            error!(message = %err.message, "compilation error");
         }
-    };
+        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+        RheoError::Compilation {
+            count: errors.len(),
+            errors: error_messages.join("\n"),
+        }
+    })
+}
 
+pub fn compile_document_to_string(
+    document: &HtmlDocument,
+    input: &Path,
+    root: &Path,
+) -> Result<String> {
     // Export to HTML string
-    debug!(output = %output.display(), "exporting to HTML");
-    let html_string = typst_html::html(&document).map_err(|errors| {
+    let html_string = typst_html::html(document).map_err(|errors| {
         for err in &errors {
             error!(message = %err.message, "HTML export error");
         }
         let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::HtmlExport {
+        RheoError::HtmlGeneration {
             count: errors.len(),
             errors: error_messages.join("\n"),
         }
     })?;
 
     // Transform .typ links to .html links
-    let html_string = transform_html_links(&html_string, input, root)?;
+    transform_html_links(&html_string, input, root)
+}
+
+/// Compile a Typst document to HTML
+///
+/// Uses the typst library with:
+/// - Root set to content_dir or project root (for local file imports across directories)
+/// - Shared resources available via repo_root in src/typst/ (rheo.typ)
+#[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
+pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
+    let doc = compile_html_to_document(input, root, repo_root)?;
+    let html_string = compile_document_to_string(&doc, input, root)?;
 
     // Write to file
     debug!(size = html_string.len(), "writing HTML file");
@@ -130,6 +142,35 @@ pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) 
         .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
 
     info!(output = %output.display(), "successfully compiled to HTML");
+    Ok(())
+}
+
+/// Compile a set of Typst documents to EPUB.
+pub fn compile_epub(
+    config: &EpubConfig,
+    epub_path: &Path,
+    root: &Path,
+    repo_root: &Path,
+) -> Result<()> {
+    let inner = || -> anyhow::Result<()> {
+        let spine = epub::generate_spine(root, &config.spine)?;
+
+        let mut items = spine
+            .into_iter()
+            .map(|path| EpubItem::create(path, root, repo_root))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let nav_xhtml = epub::generate_nav_xhtml(&mut items);
+        let package_string = epub::generate_package(&items, &config)?;
+        epub::zip_epub(epub_path, package_string, nav_xhtml, &items)
+    };
+
+    inner().map_err(|e| RheoError::EpubGeneration {
+        count: 1,
+        errors: e.to_string(),
+    })?;
+
+    info!(output = %epub_path.display(), "successfully generated EPUB");
     Ok(())
 }
 
@@ -176,7 +217,7 @@ pub fn compile_pdf_incremental(world: &RheoWorld, output: &Path) -> Result<()> {
             error!(message = %err.message, "PDF export error");
         }
         let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::PdfExport {
+        RheoError::PdfGeneration {
             count: errors.len(),
             errors: error_messages.join("\n"),
         }
@@ -248,7 +289,7 @@ pub fn compile_html_incremental(
             error!(message = %err.message, "HTML export error");
         }
         let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::HtmlExport {
+        RheoError::HtmlGeneration {
             count: errors.len(),
             errors: error_messages.join("\n"),
         }
