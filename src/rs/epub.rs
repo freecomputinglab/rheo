@@ -254,7 +254,7 @@ pub fn generate_spine(root: &Path, spine: &[String]) -> Result<Vec<PathBuf>> {
     } else {
         let mut typst_files = Vec::new();
         for path in spine {
-            eprintln!("{}", root.join(path).display().to_string());
+            eprintln!("{}", root.join(path).display());
             let glob = glob::glob(&root.join(path).display().to_string())?;
             let mut glob_files = glob
                 .filter_map(|entry| entry.ok())

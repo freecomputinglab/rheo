@@ -1,6 +1,6 @@
 use crate::{Result, RheoError};
 use tracing::Level;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Verbosity level for CLI output
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

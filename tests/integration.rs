@@ -1,5 +1,5 @@
-use anyhow::{ensure, Result};
-use rheo::{cli::Commands, Cli};
+use anyhow::{Result, ensure};
+use rheo::{Cli, cli::Commands};
 use std::{env::set_current_dir, fs, io, path::Path, process::Command};
 use tempfile::TempDir;
 use walkdir::WalkDir;

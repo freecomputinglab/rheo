@@ -161,7 +161,7 @@ pub fn compile_epub(
             .collect::<anyhow::Result<Vec<_>>>()?;
 
         let nav_xhtml = epub::generate_nav_xhtml(&mut items);
-        let package_string = epub::generate_package(&items, &config)?;
+        let package_string = epub::generate_package(&items, config)?;
         epub::zip_epub(epub_path, package_string, nav_xhtml, &items)
     };
 

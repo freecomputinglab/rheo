@@ -613,7 +613,9 @@ impl Cli {
                 // Log TODOs for --open with formats that aren't ready yet
                 if open {
                     if formats.contains(&OutputFormat::Pdf) {
-                        info!("TODO: PDF opening not yet implemented (need to decide on multi-file handling)");
+                        info!(
+                            "TODO: PDF opening not yet implemented (need to decide on multi-file handling)"
+                        );
                     }
                     if formats.contains(&OutputFormat::Epub) {
                         info!(

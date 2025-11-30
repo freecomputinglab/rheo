@@ -215,10 +215,10 @@ impl RheoWorld {
         // user files that are in the document root (like references.bib)
         if !path.exists() {
             // Try resolving relative to document root
-            if let Some(doc_path) = id.vpath().resolve(&self.root) {
-                if doc_path.exists() {
-                    return Ok(doc_path);
-                }
+            if let Some(doc_path) = id.vpath().resolve(&self.root)
+                && doc_path.exists()
+            {
+                return Ok(doc_path);
             }
 
             // If still not found, try just the filename in the document root
@@ -250,10 +250,10 @@ impl World for RheoWorld {
 
     fn source(&self, id: FileId) -> FileResult<Source> {
         // Check cache first
-        if let Some(slot) = self.slots.lock().get(&id) {
-            if let Some(source) = &slot.source {
-                return Ok(source.clone());
-            }
+        if let Some(slot) = self.slots.lock().get(&id)
+            && let Some(source) = &slot.source
+        {
+            return Ok(source.clone());
         }
 
         // Load from file system
@@ -286,10 +286,10 @@ impl World for RheoWorld {
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {
         // Check cache first
-        if let Some(slot) = self.slots.lock().get(&id) {
-            if let Some(file) = &slot.file {
-                return Ok(file.clone());
-            }
+        if let Some(slot) = self.slots.lock().get(&id)
+            && let Some(file) = &slot.file
+        {
+            return Ok(file.clone());
         }
 
         // Load from file system
