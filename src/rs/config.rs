@@ -148,6 +148,11 @@ pub struct RheoConfig {
     /// Example: "content"
     pub content_dir: Option<String>,
 
+    /// Build output directory (relative to project root unless absolute)
+    /// Defaults to "build/" if not specified
+    /// Examples: "output", "../shared-build", "/tmp/rheo-build"
+    pub build_dir: Option<String>,
+
     #[serde(default)]
     pub compile: CompileConfig,
 
@@ -279,6 +284,47 @@ impl RheoConfig {
         Ok(config)
     }
 
+    /// Load configuration from a specific path with validation
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - File does not exist
+    /// - Path points to a directory, not a file
+    /// - File is not valid TOML
+    /// - TOML doesn't match RheoConfig schema
+    pub fn load_from_path(config_path: &Path) -> Result<Self> {
+        // Stage 1: File existence
+        if !config_path.exists() {
+            return Err(crate::RheoError::path(
+                config_path,
+                "config file does not exist",
+            ));
+        }
+        if !config_path.is_file() {
+            return Err(crate::RheoError::path(
+                config_path,
+                "config path must be a file, not a directory",
+            ));
+        }
+
+        // Stage 2: Read file
+        let contents = std::fs::read_to_string(config_path).map_err(|e| {
+            crate::RheoError::io(e, format!("reading config file {}", config_path.display()))
+        })?;
+
+        // Stage 3: Parse TOML and validate schema
+        let config: RheoConfig = toml::from_str(&contents).map_err(|e| {
+            crate::RheoError::project_config(format!(
+                "invalid config file {}: {}",
+                config_path.display(),
+                e
+            ))
+        })?;
+
+        info!(path = %config_path.display(), "loaded custom configuration");
+        Ok(config)
+    }
+
     /// Build a GlobSet from the exclusion patterns for efficient matching
     pub fn build_exclusion_set(&self) -> Result<GlobSet> {
         let mut builder = GlobSetBuilder::new();
@@ -301,10 +347,18 @@ impl RheoConfig {
     }
 
     /// Resolve content_dir to an absolute path if configured
-    /// Returns None if content_dir is not set or doesn't exist
-    pub fn resolve_content_dir(&self, project_root: &Path) -> Option<std::path::PathBuf> {
+    ///
+    /// # Arguments
+    /// * `base_dir` - Base directory to resolve content_dir against.
+    ///   In directory mode: the project root directory
+    ///   In single-file mode: the parent directory of the .typ file
+    ///
+    /// # Returns
+    /// - Some(PathBuf) if content_dir is configured (absolute path)
+    /// - None if content_dir is not set in config
+    pub fn resolve_content_dir(&self, base_dir: &Path) -> Option<std::path::PathBuf> {
         self.content_dir.as_ref().map(|dir| {
-            let path = project_root.join(dir);
+            let path = base_dir.join(dir);
             debug!(content_dir = %path.display(), "resolved content directory");
             path
         })
@@ -789,4 +843,60 @@ fn test_empty_global_excludes_works() {
     assert!(!filter.should_include(Path::new("index.typ")));
     assert!(filter.should_include(Path::new("article.typ")));
     assert!(filter.should_include(Path::new("refs.bib")));
+}
+
+#[test]
+fn test_load_from_path_valid_config() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let config_path = temp.path().join("test.toml");
+    let config_content = r#"
+        [compile]
+        exclude = ["test/**/*.typ"]
+        formats = ["html"]
+    "#;
+    fs::write(&config_path, config_content).unwrap();
+
+    let config = RheoConfig::load_from_path(&config_path).unwrap();
+    assert_eq!(config.compile.exclude, vec!["test/**/*.typ"]);
+    assert_eq!(config.compile.formats, vec!["html"]);
+}
+
+#[test]
+fn test_load_from_path_not_found() {
+    use std::path::PathBuf;
+
+    let path = PathBuf::from("/tmp/nonexistent_config_12345_rheo_test.toml");
+    let result = RheoConfig::load_from_path(&path);
+    assert!(result.is_err());
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(err_msg.contains("config file does not exist"));
+}
+
+#[test]
+fn test_load_from_path_is_directory() {
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let result = RheoConfig::load_from_path(temp.path());
+    assert!(result.is_err());
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(err_msg.contains("must be a file, not a directory"));
+}
+
+#[test]
+fn test_load_from_path_invalid_toml() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let config_path = temp.path().join("invalid.toml");
+    fs::write(&config_path, "[this is not valid toml").unwrap();
+
+    let result = RheoConfig::load_from_path(&config_path);
+    assert!(result.is_err());
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(err_msg.contains("invalid config file"));
 }
