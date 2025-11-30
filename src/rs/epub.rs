@@ -344,14 +344,3 @@ impl EpubItem {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::process::Command;
-    use tempfile::TempDir;
-
-    #[test]
-    #[ignore] // Requires epubcheck binary to be installed
-    fn test_generate_epub_with_epubcheck() {}
-}
