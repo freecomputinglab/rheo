@@ -220,7 +220,6 @@ fn get_file_formats(
     // Build filter patterns for each format (combines global + format-specific)
     let html_filter = config.get_html_filter_patterns()?;
     let pdf_filter = config.get_pdf_filter_patterns()?;
-    let epub_filter = config.get_epub_filter_patterns()?;
 
     let mut formats = Vec::new();
 
@@ -228,7 +227,7 @@ fn get_file_formats(
         let should_compile = match format {
             OutputFormat::Pdf => pdf_filter.should_include(relative_path),
             OutputFormat::Html => html_filter.should_include(relative_path),
-            OutputFormat::Epub => epub_filter.should_include(relative_path),
+            OutputFormat::Epub => true,
         };
 
         if should_compile {
@@ -268,6 +267,8 @@ fn perform_compilation(
     let mut pdf_failed = 0;
     let mut html_succeeded = 0;
     let mut html_failed = 0;
+    let mut epub_succeeded = 0;
+    let mut epub_failed = 0;
 
     // Use current working directory as root for Typst world
     // This allows absolute imports like /src/typst/rheo.typ to work
@@ -337,6 +338,28 @@ fn perform_compilation(
         }
     }
 
+    // Generate EPUB if requested
+    if formats.contains(&OutputFormat::Epub) {
+        let epub_filename = format!("{}.epub", project.name);
+        let epub_path = output_config.epub_dir.join(&epub_filename);
+
+        match crate::compile::compile_epub(
+            &project.config.epub,
+            &epub_path,
+            &compilation_root,
+            &repo_root,
+        ) {
+            Ok(_) => {
+                epub_succeeded += 1;
+                info!(output = %epub_path.display(), "EPUB generation complete");
+            }
+            Err(e) => {
+                error!(error = %e, "EPUB generation failed");
+                epub_failed += 1;
+            }
+        }
+    }
+
     // Report results with per-format summary
     let total_files = project.typ_files.len();
 
@@ -375,15 +398,34 @@ fn perform_compilation(
         }
     }
 
+    if formats.contains(&OutputFormat::Epub) {
+        if epub_failed > 0 {
+            warn!(
+                failed = epub_failed,
+                succeeded = epub_succeeded,
+                total = total_files,
+                "EPUB compilation"
+            );
+        } else {
+            info!(
+                succeeded = epub_succeeded,
+                total = total_files,
+                "EPUB compilation complete"
+            );
+        }
+    }
+
     // Graceful degradation: succeed if ANY format fully succeeded
     let pdf_fully_succeeded =
         formats.contains(&OutputFormat::Pdf) && pdf_failed == 0 && pdf_succeeded > 0;
     let html_fully_succeeded =
         formats.contains(&OutputFormat::Html) && html_failed == 0 && html_succeeded > 0;
+    let epub_fully_succeeded =
+        formats.contains(&OutputFormat::Epub) && epub_failed == 0 && epub_succeeded > 0;
 
-    if pdf_fully_succeeded || html_fully_succeeded {
+    if pdf_fully_succeeded || html_fully_succeeded || epub_fully_succeeded {
         // At least one format succeeded completely
-        if pdf_failed > 0 || html_failed > 0 {
+        if pdf_failed > 0 || html_failed > 0 || epub_failed > 0 {
             info!("compilation succeeded with warnings (some formats failed)");
         } else {
             info!("compilation succeeded");
@@ -391,7 +433,7 @@ fn perform_compilation(
         Ok(())
     } else {
         // All requested formats had failures
-        let total_failed = pdf_failed + html_failed;
+        let total_failed = pdf_failed + html_failed + epub_failed;
         Err(crate::RheoError::project_config(format!(
             "all formats failed: {} file(s) could not be compiled",
             total_failed
@@ -579,11 +621,6 @@ impl Cli {
                 html,
                 epub,
             } => {
-                // Warn if EPUB requested
-                if epub {
-                    warn!("EPUB format is not yet supported and will be ignored");
-                }
-
                 // Detect project configuration first to get config defaults
                 info!(path = %path.display(), "detecting project configuration");
                 let project = crate::project::ProjectConfig::from_path(&path, config.as_deref())?;
@@ -641,7 +678,9 @@ impl Cli {
                 // Log TODOs for --open with formats that aren't ready yet
                 if open {
                     if formats.contains(&OutputFormat::Pdf) {
-                        info!("TODO: PDF opening not yet implemented (need to decide on multi-file handling)");
+                        info!(
+                            "TODO: PDF opening not yet implemented (need to decide on multi-file handling)"
+                        );
                     }
                     if formats.contains(&OutputFormat::Epub) {
                         info!(
@@ -856,21 +895,16 @@ impl Cli {
 mod tests {
     use super::*;
 
-    fn build_test_config(
-        html_exclude: &[&str],
-        pdf_exclude: &[&str],
-        epub_exclude: &[&str],
-    ) -> crate::RheoConfig {
+    fn build_test_config(html_exclude: &[&str], pdf_exclude: &[&str]) -> crate::RheoConfig {
         let mut config = crate::RheoConfig::default();
         config.html.exclude = html_exclude.iter().map(|s| s.to_string()).collect();
         config.pdf.exclude = pdf_exclude.iter().map(|s| s.to_string()).collect();
-        config.epub.exclude = epub_exclude.iter().map(|s| s.to_string()).collect();
         config
     }
 
     #[test]
     fn test_no_exclusions_compiles_all_formats() {
-        let config = build_test_config(&[], &[], &[]);
+        let config = build_test_config(&[], &[]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/test.typ");
         let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
@@ -884,7 +918,7 @@ mod tests {
 
     #[test]
     fn test_pdf_exclusion_excludes_pdf() {
-        let config = build_test_config(&[], &["content/index.typ"], &[]);
+        let config = build_test_config(&[], &["content/index.typ"]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/index.typ");
         let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
@@ -898,7 +932,7 @@ mod tests {
 
     #[test]
     fn test_html_exclusion_excludes_html() {
-        let config = build_test_config(&["content/print/**/*.typ"], &[], &[]);
+        let config = build_test_config(&["content/print/**/*.typ"], &[]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/print/document.typ");
         let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
@@ -912,11 +946,7 @@ mod tests {
 
     #[test]
     fn test_html_and_pdf_exclusions_leave_only_epub() {
-        let config = build_test_config(
-            &["content/ebook/**/*.typ"],
-            &["content/ebook/**/*.typ"],
-            &[],
-        );
+        let config = build_test_config(&["content/ebook/**/*.typ"], &["content/ebook/**/*.typ"]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/ebook/chapter1.typ");
         let requested = vec![OutputFormat::Pdf, OutputFormat::Html, OutputFormat::Epub];
@@ -931,7 +961,7 @@ mod tests {
 
     #[test]
     fn test_file_not_matching_exclusions_gets_all_formats() {
-        let config = build_test_config(&["content/index.typ"], &["content/print/**/*.typ"], &[]);
+        let config = build_test_config(&["content/index.typ"], &["content/print/**/*.typ"]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/other/document.typ");
         let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
@@ -945,7 +975,7 @@ mod tests {
 
     #[test]
     fn test_respects_requested_formats() {
-        let config = build_test_config(&[], &[], &[]);
+        let config = build_test_config(&[], &[]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/test.typ");
         let requested = vec![OutputFormat::Pdf]; // Only PDF requested
@@ -959,7 +989,7 @@ mod tests {
 
     #[test]
     fn test_html_excluded_file_with_html_requested() {
-        let config = build_test_config(&["content/index.typ"], &[], &[]);
+        let config = build_test_config(&["content/index.typ"], &[]);
         let project_root = std::path::PathBuf::from("/tmp/project");
         let file = project_root.join("content/index.typ");
         let requested = vec![OutputFormat::Html]; // Only HTML requested, but file is html-excluded
@@ -972,7 +1002,7 @@ mod tests {
 
     #[test]
     fn test_glob_pattern_matching() {
-        let config = build_test_config(&[], &["content/web/**/*.typ"], &[]);
+        let config = build_test_config(&[], &["content/web/**/*.typ"]);
         let project_root = std::path::PathBuf::from("/tmp/project");
 
         // File matching the PDF exclusion pattern

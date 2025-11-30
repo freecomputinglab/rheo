@@ -1,8 +1,8 @@
-= In Perpetuity - #emph[Severance] [s1/e3]
+#set document(title: [In Perpetuity - #emph[Severance] [s1/e3]])
 
 #image("img/severance-s1e3-shot1.png")
 
-== We need to talk about Ms. Cobel
+= We need to talk about Ms. Cobel
 As we noted in #link("./severance-ep-1.typ")[analysis of S1E1], she typically storms the screen with an icy blue, a temper (the significance of this word we shall unpack shortly) that seeks to quell the fiery red that flickers in and out of the consciousness of workers on the severed floor.
 The ominous ending to that first episode intimated that, while her wintery business has its office underground, it also warrants her prying into Mark's outie's personal life in Baird Creek's subsidized Lumon housing. 
 Indeed, it seems that Miss Cobel lives in Mark's housing complex, too. 
@@ -51,7 +51,7 @@ Most likely, she is an inextricable concoction of the two.
 Cobel wants to have Mark's cake and eat it too; to be at once his mother, his corporate superior, and (we can't help but suspect) his lover. 
 Like many put in positions of power, she has trouble setting her more inapproriate desires aside so as to simply 'do her job'.
 
-== Primal father figures
+= Primal father figures
 Cobel's mother energy is arguably muted and mixed up in her #link("https://en.wikipedia.org/wiki/Sphinx#Riddle_of_the_Sphinx")[Sphinxesque] triplicity.
 But the father energy on display in this episode is, by contrast, loudly and proudly pronounced in at least three different figures: Petey, Irving, and, of course, Kier Eagan.
 #footnote[
@@ -105,7 +105,7 @@ That this is an historic explanation does not mean that Freud believes that it r
 Indeed, he states the opposite, that #quote[primal state of society has nowhere been observed.] @freudTotemTabooResemblances1919[p.233] 
 The parable of the Primal Father is historic rather in the sense that narrates to us an important aspect of the structure of the subject, much like Oedipus' tragedy.
 
-== Daddy issues at work
+= Daddy issues at work
 
 Okay: we now return from this Freudian digression to the stuff of #emph[Severance]. 
 What bearing do the Oedipus complex and the myth of the Primal Father have on the structure of the subject on display in the show? 
@@ -148,7 +148,7 @@ Irving seems at this point the most mature of the children, looking reverentaill
 Yet recall that he has been chided by Milchick already for falling asleep on the job, so not all is perfect in paradise. 
 Hellie has no time for Cobel's authority, yet we will see in due course that her relationship with a Father is a deep lineament in her personality, too.
 
-== Taming tempers
+= Taming tempers
 The count of four in the members of MDR mirrors the exact amount of tempers that we learn about from Kier Eagan's wax simulacrum speaking during the tour of the Perpetuity Wing. 
 These tempers are crucial as coordinates of the Eaganic attempt to coherently quantify the subject, and Kier's pronouncement is deeply significant for our investigation of the subject's distorted structure on the severed floor:
 

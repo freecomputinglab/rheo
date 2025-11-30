@@ -9,3 +9,8 @@ result-*
 
 # Per-project build directories
 **/build/
+
+# Cargo build artifacts
+/target
+
+.rustfmt.toml

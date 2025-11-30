@@ -1,4 +1,4 @@
-#let html-element(body, name: "div", attrs: ()) = context {
+#let html-element(body, name: "div", attrs: (:)) = context {
     if target() == "html" {
       html.elem(name, attrs: attrs, body)
     } else {
@@ -7,19 +7,19 @@
     }
 }
 
-#let custom-element(name, attrs: ()) = html-element.with(name: name).with(attrs: attrs)
+#let custom-element(name, attrs: (:)) = html-element.with(name: name).with(attrs: attrs)
 
 #let header = custom-element("header")
 #let authors = custom-element("doc-authors")
 #let author = custom-element("doc-author")
-#let author-name = custom-element("doc-author-affiliation")
+#let author-name = custom-element("doc-author-name")
 #let author-affiliation = custom-element("doc-author-affiliation")
 #let publication-date = custom-element("doc-publication-date")
 #let abstract = custom-element("doc-abstract")
 #let section = custom-element("section")
 #let definition = custom-element("dfn-container")
 
-#let defined-word(id: "") = [#custom-element("dfn", attrs: (id: id))]
+#let defined-word(id: "", body) = custom-element("dfn")(attrs: (id: id), body)
 
 #let callout(body) = custom-element("div")(attrs: (class: "callout"), body)
 #let def-link(id, body) = custom-element("a")(attrs: (href: "#" + id, data-target: "dfn"), body)
@@ -66,6 +66,7 @@
 #set document(title: "Portable EPUBs")
 
 #header[
+  #title()
   #authors[
     #author[
       #author-name[Will Crichton]
@@ -385,7 +386,7 @@ A challenge in reading this passage is finding the correspondences between the p
 #figure[
   #code-description[
     + fn main() {
-      + let #code-def("code-1")[x] = #code-def("code-1")[5];
+      + let #code-def("code-1")[x] = #code-def("code-2")[5];
       + #code-def("code-4")[let #code-def("code-3")[x] =] #code-def("code-15")[x] #code-def("code-16")[+] #code-def("code-5")[1];
       + #code-def("code-7")[{]
         + #code-def("code-8")[let] #code-def("code-9")[x] = #code-def("code-10")[x] #code-def("code-17")[\*] #code-def("code-11")[2];
@@ -400,7 +401,7 @@ A challenge in reading this passage is finding the correspondences between the p
       + This program first binds #link("#code-1")[`x`] to a value of #link("#code-2")[`5`].
       + Then it creates a new variable #link("#code-3")[`x`] by repeating #link("#code-4")[`let x =`],
       + taking #link("#code-15")[the original value] and #link("#code-16")[adding] #link("#code-5")[1] so the value of #link("#code-3")[`x`] is then 6.
-      + Then, within an #link("#code-18")[inner scope] created with the #link("#code-7")[curly] #link("#code-13")[brackets],
+      + Then, within an #link("#code-7")[inner scope] created with the #link("#code-7")[curly] #link("#code-13")[brackets],
       + the third #link("#code-8")[`let`] statement also shadows #link("#code-3")[`x`] and creates #link("#code-9")[a new variable],
       + #link("#code-17")[multiplying] #link("#code-10")[the previous value] by #link("#code-11")[2] to give #link("#code-9")[`x`] a value of 12.
       + When #link("#code-7")[that scope] #link("#code-13")[is over], #link("#code-9")[the inner shadowing] ends and #link("#code-14")[`x`] returns to being 6.

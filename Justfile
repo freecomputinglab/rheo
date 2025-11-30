@@ -6,3 +6,9 @@ test:
 
 build:
   cargo build
+
+install:
+  cargo install --path . --locked
+
+watch:
+  cargo watch -x "build --profile local-dev"

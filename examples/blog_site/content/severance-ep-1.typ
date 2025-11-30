@@ -1,4 +1,6 @@
-= Good news about hell - #emph[Severance] [s1/e1]
+#set document(title: [Good news about hell - #emph[Severance] [s1/e1]])
+
+#title()
 
 #image("img/severance-s1e1-shot1.jpg")
 

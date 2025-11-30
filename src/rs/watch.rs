@@ -1,6 +1,6 @@
 use crate::{
-    project::{ProjectConfig, ProjectMode},
     Result,
+    project::{ProjectConfig, ProjectMode},
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
@@ -156,28 +156,26 @@ fn is_relevant_path(path: &Path, project: &ProjectConfig) -> bool {
             }
 
             // Check if it's style.css in the same directory
-            if path.file_name().and_then(|n| n.to_str()) == Some("style.css") {
-                if let Some(parent) = path.parent() {
-                    if parent == project.root {
-                        return true;
-                    }
-                }
+            if path.file_name().and_then(|n| n.to_str()) == Some("style.css")
+                && let Some(parent) = path.parent()
+                && parent == project.root
+            {
+                return true;
             }
 
             // Check if it's in the img/ directory
-            if let Some(img_dir) = &project.img_dir {
-                if path.starts_with(img_dir) {
-                    return true;
-                }
+            if let Some(img_dir) = &project.img_dir
+                && path.starts_with(img_dir)
+            {
+                return true;
             }
 
             // Check if it's references.bib
-            if path.file_name().and_then(|n| n.to_str()) == Some("references.bib") {
-                if let Some(parent) = path.parent() {
-                    if parent == project.root {
-                        return true;
-                    }
-                }
+            if path.file_name().and_then(|n| n.to_str()) == Some("references.bib")
+                && let Some(parent) = path.parent()
+                && parent == project.root
+            {
+                return true;
             }
 
             false
@@ -197,27 +195,26 @@ fn is_relevant_path(path: &Path, project: &ProjectConfig) -> bool {
             // Check if it's style.css
             if path.file_name().and_then(|n| n.to_str()) == Some("style.css") {
                 // Only if it's in the project root
-                if let Some(parent) = path.parent() {
-                    if parent == project.root {
-                        return true;
-                    }
-                }
-            }
-
-            // Check if it's in the img/ directory
-            if let Some(img_dir) = &project.img_dir {
-                if path.starts_with(img_dir) {
+                if let Some(parent) = path.parent()
+                    && parent == project.root
+                {
                     return true;
                 }
             }
 
+            // Check if it's in the img/ directory
+            if let Some(img_dir) = &project.img_dir
+                && path.starts_with(img_dir)
+            {
+                return true;
+            }
+
             // Check if it's references.bib
-            if path.file_name().and_then(|n| n.to_str()) == Some("references.bib") {
-                if let Some(parent) = path.parent() {
-                    if parent == project.root {
-                        return true;
-                    }
-                }
+            if path.file_name().and_then(|n| n.to_str()) == Some("references.bib")
+                && let Some(parent) = path.parent()
+                && parent == project.root
+            {
+                return true;
             }
 
             false

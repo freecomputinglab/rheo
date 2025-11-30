@@ -1,17 +1,17 @@
 use crate::Result;
 use axum::{
+    Router,
     body::Body,
     extract::State,
-    http::{header, StatusCode},
-    response::{sse::Event, IntoResponse, Response, Sse},
+    http::{StatusCode, header},
+    response::{IntoResponse, Response, Sse, sse::Event},
     routing::get,
-    Router,
 };
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tokio::sync::broadcast;
-use tokio_stream::{wrappers::BroadcastStream, StreamExt};
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{info, warn};
 
 /// Server state shared across handlers
@@ -107,7 +107,7 @@ async fn static_handler(State(state): State<ServerState>, uri: axum::http::Uri) 
     let content = match tokio::fs::read(&file_path).await {
         Ok(content) => content,
         Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to read file").into_response()
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to read file").into_response();
         }
     };
 

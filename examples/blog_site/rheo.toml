@@ -23,3 +23,7 @@ exclude = ["!**/*.typ", "!img/**"]
 
 [pdf]
 exclude = ["index.typ"]
+
+[epub.combined]
+spine = ["severance-*.typ"]
+title = "Severance Analysis"
