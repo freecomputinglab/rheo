@@ -231,7 +231,8 @@ fn perform_compilation(
     let mut pdf_failed = 0;
     let mut html_succeeded = 0;
     let mut html_failed = 0;
-    let mut epub_succeeded = false;
+    let mut epub_succeeded = 0;
+    let mut epub_failed = 0;
 
     // Use current working directory as root for Typst world
     // This allows absolute imports like /src/typst/rheo.typ to work
@@ -313,12 +314,12 @@ fn perform_compilation(
             &repo_root,
         ) {
             Ok(_) => {
-                epub_succeeded = true;
+                epub_succeeded += 1;
                 info!(output = %epub_path.display(), "EPUB generation complete");
             }
             Err(e) => {
                 error!(error = %e, "EPUB generation failed");
-                epub_succeeded = false;
+                epub_failed += 1;
             }
         }
     }
@@ -362,10 +363,19 @@ fn perform_compilation(
     }
 
     if formats.contains(&OutputFormat::Epub) {
-        if epub_succeeded {
-            info!("EPUB generation complete");
+        if epub_failed > 0 {
+            warn!(
+                failed = epub_failed,
+                succeeded = epub_succeeded,
+                total = total_files,
+                "EPUB compilation"
+            );
         } else {
-            warn!("EPUB generation failed");
+            info!(
+                succeeded = epub_succeeded,
+                total = total_files,
+                "EPUB compilation complete"
+            );
         }
     }
 
@@ -374,11 +384,12 @@ fn perform_compilation(
         formats.contains(&OutputFormat::Pdf) && pdf_failed == 0 && pdf_succeeded > 0;
     let html_fully_succeeded =
         formats.contains(&OutputFormat::Html) && html_failed == 0 && html_succeeded > 0;
-    let epub_fully_succeeded = formats.contains(&OutputFormat::Epub) && epub_succeeded;
+    let epub_fully_succeeded =
+        formats.contains(&OutputFormat::Epub) && epub_failed == 0 && epub_succeeded > 0;
 
     if pdf_fully_succeeded || html_fully_succeeded || epub_fully_succeeded {
         // At least one format succeeded completely
-        if pdf_failed > 0 || html_failed > 0 || !epub_succeeded {
+        if pdf_failed > 0 || html_failed > 0 || epub_failed > 0 {
             info!("compilation succeeded with warnings (some formats failed)");
         } else {
             info!("compilation succeeded");
@@ -386,7 +397,7 @@ fn perform_compilation(
         Ok(())
     } else {
         // All requested formats had failures
-        let total_failed = pdf_failed + html_failed + if !epub_succeeded { 1 } else { 0 };
+        let total_failed = pdf_failed + html_failed + epub_failed;
         Err(crate::RheoError::project_config(format!(
             "all formats failed: {} file(s) could not be compiled",
             total_failed

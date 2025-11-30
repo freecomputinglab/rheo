@@ -7,6 +7,9 @@ use crate::{
     },
 };
 use anyhow::{Result, bail, ensure};
+use chrono::{DateTime, Utc};
+use iref::{IriRef, IriRefBuf, iri::Fragment};
+use itertools::Itertools;
 use std::{
     fmt::Write as _,
     fs::File,
@@ -22,6 +25,7 @@ use typst::{
     model::{HeadingElem, OutlineNode},
 };
 use typst_html::HtmlDocument;
+use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::{result::ZipError, write::SimpleFileOptions};
 
@@ -59,22 +63,23 @@ pub fn generate_nav_xhtml(items: &mut [EpubItem]) -> String {
         writeln!(buf, "{indent_str}<ol>").unwrap();
         for node in outline {
             write!(buf, r#"{indent_str}<li>{}"#, node.entry).unwrap();
-
             if !node.children.is_empty() {
                 buf.push('\n');
                 stringify_outline(buf, &node.children, indent + 4);
                 buf.push('\n');
                 buf.push_str(&indent_str);
             }
-
             buf.push_str("</li>\n");
         }
         writeln!(buf, "{indent_str}</ol>").unwrap();
     }
 
     let outline = if items.len() == 1 {
+        // If we only have one item, then its nav is just its outline.
         items[0].outline.take().unwrap()
     } else {
+        // If we have multiple items, generate a new level of outline which contains a link
+        // to each item.
         items
             .iter_mut()
             .map(|item| {
@@ -95,52 +100,73 @@ pub fn generate_nav_xhtml(items: &mut [EpubItem]) -> String {
     buf
 }
 
+const XHTML_MEDIATYPE: &str = "application/xhtml+xml";
+const EPUB_MEDIATYPE: &str = "application/epub+zip";
+
+fn date_format(dt: &DateTime<Utc>) -> EcoString {
+    dt.format("%Y-%m-%dT%H:%M:%SZ").to_string().into()
+}
+
+/// Generates the package.opf XML string from the generated EPUB items.
+///
+/// See: EPUB 3.3 Package document <https://www.w3.org/TR/epub-33/#sec-package-doc>
 pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> Result<String> {
     let info = &items[0].document.info;
     let language = info.locale.unwrap_or_default().rfc_3066();
-    let title = if items.len() == 1 {
-        items[0].title().clone()
-    } else {
-        match &config.title {
-            Some(title) => title.clone().into(),
-            None => bail!("must have [epub.title] for multi-document EPUB"),
+    let title = match &config.combined {
+        None => items[0].title(),
+        Some(combined) => combined.title.clone().into(),
+    };
+
+    const INTERNAL_UNIQUE_ID: &str = "uid";
+
+    // If the user did not provide a unique ID, we generate a UUID for them.
+    let identifier = {
+        let content = match &config.identifier {
+            Some(id) => id.into(),
+            None => eco_format!("urn:uuid:{}", Uuid::new_v4()),
+        };
+        Identifier {
+            id: INTERNAL_UNIQUE_ID.into(),
+            content,
         }
     };
 
-    let metadata = Metadata {
-        identifier: Identifier {
-            id: "uid".into(),
-            content: "identifier".into(), // todo
+    // Concatenate all authors into a comma-separated string.
+    let creator = (!info.author.is_empty()).then(|| info.author.join(", ").into());
+
+    let date = config.date.as_ref().map(date_format);
+
+    let meta = vec![
+        // Record a timestamp for when this document is generated.
+        Meta {
+            property: "dcterms:modified".into(),
+            content: date_format(&chrono::Utc::now()),
         },
+        // Indicate that this document is a portable EPUB.
+        Meta {
+            property: "ppub:valid".into(),
+            content: ".".into(),
+        },
+    ];
+
+    let metadata = Metadata {
+        identifier,
         title,
         language: language.clone(),
-        creator: info.author.first().cloned(),
-        date: None, // TODO: get this from rheo.toml?
-        meta: vec![
-            Meta {
-                property: "dcterms:modified".into(),
-                content: chrono::Utc::now()
-                    .format("%Y-%m-%dT%H:%M:%SZ")
-                    .to_string()
-                    .into(),
-            },
-            Meta {
-                property: "ppub:valid".into(),
-                content: ".".into(),
-            },
-        ],
+        creator,
+        date,
+        meta,
     };
 
-    // Generate manifest items and spine itemrefs for each file in the spine
     let mut manifest_items = Vec::new();
     let mut spine_itemrefs = Vec::new();
 
-    // Add navigation document to manifest
     manifest_items.push(Item {
         id: "nav".into(),
-        href: "nav.xhtml".into(),
-        media_type: "application/xhtml+xml".into(),
-        properties: Some("nav".into()),
+        href: IriRefBuf::new("nav.xhtml".into()).unwrap(),
+        media_type: XHTML_MEDIATYPE.into(),
+        properties: Some("nav".into()), // required by spec
     });
 
     for item in items {
@@ -153,12 +179,12 @@ pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> Result<Strin
         }
         let properties = (!prop_list.is_empty()).then(|| prop_list.join(" ").into());
 
-        let id = EcoString::from(item.path.file_stem().unwrap().to_string_lossy().to_string());
+        let id = item.id();
 
         manifest_items.push(Item {
             id: id.clone(),
             href: item.href.clone(),
-            media_type: "application/xhtml+xml".into(),
+            media_type: XHTML_MEDIATYPE.into(),
             properties,
         });
 
@@ -177,9 +203,9 @@ pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> Result<Strin
 
     let package = Package {
         version: "3.0".into(),
-        unique_identifier: "uid".into(),
+        unique_identifier: INTERNAL_UNIQUE_ID.into(),
         lang: language,
-        prefix: "ppub: http://example.com/ppub".into(),
+        prefix: "ppub: http://example.com/ppub".into(), // to support portable EPUB properties
         metadata,
         manifest,
         spine,
@@ -188,6 +214,9 @@ pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> Result<Strin
     Ok(package.to_xml()?)
 }
 
+/// Combines all EPUB components into the final .epub i.e. zip file.
+///
+/// See: EPUB 3.3 Open Container Format <https://www.w3.org/TR/epub-33/#sec-ocf>
 pub fn zip_epub(
     epub_path: &Path,
     package_string: String,
@@ -205,7 +234,7 @@ pub fn zip_epub(
         "mimetype",
         opts.compression_method(zip::CompressionMethod::Stored),
     )?;
-    zip.write_all(b"application/epub+zip")?;
+    zip.write_all(EPUB_MEDIATYPE.as_bytes())?;
 
     // The EPUB root metadata file must be exactly at `META-INF/container.xml`.
     // See `CONTAINER_XML` for its pre-baked definition.
@@ -233,44 +262,51 @@ pub fn zip_epub(
     Ok(())
 }
 
-pub fn generate_spine(root: &Path, spine: &[String]) -> Result<Vec<PathBuf>> {
-    if spine.is_empty() {
-        let mut typst_files = WalkDir::new(root)
-            .into_iter()
-            .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
-            .filter(|entry| {
-                matches!(
-                    entry
-                        .extension()
-                        .map(|ext| ext.to_string_lossy())
-                        .as_deref(),
-                    Some("typ")
-                )
-            })
-            .collect::<Vec<_>>();
-        ensure!(!typst_files.is_empty(), "need at least one .typ file");
-        typst_files.sort_by_cached_key(|p| p.file_name().unwrap().to_os_string());
-        Ok(typst_files)
-    } else {
-        let mut typst_files = Vec::new();
-        for path in spine {
-            eprintln!("{}", root.join(path).display());
-            let glob = glob::glob(&root.join(path).display().to_string())?;
-            let mut glob_files = glob
-                .filter_map(|entry| entry.ok())
-                .filter(|path| path.is_file())
-                .collect::<Vec<_>>();
-            glob_files.sort_by_cached_key(|p| p.file_name().unwrap().to_os_string());
-            typst_files.extend(glob_files);
+/// Generates the EPUB spine as a list of canonicalized paths to .typ files.
+///
+/// If no spine is provided, then the workspace must contain exactly one .typ file, and that is used as the spine.
+pub fn generate_spine(root: &Path, config: &EpubConfig) -> Result<Vec<PathBuf>> {
+    match &config.combined {
+        None => {
+            let typst_files = WalkDir::new(root)
+                .into_iter()
+                .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
+                .filter(|entry| {
+                    matches!(
+                        entry
+                            .extension()
+                            .map(|ext| ext.to_string_lossy())
+                            .as_deref(),
+                        Some("typ")
+                    )
+                })
+                .collect_vec();
+            match typst_files.len() {
+                0 => bail!("need at least one .typ file"),
+                1 => Ok(typst_files),
+                _ => bail!("multiple .typ files found, specify a spine in [epub.combined]"),
+            }
         }
-        ensure!(!typst_files.is_empty(), "need at least one .typ file");
-        Ok(typst_files)
+
+        Some(combined) => {
+            let mut typst_files = Vec::new();
+            for path in &combined.spine {
+                let glob = glob::glob(&root.join(path).display().to_string())?;
+                let mut glob_files = glob
+                    .filter_map(|entry| entry.ok())
+                    .filter(|path| path.is_file())
+                    .collect::<Vec<_>>();
+                glob_files.sort_by_cached_key(|p| p.file_name().unwrap().to_os_string());
+                typst_files.extend(glob_files);
+            }
+            ensure!(!typst_files.is_empty(), "need at least one .typ file");
+            Ok(typst_files)
+        }
     }
 }
 
 pub struct EpubItem {
-    path: PathBuf,
-    href: EcoString,
+    href: IriRefBuf,
     document: HtmlDocument,
     xhtml: String,
     info: HtmlInfo,
@@ -297,13 +333,12 @@ impl EpubItem {
         let document = compile::compile_html_to_document(&path, root, repo_root)?;
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();
-        let href = EcoString::from(bare_file.with_extension("xhtml").display().to_string());
+        let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
         let (heading_ids, outline) = Self::outline(&document, &href);
-        let html_string = compile::compile_document_to_string(&document, &path, root)?;
+        let html_string = compile::compile_document_to_string(&document, &path, root, true)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
         Ok(EpubItem {
-            path,
             href,
             document,
             xhtml,
@@ -312,13 +347,15 @@ impl EpubItem {
         })
     }
 
-    fn outline(doc: &HtmlDocument, href: &str) -> (Vec<EcoString>, Vec<OutlineNode<EcoString>>) {
+    fn outline(doc: &HtmlDocument, href: &IriRef) -> (Vec<EcoString>, Vec<OutlineNode<EcoString>>) {
         // Adapted from https://github.com/typst/typst/blob/02cd1c13de50363010b41b95148233dc952042c2/crates/typst-pdf/src/outline.rs#L7
         let elems = doc.introspector.query(&HeadingElem::ELEM.select());
         let (nodes, heading_ids): (Vec<_>, Vec<_>) = elems
             .iter()
             .map(|elem| {
-                let heading = elem.to_packed::<HeadingElem>().unwrap();
+                let heading = elem
+                    .to_packed::<HeadingElem>()
+                    .expect("must be heading b/c queried for headings");
                 let level = heading.resolve_level(StyleChain::default());
                 let text = heading.body.plain_text();
                 let id = match heading.label() {
@@ -329,18 +366,36 @@ impl EpubItem {
                     Some(num) => eco_format!("{num} {text}"),
                     None => text,
                 };
-                let link = eco_format!(r#"<a href="{href}#{id}">{entry}</a>"#);
+                let mut anchored_href = href.to_owned();
+                anchored_href.set_fragment(Some(Fragment::new(&id).unwrap())); // TODO: when can this panic?
+                let link = eco_format!(r#"<a href="{anchored_href}">{entry}</a>"#);
                 ((link, level, true), id)
             })
             .unzip();
         (heading_ids, OutlineNode::build_tree(nodes))
     }
 
-    fn title(&self) -> &EcoString {
+    fn title(&self) -> EcoString {
         match &self.document.info.title {
-            Some(title) => title,
+            Some(title) => title.clone(),
             // Default title must not be empty, so we just use the filename as a fallback
-            None => &self.href,
+            None => self.href.path().as_str().into(),
         }
+    }
+
+    fn id(&self) -> EcoString {
+        // Use href as a stand-in for item ID.
+        // Eg `chapters/foo.typ` becomes `chapters-foo`
+        let mut segments = self.href.path().segments();
+        let file_name = Path::new(segments.next_back().unwrap().as_str())
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        segments
+            .map(|seg| seg.as_str())
+            .chain([file_name])
+            .join("-")
+            .into()
     }
 }

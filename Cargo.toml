@@ -26,7 +26,7 @@ clap = { version = "4.5", features = ["derive"] }
 walkdir = "2.5"
 thiserror = "1.0"
 parking_lot = "0.12"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
 atty = "0.2"
@@ -49,6 +49,9 @@ zip = { version = "6.0.0", default-features = false }
 html5ever = "0.36.1"
 markup5ever_rcdom = "0.36.0"
 anyhow = "1.0.100"
+iref = { version = "3.2.2", features = ["serde"] }
+itertools = "0.14.0"
+uuid = { version = "1.18.1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3.8"
@@ -57,3 +60,10 @@ tempfile = "3.8"
 opt-level = 3
 lto = true
 codegen-units = 1
+
+[profile.local-dev]
+inherits = "dev"
+
+# Makes Typst run quickly without impacting incremental compile times
+[profile.local-dev.package."*"]
+opt-level = 3

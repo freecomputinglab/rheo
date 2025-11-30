@@ -1,6 +1,16 @@
+//! An EPUB 3 package document with XML serialization.
+//!
+//! For context on any given field, see the linked EPUB specification document
+//! at the header of each struct.
+
+use iref::IriRefBuf;
 use serde::{Deserialize, Serialize};
 use typst::diag::EcoString;
 
+// To understand the idiosyncratic serde renames, see:
+// https://docs.rs/serde-xml-rs/latest/serde_xml_rs/
+
+/// https://www.w3.org/TR/epub-33/#sec-package-doc
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename = "package")]
 pub struct Package {
@@ -19,6 +29,9 @@ pub struct Package {
 
 impl Package {
     pub fn to_xml(&self) -> Result<String, serde_xml_rs::Error> {
+        // Note: wcrichto evaluated quick-xml for serialization as of Nov 2025,
+        // but it doesn't support serializing namespaced elements. Waiting on this issue:
+        // https://github.com/tafia/quick-xml/issues/218
         let config = serde_xml_rs::SerdeXml::new()
             .default_namespace("http://www.idpf.org/2007/opf")
             .namespace("dc", "http://purl.org/dc/elements/1.1/");
@@ -26,6 +39,7 @@ impl Package {
     }
 }
 
+/// https://www.w3.org/TR/epub-33/#sec-pkg-metadata
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Metadata {
     #[serde(rename = "dc:identifier")]
@@ -42,6 +56,7 @@ pub struct Metadata {
     pub meta: Vec<Meta>,
 }
 
+/// https://www.w3.org/TR/epub-33/#sec-meta-elem
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Meta {
     #[serde(rename = "@property")]
@@ -50,6 +65,7 @@ pub struct Meta {
     pub content: EcoString,
 }
 
+/// https://www.w3.org/TR/epub-33/#sec-opf-dcidentifier
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Identifier {
     #[serde(rename = "@id")]
@@ -58,30 +74,34 @@ pub struct Identifier {
     pub content: EcoString,
 }
 
+/// https://www.w3.org/TR/epub-33/#sec-pkg-manifest
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
     #[serde(rename = "item", default)]
     pub items: Vec<Item>,
 }
 
+/// https://www.w3.org/TR/epub-33/#sec-item-elem
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Item {
     #[serde(rename = "@id")]
     pub id: EcoString,
     #[serde(rename = "@href")]
-    pub href: EcoString,
+    pub href: IriRefBuf,
     #[serde(rename = "@media-type")]
     pub media_type: EcoString,
     #[serde(rename = "@properties")]
     pub properties: Option<EcoString>,
 }
 
+/// https://www.w3.org/TR/epub-33/#sec-pkg-spine
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Spine {
     #[serde(default)]
     pub itemref: Vec<ItemRef>,
 }
 
+/// https://www.w3.org/TR/epub-33/#sec-itemref-elem
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ItemRef {
     #[serde(rename = "@id")]
@@ -115,6 +135,7 @@ fn test_package_serde() {
 </package>"#;
     let opf = serde_xml_rs::from_str::<Package>(opf_str).unwrap();
 
+    // Check that the `Package` contains every expected field deserialized from the string.
     assert_eq!(opf.version, "3.0");
     assert_eq!(opf.unique_identifier, "uid");
     assert_eq!(opf.lang, "en-US");
@@ -149,6 +170,8 @@ fn test_package_serde() {
     assert_eq!(opf.spine.itemref[0].id, Some("pageref".into()));
     assert_eq!(opf.spine.itemref[0].idref, "page");
 
+    // Check that serialization works by round-tripping `Package` to a string and back,
+    // then checking that the resulting package is the same as the input.
     let opf_str_again = opf.to_xml().unwrap();
     let opf_again = serde_xml_rs::from_str::<Package>(&opf_str_again).unwrap();
     assert_eq!(opf, opf_again);

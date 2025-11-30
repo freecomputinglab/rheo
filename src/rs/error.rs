@@ -20,16 +20,16 @@ pub enum RheoError {
     #[error("Compilation failed with {count} error(s):\n{errors}")]
     Compilation { count: usize, errors: String },
 
-    /// PDF export error
-    #[error("PDF export failed with {count} error(s):\n{errors}")]
+    /// PDF generation error
+    #[error("PDF generation failed with {count} error(s):\n{errors}")]
     PdfGeneration { count: usize, errors: String },
 
-    /// HTML export error
-    #[error("HTML export failed with {count} error(s):\n{errors}")]
+    /// HTML generation error
+    #[error("HTML generation failed with {count} error(s):\n{errors}")]
     HtmlGeneration { count: usize, errors: String },
 
     /// EPUB export error
-    #[error("EPUB export failed with {count} error(s):\n{errors}")]
+    #[error("EPUB generation failed with {count} error(s):\n{errors}")]
     EpubGeneration { count: usize, errors: String },
 
     /// Project configuration detection error

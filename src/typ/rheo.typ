@@ -6,6 +6,7 @@
 
 #let rheo_template(doc) = context {
   // Inject CSS and font links for HTML target
+  // TODO: we should only do this for HTML site output, not EPUB output
   if target() == "html" {
     // FIX: very hacky way to get the styles
     html.elem("script", attrs: (type: "text/javascript"))[

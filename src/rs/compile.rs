@@ -109,6 +109,7 @@ pub fn compile_document_to_string(
     document: &HtmlDocument,
     input: &Path,
     root: &Path,
+    xhtml: bool,
 ) -> Result<String> {
     // Export to HTML string
     let html_string = typst_html::html(document).map_err(|errors| {
@@ -123,7 +124,7 @@ pub fn compile_document_to_string(
     })?;
 
     // Transform .typ links to .html links
-    transform_html_links(&html_string, input, root)
+    transform_html_links(&html_string, input, root, xhtml)
 }
 
 /// Compile a Typst document to HTML
@@ -134,7 +135,7 @@ pub fn compile_document_to_string(
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
     let doc = compile_html_to_document(input, root, repo_root)?;
-    let html_string = compile_document_to_string(&doc, input, root)?;
+    let html_string = compile_document_to_string(&doc, input, root, false)?;
 
     // Write to file
     debug!(size = html_string.len(), "writing HTML file");
@@ -153,7 +154,7 @@ pub fn compile_epub(
     repo_root: &Path,
 ) -> Result<()> {
     let inner = || -> anyhow::Result<()> {
-        let spine = epub::generate_spine(root, &config.spine)?;
+        let spine = epub::generate_spine(root, config)?;
 
         let mut items = spine
             .into_iter()
@@ -296,7 +297,7 @@ pub fn compile_html_incremental(
     })?;
 
     // Transform .typ links to .html links
-    let html_string = transform_html_links(&html_string, input, root)?;
+    let html_string = transform_html_links(&html_string, input, root, false)?;
 
     // Write to file
     debug!(size = html_string.len(), "writing HTML file");
@@ -386,7 +387,12 @@ pub fn remove_relative_typ_links(source: &str) -> String {
 /// * `Ok(String)` - Transformed HTML with .typ links changed to .html
 /// * `Err(RheoError)` - If a linked .typ file doesn't exist
 #[instrument(skip(html), fields(source = %source_file.display()))]
-pub fn transform_html_links(html: &str, source_file: &Path, root: &Path) -> Result<String> {
+pub fn transform_html_links(
+    html: &str,
+    source_file: &Path,
+    root: &Path,
+    xhtml: bool,
+) -> Result<String> {
     // Regex to match href="..." attributes
     // Captures the href value in group 1
     let re = Regex::new(r#"href="([^"]*)""#).expect("invalid regex pattern");
@@ -461,7 +467,8 @@ pub fn transform_html_links(html: &str, source_file: &Path, root: &Path) -> Resu
             }
 
             // Transform the link from .typ to .html
-            let new_href = href.replace(".typ", ".html");
+            let new_ext = if xhtml { ".xhtml" } else { ".html" };
+            let new_href = href.replace(".typ", new_ext);
             result = result.replace(
                 &format!(r#"href="{}""#, href),
                 &format!(r#"href="{}""#, new_href),
@@ -499,7 +506,7 @@ mod tests {
         fs::write(&target_file, "").unwrap();
 
         let html = r#"<a href="./about.typ">About</a>"#;
-        let result = transform_html_links(html, &source_file, root).unwrap();
+        let result = transform_html_links(html, &source_file, root, false).unwrap();
 
         assert_eq!(result, r#"<a href="./about.html">About</a>"#);
     }
@@ -512,7 +519,7 @@ mod tests {
         fs::write(&source_file, "").unwrap();
 
         let html = r#"<a href="https://example.com">Example</a> <a href="mailto:test@example.com">Email</a>"#;
-        let result = transform_html_links(html, &source_file, root).unwrap();
+        let result = transform_html_links(html, &source_file, root, false).unwrap();
 
         assert_eq!(result, html);
     }
@@ -525,7 +532,7 @@ mod tests {
         fs::write(&source_file, "").unwrap();
 
         let html = r##"<a href="#section">Section</a>"##;
-        let result = transform_html_links(html, &source_file, root).unwrap();
+        let result = transform_html_links(html, &source_file, root, false).unwrap();
 
         assert_eq!(result, html);
     }
@@ -538,7 +545,7 @@ mod tests {
         fs::write(&source_file, "").unwrap();
 
         let html = r#"<a href="./missing.typ">Missing</a>"#;
-        let result = transform_html_links(html, &source_file, root);
+        let result = transform_html_links(html, &source_file, root, false);
 
         assert!(result.is_err());
         match result {
