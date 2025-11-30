@@ -28,6 +28,9 @@ pub enum RheoError {
     #[error("HTML export failed with {count} error(s):\n{errors}")]
     HtmlExport { count: usize, errors: String },
 
+    #[error("HTML export failed with {count} error(s):\n{errors}")]
+    EpubExport { count: usize, errors: String },
+
     /// Project configuration detection error
     #[error("Project configuration error: {message}")]
     ProjectConfig { message: String },
