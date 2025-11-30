@@ -1,77 +1,40 @@
 #+ATTR_HTML: :alt Project header :align center :width 600px
 [[./header.png]]
 
-* rheo
-rheo is a static site and experimental typesetting engine based on Typst.
-It provides first-class support for both HTML and PDF, and experimental support for EPUB.
-
-** Installation
-
-*** Using Nix Flakes (Recommended)
-To install the compilation environment, first ensure that you have [[https://nixos.org/download/][Nix]] installed on your computer.
-You will also need to enable [[https://nixos.wiki/wiki/Flakes][Nix flakes]], which you can do by inserting the following line in your ~nix.conf~:
-#+begin_src conf
-experimental-features = nix-command flakes
-#+end_src
-
-With Nix and flakes installed, you should be able to now run:
-
-#+begin_src bash
-# Enter development environment
-nix develop
-
-# Or build the package
-nix build
-#+end_src
-
-This might take a while the first time, as Nix is installing typst from upstream and all the other necessary software.
-
-*** Using Cargo
-rheo requires Rust and Cargo. Install from [[https://rustup.rs/][rustup.rs]].
-
-#+begin_src bash
-# Build the project
-cargo build --release
-
-# Install locally
-cargo install --path .
-#+end_src
+rheo is a static site and experimental typesetting engine based on Typst that compiles entire folders of Typst documents to PDF, HTML, and EPUB simultaneously. It provides first-class support for both HTML and PDF with experimental EPUB support, and includes a development server for rapid HTML iteration.
 
 ** Usage
+rheo is a command-line tool for batch-compiling Typst documents to multiple output formats.
 
-rheo is a command-line tool for compiling Typst documents to PDF and HTML.
+*** Start developing a project
 
-*** Compile a Project
-
-Compile all =.typ= files in a directory to both PDF and HTML:
+Compile all =.typ= files in a directory to PDF, HTML, and EPUB:
 
 #+begin_src bash
-rheo compile examples/web_book
+rheo watch examples/blog_site --open
 #+end_src
 
 Compile to specific formats:
 
 #+begin_src bash
 # PDF only
-rheo compile examples/web_book --pdf
+rheo compile examples/blog_site --pdf
 
 # HTML only
-rheo compile examples/web_book --html
+rheo compile examples/blog_site --html
 #+end_src
 
-Output is organized in each project's =build/= directory: =build/pdf/= and =build/html/=.
+Output is organized in each project's =build= directory: =build/pdf/= and =build/html/=.
 
 *** Clean Build Artifacts
 
-Remove build artifacts for the current directory's project:
+Remove build artifacts:
 
 #+begin_src bash
+# For current directory
 rheo clean
-#+end_src
 
-Remove build artifacts for a specific project:
-
-#+begin_src bash
+# For a specific project
 rheo clean examples/web_book
 #+end_src
 
@@ -86,96 +49,63 @@ rheo compile examples/web_book --quiet
 # Verbose mode (debug information)
 rheo compile examples/web_book --verbose
 
-# Trace-level logging with RUST_LOG
+# Trace-level logging
 RUST_LOG=rheo=trace rheo compile examples/web_book
 #+end_src
+
+** Installation
+
+*** Using cargo (Recommended)
+rheo requires Rust and Cargo. Install from [[https://rustup.rs/][rustup.rs]].
+
+#+begin_src bash
+# Build the project
+cargo build --release
+
+# Install locally
+cargo install --path .
+#+end_src
+
+
+*** Using Nix flakes
+To install the compilation environment, first ensure that you have [[https://nixos.org/download/][Nix]] installed on your computer.
+You will also need to enable [[https://nixos.wiki/wiki/Flakes][Nix flakes]], which you can do by inserting the following line in your ~nix.conf~:
+
+#+begin_src conf
+experimental-features = nix-command flakes
+#+end_src
+
+With Nix and flakes installed, run:
+
+#+begin_src bash
+# Enter development environment
+nix develop
+
+# Or build the package
+nix build
+#+end_src
+
+This might take a while the first time, as Nix is installing typst from upstream and all the other necessary software.
 
 ** Link Transformation
 
 rheo automatically transforms cross-document links based on the output format to ensure they work correctly in each context.
 
-*** PDF Output
-
-Relative =.typ= links are *removed* from the compiled PDF, preserving only the link text. This prevents broken links in the PDF output since Typst files don't exist in the PDF context.
-
-Example Typst source:
-#+begin_src typst
-See the #link("./about.typ")[about page] for more information.
-#+end_src
-
-Compiles to PDF as:
-#+begin_example
-See the about page for more information.
-#+end_example
-
-*** HTML Output
-
-Relative =.typ= links are *transformed* to =.html= links with validation. rheo verifies that the linked files exist and are within the project boundaries.
+Relative =.typ= links are handled as follows:
+- **PDF**: Removed from output, preserving only the link text (since Typst files won't exist output)
+- **HTML**: Transformed to =.html= links with validation that linked files exist and are within project boundaries
+- **External links** (HTTP, HTTPS, mailto): Preserved identically in all formats
+- **Fragment links** (anchors within the same document): Preserved in all formats
 
 Example Typst source:
+
 #+begin_src typst
 See the #link("./about.typ")[about page] for more information.
+Visit #link("https://example.com")[our website].
 #+end_src
 
-Compiles to HTML as:
-#+begin_src html
-See the <a href="./about.html">about page</a> for more information.
-#+end_src
+Compiles to PDF as: "See the about page for more information. Visit our website."
+
+Compiles to HTML as: `See the <a href="./about.html">about page</a> for more information. Visit <a href="https://example.com">our website</a>.`
 
 If a linked file doesn't exist, rheo will report a detailed error during compilation.
-
-*** External Links
-
-External links (HTTP, HTTPS, mailto) are *preserved* in all output formats:
-
-#+begin_src typst
-Visit #link("https://example.com")[our website] or
-email us at #link("mailto:hello@example.com")[hello@example.com].
-#+end_src
-
-This works identically in both PDF and HTML output.
-
-*** Fragment Links
-
-Fragment-only links (anchors within the same document) are preserved:
-
-#+begin_src typst
-See the #link("#introduction")[introduction] section.
-#+end_src
-
-** Project Structure
-
-Each project folder can contain its own =.typ= files, =style.css=, =img/= directory, and =references.bib=.
-All =.typ= files in the project directory (and subdirectories) will be compiled.
-
-rheo automatically injects the following at the beginning of each main =.typ= file:
-
-#+begin_src typst
-#import "/src/typst/rheo.typ": *
-#show: rheo_template
-#+end_src
-
-** Development
-
-The typst we are using builds directly from the upstream GitHub, as HTML generation is a feature in progress.
-
-*** Development Commands
-
-#+begin_src bash
-# Build the project
-cargo build
-
-# Run tests
-cargo test
-
-# Format code
-cargo fmt
-
-# Check for issues
-cargo clippy
-#+end_src
-
-See [[file:CLAUDE.md][CLAUDE.md]] for detailed development workflow, including:
-- Version control with Jujutsu (jj)
-- Issue tracking with Beads (bd)
-- Development conventions
