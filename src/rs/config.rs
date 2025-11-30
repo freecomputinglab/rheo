@@ -148,6 +148,11 @@ pub struct RheoConfig {
     /// Example: "content"
     pub content_dir: Option<String>,
 
+    /// Build output directory (relative to project root unless absolute)
+    /// Defaults to "build/" if not specified
+    /// Examples: "output", "../shared-build", "/tmp/rheo-build"
+    pub build_dir: Option<String>,
+
     #[serde(default)]
     pub compile: CompileConfig,
 

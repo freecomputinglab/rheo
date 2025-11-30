@@ -18,9 +18,12 @@ pub struct OutputConfig {
 impl OutputConfig {
     /// Create output configuration for a project
     ///
-    /// Outputs to {project_root}/build/{pdf,html,epub}/
-    pub fn new(project_root: &Path) -> Self {
-        let base = project_root.join("build");
+    /// Outputs to {build_dir}/{pdf,html,epub}/ where build_dir defaults to {project_root}/build
+    pub fn new(project_root: &Path, build_dir: Option<PathBuf>) -> Self {
+        let base = match build_dir {
+            Some(custom) => custom,
+            None => project_root.join("build"),
+        };
 
         OutputConfig {
             pdf_dir: base.join("pdf"),
@@ -97,7 +100,7 @@ mod tests {
     #[test]
     fn test_output_config_new() {
         let project_root = PathBuf::from("/home/user/my-book");
-        let config = OutputConfig::new(&project_root);
+        let config = OutputConfig::new(&project_root, None);
 
         assert_eq!(
             config.pdf_dir,
@@ -121,7 +124,7 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
 
         // Create a test configuration
-        let config = OutputConfig::new(&temp_dir);
+        let config = OutputConfig::new(&temp_dir, None);
 
         // Create directories and some dummy files
         config.create_dirs().expect("Failed to create directories");
@@ -150,9 +153,29 @@ mod tests {
     #[test]
     fn test_clean_nonexistent_directory() {
         let nonexistent = PathBuf::from("/tmp/rheo_nonexistent_test_xyz");
-        let config = OutputConfig::new(&nonexistent);
+        let config = OutputConfig::new(&nonexistent, None);
 
         // Should not error when cleaning non-existent directory
         assert!(config.clean().is_ok());
+    }
+
+    #[test]
+    fn test_output_config_custom_build_dir() {
+        let project_root = PathBuf::from("/home/user/my-book");
+        let custom_build = PathBuf::from("/tmp/rheo-output");
+        let config = OutputConfig::new(&project_root, Some(custom_build));
+
+        assert_eq!(
+            config.pdf_dir,
+            PathBuf::from("/tmp/rheo-output/pdf")
+        );
+        assert_eq!(
+            config.html_dir,
+            PathBuf::from("/tmp/rheo-output/html")
+        );
+        assert_eq!(
+            config.epub_dir,
+            PathBuf::from("/tmp/rheo-output/epub")
+        );
     }
 }

@@ -91,6 +91,10 @@ pub enum Commands {
         /// Path to project directory or single .typ file
         path: PathBuf,
 
+        /// Build output directory (overrides rheo.toml if set)
+        #[arg(long)]
+        build_dir: Option<PathBuf>,
+
         /// Compile to PDF only
         #[arg(long)]
         pdf: bool,
@@ -108,6 +112,10 @@ pub enum Commands {
     Watch {
         /// Path to project directory or single .typ file
         path: PathBuf,
+
+        /// Build output directory (overrides rheo.toml if set)
+        #[arg(long)]
+        build_dir: Option<PathBuf>,
 
         /// Watch and compile to PDF only
         #[arg(long)]
@@ -131,6 +139,10 @@ pub enum Commands {
         /// Path to project directory or single .typ file (defaults to current directory)
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// Build output directory to clean (overrides rheo.toml if set)
+        #[arg(long)]
+        build_dir: Option<PathBuf>,
     },
 
     /// Initialize a new Typst project from a template
@@ -145,6 +157,18 @@ pub enum Commands {
 
     /// List available example projects
     ListExamples,
+}
+
+/// Resolve a path relative to a base directory
+///
+/// If path is absolute, returns it as-is.
+/// If path is relative, resolves it relative to base.
+fn resolve_path(base: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    }
 }
 
 /// Helper to extract output filename from .typ file path
@@ -537,6 +561,7 @@ impl Cli {
         match self.command {
             Commands::Compile {
                 path,
+                build_dir,
                 pdf,
                 html,
                 epub,
@@ -555,8 +580,22 @@ impl Cli {
                 let flags = FormatFlags { pdf, html, epub };
                 let formats = determine_formats(flags, &project.config.compile.formats)?;
 
+                // Resolve build_dir with priority: CLI > config > default
+                let resolved_build_dir = if let Some(cli_path) = build_dir {
+                    let cwd = std::env::current_dir()
+                        .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
+                    info!(cli_build_dir = %cli_path.display(), "using build directory from CLI flag");
+                    Some(resolve_path(&cwd, &cli_path))
+                } else if let Some(config_path) = &project.config.build_dir {
+                    let resolved = resolve_path(&project.root, Path::new(config_path));
+                    info!(config_build_dir = %resolved.display(), "using build directory from rheo.toml");
+                    Some(resolved)
+                } else {
+                    None
+                };
+
                 // Create output directories
-                let output_config = crate::output::OutputConfig::new(&project.root);
+                let output_config = crate::output::OutputConfig::new(&project.root, resolved_build_dir);
                 output_config.create_dirs()?;
 
                 // Perform compilation
@@ -564,6 +603,7 @@ impl Cli {
             }
             Commands::Watch {
                 path,
+                build_dir,
                 pdf,
                 html,
                 epub,
@@ -595,8 +635,22 @@ impl Cli {
                     }
                 }
 
+                // Resolve build_dir with priority: CLI > config > default
+                let resolved_build_dir = if let Some(cli_path) = build_dir {
+                    let cwd = std::env::current_dir()
+                        .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
+                    info!(cli_build_dir = %cli_path.display(), "using build directory from CLI flag");
+                    Some(resolve_path(&cwd, &cli_path))
+                } else if let Some(config_path) = &project.config.build_dir {
+                    let resolved = resolve_path(&project.root, Path::new(config_path));
+                    info!(config_build_dir = %resolved.display(), "using build directory from rheo.toml");
+                    Some(resolved)
+                } else {
+                    None
+                };
+
                 // Create output directories
-                let output_config = crate::output::OutputConfig::new(&project.root);
+                let output_config = crate::output::OutputConfig::new(&project.root, resolved_build_dir);
                 output_config.create_dirs()?;
 
                 // Perform initial compilation
@@ -738,11 +792,25 @@ impl Cli {
 
                 Ok(())
             }
-            Commands::Clean { path } => {
+            Commands::Clean { path, build_dir } => {
                 info!(path = %path.display(), "detecting project for cleanup");
                 let project = crate::project::ProjectConfig::from_path(&path)?;
 
-                let output_config = crate::output::OutputConfig::new(&project.root);
+                // Resolve build_dir with priority: CLI > config > default
+                let resolved_build_dir = if let Some(cli_path) = build_dir {
+                    let cwd = std::env::current_dir()
+                        .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
+                    info!(cli_build_dir = %cli_path.display(), "using build directory from CLI flag");
+                    Some(resolve_path(&cwd, &cli_path))
+                } else if let Some(config_path) = &project.config.build_dir {
+                    let resolved = resolve_path(&project.root, Path::new(config_path));
+                    info!(config_build_dir = %resolved.display(), "using build directory from rheo.toml");
+                    Some(resolved)
+                } else {
+                    None
+                };
+
+                let output_config = crate::output::OutputConfig::new(&project.root, resolved_build_dir);
                 info!(project = %project.name, "cleaning project build artifacts");
                 output_config.clean()?;
                 info!(project = %project.name, "cleaned project build artifacts");
