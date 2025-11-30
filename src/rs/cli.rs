@@ -608,7 +608,8 @@ impl Cli {
                 };
 
                 // Create output directories
-                let output_config = crate::output::OutputConfig::new(&project.root, resolved_build_dir);
+                let output_config =
+                    crate::output::OutputConfig::new(&project.root, resolved_build_dir);
                 output_config.create_dirs()?;
 
                 // Perform compilation
@@ -664,7 +665,8 @@ impl Cli {
                 };
 
                 // Create output directories
-                let output_config = crate::output::OutputConfig::new(&project.root, resolved_build_dir);
+                let output_config =
+                    crate::output::OutputConfig::new(&project.root, resolved_build_dir);
                 output_config.create_dirs()?;
 
                 // Perform initial compilation
@@ -740,7 +742,8 @@ impl Cli {
                         crate::watch::WatchEvent::ConfigChanged => {
                             info!("config changed, reloading project");
                             // Reload project configuration
-                            match crate::project::ProjectConfig::from_path(&path, config.as_deref()) {
+                            match crate::project::ProjectConfig::from_path(&path, config.as_deref())
+                            {
                                 Ok(new_project) => {
                                     *project_cell.borrow_mut() = new_project;
                                     let borrowed = project_cell.borrow();
@@ -828,7 +831,8 @@ impl Cli {
                     None
                 };
 
-                let output_config = crate::output::OutputConfig::new(&project.root, resolved_build_dir);
+                let output_config =
+                    crate::output::OutputConfig::new(&project.root, resolved_build_dir);
                 info!(project = %project.name, "cleaning project build artifacts");
                 output_config.clean()?;
                 info!(project = %project.name, "cleaned project build artifacts");

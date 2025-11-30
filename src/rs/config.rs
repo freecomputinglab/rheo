@@ -309,10 +309,7 @@ impl RheoConfig {
 
         // Stage 2: Read file
         let contents = std::fs::read_to_string(config_path).map_err(|e| {
-            crate::RheoError::io(
-                e,
-                format!("reading config file {}", config_path.display()),
-            )
+            crate::RheoError::io(e, format!("reading config file {}", config_path.display()))
         })?;
 
         // Stage 3: Parse TOML and validate schema
@@ -353,8 +350,8 @@ impl RheoConfig {
     ///
     /// # Arguments
     /// * `base_dir` - Base directory to resolve content_dir against.
-    ///                In directory mode: the project root directory
-    ///                In single-file mode: the parent directory of the .typ file
+    ///   In directory mode: the project root directory
+    ///   In single-file mode: the parent directory of the .typ file
     ///
     /// # Returns
     /// - Some(PathBuf) if content_dir is configured (absolute path)

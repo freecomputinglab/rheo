@@ -165,17 +165,8 @@ mod tests {
         let custom_build = PathBuf::from("/tmp/rheo-output");
         let config = OutputConfig::new(&project_root, Some(custom_build));
 
-        assert_eq!(
-            config.pdf_dir,
-            PathBuf::from("/tmp/rheo-output/pdf")
-        );
-        assert_eq!(
-            config.html_dir,
-            PathBuf::from("/tmp/rheo-output/html")
-        );
-        assert_eq!(
-            config.epub_dir,
-            PathBuf::from("/tmp/rheo-output/epub")
-        );
+        assert_eq!(config.pdf_dir, PathBuf::from("/tmp/rheo-output/pdf"));
+        assert_eq!(config.html_dir, PathBuf::from("/tmp/rheo-output/html"));
+        assert_eq!(config.epub_dir, PathBuf::from("/tmp/rheo-output/epub"));
     }
 }
