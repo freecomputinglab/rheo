@@ -309,7 +309,7 @@ fn perform_compilation(
         let epub_filename = format!("{}.epub", project.name);
         let epub_path = output_config.epub_dir.join(&epub_filename);
 
-        match crate::compile::compile_epub(
+        match crate::formats::epub::compile_epub(
             &project.config.epub,
             &epub_path,
             &compilation_root,
