@@ -137,19 +137,6 @@ pub enum Commands {
         #[arg(long)]
         build_dir: Option<PathBuf>,
     },
-
-    /// Initialize a new Typst project from a template
-    Init {
-        /// Name of the new project
-        name: String,
-
-        /// Template type (book, thesis, blog, cv)
-        #[arg(long, default_value = "book")]
-        template: String,
-    },
-
-    /// List available example projects
-    ListExamples,
 }
 
 /// Resolve a path relative to a base directory
@@ -903,16 +890,6 @@ impl Cli {
                 info!(project = %project.name, "cleaning project build artifacts");
                 output_config.clean()?;
                 info!(project = %project.name, "cleaned project build artifacts");
-                Ok(())
-            }
-            Commands::Init { name, template } => {
-                info!(name, template, "initializing new project");
-                // TODO: Implement init logic
-                Ok(())
-            }
-            Commands::ListExamples => {
-                info!("listing available example projects");
-                // TODO: Implement list-examples logic
                 Ok(())
             }
         }
