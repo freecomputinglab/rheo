@@ -1,3 +1,4 @@
+use crate::formats::{epub, html, pdf};
 use crate::{FilterPatterns, OutputFormat, Result};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
@@ -271,7 +272,7 @@ fn perform_compilation(
         // Compile to PDF
         if file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-            match crate::formats::pdf::compile_pdf(typ_file, &output_path, &compilation_root, &repo_root)
+            match pdf::compile_pdf(typ_file, &output_path, &compilation_root, &repo_root)
             {
                 Ok(_) => pdf_succeeded += 1,
                 Err(e) => {
@@ -287,7 +288,7 @@ fn perform_compilation(
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            match crate::formats::html::compile_html(
+            match html::compile_html(
                 typ_file,
                 &output_path,
                 &compilation_root,
@@ -309,7 +310,7 @@ fn perform_compilation(
         let epub_filename = format!("{}.epub", project.name);
         let epub_path = output_config.epub_dir.join(&epub_filename);
 
-        match crate::formats::epub::compile_epub(
+        match epub::compile_epub(
             &project.config.epub,
             &epub_path,
             &compilation_root,
@@ -454,7 +455,7 @@ fn perform_compilation_incremental(
         // Compile to PDF
         if file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-            match crate::formats::pdf::compile_pdf_incremental(world, &output_path) {
+            match pdf::compile_pdf_incremental(world, &output_path) {
                 Ok(_) => pdf_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
@@ -469,7 +470,7 @@ fn perform_compilation_incremental(
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            match crate::formats::html::compile_html_incremental(
+            match html::compile_html_incremental(
                 world,
                 typ_file,
                 &output_path,
