@@ -8,6 +8,7 @@ pub mod logging;
 pub mod output;
 pub mod project;
 pub mod server;
+pub mod spine;
 pub mod watch;
 pub mod world;
 

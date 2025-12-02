@@ -6,7 +6,7 @@ use crate::{
         xhtml::HtmlInfo,
     },
 };
-use anyhow::{Result, bail, ensure};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
@@ -26,7 +26,6 @@ use typst::{
 };
 use typst_html::HtmlDocument;
 use uuid::Uuid;
-use walkdir::WalkDir;
 use zip::{result::ZipError, write::SimpleFileOptions};
 
 mod package;
@@ -266,43 +265,7 @@ pub fn zip_epub(
 ///
 /// If no spine is provided, then the workspace must contain exactly one .typ file, and that is used as the spine.
 pub fn generate_spine(root: &Path, config: &EpubConfig) -> Result<Vec<PathBuf>> {
-    match &config.merge {
-        None => {
-            let typst_files = WalkDir::new(root)
-                .into_iter()
-                .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
-                .filter(|entry| {
-                    matches!(
-                        entry
-                            .extension()
-                            .map(|ext| ext.to_string_lossy())
-                            .as_deref(),
-                        Some("typ")
-                    )
-                })
-                .collect_vec();
-            match typst_files.len() {
-                0 => bail!("need at least one .typ file"),
-                1 => Ok(typst_files),
-                _ => bail!("multiple .typ files found, specify a spine in [epub.merge]"),
-            }
-        }
-
-        Some(combined) => {
-            let mut typst_files = Vec::new();
-            for path in &combined.spine {
-                let glob = glob::glob(&root.join(path).display().to_string())?;
-                let mut glob_files = glob
-                    .filter_map(|entry| entry.ok())
-                    .filter(|path| path.is_file())
-                    .collect::<Vec<_>>();
-                glob_files.sort_by_cached_key(|p| p.file_name().unwrap().to_os_string());
-                typst_files.extend(glob_files);
-            }
-            ensure!(!typst_files.is_empty(), "need at least one .typ file");
-            Ok(typst_files)
-        }
-    }
+    Ok(crate::spine::generate_spine(root, config.merge.as_ref(), false)?)
 }
 
 pub struct EpubItem {

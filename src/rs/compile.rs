@@ -185,34 +185,7 @@ pub fn compile_epub(
 /// - No merge config is specified
 /// - No .typ files matched the patterns
 pub fn generate_pdf_spine(root: &Path, config: &PdfConfig) -> Result<Vec<PathBuf>> {
-    let merge = config
-        .merge
-        .as_ref()
-        .ok_or_else(|| RheoError::project_config("PDF merge requires [pdf.merge] configuration"))?;
-
-    let mut typst_files = Vec::new();
-    for pattern in &merge.spine {
-        let glob_pattern = root.join(pattern).display().to_string();
-        let glob = glob::glob(&glob_pattern)
-            .map_err(|e| RheoError::project_config(format!("invalid glob pattern '{}': {}", pattern, e)))?;
-
-        let mut glob_files: Vec<PathBuf> = glob
-            .filter_map(|entry| entry.ok())
-            .filter(|path| path.is_file())
-            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("typ"))
-            .collect();
-
-        glob_files.sort_by_cached_key(|p| p.file_name().unwrap().to_os_string());
-        typst_files.extend(glob_files);
-    }
-
-    if typst_files.is_empty() {
-        return Err(RheoError::project_config(
-            "PDF merge spine matched no .typ files"
-        ));
-    }
-
-    Ok(typst_files)
+    crate::spine::generate_spine(root, config.merge.as_ref(), true)
 }
 
 /// Compile a Typst document to PDF using an existing World (for watch mode).
@@ -726,7 +699,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("PDF merge requires [pdf.merge] configuration"));
+            .contains("merge configuration required"));
     }
 
     #[test]
@@ -751,6 +724,6 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("PDF merge spine matched no .typ files"));
+            .contains("merge spine matched no .typ files"));
     }
 }
