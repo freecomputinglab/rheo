@@ -3,12 +3,12 @@ pub mod cli;
 pub mod compile;
 pub mod config;
 pub mod error;
+pub mod formats;
 pub mod logging;
 pub mod output;
 pub mod project;
 pub mod server;
 pub mod spine;
-pub mod formats;
 pub mod watch;
 pub mod world;
 

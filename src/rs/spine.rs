@@ -1,3 +1,8 @@
+///! Unified spine generation for merged compilation.
+///!
+///! Provides generate_spine() function used by both PDF and EPUB
+///! to determine which .typ files to include in merged output.
+
 use crate::config::Merge;
 use crate::{Result, RheoError};
 use std::path::{Path, PathBuf};
@@ -110,10 +115,12 @@ mod tests {
         let temp = create_test_dir_with_files(&["test.typ"]);
         let result = generate_spine(temp.path(), None, true);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("merge configuration required"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("merge configuration required")
+        );
     }
 
     #[test]
@@ -131,10 +138,12 @@ mod tests {
         let temp = create_test_dir_with_files(&["first.typ", "second.typ"]);
         let result = generate_spine(temp.path(), None, false);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("multiple .typ files found"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("multiple .typ files found")
+        );
     }
 
     #[test]
@@ -142,10 +151,12 @@ mod tests {
         let temp = create_test_dir_with_files(&["readme.md"]);
         let result = generate_spine(temp.path(), None, false);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("need at least one .typ file"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("need at least one .typ file")
+        );
     }
 
     #[test]
@@ -184,8 +195,22 @@ mod tests {
         // Verify pattern order is preserved
         assert_eq!(files[0].file_name().unwrap(), "cover.typ");
         // ch1.typ and ch2.typ should be sorted lexicographically within their pattern
-        assert!(files[1].file_name().unwrap().to_str().unwrap().starts_with("ch"));
-        assert!(files[2].file_name().unwrap().to_str().unwrap().starts_with("ch"));
+        assert!(
+            files[1]
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("ch")
+        );
+        assert!(
+            files[2]
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("ch")
+        );
         assert_eq!(files[3].file_name().unwrap(), "appendix.typ");
     }
 
@@ -198,9 +223,11 @@ mod tests {
         };
         let result = generate_spine(temp.path(), Some(&merge), false);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("merge spine matched no .typ files"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("merge spine matched no .typ files")
+        );
     }
 }

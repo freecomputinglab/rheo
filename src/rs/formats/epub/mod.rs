@@ -1,3 +1,8 @@
+///! EPUB compilation and packaging.
+///!
+///! Compiles multiple Typst files to EPUB format with
+///! navigation, metadata, and packaging.
+
 mod package;
 mod xhtml;
 
@@ -316,7 +321,8 @@ impl EpubItem {
         let bare_file = path.strip_prefix(parent).unwrap();
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
         let (heading_ids, outline) = Self::outline(&document, &href);
-        let html_string = crate::formats::html::compile_document_to_string(&document, &path, root, true)?;
+        let html_string =
+            crate::formats::html::compile_document_to_string(&document, &path, root, true)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
         Ok(EpubItem {

@@ -39,7 +39,7 @@ fn determine_formats(
     }
 
     // Otherwise, use config defaults provided not empty
-    if config_defaults.len() > 0 {
+    if !config_defaults.is_empty() {
         Ok(config_defaults.to_vec())
     } else {
         Ok(OutputFormat::all_variants())
@@ -272,8 +272,7 @@ fn perform_compilation(
         // Compile to PDF
         if file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-            match pdf::compile_pdf(typ_file, &output_path, &compilation_root, &repo_root)
-            {
+            match pdf::compile_pdf(typ_file, &output_path, &compilation_root, &repo_root) {
                 Ok(_) => pdf_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
@@ -288,12 +287,7 @@ fn perform_compilation(
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            match html::compile_html(
-                typ_file,
-                &output_path,
-                &compilation_root,
-                &repo_root,
-            ) {
+            match html::compile_html(typ_file, &output_path, &compilation_root, &repo_root) {
                 Ok(_) => html_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
@@ -307,7 +301,8 @@ fn perform_compilation(
     if formats.contains(&OutputFormat::Html) {
         info!("copying HTML assets");
         // TODO: make this configurable via rheo.toml
-        let html_filter = FilterPatterns::from_patterns(&["!**/*.typ".to_string(), "!img/**".to_string()])?;
+        let html_filter =
+            FilterPatterns::from_patterns(&["!**/*.typ".to_string(), "!img/**".to_string()])?;
         let content_dir = project.config.content_dir.as_deref().map(Path::new);
 
         if let Err(e) = crate::assets::copy_html_assets(
@@ -485,12 +480,7 @@ fn perform_compilation_incremental(
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            match html::compile_html_incremental(
-                world,
-                typ_file,
-                &output_path,
-                &project.root,
-            ) {
+            match html::compile_html_incremental(world, typ_file, &output_path, &project.root) {
                 Ok(_) => html_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
@@ -504,7 +494,8 @@ fn perform_compilation_incremental(
     if formats.contains(&OutputFormat::Html) {
         info!("copying HTML assets");
         // TODO: make this configurable via rheo.toml
-        let html_filter = FilterPatterns::from_patterns(&["!**/*.typ".to_string(), "!img/**".to_string()])?;
+        let html_filter =
+            FilterPatterns::from_patterns(&["!**/*.typ".to_string(), "!img/**".to_string()])?;
         let content_dir = project.config.content_dir.as_deref().map(Path::new);
 
         if let Err(e) = crate::assets::copy_html_assets(

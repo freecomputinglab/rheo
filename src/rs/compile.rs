@@ -1,3 +1,8 @@
+///! Shared compilation utilities.
+///!
+///! Contains utilities used across multiple output formats,
+///! such as remove_relative_typ_links().
+
 use crate::formats::{html, pdf};
 use crate::{OutputFormat, Result, RheoError};
 use regex::Regex;

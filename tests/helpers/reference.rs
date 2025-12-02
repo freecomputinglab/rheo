@@ -1,4 +1,4 @@
-use crate::helpers::comparison::{extract_pdf_metadata, BinaryFileMetadata};
+use crate::helpers::comparison::{BinaryFileMetadata, extract_pdf_metadata};
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -23,15 +23,16 @@ pub fn update_html_references(
     // Copy all files from actual to reference, replacing binary files with .metadata.json
     copy_directory_with_binary_refs(actual_dir, &ref_dir, project_path)?;
 
-    println!("Updated HTML references for {} at {}", test_name, ref_dir.display());
+    println!(
+        "Updated HTML references for {} at {}",
+        test_name,
+        ref_dir.display()
+    );
     Ok(())
 }
 
 /// Update PDF metadata references from test output
-pub fn update_pdf_references(
-    test_name: &str,
-    actual_dir: &Path,
-) -> Result<(), String> {
+pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), String> {
     let ref_dir = PathBuf::from("tests/ref")
         .join("examples")
         .join(test_name)
@@ -74,10 +75,7 @@ pub fn update_pdf_references(
                         fs::write(&metadata_file, json)
                             .map_err(|e| format!("Failed to write metadata: {}", e))?;
 
-                        println!(
-                            "Updated PDF metadata for {}",
-                            rel_path.display()
-                        );
+                        println!("Updated PDF metadata for {}", rel_path.display());
                     }
                 }
             }
@@ -88,13 +86,18 @@ pub fn update_pdf_references(
 }
 
 /// Copy directory recursively, replacing binary files with .metadata.json references
-pub fn copy_directory_with_binary_refs(src: &Path, dst: &Path, project_path: &Path) -> Result<(), String> {
-    fs::create_dir_all(dst)
-        .map_err(|e| format!("Failed to create directory: {}", e))?;
+pub fn copy_directory_with_binary_refs(
+    src: &Path,
+    dst: &Path,
+    project_path: &Path,
+) -> Result<(), String> {
+    fs::create_dir_all(dst).map_err(|e| format!("Failed to create directory: {}", e))?;
 
     for entry in WalkDir::new(src) {
         let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
-        let rel_path = entry.path().strip_prefix(src)
+        let rel_path = entry
+            .path()
+            .strip_prefix(src)
             .map_err(|e| format!("Failed to get relative path: {}", e))?;
         let dst_path = dst.join(rel_path);
 
@@ -113,8 +116,7 @@ pub fn copy_directory_with_binary_refs(src: &Path, dst: &Path, project_path: &Pa
                 .map_err(|e| format!("Failed to write metadata: {}", e))?;
         } else {
             // Copy text files normally
-            fs::copy(entry.path(), &dst_path)
-                .map_err(|e| format!("Failed to copy file: {}", e))?;
+            fs::copy(entry.path(), &dst_path).map_err(|e| format!("Failed to copy file: {}", e))?;
         }
     }
 
@@ -125,19 +127,27 @@ pub fn copy_directory_with_binary_refs(src: &Path, dst: &Path, project_path: &Pa
 fn is_binary_file(path: &Path) -> bool {
     if let Some(ext) = path.extension() {
         let ext_str = ext.to_string_lossy().to_lowercase();
-        matches!(ext_str.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "mp4" | "webm" | "pdf")
+        matches!(
+            ext_str.as_str(),
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "mp4" | "webm" | "pdf"
+        )
     } else {
         false
     }
 }
 
 /// Create metadata for a binary file
-fn create_binary_metadata(file_path: &Path, rel_path: &Path, project_path: &Path) -> Result<BinaryFileMetadata, String> {
+fn create_binary_metadata(
+    file_path: &Path,
+    rel_path: &Path,
+    project_path: &Path,
+) -> Result<BinaryFileMetadata, String> {
     let file_size = fs::metadata(file_path)
         .map_err(|e| format!("Failed to read file metadata: {}", e))?
         .len();
 
-    let filetype = file_path.extension()
+    let filetype = file_path
+        .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("unknown")
         .to_lowercase();

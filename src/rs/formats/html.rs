@@ -1,3 +1,8 @@
+///! HTML compilation using Typst's HtmlDocument.
+///!
+///! Provides HTML compilation with link transformation for
+///! cross-file navigation.
+
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use regex::Regex;

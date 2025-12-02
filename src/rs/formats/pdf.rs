@@ -1,3 +1,8 @@
+///! PDF compilation using Typst's PagedDocument.
+///!
+///! Provides compile_pdf() for single-file compilation and
+///! compile_pdf_incremental() for watch mode.
+
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use std::path::Path;
