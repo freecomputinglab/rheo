@@ -5,18 +5,11 @@
 
 use crate::config::PdfConfig;
 use crate::formats::{html, pdf};
-use crate::spine::generate_spine;
 use crate::world::RheoWorld;
 use crate::{OutputFormat, Result, RheoError};
 use regex::Regex;
-use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use tempfile::NamedTempFile;
-use tracing::{debug, error, info, instrument, warn};
-use typst::layout::PagedDocument;
-use typst_pdf::PdfOptions;
+use tracing::{instrument, warn};
 
 /// Common compilation options used across all output formats.
 ///
@@ -117,6 +110,7 @@ impl<'a> RheoCompileOptions<'a> {
 /// Compile a single file to a specific format.
 ///
 /// Note: EPUB is not supported (requires EpubConfig).
+#[deprecated(since = "0.1.0", note = "Use format-specific modules with unified APIs")]
 pub fn compile_format(
     format: OutputFormat,
     input: &Path,
@@ -125,12 +119,49 @@ pub fn compile_format(
     repo_root: &Path,
 ) -> Result<()> {
     match format {
-        OutputFormat::Pdf => pdf::compile_pdf(input, output, root, repo_root),
+        OutputFormat::Pdf => {
+            // Use old API via wrapper
+            compile_pdf_single(input, output, root, repo_root)
+        }
         OutputFormat::Html => html::compile_html(input, output, root, repo_root),
         OutputFormat::Epub => Err(RheoError::project_config(
             "EPUB requires config, use formats::epub::compile_epub()",
         )),
     }
+}
+
+// ============================================================================
+// Deprecated wrappers for backward compatibility
+// ============================================================================
+
+/// Compile a single Typst document to PDF (deprecated).
+///
+/// **Deprecated:** Use `formats::pdf::compile_pdf_new()` with `RheoCompileOptions` instead.
+///
+/// This function is kept for backward compatibility with existing call sites.
+#[deprecated(since = "0.1.0", note = "Use formats::pdf::compile_pdf_new() with RheoCompileOptions")]
+pub fn compile_pdf_single(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
+    let options = RheoCompileOptions::new(input, output, root, repo_root);
+    pdf::compile_pdf_new(options, None)
+}
+
+/// Compile a single Typst document to PDF (incremental, deprecated).
+///
+/// **Deprecated:** Use `formats::pdf::compile_pdf()` with `RheoCompileOptions` instead.
+#[deprecated(since = "0.1.0", note = "Use formats::pdf::compile_pdf() with RheoCompileOptions")]
+pub fn compile_pdf_single_incremental(world: &RheoWorld, output: &Path) -> Result<()> {
+    // Call implementation directly to avoid mutability requirement
+    pdf::compile_pdf_incremental(world, output)
+}
+
+/// Compile a single Typst document to PDF using incremental world (deprecated, for cli.rs).
+///
+/// **Deprecated:** Use `formats::pdf::compile_pdf()` with `RheoCompileOptions` instead.
+///
+/// This is a compatibility shim for cli.rs watch mode.
+#[deprecated(since = "0.1.0", note = "Use formats::pdf::compile_pdf() with RheoCompileOptions")]
+pub fn compile_pdf_incremental(world: &RheoWorld, output: &Path) -> Result<()> {
+    pdf::compile_pdf_incremental(world, output)
 }
 
 /// Remove relative .typ links from Typst source code for PDF/EPUB compilation.
@@ -200,258 +231,58 @@ pub fn remove_relative_typ_links(source: &str) -> String {
     result.to_string()
 }
 
-/// Sanitize a filename to create a valid Typst label name.
+/// Sanitize a filename to create a valid Typst label name (deprecated).
+///
+/// **Deprecated:** Use `formats::pdf::sanitize_label_name()` instead.
 ///
 /// Replaces non-alphanumeric characters (except hyphens and underscores) with underscores.
-///
-/// # Arguments
-/// * `name` - The filename to sanitize
-///
-/// # Returns
-/// * `String` - Sanitized label name
-///
-/// # Examples
-/// ```
-/// # use rheo::compile::sanitize_label_name;
-/// assert_eq!(sanitize_label_name("chapter 01"), "chapter_01");
-/// assert_eq!(sanitize_label_name("severance-01"), "severance-01");
-/// assert_eq!(sanitize_label_name("my_file!@#"), "my_file___");
-/// ```
+#[deprecated(since = "0.1.0", note = "Use formats::pdf::sanitize_label_name()")]
 pub fn sanitize_label_name(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+    pdf::sanitize_label_name(name)
 }
 
-/// Convert filename to readable title.
+/// Convert filename to readable title (deprecated).
+///
+/// **Deprecated:** Use `formats::pdf::filename_to_title()` instead.
 ///
 /// Transforms a filename stem into a human-readable title by replacing
 /// separators with spaces and capitalizing words.
-///
-/// # Arguments
-/// * `filename` - The filename stem (without .typ extension)
-///
-/// # Returns
-/// * `String` - Title-cased readable title
-///
-/// # Examples
-/// ```
-/// # use rheo::compile::filename_to_title;
-/// assert_eq!(filename_to_title("severance-ep-1"), "Severance Ep 1");
-/// assert_eq!(filename_to_title("my_document"), "My Document");
-/// ```
+#[deprecated(since = "0.1.0", note = "Use formats::pdf::filename_to_title()")]
 pub fn filename_to_title(filename: &str) -> String {
-    filename
-        .replace('-', " ")
-        .replace('_', " ")
-        .split_whitespace()
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    pdf::filename_to_title(filename)
 }
 
-/// Strip basic Typst markup to get plain text.
-///
-/// Removes common Typst markup patterns like #emph[...], #strong[...],
-/// and italic markers (_) to extract plain text from formatted content.
-///
-/// # Arguments
-/// * `text` - Text with Typst markup
-///
-/// # Returns
-/// * `String` - Plain text with markup removed
-fn strip_typst_markup(text: &str) -> String {
-    // Remove #emph[...], #strong[...], etc.
-    let re = Regex::new(r"#\w+\[([^\]]+)\]").expect("invalid regex");
-    let result = re.replace_all(text, "$1");
+// strip_typst_markup is now private in pdf module, no longer exposed
 
-    // Remove underscores (italic markers)
-    let result = result.replace('_', "");
-
-    result.trim().to_string()
-}
-
-/// Extract title from Typst document source.
+/// Extract title from Typst document source (deprecated).
+///
+/// **Deprecated:** Use `formats::pdf::extract_document_title()` instead.
 ///
 /// Searches for `#set document(title: [...])` and extracts the content.
-/// Falls back to filename if no title is found. The extracted title is
-/// cleaned of basic Typst markup.
-///
-/// # Arguments
-/// * `source` - The Typst source code
-/// * `filename` - Filename to use as fallback (without .typ extension)
-///
-/// # Returns
-/// * `String` - Extracted or fallback title
-///
-/// # Examples
-/// ```
-/// # use rheo::compile::extract_document_title;
-/// let source = r#"#set document(title: [My Title])"#;
-/// let title = extract_document_title(source, "fallback");
-/// assert_eq!(title, "My Title");
-/// ```
+/// Falls back to filename if no title is found.
+#[deprecated(since = "0.1.0", note = "Use formats::pdf::extract_document_title()")]
 pub fn extract_document_title(source: &str, filename: &str) -> String {
-    // Find the start of the title parameter
-    if let Some(title_start) = source.find("#set document(") {
-        let after_doc = &source[title_start..];
-        if let Some(title_pos) = after_doc.find("title:") {
-            let after_title = &after_doc[title_pos + 6..]; // Skip "title:"
-
-            // Find the opening bracket for the title
-            if let Some(bracket_start) = after_title.find('[') {
-                let title_content = &after_title[bracket_start + 1..];
-
-                // Count brackets to find the matching closing bracket
-                let mut depth = 1;
-                let mut end_pos = 0;
-
-                for (i, ch) in title_content.chars().enumerate() {
-                    if ch == '[' {
-                        depth += 1;
-                    } else if ch == ']' {
-                        depth -= 1;
-                        if depth == 0 {
-                            end_pos = i;
-                            break;
-                        }
-                    }
-                }
-
-                if end_pos > 0 {
-                    let title = &title_content[..end_pos];
-                    // Strip Typst markup for plain text
-                    let cleaned = strip_typst_markup(title);
-                    if !cleaned.trim().is_empty() {
-                        return cleaned;
-                    }
-                }
-            }
-        }
-    }
-
-    // Fallback: use filename, convert to title case
-    filename_to_title(filename)
+    pdf::extract_document_title(source, filename)
 }
 
-/// Transform relative .typ links to label references for merged PDF compilation.
+/// Transform relative .typ links to label references for merged PDF compilation (deprecated).
+///
+/// **Deprecated:** Use `formats::pdf::transform_typ_links_to_labels()` instead.
 ///
 /// For merged PDF outputs, links to other .typ files should reference the label
-/// at the start of each document section. This function transforms relative .typ
-/// links to label references using the document's filename.
-///
-/// # Arguments
-/// * `source` - The Typst source code
-/// * `spine_files` - List of files in the spine (for validation)
-/// * `current_file` - Path to the current file being processed
-///
-/// # Returns
-/// * `Result<String>` - Source code with .typ links transformed to labels
-///
-/// # Examples
-/// ```no_run
-/// # use rheo::compile::transform_typ_links_to_labels;
-/// # use std::path::PathBuf;
-/// let source = r#"See #link("./chapter2.typ")[next chapter]"#;
-/// let spine = vec![PathBuf::from("chapter1.typ"), PathBuf::from("chapter2.typ")];
-/// let current = PathBuf::from("chapter1.typ");
-/// let result = transform_typ_links_to_labels(source, &spine, &current).unwrap();
-/// assert_eq!(result, r#"See #link(<chapter2>)[next chapter]"#);
-/// ```
-///
-/// # Errors
-/// Returns an error if a .typ link references a file not in the spine.
-#[instrument(skip(source, spine_files))]
+/// at the start of each document section.
+#[deprecated(since = "0.1.0", note = "Use formats::pdf::transform_typ_links_to_labels()")]
 pub fn transform_typ_links_to_labels(
     source: &str,
     spine_files: &[PathBuf],
     current_file: &Path,
 ) -> Result<String> {
-    // Build map: filename (without extension) -> sanitized label name
-    let mut label_map: HashMap<String, String> = HashMap::new();
-    for spine_file in spine_files {
-        if let Some(filename) = spine_file.file_name() {
-            let filename_str = filename.to_string_lossy();
-            // Remove .typ extension
-            let stem = filename_str.strip_suffix(".typ").unwrap_or(&filename_str);
-            let label = sanitize_label_name(stem);
-            label_map.insert(stem.to_string(), label);
-        }
-    }
-
-    // Regex to match Typst link function calls
-    // Captures: #link("url")[body] or #link("url", body)
-    let re =
-        Regex::new(r#"#link\("([^"]+)"\)(\[[^\]]+\]|,\s*[^)]+)"#).expect("invalid regex pattern");
-
-    let mut errors = Vec::new();
-    let result = re.replace_all(source, |caps: &regex::Captures| {
-        let url = &caps[1];
-        let body = &caps[2];
-
-        // Check if this is a .typ link
-        let is_typ_link = url.ends_with(".typ");
-
-        // Check if it's an external URL or fragment-only link
-        let is_external = url.starts_with("http://")
-            || url.starts_with("https://")
-            || url.starts_with("mailto:");
-        let is_fragment = url.starts_with('#');
-
-        if is_typ_link && !is_external {
-            // Extract the filename from the path
-            let path = Path::new(url);
-            let filename = path
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or(url);
-
-            // Remove .typ extension for lookup
-            let stem = filename.strip_suffix(".typ").unwrap_or(filename);
-
-            // Look up in spine files map
-            if let Some(label) = label_map.get(stem) {
-                // Transform to label reference: #link(<label>)[...]
-                format!("#link(<{}>){}", label, body)
-            } else {
-                // File not in spine - collect error
-                errors.push(format!(
-                    "Link target '{}' not found in spine. Add it to the spine in rheo.toml or remove the link.",
-                    filename
-                ));
-                // Keep original link unchanged in output
-                format!("#link(\"{}\"){}", url, body)
-            }
-        } else if is_fragment {
-            // Preserve fragment-only links unchanged
-            format!("#link(\"{}\"){}", url, body)
-        } else {
-            // Preserve external URLs unchanged
-            format!("#link(\"{}\"){}", url, body)
-        }
-    });
-
-    // If we collected any errors, return the first one
-    if let Some(error_msg) = errors.first() {
-        return Err(RheoError::project_config(error_msg));
-    }
-
-    Ok(result.to_string())
+    pdf::transform_typ_links_to_labels(source, spine_files, current_file)
 }
 
-/// Concatenate multiple Typst source files into a single source for merged PDF compilation.
+/// Concatenate multiple Typst source files into a single source for merged PDF compilation (deprecated).
+///
+/// **Deprecated:** Use `formats::pdf::concatenate_typst_sources()` instead.
 ///
 /// Each file in the spine is:
 /// 1. Read from disk
@@ -459,318 +290,49 @@ pub fn transform_typ_links_to_labels(
 /// 3. Prefixed with a level-1 heading containing the title and a label derived from filename
 /// 4. Links to other .typ files transformed to label references
 /// 5. Concatenated together
-///
-/// # Arguments
-/// * `spine_files` - Ordered list of .typ files to concatenate
-///
-/// # Returns
-/// * `Result<String>` - Concatenated source code with headings, labels, and transformed links
-///
-/// # Errors
-/// * Returns an error if duplicate filenames are found (would create duplicate labels)
-/// * Returns an error if link transformation fails
-/// * Returns an error if file reading fails
-///
-/// # Format
-/// ```typst
-/// = Document Title <filename-label>
-///
-/// [original content with transformed links]
-///
-/// = Next Document <next-label>
-///
-/// [next document content]
-/// ```
-///
-/// # Examples
-/// ```no_run
-/// # use rheo::compile::concatenate_typst_sources;
-/// # use std::path::PathBuf;
-/// let spine = vec![
-///     PathBuf::from("chapter1.typ"),
-///     PathBuf::from("chapter2.typ"),
-/// ];
-/// let result = concatenate_typst_sources(&spine).unwrap();
-/// // Result will be:
-/// // = Chapter 1 <chapter1>
-/// //
-/// // [contents of chapter1.typ with transformed links]
-/// //
-/// // = Chapter 2 <chapter2>
-/// //
-/// // [contents of chapter2.typ with transformed links]
-/// ```
-#[instrument(skip(spine_files))]
+#[deprecated(since = "0.1.0", note = "Use formats::pdf::concatenate_typst_sources()")]
 pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
-    // Check for duplicate filenames
-    let mut seen_filenames: HashSet<String> = HashSet::new();
-    let mut duplicate_paths: Vec<(String, PathBuf, PathBuf)> = Vec::new();
-
-    for spine_file in spine_files {
-        if let Some(filename) = spine_file.file_name() {
-            let filename_str = filename.to_string_lossy().to_string();
-
-            // Check if we've seen this filename before
-            if !seen_filenames.insert(filename_str.clone()) {
-                // Find the first occurrence
-                if let Some(first_occurrence) = spine_files
-                    .iter()
-                    .find(|f| f.file_name().map(|n| n.to_string_lossy() == filename.to_string_lossy()).unwrap_or(false))
-                {
-                    duplicate_paths.push((
-                        filename_str.clone(),
-                        first_occurrence.clone(),
-                        spine_file.clone(),
-                    ));
-                }
-            }
-        }
-    }
-
-    // Report first duplicate error if any
-    if let Some((filename, first_path, second_path)) = duplicate_paths.first() {
-        return Err(RheoError::project_config(&format!(
-            "duplicate filename in spine: '{}' appears at both '{}' and '{}'",
-            filename,
-            first_path.display(),
-            second_path.display()
-        )));
-    }
-
-    // Concatenate all sources
-    let mut concatenated = String::new();
-
-    for spine_file in spine_files {
-        // Read source content
-        let source = fs::read_to_string(spine_file).map_err(|e| {
-            RheoError::project_config(&format!(
-                "failed to read spine file '{}': {}",
-                spine_file.display(),
-                e
-            ))
-        })?;
-
-        // Derive label and title from filename (without extension)
-        let (label, title) = if let Some(filename) = spine_file.file_name() {
-            let filename_str = filename.to_string_lossy();
-            let stem = filename_str.strip_suffix(".typ").unwrap_or(&filename_str);
-            let label = sanitize_label_name(stem);
-            let title = extract_document_title(&source, stem);
-            (label, title)
-        } else {
-            return Err(RheoError::project_config(&format!(
-                "invalid filename in spine: '{}'",
-                spine_file.display()
-            )));
-        };
-
-        // Transform .typ links to labels
-        let transformed_source = transform_typ_links_to_labels(&source, spine_files, spine_file)?;
-
-        // Inject heading with label at start: = Title <label>
-        concatenated.push_str(&format!("= {} <{}>\n\n{}\n\n", title, label, transformed_source));
-    }
-
-    Ok(concatenated)
+    pdf::concatenate_typst_sources(spine_files)
 }
 
-/// Compile multiple Typst files into a single merged PDF.
+/// Compile multiple Typst files into a single merged PDF (deprecated).
+///
+/// **Deprecated:** Use `formats::pdf::compile_pdf_new()` with `RheoCompileOptions` instead.
 ///
 /// Generates a spine from the PDF merge configuration, concatenates all sources
 /// with labels and transformed links, then compiles to a single PDF document.
-///
-/// # Arguments
-/// * `config` - PDF configuration including merge settings
-/// * `output_path` - Where to write the merged PDF
-/// * `root` - Project root directory
-/// * `repo_root` - Repository root for shared resources
-///
-/// # Returns
-/// * `Result<()>` - Success or compilation error
-///
-/// # Errors
-/// * Returns error if spine generation fails
-/// * Returns error if source concatenation fails (duplicate filenames, link validation)
-/// * Returns error if compilation fails
-/// * Returns error if PDF export fails
-#[instrument(skip_all, fields(output = %output_path.display()))]
+#[deprecated(since = "0.1.0", note = "Use formats::pdf::compile_pdf_new() with RheoCompileOptions")]
 pub fn compile_pdf_merged(
     config: &PdfConfig,
     output_path: &Path,
     root: &Path,
     repo_root: &Path,
 ) -> Result<()> {
-    // Generate spine: ordered list of .typ files
-    let spine = generate_spine(root, config.merge.as_ref(), true)?;
-    debug!(file_count = spine.len(), "generated PDF spine");
-
-    // Concatenate sources with labels and transformed links
-    let concatenated_source = concatenate_typst_sources(&spine)?;
-    debug!(
-        source_length = concatenated_source.len(),
-        "concatenated sources"
-    );
-
-    // Create temporary file with concatenated source in the root directory
-    // (Typst compiler requires main file to be within root for imports)
-    let mut temp_file = NamedTempFile::new_in(root)
-        .map_err(|e| RheoError::io(e, "creating temporary file for merged PDF"))?;
-    temp_file
-        .write_all(concatenated_source.as_bytes())
-        .map_err(|e| RheoError::io(e, "writing concatenated source to temporary file"))?;
-    temp_file
-        .flush()
-        .map_err(|e| RheoError::io(e, "flushing temporary file"))?;
-
-    let temp_path = temp_file.path();
-    debug!(temp_path = %temp_path.display(), "created temporary file");
-
-    // Create RheoWorld with temp file as main
-    // remove_typ_links=false because links already transformed to labels
-    let world = RheoWorld::new(root, temp_path, repo_root, false)?;
-
-    // Compile to PagedDocument
-    info!(output = %output_path.display(), "compiling merged PDF");
-    let result = typst::compile::<PagedDocument>(&world);
-
-    // Print warnings
-    for warning in &result.warnings {
-        warn!(message = %warning.message, "compilation warning");
-    }
-
-    // Get the document or return errors
-    let document = match result.output {
-        Ok(doc) => doc,
-        Err(errors) => {
-            for err in &errors {
-                error!(message = %err.message, "compilation error");
-            }
-            let error_messages: Vec<String> =
-                errors.iter().map(|e| e.message.to_string()).collect();
-            return Err(RheoError::Compilation {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            });
-        }
-    };
-
-    // Export PDF bytes
-    // Note: PDF title is set via document metadata in Typst source, not PdfOptions
-    debug!(output = %output_path.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default()).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "PDF export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::PdfGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })?;
-
-    // Write to output file
-    debug!(size = pdf_bytes.len(), "writing PDF file");
-    std::fs::write(output_path, &pdf_bytes)
-        .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output_path)))?;
-
-    info!(output = %output_path.display(), "successfully compiled merged PDF");
-    Ok(())
+    let options = RheoCompileOptions::new(PathBuf::new(), output_path, root, repo_root);
+    pdf::compile_pdf_new(options, Some(config))
 }
 
-/// Compile multiple Typst files into a single merged PDF (incremental mode).
+/// Compile multiple Typst files into a single merged PDF (incremental mode, deprecated).
+///
+/// **Deprecated:** Use `formats::pdf::compile_pdf_new()` with `RheoCompileOptions` instead.
 ///
 /// Same as compile_pdf_merged() but reuses an existing RheoWorld for faster
 /// recompilation in watch mode.
-///
-/// # Arguments
-/// * `world` - Existing RheoWorld to reuse
-/// * `config` - PDF configuration including merge settings
-/// * `output_path` - Where to write the merged PDF
-/// * `root` - Project root directory
-///
-/// # Returns
-/// * `Result<()>` - Success or compilation error
-#[instrument(skip(world), fields(output = %output_path.display()))]
+#[deprecated(since = "0.1.0", note = "Use formats::pdf::compile_pdf_new() with RheoCompileOptions")]
 pub fn compile_pdf_merged_incremental(
     world: &mut RheoWorld,
     config: &PdfConfig,
     output_path: &Path,
     root: &Path,
 ) -> Result<()> {
-    // Generate spine: ordered list of .typ files
-    let spine = generate_spine(root, config.merge.as_ref(), true)?;
-    debug!(file_count = spine.len(), "generated PDF spine");
-
-    // Concatenate sources with labels and transformed links
-    let concatenated_source = concatenate_typst_sources(&spine)?;
-    debug!(
-        source_length = concatenated_source.len(),
-        "concatenated sources"
-    );
-
-    // Create temporary file with concatenated source in the root directory
-    // (Typst compiler requires main file to be within root)
-    let mut temp_file = NamedTempFile::new_in(root)
-        .map_err(|e| RheoError::io(e, "creating temporary file for merged PDF"))?;
-    temp_file
-        .write_all(concatenated_source.as_bytes())
-        .map_err(|e| RheoError::io(e, "writing concatenated source to temporary file"))?;
-    temp_file
-        .flush()
-        .map_err(|e| RheoError::io(e, "flushing temporary file"))?;
-
-    let temp_path = temp_file.path();
-    debug!(temp_path = %temp_path.display(), "created temporary file");
-
-    // Set main file in existing world
-    world.set_main(temp_path)?;
-
-    // Compile to PagedDocument
-    info!("compiling merged PDF");
-    let result = typst::compile::<PagedDocument>(world);
-
-    // Print warnings
-    for warning in &result.warnings {
-        warn!(message = %warning.message, "compilation warning");
-    }
-
-    // Get the document or return errors
-    let document = match result.output {
-        Ok(doc) => doc,
-        Err(errors) => {
-            for err in &errors {
-                error!(message = %err.message, "compilation error");
-            }
-            let error_messages: Vec<String> =
-                errors.iter().map(|e| e.message.to_string()).collect();
-            return Err(RheoError::Compilation {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            });
-        }
+    let options = RheoCompileOptions {
+        input: PathBuf::new(),
+        output: output_path.to_path_buf(),
+        root: root.to_path_buf(),
+        repo_root: PathBuf::new(),
+        world: Some(world),
     };
-
-    // Export PDF bytes
-    // Note: PDF title is set via document metadata in Typst source, not PdfOptions
-    debug!(output = %output_path.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default()).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "PDF export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::PdfGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })?;
-
-    // Write to output file
-    debug!(size = pdf_bytes.len(), "writing PDF file");
-    std::fs::write(output_path, &pdf_bytes)
-        .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output_path)))?;
-
-    info!(output = %output_path.display(), "successfully compiled merged PDF");
-    Ok(())
+    pdf::compile_pdf_new(options, Some(config))
 }
 
 #[cfg(test)]
@@ -1008,26 +570,7 @@ mod tests {
         assert_eq!(filename_to_title("single"), "Single");
     }
 
-    #[test]
-    fn test_strip_typst_markup_basic() {
-        assert_eq!(strip_typst_markup("#emph[italic]"), "italic");
-        assert_eq!(strip_typst_markup("#strong[bold]"), "bold");
-        assert_eq!(strip_typst_markup("plain text"), "plain text");
-    }
-
-    #[test]
-    fn test_strip_typst_markup_underscores() {
-        assert_eq!(strip_typst_markup("_underscored_"), "underscored");
-        assert_eq!(strip_typst_markup("some_text"), "sometext");
-    }
-
-    #[test]
-    fn test_strip_typst_markup_combined() {
-        assert_eq!(
-            strip_typst_markup("#emph[italic] and _underscored_"),
-            "italic and underscored"
-        );
-    }
+    // strip_typst_markup tests moved to formats::pdf module (now private)
 
     #[test]
     fn test_extract_document_title_from_metadata() {
