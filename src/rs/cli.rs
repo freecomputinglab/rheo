@@ -303,7 +303,22 @@ fn perform_compilation(
         }
     }
 
-    // TODO: Copy relevant assets such as styles.css for HTML
+    // Copy assets for HTML
+    if formats.contains(&OutputFormat::Html) {
+        info!("copying HTML assets");
+        // TODO: make this configurable via rheo.toml
+        let html_filter = FilterPatterns::from_patterns(&["!**/*.typ".to_string(), "!img/**".to_string()])?;
+        let content_dir = project.config.content_dir.as_deref().map(Path::new);
+
+        if let Err(e) = crate::assets::copy_html_assets(
+            &project.root,
+            &output_config.html_dir,
+            &html_filter,
+            content_dir,
+        ) {
+            error!(error = %e, "failed to copy HTML assets");
+        }
+    }
 
     // Generate EPUB if requested
     if formats.contains(&OutputFormat::Epub) {
@@ -488,8 +503,8 @@ fn perform_compilation_incremental(
     // Copy assets for HTML
     if formats.contains(&OutputFormat::Html) {
         info!("copying HTML assets");
-        // TODO: expands
-        let html_filter = FilterPatterns::from_patterns(&["!style.css".to_string()])?;
+        // TODO: make this configurable via rheo.toml
+        let html_filter = FilterPatterns::from_patterns(&["!**/*.typ".to_string(), "!img/**".to_string()])?;
         let content_dir = project.config.content_dir.as_deref().map(Path::new);
 
         if let Err(e) = crate::assets::copy_html_assets(
