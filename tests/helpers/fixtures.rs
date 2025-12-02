@@ -1,18 +1,6 @@
+use rheo::OutputFormat;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-#[derive(Clone, Debug)]
-pub enum OutputFormat {
-    Html,
-    Epub,
-    Pdf,
-}
-
-impl OutputFormat {
-    fn all() -> Vec<Self> {
-        vec![Self::Html, Self::Epub, Self::Pdf]
-    }
-}
 
 /// Test case variants for different compilation modes
 #[derive(Debug, Clone)]
@@ -42,7 +30,7 @@ impl TestCase {
             Self::SingleFile {
                 name,
                 file_path: path.into(),
-                formats: OutputFormat::all(),
+                formats: OutputFormat::all_variants(),
             }
         } else if metadata.is_dir() {
             Self::Directory {

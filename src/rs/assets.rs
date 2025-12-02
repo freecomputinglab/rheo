@@ -1,4 +1,4 @@
-use crate::config::FilterPatterns;
+use crate::FilterPatterns;
 use crate::{Result, RheoError};
 use std::fs;
 use std::path::Path;
@@ -20,7 +20,7 @@ use walkdir::WalkDir;
 ///
 /// Include only .typ files and images:
 /// ```no_run
-/// # use rheo::config::FilterPatterns;
+/// # use rheo::FilterPatterns;
 /// # use rheo::assets::copy_html_assets;
 /// # use std::path::Path;
 /// # let project_dir = Path::new(".");

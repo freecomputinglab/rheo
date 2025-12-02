@@ -3,6 +3,102 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
+pub fn verify_html_output(test_name: &str, actual_dir: &PathBuf) {
+    let ref_dir = PathBuf::from("tests/ref")
+        .join("examples")
+        .join(test_name)
+        .join("html");
+
+    if !ref_dir.exists() {
+        panic!(
+            "HTML reference not found for {}. Run with UPDATE_REFERENCES=1 to generate.",
+            test_name
+        );
+    }
+
+    // Verify exclusion patterns for blog_site
+    if test_name == "blog_site" {
+        // HTML should include only .typ files and img/** per rheo.toml
+        verify_included_files_present(actual_dir, &[".typ", "img/"])
+            .expect("HTML inclusion pattern validation failed");
+    }
+
+    // Validate assets
+    validate_html_assets(&ref_dir, actual_dir).expect("HTML asset validation failed");
+
+    // Compare HTML files
+    for entry in WalkDir::new(&ref_dir) {
+        if let Ok(entry) = entry {
+            if entry.file_type().is_file() {
+                if let Some(ext) = entry.path().extension() {
+                    if ext == "html" {
+                        let rel_path = entry.path().strip_prefix(&ref_dir).unwrap();
+                        let actual_file = actual_dir.join(rel_path);
+
+                        compare_html_content(entry.path(), &actual_file)
+                            .expect("HTML content mismatch");
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn verify_pdf_output(test_name: &str, actual_dir: &PathBuf) {
+    let ref_dir = PathBuf::from("tests/ref")
+        .join("examples")
+        .join(test_name)
+        .join("pdf");
+
+    if !ref_dir.exists() {
+        panic!(
+            "PDF reference not found for {}. Run with UPDATE_REFERENCES=1 to generate.",
+            test_name
+        );
+    }
+
+    // Validate PDF assets match reference
+    validate_pdf_assets(&ref_dir, actual_dir).expect("PDF asset validation failed");
+
+    // Compare PDF metadata
+    for entry in WalkDir::new(actual_dir) {
+        if let Ok(entry) = entry {
+            if entry.file_type().is_file() {
+                if let Some(ext) = entry.path().extension() {
+                    if ext == "pdf" {
+                        let rel_path = entry.path().strip_prefix(actual_dir).unwrap();
+                        let metadata_file = ref_dir.join(format!(
+                            "{}.metadata.json",
+                            rel_path.file_stem().unwrap().to_string_lossy()
+                        ));
+
+                        if !metadata_file.exists() {
+                            panic!(
+                                "PDF metadata reference not found: {}. Run with UPDATE_REFERENCES=1",
+                                metadata_file.display()
+                            );
+                        }
+
+                        // Load reference metadata
+                        let ref_metadata_json = std::fs::read_to_string(&metadata_file)
+                            .expect("Failed to read reference metadata");
+                        let ref_metadata = serde_json::from_str(&ref_metadata_json)
+                            .expect("Failed to parse reference metadata");
+
+                        // Extract actual metadata
+                        let actual_metadata = extract_pdf_metadata(entry.path())
+                            .expect("Failed to extract PDF metadata");
+
+                        // Compare
+                        compare_pdf_metadata(&ref_metadata, &actual_metadata)
+                            .expect("PDF metadata mismatch");
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Extract build-relative path from repo-relative metadata path
 ///
 /// Converts paths like:
@@ -17,8 +113,9 @@ fn extract_build_relative_path(repo_relative_path: &str) -> PathBuf {
     let path = PathBuf::from(repo_relative_path);
 
     // Strip examples/<project>/ prefix (first two components)
-    let after_project = path.components()
-        .skip(2)  // Skip "examples" and "<project_name>"
+    let after_project = path
+        .components()
+        .skip(2) // Skip "examples" and "<project_name>"
         .collect::<PathBuf>();
 
     // Strip content/ if it's the first component
@@ -30,9 +127,9 @@ fn extract_build_relative_path(repo_relative_path: &str) -> PathBuf {
 }
 
 /// Compare HTML content byte-for-byte
-pub fn compare_html_content(reference: &Path, actual: &Path) -> Result<(), String> {
-    let ref_content = fs::read_to_string(reference)
-        .map_err(|e| format!("Failed to read reference: {}", e))?;
+fn compare_html_content(reference: &Path, actual: &Path) -> Result<(), String> {
+    let ref_content =
+        fs::read_to_string(reference).map_err(|e| format!("Failed to read reference: {}", e))?;
     let actual_content =
         fs::read_to_string(actual).map_err(|e| format!("Failed to read actual: {}", e))?;
 
@@ -49,7 +146,7 @@ pub fn compare_html_content(reference: &Path, actual: &Path) -> Result<(), Strin
 }
 
 /// Compute unified diff for HTML content
-pub fn compute_html_diff(reference: &str, actual: &str) -> String {
+fn compute_html_diff(reference: &str, actual: &str) -> String {
     let diff = TextDiff::from_lines(reference, actual);
     let mut output = String::new();
 
@@ -64,17 +161,18 @@ pub fn compute_html_diff(reference: &str, actual: &str) -> String {
 
     // Limit output size for readability
     if output.len() > 2000 {
-        format!("{}... (truncated, {} bytes total)", &output[..2000], output.len())
+        format!(
+            "{}... (truncated, {} bytes total)",
+            &output[..2000],
+            output.len()
+        )
     } else {
         output
     }
 }
 
 /// Validate that expected HTML assets are present
-pub fn validate_html_assets(
-    reference_dir: &Path,
-    actual_dir: &Path,
-) -> Result<(), String> {
+fn validate_html_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), String> {
     let mut errors = Vec::new();
 
     // Collect all files in reference directory
@@ -118,14 +216,16 @@ pub fn validate_html_assets(
                     let build_relative_path = extract_build_relative_path(path);
                     let actual_file = actual_dir.join(&build_relative_path);
                     if !actual_file.exists() {
-                        errors.push(format!("Missing binary file: {} (expected at {})", path, build_relative_path.display()));
+                        errors.push(format!(
+                            "Missing binary file: {} (expected at {})",
+                            path,
+                            build_relative_path.display()
+                        ));
                     }
                 } else {
                     // If no path in metadata, derive from .metadata.json filename
                     let file_str = metadata_file.to_string_lossy();
-                    let binary_name = file_str
-                        .strip_suffix(".metadata.json")
-                        .unwrap_or(&file_str);
+                    let binary_name = file_str.strip_suffix(".metadata.json").unwrap_or(&file_str);
                     let actual_file = actual_dir.join(binary_name);
                     if !actual_file.exists() {
                         errors.push(format!("Missing binary file: {}", binary_name));
@@ -213,8 +313,7 @@ pub fn extract_pdf_metadata(pdf_path: &Path) -> Result<BinaryFileMetadata, Strin
         .len();
 
     // Load PDF and count pages
-    let doc =
-        Document::load(pdf_path).map_err(|e| format!("Failed to load PDF: {}", e))?;
+    let doc = Document::load(pdf_path).map_err(|e| format!("Failed to load PDF: {}", e))?;
     let page_count = doc.get_pages().len() as u32;
 
     Ok(BinaryFileMetadata {
@@ -226,7 +325,7 @@ pub fn extract_pdf_metadata(pdf_path: &Path) -> Result<BinaryFileMetadata, Strin
 }
 
 /// Compare binary file metadata with tolerance
-pub fn compare_pdf_metadata(
+fn compare_pdf_metadata(
     reference: &BinaryFileMetadata,
     actual: &BinaryFileMetadata,
 ) -> Result<(), String> {
@@ -267,10 +366,7 @@ pub fn compare_pdf_metadata(
 }
 
 /// Validate that expected PDF metadata files are present
-pub fn validate_pdf_assets(
-    reference_dir: &Path,
-    actual_dir: &Path,
-) -> Result<(), String> {
+fn validate_pdf_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), String> {
     let mut errors = Vec::new();
 
     // Collect all metadata files in reference directory
@@ -282,7 +378,9 @@ pub fn validate_pdf_assets(
                     if ext == "json" {
                         if let Ok(_rel_path) = entry.path().strip_prefix(reference_dir) {
                             // Convert .metadata.json to .pdf
-                            let file_stem = entry.path().file_stem()
+                            let file_stem = entry
+                                .path()
+                                .file_stem()
                                 .and_then(|s| s.to_str())
                                 .and_then(|s| s.strip_suffix(".metadata"))
                                 .unwrap_or("");
@@ -331,12 +429,8 @@ pub fn validate_pdf_assets(
     }
 }
 
-
 /// Verify that files matching the pattern are present in the output
-pub fn verify_included_files_present(
-    output_dir: &Path,
-    patterns: &[&str],
-) -> Result<(), String> {
+fn verify_included_files_present(output_dir: &Path, patterns: &[&str]) -> Result<(), String> {
     let mut found = vec![false; patterns.len()];
 
     for entry in WalkDir::new(output_dir) {

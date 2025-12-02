@@ -21,7 +21,7 @@ pub enum WatchEvent {
 ///
 /// This function sets up file system watching for:
 /// - All .typ files in the project
-/// - Asset files (style.css, img/)
+/// - Asset files (style.css)
 /// - Project configuration (rheo.toml)
 ///
 /// Changes are debounced with a 1-second delay to avoid rapid rebuilds during editing.
@@ -163,21 +163,6 @@ fn is_relevant_path(path: &Path, project: &ProjectConfig) -> bool {
                 return true;
             }
 
-            // Check if it's in the img/ directory
-            if let Some(img_dir) = &project.img_dir
-                && path.starts_with(img_dir)
-            {
-                return true;
-            }
-
-            // Check if it's references.bib
-            if path.file_name().and_then(|n| n.to_str()) == Some("references.bib")
-                && let Some(parent) = path.parent()
-                && parent == project.root
-            {
-                return true;
-            }
-
             false
         }
         ProjectMode::Directory => {
@@ -200,21 +185,6 @@ fn is_relevant_path(path: &Path, project: &ProjectConfig) -> bool {
                 {
                     return true;
                 }
-            }
-
-            // Check if it's in the img/ directory
-            if let Some(img_dir) = &project.img_dir
-                && path.starts_with(img_dir)
-            {
-                return true;
-            }
-
-            // Check if it's references.bib
-            if path.file_name().and_then(|n| n.to_str()) == Some("references.bib")
-                && let Some(parent) = path.parent()
-                && parent == project.root
-            {
-                return true;
             }
 
             false

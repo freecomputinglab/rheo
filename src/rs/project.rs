@@ -27,14 +27,8 @@ pub struct ProjectConfig {
     /// List of .typ files in the project
     pub typ_files: Vec<PathBuf>,
 
-    /// Project-specific style.css if it exists
+    /// Project-specific style.css (for HTML export) if it exists
     pub style_css: Option<PathBuf>,
-
-    /// Project img/ directory if it exists
-    pub img_dir: Option<PathBuf>,
-
-    /// Project references.bib if it exists
-    pub references_bib: Option<PathBuf>,
 
     /// Compilation mode (directory or single file)
     pub mode: ProjectMode,
@@ -98,8 +92,6 @@ impl ProjectConfig {
             (config, loaded_path)
         };
 
-        let exclusions = config.build_exclusion_set()?;
-
         // Determine search directory: content_dir if configured, otherwise project root
         let search_dir = config
             .resolve_content_dir(&root)
@@ -107,60 +99,17 @@ impl ProjectConfig {
         debug!(search_dir = %search_dir.display(), "searching for .typ files");
 
         // Find all .typ files in the search directory (recursive walk)
-        let all_typ_files: Vec<PathBuf> = WalkDir::new(&search_dir)
+        let typ_files: Vec<PathBuf> = WalkDir::new(&search_dir)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("typ"))
             .map(|e| e.path().to_path_buf())
             .collect();
 
-        let total_count = all_typ_files.len();
-
-        // Apply exclusions - filter out files matching exclusion patterns
-        let typ_files: Vec<PathBuf> = all_typ_files
-            .into_iter()
-            .filter(|path| {
-                // Make path relative to search_dir for glob matching
-                let relative_path = match path.strip_prefix(&search_dir) {
-                    Ok(rel) => rel,
-                    Err(_) => return true, // Keep file if we can't make it relative
-                };
-
-                let is_excluded = exclusions.is_match(relative_path);
-                if is_excluded {
-                    debug!(file = %relative_path.display(), "excluding file from compilation");
-                }
-                !is_excluded
-            })
-            .collect();
-
-        let excluded_count = total_count - typ_files.len();
-        if excluded_count > 0 {
-            info!(
-                excluded = excluded_count,
-                included = typ_files.len(),
-                "applied exclusion filters"
-            );
-        }
-
         // Detect optional project-specific resources
         let style_css = root.join("style.css");
         let style_css = if style_css.is_file() {
             Some(style_css)
-        } else {
-            None
-        };
-
-        let img_dir = root.join("img");
-        let img_dir = if img_dir.is_dir() {
-            Some(img_dir)
-        } else {
-            None
-        };
-
-        let references_bib = root.join("references.bib");
-        let references_bib = if references_bib.is_file() {
-            Some(references_bib)
         } else {
             None
         };
@@ -171,8 +120,6 @@ impl ProjectConfig {
             config,
             typ_files,
             style_css,
-            img_dir,
-            references_bib,
             mode: ProjectMode::Directory,
             config_path: loaded_config_path,
         })
@@ -226,28 +173,12 @@ impl ProjectConfig {
             None
         };
 
-        let img_dir = root.join("img");
-        let img_dir = if img_dir.is_dir() {
-            Some(img_dir)
-        } else {
-            None
-        };
-
-        let references_bib = root.join("references.bib");
-        let references_bib = if references_bib.is_file() {
-            Some(references_bib)
-        } else {
-            None
-        };
-
         Ok(ProjectConfig {
             name,
             root,
             config,
             typ_files,
             style_css,
-            img_dir,
-            references_bib,
             mode: ProjectMode::SingleFile,
             config_path: loaded_config_path,
         })
@@ -296,27 +227,6 @@ mod tests {
     }
 
     #[test]
-    fn test_single_file_uses_default_config() {
-        let temp = TempDir::new().unwrap();
-
-        // Create rheo.toml in parent directory with custom exclusions
-        let config_content = r#"
-[compile]
-exclude = ["*.typ"]
-"#;
-        fs::write(temp.path().join("rheo.toml"), config_content).unwrap();
-
-        let file = temp.path().join("document.typ");
-        fs::write(&file, "#heading[Test]").unwrap();
-
-        let project = ProjectConfig::from_path(&file, None).unwrap();
-
-        // Should use default config, not load rheo.toml
-        // Default exclusion is "lib/**/*.typ"
-        assert_eq!(project.config.compile.exclude, vec!["lib/**/*.typ"]);
-    }
-
-    #[test]
     fn test_single_file_discovers_assets() {
         let temp = TempDir::new().unwrap();
 
@@ -331,8 +241,6 @@ exclude = ["*.typ"]
         let project = ProjectConfig::from_path(&file, None).unwrap();
 
         assert!(project.style_css.is_some());
-        assert!(project.img_dir.is_some());
-        assert!(project.references_bib.is_some());
     }
 
     #[test]
@@ -369,91 +277,6 @@ exclude = ["*.typ"]
         assert_eq!(project.mode, ProjectMode::SingleFile);
         assert_eq!(project.typ_files.len(), 1);
         assert_eq!(project.root, temp.path().canonicalize().unwrap());
-    }
-
-    #[test]
-    fn test_single_file_with_custom_config() {
-        let temp = TempDir::new().unwrap();
-
-        // Create a custom config file
-        let config_path = temp.path().join("custom.toml");
-        fs::write(
-            &config_path,
-            r#"
-[compile]
-exclude = ["custom-exclude/**/*.typ"]
-formats = ["html"]
-"#,
-        )
-        .unwrap();
-
-        let file = temp.path().join("document.typ");
-        fs::write(&file, "#heading[Test]").unwrap();
-
-        let project = ProjectConfig::from_path(&file, Some(&config_path)).unwrap();
-
-        // Should use custom config, not default
-        assert_eq!(
-            project.config.compile.exclude,
-            vec!["custom-exclude/**/*.typ"]
-        );
-        assert_eq!(project.config.compile.formats, vec!["html"]);
-        assert!(project.config_path.is_some());
-        assert_eq!(
-            project.config_path.unwrap().canonicalize().unwrap(),
-            config_path.canonicalize().unwrap()
-        );
-    }
-
-    #[test]
-    fn test_directory_mode_with_custom_config() {
-        let temp = TempDir::new().unwrap();
-
-        // Create a custom config file outside the project
-        let config_path = temp.path().join("custom.toml");
-        fs::write(
-            &config_path,
-            r#"
-[compile]
-exclude = ["*.typ"]
-formats = ["pdf"]
-"#,
-        )
-        .unwrap();
-
-        // Create project files
-        fs::write(temp.path().join("doc1.typ"), "#heading[1]").unwrap();
-        fs::write(temp.path().join("doc2.typ"), "#heading[2]").unwrap();
-
-        let project = ProjectConfig::from_path(temp.path(), Some(&config_path)).unwrap();
-
-        // Should use custom config
-        assert_eq!(project.config.compile.exclude, vec!["*.typ"]);
-        assert_eq!(project.config.compile.formats, vec!["pdf"]);
-        assert!(project.config_path.is_some());
-
-        // Files should be excluded by the custom config
-        assert_eq!(project.typ_files.len(), 0); // All .typ files excluded
-    }
-
-    #[test]
-    fn test_custom_config_path_stored() {
-        let temp = TempDir::new().unwrap();
-
-        // Create a custom config file
-        let config_path = temp.path().join("config.toml");
-        fs::write(&config_path, "[compile]\n").unwrap();
-
-        let file = temp.path().join("document.typ");
-        fs::write(&file, "#heading[Test]").unwrap();
-
-        let project = ProjectConfig::from_path(&file, Some(&config_path)).unwrap();
-
-        assert!(project.config_path.is_some());
-        assert_eq!(
-            project.config_path.unwrap().canonicalize().unwrap(),
-            config_path.canonicalize().unwrap()
-        );
     }
 
     #[test]
