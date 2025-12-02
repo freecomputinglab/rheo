@@ -381,9 +381,9 @@ pub fn compile_pdf_merged(
         "concatenated sources"
     );
 
-    // Create temporary file with concatenated source
-    // Typst compiler needs real file paths for imports
-    let mut temp_file = NamedTempFile::new()
+    // Create temporary file with concatenated source in the root directory
+    // (Typst compiler requires main file to be within root for imports)
+    let mut temp_file = NamedTempFile::new_in(root)
         .map_err(|e| RheoError::io(e, "creating temporary file for merged PDF"))?;
     temp_file
         .write_all(concatenated_source.as_bytes())
@@ -478,8 +478,9 @@ pub fn compile_pdf_merged_incremental(
         "concatenated sources"
     );
 
-    // Create temporary file with concatenated source
-    let mut temp_file = NamedTempFile::new()
+    // Create temporary file with concatenated source in the root directory
+    // (Typst compiler requires main file to be within root)
+    let mut temp_file = NamedTempFile::new_in(root)
         .map_err(|e| RheoError::io(e, "creating temporary file for merged PDF"))?;
     temp_file
         .write_all(concatenated_source.as_bytes())
