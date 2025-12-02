@@ -271,7 +271,7 @@ fn perform_compilation(
         // Compile to PDF
         if file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-            match crate::compile::compile_pdf(typ_file, &output_path, &compilation_root, &repo_root)
+            match crate::formats::pdf::compile_pdf(typ_file, &output_path, &compilation_root, &repo_root)
             {
                 Ok(_) => pdf_succeeded += 1,
                 Err(e) => {
@@ -454,7 +454,7 @@ fn perform_compilation_incremental(
         // Compile to PDF
         if file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-            match crate::compile::compile_pdf_incremental(world, &output_path) {
+            match crate::formats::pdf::compile_pdf_incremental(world, &output_path) {
                 Ok(_) => pdf_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "PDF compilation failed");

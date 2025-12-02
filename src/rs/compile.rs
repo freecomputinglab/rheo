@@ -5,67 +5,7 @@ use crate::{Result, RheoError, epub};
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, instrument, warn};
-use typst::layout::PagedDocument;
 use typst_html::HtmlDocument;
-use typst_pdf::PdfOptions;
-
-/// Compile a Typst document to PDF
-///
-/// Uses the typst library with:
-/// - Root set to content_dir or project root (for local file imports across directories)
-/// - Shared resources available via repo_root in src/typst/ (rheo.typ)
-#[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
-    // Create the compilation world
-    // For standalone PDF compilation, remove relative .typ links from source
-    let world = RheoWorld::new(root, input, repo_root, true)?;
-
-    // Compile the document
-    info!(input = %input.display(), "compiling to PDF");
-    let result = typst::compile::<PagedDocument>(&world);
-
-    // Print warnings
-    for warning in &result.warnings {
-        warn!(message = %warning.message, "compilation warning");
-    }
-
-    // Get the document or return errors
-    let document = match result.output {
-        Ok(doc) => doc,
-        Err(errors) => {
-            for err in &errors {
-                error!(message = %err.message, "compilation error");
-            }
-            let error_messages: Vec<String> =
-                errors.iter().map(|e| e.message.to_string()).collect();
-            return Err(RheoError::Compilation {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            });
-        }
-    };
-
-    // Export to PDF
-    debug!(output = %output.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default()).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "PDF export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::PdfGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })?;
-
-    // Write to file
-    debug!(size = pdf_bytes.len(), "writing PDF file");
-    std::fs::write(output, &pdf_bytes)
-        .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output)))?;
-
-    info!(output = %output.display(), "successfully compiled to PDF");
-    Ok(())
-}
 
 pub fn compile_html_to_document(
     input: &Path,
@@ -186,64 +126,6 @@ pub fn compile_epub(
 /// - No .typ files matched the patterns
 pub fn generate_pdf_spine(root: &Path, config: &PdfConfig) -> Result<Vec<PathBuf>> {
     crate::spine::generate_spine(root, config.merge.as_ref(), true)
-}
-
-/// Compile a Typst document to PDF using an existing World (for watch mode).
-///
-/// This function reuses an existing RheoWorld instance, enabling incremental
-/// compilation through Typst's comemo caching system. The World should have
-/// its main file set via `set_main()` and `reset()` called before compilation.
-///
-/// # Arguments
-/// * `world` - Existing RheoWorld instance with main file already set
-/// * `output` - Path where the PDF should be written
-#[instrument(skip_all, fields(output = %output.display()))]
-pub fn compile_pdf_incremental(world: &RheoWorld, output: &Path) -> Result<()> {
-    // Compile the document
-    info!("compiling to PDF");
-    let result = typst::compile::<PagedDocument>(world);
-
-    // Print warnings
-    for warning in &result.warnings {
-        warn!(message = %warning.message, "compilation warning");
-    }
-
-    // Get the document or return errors
-    let document = match result.output {
-        Ok(doc) => doc,
-        Err(errors) => {
-            for err in &errors {
-                error!(message = %err.message, "compilation error");
-            }
-            let error_messages: Vec<String> =
-                errors.iter().map(|e| e.message.to_string()).collect();
-            return Err(RheoError::Compilation {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            });
-        }
-    };
-
-    // Export to PDF
-    debug!(output = %output.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default()).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "PDF export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::PdfGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })?;
-
-    // Write to file
-    debug!(size = pdf_bytes.len(), "writing PDF file");
-    std::fs::write(output, &pdf_bytes)
-        .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output)))?;
-
-    info!(output = %output.display(), "successfully compiled to PDF");
-    Ok(())
 }
 
 /// Compile a Typst document to HTML using an existing World (for watch mode).
