@@ -302,6 +302,28 @@ fn perform_compilation(
         }
     }
 
+    // Generate merged PDF if configured
+    if formats.contains(&OutputFormat::Pdf) && project.config.pdf.merge.is_some() {
+        let pdf_filename = format!("{}.pdf", project.name);
+        let pdf_path = output_config.pdf_dir.join(&pdf_filename);
+
+        match crate::compile::compile_pdf_merged(
+            &project.config.pdf,
+            &pdf_path,
+            &compilation_root,
+            &repo_root,
+        ) {
+            Ok(_) => {
+                pdf_succeeded = 1;
+                info!(output = %pdf_path.display(), "PDF merge complete");
+            }
+            Err(e) => {
+                error!(error = %e, "PDF merge failed");
+                pdf_failed = 1;
+            }
+        }
+    }
+
     // Generate EPUB if requested
     if formats.contains(&OutputFormat::Epub) {
         let epub_filename = format!("{}.epub", project.name);
