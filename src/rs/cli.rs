@@ -1,3 +1,5 @@
+use crate::compile::RheoCompileOptions;
+use crate::config::{EpubOptions, HtmlOptions};
 use crate::formats::{epub, html, pdf};
 use crate::{FilterPatterns, OutputFormat, Result};
 use clap::{Parser, Subcommand};
@@ -259,7 +261,8 @@ fn perform_compilation(
         // Compile to PDF (per-file mode)
         if per_file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-            match pdf::compile_pdf(typ_file, &output_path, &compilation_root, &repo_root) {
+            let options = RheoCompileOptions::new(typ_file, &output_path, &compilation_root, &repo_root);
+            match pdf::compile_pdf_new(options, None) {
                 Ok(_) => pdf_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
@@ -274,7 +277,8 @@ fn perform_compilation(
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            match html::compile_html(typ_file, &output_path, &compilation_root, &repo_root) {
+            let options = RheoCompileOptions::new(typ_file, &output_path, &compilation_root, &repo_root);
+            match html::compile_html_new(options, HtmlOptions::default()) {
                 Ok(_) => html_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
@@ -307,12 +311,8 @@ fn perform_compilation(
         let pdf_filename = format!("{}.pdf", project.name);
         let pdf_path = output_config.pdf_dir.join(&pdf_filename);
 
-        match crate::compile::compile_pdf_merged(
-            &project.config.pdf,
-            &pdf_path,
-            &compilation_root,
-            &repo_root,
-        ) {
+        let options = RheoCompileOptions::new(PathBuf::new(), &pdf_path, &compilation_root, &repo_root);
+        match pdf::compile_pdf_new(options, Some(&project.config.pdf)) {
             Ok(_) => {
                 pdf_succeeded = 1;
                 info!(output = %pdf_path.display(), "PDF merge complete");
@@ -329,12 +329,9 @@ fn perform_compilation(
         let epub_filename = format!("{}.epub", project.name);
         let epub_path = output_config.epub_dir.join(&epub_filename);
 
-        match epub::compile_epub(
-            &project.config.epub,
-            &epub_path,
-            &compilation_root,
-            &repo_root,
-        ) {
+        let options = RheoCompileOptions::new(PathBuf::new(), &epub_path, &compilation_root, &repo_root);
+        let epub_options = EpubOptions::from(&project.config.epub);
+        match epub::compile_epub_new(options, epub_options) {
             Ok(_) => {
                 epub_succeeded += 1;
                 info!(output = %epub_path.display(), "EPUB generation complete");
@@ -474,7 +471,14 @@ fn perform_compilation_incremental(
         // Compile to PDF (per-file mode)
         if per_file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-            match pdf::compile_pdf_incremental(world, &output_path) {
+            let options = RheoCompileOptions::incremental(
+                typ_file,
+                &output_path,
+                &project.root,
+                &PathBuf::new(),
+                world
+            );
+            match pdf::compile_pdf_new(options, None) {
                 Ok(_) => pdf_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
@@ -489,7 +493,14 @@ fn perform_compilation_incremental(
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            match html::compile_html_incremental(world, typ_file, &output_path, &project.root) {
+            let options = RheoCompileOptions::incremental(
+                typ_file,
+                &output_path,
+                &project.root,
+                &PathBuf::new(),
+                world
+            );
+            match html::compile_html_new(options, HtmlOptions::default()) {
                 Ok(_) => html_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
@@ -528,12 +539,14 @@ fn perform_compilation_incremental(
             .resolve_content_dir(&project.root)
             .unwrap_or_else(|| project.root.clone());
 
-        match crate::compile::compile_pdf_merged_incremental(
-            world,
-            &project.config.pdf,
+        let options = RheoCompileOptions::incremental(
+            PathBuf::new(),
             &pdf_path,
             &compilation_root,
-        ) {
+            &PathBuf::new(),
+            world
+        );
+        match pdf::compile_pdf_new(options, Some(&project.config.pdf)) {
             Ok(_) => {
                 pdf_succeeded = 1;
                 info!(output = %pdf_path.display(), "PDF merge complete");
