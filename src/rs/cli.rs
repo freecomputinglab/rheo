@@ -173,50 +173,37 @@ fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
         })
 }
 
-/// Determine which formats should be compiled for a given file
-/// based on per-format exclusion patterns and requested formats
+/// Determine which formats should be compiled for a given file.
+///
+/// Logic:
+/// - HTML: Always compile (one HTML per .typ file)
+/// - PDF: Only if pdf.merge is NOT configured (merged PDF is handled separately)
+/// - EPUB: Never (EPUB is always merged and handled separately)
 fn get_file_formats(
-    file: &Path,
-    project_root: &Path,
     config: &crate::RheoConfig,
     requested_formats: &[OutputFormat],
-) -> Result<Vec<OutputFormat>> {
-    // Determine the base path for relative pattern matching
-    let base_path = if let Some(content_dir) = config.resolve_content_dir(project_root) {
-        content_dir
-    } else {
-        project_root.to_path_buf()
-    };
-
-    // Make path relative to base_path for matching
-    let relative_path = file.strip_prefix(&base_path).map_err(|_| {
-        crate::RheoError::path(
-            file,
-            format!("file is not within base path {}", base_path.display()),
-        )
-    })?;
-
-    // Build filter patterns for each format (combines global + format-specific)
-    // TODO: update so that this is based on spine
-    let html_filter = FilterPatterns::from_patterns(&[])?;
-    let pdf_filter = FilterPatterns::from_patterns(&[])?;
-    let epub_filter = FilterPatterns::from_patterns(&[])?;
-
+) -> Vec<OutputFormat> {
     let mut formats = Vec::new();
 
     for &format in requested_formats {
-        let should_compile = match format {
-            OutputFormat::Pdf => pdf_filter.should_include(relative_path),
-            OutputFormat::Html => html_filter.should_include(relative_path),
-            OutputFormat::Epub => epub_filter.should_include(relative_path),
-        };
-
-        if should_compile {
-            formats.push(format);
+        match format {
+            OutputFormat::Html => {
+                // HTML is always compiled per-file
+                formats.push(format);
+            }
+            OutputFormat::Pdf => {
+                // PDF is only compiled per-file if merge config is absent
+                if config.pdf.merge.is_none() {
+                    formats.push(format);
+                }
+            }
+            OutputFormat::Epub => {
+                // EPUB is never compiled per-file (always merged)
+            }
         }
     }
 
-    Ok(formats)
+    formats
 }
 
 /// Perform compilation for a project with specified formats
@@ -263,14 +250,14 @@ fn perform_compilation(
         .resolve_content_dir(&project.root)
         .unwrap_or_else(|| project.root.clone());
 
+    // Determine which formats should be compiled per-file
+    let per_file_formats = get_file_formats(&project.config, formats);
+
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
 
-        // Determine which formats this file should be compiled to
-        let file_formats = get_file_formats(typ_file, &project.root, &project.config, formats)?;
-
-        // Compile to PDF
-        if file_formats.contains(&OutputFormat::Pdf) {
+        // Compile to PDF (per-file mode)
+        if per_file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
             match pdf::compile_pdf(typ_file, &output_path, &compilation_root, &repo_root) {
                 Ok(_) => pdf_succeeded += 1,
@@ -282,7 +269,7 @@ fn perform_compilation(
         }
 
         // Compile to HTML
-        if file_formats.contains(&OutputFormat::Html) {
+        if per_file_formats.contains(&OutputFormat::Html) {
             let output_path = output_config
                 .html_dir
                 .join(&filename)
@@ -452,18 +439,18 @@ fn perform_compilation_incremental(
     let mut html_succeeded = 0;
     let mut html_failed = 0;
 
+    // Determine which formats should be compiled per-file
+    let per_file_formats = get_file_formats(&project.config, formats);
+
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
-
-        // Determine which formats this file should be compiled to
-        let file_formats = get_file_formats(typ_file, &project.root, &project.config, formats)?;
 
         // Update world for this file and reset cache
         world.set_main(typ_file)?;
         world.reset();
 
-        // Compile to PDF
-        if file_formats.contains(&OutputFormat::Pdf) {
+        // Compile to PDF (per-file mode)
+        if per_file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
             match pdf::compile_pdf_incremental(world, &output_path) {
                 Ok(_) => pdf_succeeded += 1,
@@ -475,7 +462,7 @@ fn perform_compilation_incremental(
         }
 
         // Compile to HTML
-        if file_formats.contains(&OutputFormat::Html) {
+        if per_file_formats.contains(&OutputFormat::Html) {
             let output_path = output_config
                 .html_dir
                 .join(&filename)
