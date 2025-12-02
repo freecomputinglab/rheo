@@ -107,62 +107,6 @@ impl<'a> RheoCompileOptions<'a> {
     }
 }
 
-/// Compile a single file to a specific format.
-///
-/// Note: EPUB is not supported (requires EpubConfig).
-#[deprecated(since = "0.1.0", note = "Use format-specific modules with unified APIs")]
-pub fn compile_format(
-    format: OutputFormat,
-    input: &Path,
-    output: &Path,
-    root: &Path,
-    repo_root: &Path,
-) -> Result<()> {
-    match format {
-        OutputFormat::Pdf => {
-            // Use old API via wrapper
-            compile_pdf_single(input, output, root, repo_root)
-        }
-        OutputFormat::Html => html::compile_html(input, output, root, repo_root),
-        OutputFormat::Epub => Err(RheoError::project_config(
-            "EPUB requires config, use formats::epub::compile_epub()",
-        )),
-    }
-}
-
-// ============================================================================
-// Deprecated wrappers for backward compatibility
-// ============================================================================
-
-/// Compile a single Typst document to PDF (deprecated).
-///
-/// **Deprecated:** Use `formats::pdf::compile_pdf_new()` with `RheoCompileOptions` instead.
-///
-/// This function is kept for backward compatibility with existing call sites.
-#[deprecated(since = "0.1.0", note = "Use formats::pdf::compile_pdf_new() with RheoCompileOptions")]
-pub fn compile_pdf_single(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
-    let options = RheoCompileOptions::new(input, output, root, repo_root);
-    pdf::compile_pdf_new(options, None)
-}
-
-/// Compile a single Typst document to PDF (incremental, deprecated).
-///
-/// **Deprecated:** Use `formats::pdf::compile_pdf()` with `RheoCompileOptions` instead.
-#[deprecated(since = "0.1.0", note = "Use formats::pdf::compile_pdf() with RheoCompileOptions")]
-pub fn compile_pdf_single_incremental(world: &RheoWorld, output: &Path) -> Result<()> {
-    // Call implementation directly to avoid mutability requirement
-    pdf::compile_pdf_incremental(world, output)
-}
-
-/// Compile a single Typst document to PDF using incremental world (deprecated, for cli.rs).
-///
-/// **Deprecated:** Use `formats::pdf::compile_pdf()` with `RheoCompileOptions` instead.
-///
-/// This is a compatibility shim for cli.rs watch mode.
-#[deprecated(since = "0.1.0", note = "Use formats::pdf::compile_pdf() with RheoCompileOptions")]
-pub fn compile_pdf_incremental(world: &RheoWorld, output: &Path) -> Result<()> {
-    pdf::compile_pdf_incremental(world, output)
-}
 
 /// Remove relative .typ links from Typst source code for PDF/EPUB compilation.
 ///
@@ -338,6 +282,7 @@ pub fn compile_pdf_merged_incremental(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::formats::pdf;
 
     #[test]
     fn test_remove_relative_typ_links_basic() {
@@ -395,12 +340,12 @@ mod tests {
 
     #[test]
     fn test_sanitize_label_name() {
-        assert_eq!(sanitize_label_name("chapter 01.typ"), "chapter_01_typ");
-        assert_eq!(sanitize_label_name("chapter 01"), "chapter_01");
-        assert_eq!(sanitize_label_name("severance-01.typ"), "severance-01_typ");
-        assert_eq!(sanitize_label_name("severance-01"), "severance-01");
-        assert_eq!(sanitize_label_name("my_file!@#.typ"), "my_file____typ");
-        assert_eq!(sanitize_label_name("my_file!@#"), "my_file___");
+        assert_eq!(pdf::sanitize_label_name("chapter 01.typ"), "chapter_01_typ");
+        assert_eq!(pdf::sanitize_label_name("chapter 01"), "chapter_01");
+        assert_eq!(pdf::sanitize_label_name("severance-01.typ"), "severance-01_typ");
+        assert_eq!(pdf::sanitize_label_name("severance-01"), "severance-01");
+        assert_eq!(pdf::sanitize_label_name("my_file!@#.typ"), "my_file____typ");
+        assert_eq!(pdf::sanitize_label_name("my_file!@#"), "my_file___");
     }
 
     #[test]
@@ -411,7 +356,7 @@ mod tests {
             PathBuf::from("chapter2.typ"),
         ];
         let current = PathBuf::from("chapter1.typ");
-        let result = transform_typ_links_to_labels(source, &spine, &current).unwrap();
+        let result = pdf::transform_typ_links_to_labels(source, &spine, &current).unwrap();
         assert_eq!(result, r#"See #link(<chapter2>)[next chapter]."#);
     }
 
@@ -424,7 +369,7 @@ mod tests {
             PathBuf::from("chapter2.typ"),
         ];
         let current = PathBuf::from("chapter1.typ");
-        let result = transform_typ_links_to_labels(source, &spine, &current).unwrap();
+        let result = pdf::transform_typ_links_to_labels(source, &spine, &current).unwrap();
         assert_eq!(
             result,
             r#"See #link(<intro>)[intro] and #link(<chapter2>)[next]."#
@@ -436,7 +381,7 @@ mod tests {
         let source = r#"See #link("./missing.typ")[missing]."#;
         let spine = vec![PathBuf::from("chapter1.typ")];
         let current = PathBuf::from("chapter1.typ");
-        let result = transform_typ_links_to_labels(source, &spine, &current);
+        let result = pdf::transform_typ_links_to_labels(source, &spine, &current);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("not found in spine"));
@@ -447,7 +392,7 @@ mod tests {
         let source = r#"Visit #link("https://example.com")[our website] or #link("mailto:test@example.com")[email us]."#;
         let spine = vec![PathBuf::from("chapter1.typ")];
         let current = PathBuf::from("chapter1.typ");
-        let result = transform_typ_links_to_labels(source, &spine, &current).unwrap();
+        let result = pdf::transform_typ_links_to_labels(source, &spine, &current).unwrap();
         assert_eq!(result, source); // Should be unchanged
     }
 
@@ -456,7 +401,7 @@ mod tests {
         let source = r##"See #link("#heading")[section]."##;
         let spine = vec![PathBuf::from("chapter1.typ")];
         let current = PathBuf::from("chapter1.typ");
-        let result = transform_typ_links_to_labels(source, &spine, &current).unwrap();
+        let result = pdf::transform_typ_links_to_labels(source, &spine, &current).unwrap();
         assert_eq!(result, source); // Should be unchanged
     }
 
@@ -477,7 +422,7 @@ mod tests {
         write!(file2, "= Chapter 2\nThis is chapter two.").unwrap();
 
         let spine = vec![path1, path2];
-        let result = concatenate_typst_sources(&spine).unwrap();
+        let result = pdf::concatenate_typst_sources(&spine).unwrap();
 
         // Check that heading-based labels are injected (derived from filename)
         // These should appear at the start of each section
@@ -504,7 +449,7 @@ mod tests {
         write!(file, "Content here").unwrap();
 
         let spine = vec![path];
-        let result = concatenate_typst_sources(&spine).unwrap();
+        let result = pdf::concatenate_typst_sources(&spine).unwrap();
 
         // Heading with label should be injected (title derived from filename)
         assert!(result.starts_with("= Test File <test-file>"));
@@ -531,7 +476,7 @@ mod tests {
         write!(file2, "Content 2").unwrap();
 
         let spine = vec![path1, path2];
-        let result = concatenate_typst_sources(&spine);
+        let result = pdf::concatenate_typst_sources(&spine);
 
         // Should fail with duplicate filename error
         assert!(result.is_err());
@@ -555,7 +500,7 @@ mod tests {
         write!(file2, "= Chapter 2").unwrap();
 
         let spine = vec![path1, path2];
-        let result = concatenate_typst_sources(&spine).unwrap();
+        let result = pdf::concatenate_typst_sources(&spine).unwrap();
 
         // Link should be transformed to label
         assert!(result.contains("#link(<chapter2>)[next chapter]"));
@@ -563,11 +508,11 @@ mod tests {
 
     #[test]
     fn test_filename_to_title() {
-        assert_eq!(filename_to_title("severance-ep-1"), "Severance Ep 1");
-        assert_eq!(filename_to_title("my_document"), "My Document");
-        assert_eq!(filename_to_title("chapter-01"), "Chapter 01");
-        assert_eq!(filename_to_title("hello_world"), "Hello World");
-        assert_eq!(filename_to_title("single"), "Single");
+        assert_eq!(pdf::filename_to_title("severance-ep-1"), "Severance Ep 1");
+        assert_eq!(pdf::filename_to_title("my_document"), "My Document");
+        assert_eq!(pdf::filename_to_title("chapter-01"), "Chapter 01");
+        assert_eq!(pdf::filename_to_title("hello_world"), "Hello World");
+        assert_eq!(pdf::filename_to_title("single"), "Single");
     }
 
     // strip_typst_markup tests moved to formats::pdf module (now private)
@@ -579,7 +524,7 @@ mod tests {
 = Chapter 1
 Content here."#;
 
-        let title = extract_document_title(source, "fallback");
+        let title = pdf::extract_document_title(source, "fallback");
         assert_eq!(title, "My Great Title");
     }
 
@@ -588,7 +533,7 @@ Content here."#;
         let source = r#"= Chapter 1
 Content here."#;
 
-        let title = extract_document_title(source, "my-chapter");
+        let title = pdf::extract_document_title(source, "my-chapter");
         assert_eq!(title, "My Chapter");
     }
 
@@ -596,7 +541,7 @@ Content here."#;
     fn test_extract_document_title_with_markup() {
         let source = r#"#set document(title: [Good news about hell - #emph[Severance]])"#;
 
-        let title = extract_document_title(source, "fallback");
+        let title = pdf::extract_document_title(source, "fallback");
         // Should strip #emph and underscores
         // Note: complex nested bracket handling is limited by regex
         assert!(title.contains("Good news"));
@@ -609,7 +554,7 @@ Content here."#;
 
 Content"#;
 
-        let title = extract_document_title(source, "default-name");
+        let title = pdf::extract_document_title(source, "default-name");
         // Empty title should fall back to filename
         assert_eq!(title, "Default Name");
     }
@@ -619,7 +564,7 @@ Content"#;
         let source =
             r#"#set document(title: [Half Loop - _Severance_ [s1/e2]], author: [Test])"#;
 
-        let title = extract_document_title(source, "fallback");
+        let title = pdf::extract_document_title(source, "fallback");
         // Should extract title and strip markup
         assert!(title.contains("Half Loop"));
         assert!(title.contains("Severance"));

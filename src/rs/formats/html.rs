@@ -2,7 +2,6 @@
 ///!
 ///! Provides unified compile_html_new() that routes to appropriate implementation
 ///! based on compilation options (fresh vs incremental).
-
 use crate::compile::RheoCompileOptions;
 use crate::config::HtmlOptions;
 use crate::world::RheoWorld;
@@ -82,7 +81,12 @@ pub fn compile_document_to_string(
 /// - Root set to content_dir or project root (for local file imports across directories)
 /// - Shared resources available via repo_root in src/typst/ (rheo.typ)
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-fn compile_html_impl_fresh(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
+fn compile_html_impl_fresh(
+    input: &Path,
+    output: &Path,
+    root: &Path,
+    repo_root: &Path,
+) -> Result<()> {
     let doc = compile_html_to_document(input, root, repo_root)?;
     let html_string = compile_document_to_string(&doc, input, root, false)?;
 
@@ -107,12 +111,7 @@ fn compile_html_impl_fresh(input: &Path, output: &Path, root: &Path, repo_root: 
 /// * `output` - Path where the HTML should be written
 /// * `root` - Project root path (for link validation)
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-fn compile_html_impl(
-    world: &RheoWorld,
-    input: &Path,
-    output: &Path,
-    root: &Path,
-) -> Result<()> {
+fn compile_html_impl(world: &RheoWorld, input: &Path, output: &Path, root: &Path) -> Result<()> {
     // Compile the document to HtmlDocument
     info!("compiling to HTML");
     let result = typst::compile::<HtmlDocument>(world);
@@ -174,7 +173,7 @@ fn compile_html_impl(
 // Unified public API
 // ============================================================================
 
-/// Compile Typst document to HTML (unified API).
+/// Compile Typst document to HTML.
 ///
 /// Routes to the appropriate implementation based on options:
 /// - Fresh compilation: compile_html_impl_fresh() (when options.world is None)
@@ -189,13 +188,14 @@ fn compile_html_impl(
 pub fn compile_html_new(options: RheoCompileOptions, _html_options: HtmlOptions) -> Result<()> {
     match options.world {
         // Incremental compilation (reuse existing world)
-        Some(world) => {
-            compile_html_impl(world, &options.input, &options.output, &options.root)
-        }
+        Some(world) => compile_html_impl(world, &options.input, &options.output, &options.root),
         // Fresh compilation (create new world)
-        None => {
-            compile_html_impl_fresh(&options.input, &options.output, &options.root, &options.repo_root)
-        }
+        None => compile_html_impl_fresh(
+            &options.input,
+            &options.output,
+            &options.root,
+            &options.repo_root,
+        ),
     }
 }
 
@@ -208,7 +208,10 @@ pub fn compile_html_new(options: RheoCompileOptions, _html_options: HtmlOptions)
 /// **Deprecated:** Use `compile_html_new()` with `RheoCompileOptions` instead.
 ///
 /// This function is kept for backward compatibility with existing call sites in cli.rs.
-#[deprecated(since = "0.1.0", note = "Use compile_html_new() with RheoCompileOptions")]
+#[deprecated(
+    since = "0.1.0",
+    note = "Use compile_html_new() with RheoCompileOptions"
+)]
 pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
     compile_html_impl_fresh(input, output, root, repo_root)
 }
@@ -218,7 +221,10 @@ pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) 
 /// **Deprecated:** Use `compile_html_new()` with `RheoCompileOptions` instead.
 ///
 /// This is a compatibility shim for existing call sites.
-#[deprecated(since = "0.1.0", note = "Use compile_html_new() with RheoCompileOptions")]
+#[deprecated(
+    since = "0.1.0",
+    note = "Use compile_html_new() with RheoCompileOptions"
+)]
 pub fn compile_html_incremental(
     world: &RheoWorld,
     input: &Path,
