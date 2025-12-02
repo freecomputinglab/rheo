@@ -1,9 +1,9 @@
-use crate::config::EpubConfig;
+use crate::config::{EpubConfig, PdfConfig};
 use crate::epub::EpubItem;
 use crate::world::RheoWorld;
 use crate::{Result, RheoError, epub};
 use regex::Regex;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, instrument, warn};
 use typst::layout::PagedDocument;
 use typst_html::HtmlDocument;
@@ -173,6 +173,46 @@ pub fn compile_epub(
 
     info!(output = %epub_path.display(), "successfully generated EPUB");
     Ok(())
+}
+
+/// Generates the PDF spine as a list of canonicalized paths to .typ files.
+///
+/// Processes glob patterns from [pdf.merge] config and returns an ordered list.
+/// Pattern order is preserved, with lexicographic sorting within each pattern.
+///
+/// # Errors
+/// Returns error if:
+/// - No merge config is specified
+/// - No .typ files matched the patterns
+pub fn generate_pdf_spine(root: &Path, config: &PdfConfig) -> Result<Vec<PathBuf>> {
+    let merge = config
+        .merge
+        .as_ref()
+        .ok_or_else(|| RheoError::project_config("PDF merge requires [pdf.merge] configuration"))?;
+
+    let mut typst_files = Vec::new();
+    for pattern in &merge.spine {
+        let glob_pattern = root.join(pattern).display().to_string();
+        let glob = glob::glob(&glob_pattern)
+            .map_err(|e| RheoError::project_config(format!("invalid glob pattern '{}': {}", pattern, e)))?;
+
+        let mut glob_files: Vec<PathBuf> = glob
+            .filter_map(|entry| entry.ok())
+            .filter(|path| path.is_file())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("typ"))
+            .collect();
+
+        glob_files.sort_by_cached_key(|p| p.file_name().unwrap().to_os_string());
+        typst_files.extend(glob_files);
+    }
+
+    if typst_files.is_empty() {
+        return Err(RheoError::project_config(
+            "PDF merge spine matched no .typ files"
+        ));
+    }
+
+    Ok(typst_files)
 }
 
 /// Compile a Typst document to PDF using an existing World (for watch mode).
@@ -610,5 +650,107 @@ mod tests {
         let result = remove_relative_typ_links(source);
         // .pdf files should be preserved since they're not .typ files
         assert_eq!(result, source);
+    }
+
+    #[test]
+    fn test_generate_pdf_spine_basic() {
+        use crate::config::{Merge, PdfConfig};
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create test files
+        fs::write(root.join("chapter1.typ"), "content").unwrap();
+        fs::write(root.join("chapter2.typ"), "content").unwrap();
+        fs::write(root.join("chapter3.typ"), "content").unwrap();
+
+        let config = PdfConfig {
+            merge: Some(Merge {
+                title: "Test".to_string(),
+                spine: vec!["chapter*.typ".to_string()],
+            }),
+        };
+
+        let result = generate_pdf_spine(root, &config).unwrap();
+        assert_eq!(result.len(), 3);
+
+        // Check lexicographic ordering
+        assert!(result[0].ends_with("chapter1.typ"));
+        assert!(result[1].ends_with("chapter2.typ"));
+        assert!(result[2].ends_with("chapter3.typ"));
+    }
+
+    #[test]
+    fn test_generate_pdf_spine_ordered_patterns() {
+        use crate::config::{Merge, PdfConfig};
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create test files
+        fs::write(root.join("intro.typ"), "content").unwrap();
+        fs::write(root.join("chapter1.typ"), "content").unwrap();
+        fs::write(root.join("chapter2.typ"), "content").unwrap();
+        fs::write(root.join("conclusion.typ"), "content").unwrap();
+
+        let config = PdfConfig {
+            merge: Some(Merge {
+                title: "Test".to_string(),
+                spine: vec![
+                    "intro.typ".to_string(),
+                    "chapter*.typ".to_string(),
+                    "conclusion.typ".to_string(),
+                ],
+            }),
+        };
+
+        let result = generate_pdf_spine(root, &config).unwrap();
+        assert_eq!(result.len(), 4);
+
+        // Check pattern order is preserved
+        assert!(result[0].ends_with("intro.typ"));
+        assert!(result[1].ends_with("chapter1.typ"));
+        assert!(result[2].ends_with("chapter2.typ"));
+        assert!(result[3].ends_with("conclusion.typ"));
+    }
+
+    #[test]
+    fn test_generate_pdf_spine_no_merge_config() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let config = PdfConfig { merge: None };
+
+        let result = generate_pdf_spine(root, &config);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("PDF merge requires [pdf.merge] configuration"));
+    }
+
+    #[test]
+    fn test_generate_pdf_spine_empty() {
+        use crate::config::{Merge, PdfConfig};
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create non-typ file
+        fs::write(root.join("readme.md"), "content").unwrap();
+
+        let config = PdfConfig {
+            merge: Some(Merge {
+                title: "Test".to_string(),
+                spine: vec!["*.typ".to_string()],
+            }),
+        };
+
+        let result = generate_pdf_spine(root, &config);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("PDF merge spine matched no .typ files"));
     }
 }

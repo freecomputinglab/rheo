@@ -5,7 +5,7 @@ content_dir = "content"
 # Default formats to compile (if not specified via CLI flags)
 # Options: "pdf", "html", "epub"
 # Default: ["pdf", "html"]
-formats = ["html", "pdf"]
+# formats = ["html", "pdf"]
 
 [epub.merge]
 spine = ["severance-*.typ"]
