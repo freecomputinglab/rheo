@@ -1,7 +1,3 @@
-///! HTML compilation using Typst's HtmlDocument.
-///!
-///! Provides unified compile_html_new() that routes to appropriate implementation
-///! based on compilation options (fresh vs incremental).
 use crate::compile::RheoCompileOptions;
 use crate::config::HtmlOptions;
 use crate::world::RheoWorld;
@@ -197,41 +193,6 @@ pub fn compile_html_new(options: RheoCompileOptions, _html_options: HtmlOptions)
             &options.repo_root,
         ),
     }
-}
-
-// ============================================================================
-// Backward compatibility wrappers (deprecated, for existing call sites)
-// ============================================================================
-
-/// Compile a Typst document to HTML (deprecated 4-parameter signature).
-///
-/// **Deprecated:** Use `compile_html_new()` with `RheoCompileOptions` instead.
-///
-/// This function is kept for backward compatibility with existing call sites in cli.rs.
-#[deprecated(
-    since = "0.1.0",
-    note = "Use compile_html_new() with RheoCompileOptions"
-)]
-pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
-    compile_html_impl_fresh(input, output, root, repo_root)
-}
-
-/// Compile a Typst document to HTML using incremental world (deprecated).
-///
-/// **Deprecated:** Use `compile_html_new()` with `RheoCompileOptions` instead.
-///
-/// This is a compatibility shim for existing call sites.
-#[deprecated(
-    since = "0.1.0",
-    note = "Use compile_html_new() with RheoCompileOptions"
-)]
-pub fn compile_html_incremental(
-    world: &RheoWorld,
-    input: &Path,
-    output: &Path,
-    root: &Path,
-) -> Result<()> {
-    compile_html_impl(world, input, output, root)
 }
 
 // ============================================================================

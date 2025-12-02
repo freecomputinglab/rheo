@@ -1,8 +1,3 @@
-///! PDF compilation using Typst's PagedDocument.
-///!
-///! Provides unified compile_pdf() that routes to appropriate implementation
-///! based on compilation options (single vs merged, fresh vs incremental).
-
 use crate::compile::RheoCompileOptions;
 use crate::config::PdfConfig;
 use crate::spine::generate_spine;
@@ -28,7 +23,12 @@ use typst_pdf::PdfOptions;
 /// - Root set to content_dir or project root (for local file imports across directories)
 /// - Shared resources available via repo_root in src/typst/ (rheo.typ)
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-fn compile_pdf_single_impl_fresh(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
+fn compile_pdf_single_impl_fresh(
+    input: &Path,
+    output: &Path,
+    root: &Path,
+    repo_root: &Path,
+) -> Result<()> {
     // Create the compilation world
     // For standalone PDF compilation, remove relative .typ links from source
     let world = RheoWorld::new(root, input, repo_root, true)?;
@@ -154,8 +154,7 @@ pub fn sanitize_label_name(name: &str) -> String {
 /// separators with spaces and capitalizing words.
 pub fn filename_to_title(filename: &str) -> String {
     filename
-        .replace('-', " ")
-        .replace('_', " ")
+        .replace(['-', '_'], " ")
         .split_whitespace()
         .map(|word| {
             let mut chars = word.chars();
@@ -335,10 +334,11 @@ pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
             // Check if we've seen this filename before
             if !seen_filenames.insert(filename_str.clone()) {
                 // Find the first occurrence
-                if let Some(first_occurrence) = spine_files
-                    .iter()
-                    .find(|f| f.file_name().map(|n| n.to_string_lossy() == filename.to_string_lossy()).unwrap_or(false))
-                {
+                if let Some(first_occurrence) = spine_files.iter().find(|f| {
+                    f.file_name()
+                        .map(|n| n.to_string_lossy() == filename.to_string_lossy())
+                        .unwrap_or(false)
+                }) {
                     duplicate_paths.push((
                         filename_str.clone(),
                         first_occurrence.clone(),
@@ -351,7 +351,7 @@ pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
 
     // Report first duplicate error if any
     if let Some((filename, first_path, second_path)) = duplicate_paths.first() {
-        return Err(RheoError::project_config(&format!(
+        return Err(RheoError::project_config(format!(
             "duplicate filename in spine: '{}' appears at both '{}' and '{}'",
             filename,
             first_path.display(),
@@ -365,7 +365,7 @@ pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
     for spine_file in spine_files {
         // Read source content
         let source = fs::read_to_string(spine_file).map_err(|e| {
-            RheoError::project_config(&format!(
+            RheoError::project_config(format!(
                 "failed to read spine file '{}': {}",
                 spine_file.display(),
                 e
@@ -380,7 +380,7 @@ pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
             let title = extract_document_title(&source, stem);
             (label, title)
         } else {
-            return Err(RheoError::project_config(&format!(
+            return Err(RheoError::project_config(format!(
                 "invalid filename in spine: '{}'",
                 spine_file.display()
             )));
@@ -390,7 +390,10 @@ pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
         let transformed_source = transform_typ_links_to_labels(&source, spine_files, spine_file)?;
 
         // Inject heading with label at start: = Title <label>
-        concatenated.push_str(&format!("= {} <{}>\n\n{}\n\n", title, label, transformed_source));
+        concatenated.push_str(&format!(
+            "= {} <{}>\n\n{}\n\n",
+            title, label, transformed_source
+        ));
     }
 
     Ok(concatenated)
@@ -579,7 +582,7 @@ fn compile_pdf_merged_impl(
 // Unified public API
 // ============================================================================
 
-/// Compile Typst document(s) to PDF (unified API).
+/// Compile Typst document(s) to PDF.
 ///
 /// Routes to the appropriate implementation based on options:
 /// - Single file, fresh: compile_pdf_single_impl_fresh()
@@ -595,54 +598,36 @@ fn compile_pdf_merged_impl(
 /// * `Result<()>` - Success or compilation error
 pub fn compile_pdf_new(options: RheoCompileOptions, pdf_config: Option<&PdfConfig>) -> Result<()> {
     // Check if this is merged PDF compilation
-    let is_merged = pdf_config
-        .and_then(|c| c.merge.as_ref())
-        .is_some();
+    let is_merged = pdf_config.and_then(|c| c.merge.as_ref()).is_some();
 
     match (is_merged, options.world) {
         // Merged PDF, incremental
         (true, Some(world)) => {
-            let config = pdf_config
-                .ok_or_else(|| RheoError::project_config("PDF config required for merged compilation"))?;
+            let config = pdf_config.ok_or_else(|| {
+                RheoError::project_config("PDF config required for merged compilation")
+            })?;
             compile_pdf_merged_impl(world, config, &options.output, &options.root)
         }
         // Merged PDF, fresh
         (true, None) => {
-            let config = pdf_config
-                .ok_or_else(|| RheoError::project_config("PDF config required for merged compilation"))?;
-            compile_pdf_merged_impl_fresh(config, &options.output, &options.root, &options.repo_root)
+            let config = pdf_config.ok_or_else(|| {
+                RheoError::project_config("PDF config required for merged compilation")
+            })?;
+            compile_pdf_merged_impl_fresh(
+                config,
+                &options.output,
+                &options.root,
+                &options.repo_root,
+            )
         }
         // Single file, incremental
-        (false, Some(world)) => {
-            compile_pdf_single_impl(world, &options.output)
-        }
+        (false, Some(world)) => compile_pdf_single_impl(world, &options.output),
         // Single file, fresh
-        (false, None) => {
-            compile_pdf_single_impl_fresh(&options.input, &options.output, &options.root, &options.repo_root)
-        }
+        (false, None) => compile_pdf_single_impl_fresh(
+            &options.input,
+            &options.output,
+            &options.root,
+            &options.repo_root,
+        ),
     }
-}
-
-// ============================================================================
-// Backward compatibility wrappers (deprecated, for existing call sites)
-// ============================================================================
-
-/// Compile a single Typst document to PDF (deprecated 4-parameter signature).
-///
-/// **Deprecated:** Use `compile_pdf_new()` with `RheoCompileOptions` instead.
-///
-/// This function is kept for backward compatibility with existing call sites in cli.rs.
-#[deprecated(since = "0.1.0", note = "Use compile_pdf_new() with RheoCompileOptions")]
-pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
-    compile_pdf_single_impl_fresh(input, output, root, repo_root)
-}
-
-/// Compile a single Typst document to PDF using incremental world (deprecated).
-///
-/// **Deprecated:** Use `compile_pdf_new()` with `RheoCompileOptions` instead.
-///
-/// This is a compatibility shim for existing call sites.
-#[deprecated(since = "0.1.0", note = "Use compile_pdf_new() with RheoCompileOptions")]
-pub fn compile_pdf_incremental(world: &RheoWorld, output: &Path) -> Result<()> {
-    compile_pdf_single_impl(world, output)
 }

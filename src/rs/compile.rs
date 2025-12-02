@@ -1,14 +1,6 @@
-///! Shared compilation utilities.
-///!
-///! Contains utilities used across multiple output formats,
-///! such as remove_relative_typ_links().
-
-use crate::config::PdfConfig;
-use crate::formats::{html, pdf};
 use crate::world::RheoWorld;
-use crate::{OutputFormat, Result, RheoError};
 use regex::Regex;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tracing::{instrument, warn};
 
 /// Common compilation options used across all output formats.
@@ -107,7 +99,6 @@ impl<'a> RheoCompileOptions<'a> {
     }
 }
 
-
 /// Remove relative .typ links from Typst source code for PDF/EPUB compilation.
 ///
 /// For PDF and EPUB outputs, relative links to other .typ files don't make sense
@@ -175,110 +166,6 @@ pub fn remove_relative_typ_links(source: &str) -> String {
     result.to_string()
 }
 
-/// Sanitize a filename to create a valid Typst label name (deprecated).
-///
-/// **Deprecated:** Use `formats::pdf::sanitize_label_name()` instead.
-///
-/// Replaces non-alphanumeric characters (except hyphens and underscores) with underscores.
-#[deprecated(since = "0.1.0", note = "Use formats::pdf::sanitize_label_name()")]
-pub fn sanitize_label_name(name: &str) -> String {
-    pdf::sanitize_label_name(name)
-}
-
-/// Convert filename to readable title (deprecated).
-///
-/// **Deprecated:** Use `formats::pdf::filename_to_title()` instead.
-///
-/// Transforms a filename stem into a human-readable title by replacing
-/// separators with spaces and capitalizing words.
-#[deprecated(since = "0.1.0", note = "Use formats::pdf::filename_to_title()")]
-pub fn filename_to_title(filename: &str) -> String {
-    pdf::filename_to_title(filename)
-}
-
-// strip_typst_markup is now private in pdf module, no longer exposed
-
-/// Extract title from Typst document source (deprecated).
-///
-/// **Deprecated:** Use `formats::pdf::extract_document_title()` instead.
-///
-/// Searches for `#set document(title: [...])` and extracts the content.
-/// Falls back to filename if no title is found.
-#[deprecated(since = "0.1.0", note = "Use formats::pdf::extract_document_title()")]
-pub fn extract_document_title(source: &str, filename: &str) -> String {
-    pdf::extract_document_title(source, filename)
-}
-
-/// Transform relative .typ links to label references for merged PDF compilation (deprecated).
-///
-/// **Deprecated:** Use `formats::pdf::transform_typ_links_to_labels()` instead.
-///
-/// For merged PDF outputs, links to other .typ files should reference the label
-/// at the start of each document section.
-#[deprecated(since = "0.1.0", note = "Use formats::pdf::transform_typ_links_to_labels()")]
-pub fn transform_typ_links_to_labels(
-    source: &str,
-    spine_files: &[PathBuf],
-    current_file: &Path,
-) -> Result<String> {
-    pdf::transform_typ_links_to_labels(source, spine_files, current_file)
-}
-
-/// Concatenate multiple Typst source files into a single source for merged PDF compilation (deprecated).
-///
-/// **Deprecated:** Use `formats::pdf::concatenate_typst_sources()` instead.
-///
-/// Each file in the spine is:
-/// 1. Read from disk
-/// 2. Title extracted from `#set document(title: [...])` or filename
-/// 3. Prefixed with a level-1 heading containing the title and a label derived from filename
-/// 4. Links to other .typ files transformed to label references
-/// 5. Concatenated together
-#[deprecated(since = "0.1.0", note = "Use formats::pdf::concatenate_typst_sources()")]
-pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
-    pdf::concatenate_typst_sources(spine_files)
-}
-
-/// Compile multiple Typst files into a single merged PDF (deprecated).
-///
-/// **Deprecated:** Use `formats::pdf::compile_pdf_new()` with `RheoCompileOptions` instead.
-///
-/// Generates a spine from the PDF merge configuration, concatenates all sources
-/// with labels and transformed links, then compiles to a single PDF document.
-#[deprecated(since = "0.1.0", note = "Use formats::pdf::compile_pdf_new() with RheoCompileOptions")]
-pub fn compile_pdf_merged(
-    config: &PdfConfig,
-    output_path: &Path,
-    root: &Path,
-    repo_root: &Path,
-) -> Result<()> {
-    let options = RheoCompileOptions::new(PathBuf::new(), output_path, root, repo_root);
-    pdf::compile_pdf_new(options, Some(config))
-}
-
-/// Compile multiple Typst files into a single merged PDF (incremental mode, deprecated).
-///
-/// **Deprecated:** Use `formats::pdf::compile_pdf_new()` with `RheoCompileOptions` instead.
-///
-/// Same as compile_pdf_merged() but reuses an existing RheoWorld for faster
-/// recompilation in watch mode.
-#[deprecated(since = "0.1.0", note = "Use formats::pdf::compile_pdf_new() with RheoCompileOptions")]
-pub fn compile_pdf_merged_incremental(
-    world: &mut RheoWorld,
-    config: &PdfConfig,
-    output_path: &Path,
-    root: &Path,
-) -> Result<()> {
-    let options = RheoCompileOptions {
-        input: PathBuf::new(),
-        output: output_path.to_path_buf(),
-        root: root.to_path_buf(),
-        repo_root: PathBuf::new(),
-        world: Some(world),
-    };
-    pdf::compile_pdf_new(options, Some(config))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,7 +229,10 @@ mod tests {
     fn test_sanitize_label_name() {
         assert_eq!(pdf::sanitize_label_name("chapter 01.typ"), "chapter_01_typ");
         assert_eq!(pdf::sanitize_label_name("chapter 01"), "chapter_01");
-        assert_eq!(pdf::sanitize_label_name("severance-01.typ"), "severance-01_typ");
+        assert_eq!(
+            pdf::sanitize_label_name("severance-01.typ"),
+            "severance-01_typ"
+        );
         assert_eq!(pdf::sanitize_label_name("severance-01"), "severance-01");
         assert_eq!(pdf::sanitize_label_name("my_file!@#.typ"), "my_file____typ");
         assert_eq!(pdf::sanitize_label_name("my_file!@#"), "my_file___");
@@ -351,10 +241,7 @@ mod tests {
     #[test]
     fn test_transform_typ_links_basic() {
         let source = r#"See #link("./chapter2.typ")[next chapter]."#;
-        let spine = vec![
-            PathBuf::from("chapter1.typ"),
-            PathBuf::from("chapter2.typ"),
-        ];
+        let spine = vec![PathBuf::from("chapter1.typ"), PathBuf::from("chapter2.typ")];
         let current = PathBuf::from("chapter1.typ");
         let result = pdf::transform_typ_links_to_labels(source, &spine, &current).unwrap();
         assert_eq!(result, r#"See #link(<chapter2>)[next chapter]."#);
@@ -430,8 +317,12 @@ mod tests {
         assert!(result.contains("<chapter2>"));
 
         // Check for generated headings with labels
-        assert!(result.contains("= Chapter1 <chapter1>") || result.contains("= Chapter 1 <chapter1>"));
-        assert!(result.contains("= Chapter2 <chapter2>") || result.contains("= Chapter 2 <chapter2>"));
+        assert!(
+            result.contains("= Chapter1 <chapter1>") || result.contains("= Chapter 1 <chapter1>")
+        );
+        assert!(
+            result.contains("= Chapter2 <chapter2>") || result.contains("= Chapter 2 <chapter2>")
+        );
 
         // Check that content is preserved
         assert!(result.contains("This is chapter one."));
@@ -561,8 +452,7 @@ Content"#;
 
     #[test]
     fn test_extract_document_title_complex() {
-        let source =
-            r#"#set document(title: [Half Loop - _Severance_ [s1/e2]], author: [Test])"#;
+        let source = r#"#set document(title: [Half Loop - _Severance_ [s1/e2]], author: [Test])"#;
 
         let title = pdf::extract_document_title(source, "fallback");
         // Should extract title and strip markup

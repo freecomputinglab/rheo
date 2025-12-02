@@ -58,11 +58,9 @@ fn run_test_case(name: &str) {
         );
     }
 
-    // Check if we should run HTML tests
     let run_html = env::var("RUN_HTML_TESTS").is_ok() || env::var("RUN_HTML_TESTS").is_err();
-
-    // Check if we should run PDF tests
     let run_pdf = env::var("RUN_PDF_TESTS").is_ok() || env::var("RUN_PDF_TESTS").is_err();
+    // let run_epub = env::var("RUN_EPUB_TESTS").is_ok() || env::var("RUN_EPUB_TESTS").is_err();
 
     // Test HTML output
     if run_html {
@@ -88,6 +86,33 @@ fn run_test_case(name: &str) {
                 verify_pdf_output(test_name, &pdf_output);
             }
         }
+    }
+
+    // TODO: Test EPUB output
+    // if run_epub {
+    //     let epub_output = build_dir.join("epub");
+    //     if epub_output.exists() {
+    //         if update_mode {
+    //             update_epub_references(test_name, &epub_output, project_path)
+    //                 .expect("Failed to update EPUB references");
+    //         } else {
+    //             verify_epub_output(test_name, &epub_output);
+    //         }
+    //     }
+    // }
+
+    // Clean build directory after test
+    let clean_output = std::process::Command::new("cargo")
+        .args(["run", "--", "clean", project_path.to_str().unwrap()])
+        .output()
+        .expect("Failed to run rheo clean");
+
+    if !clean_output.status.success() {
+        eprintln!(
+            "Warning: Clean failed for {}: {}",
+            test_name,
+            String::from_utf8_lossy(&clean_output.stderr)
+        );
     }
 }
 
@@ -202,13 +227,7 @@ Content here.
 
     // Try to compile - should fail or warn
     let output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "--",
-            "compile",
-            test_dir.to_str().unwrap(),
-            "--pdf",
-        ])
+        .args(["run", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
         .output()
         .expect("Failed to run rheo compile");
 
@@ -272,13 +291,7 @@ Content from dir2.
 
     // Try to compile - should fail with duplicate label error
     let output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "--",
-            "compile",
-            test_dir.to_str().unwrap(),
-            "--pdf",
-        ])
+        .args(["run", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
         .output()
         .expect("Failed to run rheo compile");
 

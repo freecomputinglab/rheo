@@ -1,8 +1,3 @@
-///! Unified spine generation for merged compilation.
-///!
-///! Provides generate_spine() function used by both PDF and EPUB
-///! to determine which .typ files to include in merged output.
-
 use crate::config::Merge;
 use crate::{Result, RheoError};
 use std::path::{Path, PathBuf};

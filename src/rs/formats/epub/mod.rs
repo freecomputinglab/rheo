@@ -1,8 +1,3 @@
-///! EPUB compilation and packaging.
-///!
-///! Provides unified compile_epub_new() that routes to the appropriate
-///! implementation based on compilation options.
-
 mod package;
 mod xhtml;
 
@@ -300,10 +295,6 @@ fn compile_epub_impl(
     Ok(())
 }
 
-// ============================================================================
-// Unified public API
-// ============================================================================
-
 /// Compile Typst documents to EPUB (unified API).
 ///
 /// Currently routes to the implementation function. EPUB compilation does not
@@ -318,26 +309,12 @@ fn compile_epub_impl(
 pub fn compile_epub_new(options: RheoCompileOptions, epub_options: EpubOptions) -> Result<()> {
     // Note: EPUB doesn't support incremental compilation yet, so we ignore options.world
     // and always do fresh compilation
-    compile_epub_impl(&epub_options.config, &options.output, &options.root, &options.repo_root)
-}
-
-// ============================================================================
-// Backward compatibility wrappers (deprecated, for existing call sites)
-// ============================================================================
-
-/// Compile multiple Typst files to EPUB (deprecated 4-parameter signature).
-///
-/// **Deprecated:** Use `compile_epub_new()` with `RheoCompileOptions` instead.
-///
-/// This function is kept for backward compatibility with existing call sites in cli.rs.
-#[deprecated(since = "0.1.0", note = "Use compile_epub_new() with RheoCompileOptions")]
-pub fn compile_epub(
-    config: &EpubConfig,
-    epub_path: &Path,
-    root: &Path,
-    repo_root: &Path,
-) -> Result<()> {
-    compile_epub_impl(config, epub_path, root, repo_root)
+    compile_epub_impl(
+        &epub_options.config,
+        &options.output,
+        &options.root,
+        &options.repo_root,
+    )
 }
 
 pub struct EpubItem {

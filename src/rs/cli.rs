@@ -475,7 +475,7 @@ fn perform_compilation_incremental(
                 typ_file,
                 &output_path,
                 &project.root,
-                &PathBuf::new(),
+                PathBuf::new(),
                 world
             );
             match pdf::compile_pdf_new(options, None) {
@@ -497,7 +497,7 @@ fn perform_compilation_incremental(
                 typ_file,
                 &output_path,
                 &project.root,
-                &PathBuf::new(),
+                PathBuf::new(),
                 world
             );
             match html::compile_html_new(options, HtmlOptions::default()) {
@@ -543,7 +543,7 @@ fn perform_compilation_incremental(
             PathBuf::new(),
             &pdf_path,
             &compilation_root,
-            &PathBuf::new(),
+            PathBuf::new(),
             world
         );
         match pdf::compile_pdf_new(options, Some(&project.config.pdf)) {
