@@ -62,35 +62,33 @@ pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), S
 
     // Find all PDF files in actual output
     for entry in WalkDir::new(actual_dir) {
-        if let Ok(entry) = entry {
-            if entry.file_type().is_file() {
-                if let Some(ext) = entry.path().extension() {
-                    if ext == "pdf" {
-                        // Extract metadata
-                        let metadata = extract_pdf_metadata(entry.path())?;
+        if let Ok(entry) = entry
+            && entry.file_type().is_file()
+            && let Some(ext) = entry.path().extension()
+            && ext == "pdf"
+        {
+            // Extract metadata
+            let metadata = extract_pdf_metadata(entry.path())?;
 
-                        // Get relative path
-                        let rel_path = entry
-                            .path()
-                            .strip_prefix(actual_dir)
-                            .map_err(|e| format!("Failed to get relative path: {}", e))?;
+            // Get relative path
+            let rel_path = entry
+                .path()
+                .strip_prefix(actual_dir)
+                .map_err(|e| format!("Failed to get relative path: {}", e))?;
 
-                        // Save metadata JSON
-                        let metadata_file = ref_dir.join(format!(
-                            "{}.metadata.json",
-                            rel_path.file_stem().unwrap().to_string_lossy()
-                        ));
+            // Save metadata JSON
+            let metadata_file = ref_dir.join(format!(
+                "{}.metadata.json",
+                rel_path.file_stem().unwrap().to_string_lossy()
+            ));
 
-                        let json = serde_json::to_string_pretty(&metadata)
-                            .map_err(|e| format!("Failed to serialize metadata: {}", e))?;
+            let json = serde_json::to_string_pretty(&metadata)
+                .map_err(|e| format!("Failed to serialize metadata: {}", e))?;
 
-                        fs::write(&metadata_file, json)
-                            .map_err(|e| format!("Failed to write metadata: {}", e))?;
+            fs::write(&metadata_file, json)
+                .map_err(|e| format!("Failed to write metadata: {}", e))?;
 
-                        println!("Updated PDF metadata for {}", rel_path.display());
-                    }
-                }
-            }
+            println!("Updated PDF metadata for {}", rel_path.display());
         }
     }
 

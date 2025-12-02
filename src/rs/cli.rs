@@ -261,7 +261,8 @@ fn perform_compilation(
         // Compile to PDF (per-file mode)
         if per_file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-            let options = RheoCompileOptions::new(typ_file, &output_path, &compilation_root, &repo_root);
+            let options =
+                RheoCompileOptions::new(typ_file, &output_path, &compilation_root, &repo_root);
             match pdf::compile_pdf_new(options, None) {
                 Ok(_) => pdf_succeeded += 1,
                 Err(e) => {
@@ -277,7 +278,8 @@ fn perform_compilation(
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            let options = RheoCompileOptions::new(typ_file, &output_path, &compilation_root, &repo_root);
+            let options =
+                RheoCompileOptions::new(typ_file, &output_path, &compilation_root, &repo_root);
             match html::compile_html_new(options, HtmlOptions::default()) {
                 Ok(_) => html_succeeded += 1,
                 Err(e) => {
@@ -311,7 +313,8 @@ fn perform_compilation(
         let pdf_filename = format!("{}.pdf", project.name);
         let pdf_path = output_config.pdf_dir.join(&pdf_filename);
 
-        let options = RheoCompileOptions::new(PathBuf::new(), &pdf_path, &compilation_root, &repo_root);
+        let options =
+            RheoCompileOptions::new(PathBuf::new(), &pdf_path, &compilation_root, &repo_root);
         match pdf::compile_pdf_new(options, Some(&project.config.pdf)) {
             Ok(_) => {
                 pdf_succeeded = 1;
@@ -329,7 +332,8 @@ fn perform_compilation(
         let epub_filename = format!("{}.epub", project.name);
         let epub_path = output_config.epub_dir.join(&epub_filename);
 
-        let options = RheoCompileOptions::new(PathBuf::new(), &epub_path, &compilation_root, &repo_root);
+        let options =
+            RheoCompileOptions::new(PathBuf::new(), &epub_path, &compilation_root, &repo_root);
         let epub_options = EpubOptions::from(&project.config.epub);
         match epub::compile_epub_new(options, epub_options) {
             Ok(_) => {
@@ -476,7 +480,7 @@ fn perform_compilation_incremental(
                 &output_path,
                 &project.root,
                 PathBuf::new(),
-                world
+                world,
             );
             match pdf::compile_pdf_new(options, None) {
                 Ok(_) => pdf_succeeded += 1,
@@ -498,7 +502,7 @@ fn perform_compilation_incremental(
                 &output_path,
                 &project.root,
                 PathBuf::new(),
-                world
+                world,
             );
             match html::compile_html_new(options, HtmlOptions::default()) {
                 Ok(_) => html_succeeded += 1,
@@ -544,7 +548,7 @@ fn perform_compilation_incremental(
             &pdf_path,
             &compilation_root,
             PathBuf::new(),
-            world
+            world,
         );
         match pdf::compile_pdf_new(options, Some(&project.config.pdf)) {
             Ok(_) => {
