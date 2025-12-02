@@ -133,6 +133,123 @@ pub fn sanitize_label_name(name: &str) -> String {
         .collect()
 }
 
+/// Convert filename to readable title.
+///
+/// Transforms a filename stem into a human-readable title by replacing
+/// separators with spaces and capitalizing words.
+///
+/// # Arguments
+/// * `filename` - The filename stem (without .typ extension)
+///
+/// # Returns
+/// * `String` - Title-cased readable title
+///
+/// # Examples
+/// ```
+/// # use rheo::compile::filename_to_title;
+/// assert_eq!(filename_to_title("severance-ep-1"), "Severance Ep 1");
+/// assert_eq!(filename_to_title("my_document"), "My Document");
+/// ```
+pub fn filename_to_title(filename: &str) -> String {
+    filename
+        .replace('-', " ")
+        .replace('_', " ")
+        .split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Strip basic Typst markup to get plain text.
+///
+/// Removes common Typst markup patterns like #emph[...], #strong[...],
+/// and italic markers (_) to extract plain text from formatted content.
+///
+/// # Arguments
+/// * `text` - Text with Typst markup
+///
+/// # Returns
+/// * `String` - Plain text with markup removed
+fn strip_typst_markup(text: &str) -> String {
+    // Remove #emph[...], #strong[...], etc.
+    let re = Regex::new(r"#\w+\[([^\]]+)\]").expect("invalid regex");
+    let result = re.replace_all(text, "$1");
+
+    // Remove underscores (italic markers)
+    let result = result.replace('_', "");
+
+    result.trim().to_string()
+}
+
+/// Extract title from Typst document source.
+///
+/// Searches for `#set document(title: [...])` and extracts the content.
+/// Falls back to filename if no title is found. The extracted title is
+/// cleaned of basic Typst markup.
+///
+/// # Arguments
+/// * `source` - The Typst source code
+/// * `filename` - Filename to use as fallback (without .typ extension)
+///
+/// # Returns
+/// * `String` - Extracted or fallback title
+///
+/// # Examples
+/// ```
+/// # use rheo::compile::extract_document_title;
+/// let source = r#"#set document(title: [My Title])"#;
+/// let title = extract_document_title(source, "fallback");
+/// assert_eq!(title, "My Title");
+/// ```
+pub fn extract_document_title(source: &str, filename: &str) -> String {
+    // Find the start of the title parameter
+    if let Some(title_start) = source.find("#set document(") {
+        let after_doc = &source[title_start..];
+        if let Some(title_pos) = after_doc.find("title:") {
+            let after_title = &after_doc[title_pos + 6..]; // Skip "title:"
+
+            // Find the opening bracket for the title
+            if let Some(bracket_start) = after_title.find('[') {
+                let title_content = &after_title[bracket_start + 1..];
+
+                // Count brackets to find the matching closing bracket
+                let mut depth = 1;
+                let mut end_pos = 0;
+
+                for (i, ch) in title_content.chars().enumerate() {
+                    if ch == '[' {
+                        depth += 1;
+                    } else if ch == ']' {
+                        depth -= 1;
+                        if depth == 0 {
+                            end_pos = i;
+                            break;
+                        }
+                    }
+                }
+
+                if end_pos > 0 {
+                    let title = &title_content[..end_pos];
+                    // Strip Typst markup for plain text
+                    let cleaned = strip_typst_markup(title);
+                    if !cleaned.trim().is_empty() {
+                        return cleaned;
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: use filename, convert to title case
+    filename_to_title(filename)
+}
+
 /// Transform relative .typ links to label references for merged PDF compilation.
 ///
 /// For merged PDF outputs, links to other .typ files should reference the label
@@ -240,19 +357,34 @@ pub fn transform_typ_links_to_labels(
 
 /// Concatenate multiple Typst source files into a single source for merged PDF compilation.
 ///
-/// Each file in the spine is read, transformed (links to labels), and prefixed with a label
-/// derived from its filename. All sources are concatenated together.
+/// Each file in the spine is:
+/// 1. Read from disk
+/// 2. Title extracted from `#set document(title: [...])` or filename
+/// 3. Prefixed with a level-1 heading containing the title and a label derived from filename
+/// 4. Links to other .typ files transformed to label references
+/// 5. Concatenated together
 ///
 /// # Arguments
 /// * `spine_files` - Ordered list of .typ files to concatenate
 ///
 /// # Returns
-/// * `Result<String>` - Concatenated source code with labels and transformed links
+/// * `Result<String>` - Concatenated source code with headings, labels, and transformed links
 ///
 /// # Errors
 /// * Returns an error if duplicate filenames are found (would create duplicate labels)
 /// * Returns an error if link transformation fails
 /// * Returns an error if file reading fails
+///
+/// # Format
+/// ```typst
+/// = Document Title <filename-label>
+///
+/// [original content with transformed links]
+///
+/// = Next Document <next-label>
+///
+/// [next document content]
+/// ```
 ///
 /// # Examples
 /// ```no_run
@@ -264,11 +396,11 @@ pub fn transform_typ_links_to_labels(
 /// ];
 /// let result = concatenate_typst_sources(&spine).unwrap();
 /// // Result will be:
-/// // #label("chapter1")
+/// // = Chapter 1 <chapter1>
 /// //
 /// // [contents of chapter1.typ with transformed links]
 /// //
-/// // #label("chapter2")
+/// // = Chapter 2 <chapter2>
 /// //
 /// // [contents of chapter2.typ with transformed links]
 /// ```
@@ -322,11 +454,13 @@ pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
             ))
         })?;
 
-        // Derive label from filename (without extension)
-        let label = if let Some(filename) = spine_file.file_name() {
+        // Derive label and title from filename (without extension)
+        let (label, title) = if let Some(filename) = spine_file.file_name() {
             let filename_str = filename.to_string_lossy();
             let stem = filename_str.strip_suffix(".typ").unwrap_or(&filename_str);
-            sanitize_label_name(stem)
+            let label = sanitize_label_name(stem);
+            let title = extract_document_title(&source, stem);
+            (label, title)
         } else {
             return Err(RheoError::project_config(&format!(
                 "invalid filename in spine: '{}'",
@@ -337,8 +471,8 @@ pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
         // Transform .typ links to labels
         let transformed_source = transform_typ_links_to_labels(&source, spine_files, spine_file)?;
 
-        // Inject label at start and append to concatenated string
-        concatenated.push_str(&format!("#label(\"{}\")\n\n{}\n\n", label, transformed_source));
+        // Inject heading with label at start: = Title <label>
+        concatenated.push_str(&format!("= {} <{}>\n\n{}\n\n", title, label, transformed_source));
     }
 
     Ok(concatenated)
@@ -687,9 +821,14 @@ mod tests {
         let spine = vec![path1, path2];
         let result = concatenate_typst_sources(&spine).unwrap();
 
-        // Check that labels are injected
-        assert!(result.contains("#label(\"chapter1\")"));
-        assert!(result.contains("#label(\"chapter2\")"));
+        // Check that heading-based labels are injected (derived from filename)
+        // These should appear at the start of each section
+        assert!(result.contains("<chapter1>"));
+        assert!(result.contains("<chapter2>"));
+
+        // Check for generated headings with labels
+        assert!(result.contains("= Chapter1 <chapter1>") || result.contains("= Chapter 1 <chapter1>"));
+        assert!(result.contains("= Chapter2 <chapter2>") || result.contains("= Chapter 2 <chapter2>"));
 
         // Check that content is preserved
         assert!(result.contains("This is chapter one."));
@@ -709,8 +848,8 @@ mod tests {
         let spine = vec![path];
         let result = concatenate_typst_sources(&spine).unwrap();
 
-        // Label should be sanitized filename without extension
-        assert!(result.starts_with("#label(\"test-file\")"));
+        // Heading with label should be injected (title derived from filename)
+        assert!(result.starts_with("= Test File <test-file>"));
     }
 
     #[test]
@@ -762,5 +901,88 @@ mod tests {
 
         // Link should be transformed to label
         assert!(result.contains("#link(<chapter2>)[next chapter]"));
+    }
+
+    #[test]
+    fn test_filename_to_title() {
+        assert_eq!(filename_to_title("severance-ep-1"), "Severance Ep 1");
+        assert_eq!(filename_to_title("my_document"), "My Document");
+        assert_eq!(filename_to_title("chapter-01"), "Chapter 01");
+        assert_eq!(filename_to_title("hello_world"), "Hello World");
+        assert_eq!(filename_to_title("single"), "Single");
+    }
+
+    #[test]
+    fn test_strip_typst_markup_basic() {
+        assert_eq!(strip_typst_markup("#emph[italic]"), "italic");
+        assert_eq!(strip_typst_markup("#strong[bold]"), "bold");
+        assert_eq!(strip_typst_markup("plain text"), "plain text");
+    }
+
+    #[test]
+    fn test_strip_typst_markup_underscores() {
+        assert_eq!(strip_typst_markup("_underscored_"), "underscored");
+        assert_eq!(strip_typst_markup("some_text"), "sometext");
+    }
+
+    #[test]
+    fn test_strip_typst_markup_combined() {
+        assert_eq!(
+            strip_typst_markup("#emph[italic] and _underscored_"),
+            "italic and underscored"
+        );
+    }
+
+    #[test]
+    fn test_extract_document_title_from_metadata() {
+        let source = r#"#set document(title: [My Great Title])
+
+= Chapter 1
+Content here."#;
+
+        let title = extract_document_title(source, "fallback");
+        assert_eq!(title, "My Great Title");
+    }
+
+    #[test]
+    fn test_extract_document_title_fallback() {
+        let source = r#"= Chapter 1
+Content here."#;
+
+        let title = extract_document_title(source, "my-chapter");
+        assert_eq!(title, "My Chapter");
+    }
+
+    #[test]
+    fn test_extract_document_title_with_markup() {
+        let source = r#"#set document(title: [Good news about hell - #emph[Severance]])"#;
+
+        let title = extract_document_title(source, "fallback");
+        // Should strip #emph and underscores
+        // Note: complex nested bracket handling is limited by regex
+        assert!(title.contains("Good news"));
+        assert!(title.contains("Severance"));
+    }
+
+    #[test]
+    fn test_extract_document_title_empty() {
+        let source = r#"#set document(title: [])
+
+Content"#;
+
+        let title = extract_document_title(source, "default-name");
+        // Empty title should fall back to filename
+        assert_eq!(title, "Default Name");
+    }
+
+    #[test]
+    fn test_extract_document_title_complex() {
+        let source =
+            r#"#set document(title: [Half Loop - _Severance_ [s1/e2]], author: [Test])"#;
+
+        let title = extract_document_title(source, "fallback");
+        // Should extract title and strip markup
+        assert!(title.contains("Half Loop"));
+        assert!(title.contains("Severance"));
     }
 }

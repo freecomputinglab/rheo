@@ -179,7 +179,7 @@ fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
 /// - HTML: Always compile (one HTML per .typ file)
 /// - PDF: Only if pdf.merge is NOT configured (merged PDF is handled separately)
 /// - EPUB: Never (EPUB is always merged and handled separately)
-fn get_file_formats(
+fn get_per_file_formats(
     config: &crate::RheoConfig,
     requested_formats: &[OutputFormat],
 ) -> Vec<OutputFormat> {
@@ -251,7 +251,7 @@ fn perform_compilation(
         .unwrap_or_else(|| project.root.clone());
 
     // Determine which formats should be compiled per-file
-    let per_file_formats = get_file_formats(&project.config, formats);
+    let per_file_formats = get_per_file_formats(&project.config, formats);
 
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
@@ -462,7 +462,7 @@ fn perform_compilation_incremental(
     let mut html_failed = 0;
 
     // Determine which formats should be compiled per-file
-    let per_file_formats = get_file_formats(&project.config, formats);
+    let per_file_formats = get_per_file_formats(&project.config, formats);
 
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;

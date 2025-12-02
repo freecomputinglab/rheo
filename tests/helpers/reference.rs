@@ -9,10 +9,16 @@ pub fn update_html_references(
     actual_dir: &Path,
     project_path: &Path,
 ) -> Result<(), String> {
-    let ref_dir = PathBuf::from("tests/ref")
-        .join("examples")
-        .join(test_name)
-        .join("html");
+    // Determine reference path based on project location
+    let ref_base = if project_path.starts_with("examples/") {
+        PathBuf::from("tests/ref/examples")
+    } else if project_path.starts_with("tests/cases/") {
+        PathBuf::from("tests/ref/cases")
+    } else {
+        PathBuf::from("tests/ref/examples") // fallback
+    };
+
+    let ref_dir = ref_base.join(test_name).join("html");
 
     // Remove existing references
     if ref_dir.exists() {
@@ -33,10 +39,16 @@ pub fn update_html_references(
 
 /// Update PDF metadata references from test output
 pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), String> {
-    let ref_dir = PathBuf::from("tests/ref")
-        .join("examples")
-        .join(test_name)
-        .join("pdf");
+    // Determine reference path based on actual_dir location
+    let ref_base = if actual_dir.starts_with("examples/") {
+        PathBuf::from("tests/ref/examples")
+    } else if actual_dir.starts_with("tests/cases/") {
+        PathBuf::from("tests/ref/cases")
+    } else {
+        PathBuf::from("tests/ref/examples") // fallback
+    };
+
+    let ref_dir = ref_base.join(test_name).join("pdf");
 
     // Remove existing references
     if ref_dir.exists() {

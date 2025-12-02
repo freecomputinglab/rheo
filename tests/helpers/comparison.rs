@@ -4,10 +4,17 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 pub fn verify_html_output(test_name: &str, actual_dir: &PathBuf) {
-    let ref_dir = PathBuf::from("tests/ref")
-        .join("examples")
-        .join(test_name)
-        .join("html");
+    // Determine reference path based on test location
+    // actual_dir is like: examples/blog_site/build/html or tests/cases/pdf_merge/build/html
+    let ref_base = if actual_dir.starts_with("examples/") {
+        PathBuf::from("tests/ref/examples")
+    } else if actual_dir.starts_with("tests/cases/") {
+        PathBuf::from("tests/ref/cases")
+    } else {
+        PathBuf::from("tests/ref/examples") // fallback
+    };
+
+    let ref_dir = ref_base.join(test_name).join("html");
 
     if !ref_dir.exists() {
         panic!(
@@ -45,10 +52,17 @@ pub fn verify_html_output(test_name: &str, actual_dir: &PathBuf) {
 }
 
 pub fn verify_pdf_output(test_name: &str, actual_dir: &PathBuf) {
-    let ref_dir = PathBuf::from("tests/ref")
-        .join("examples")
-        .join(test_name)
-        .join("pdf");
+    // Determine reference path based on test location
+    // actual_dir is like: examples/blog_site/build/pdf or tests/cases/pdf_merge/build/pdf
+    let ref_base = if actual_dir.starts_with("examples/") {
+        PathBuf::from("tests/ref/examples")
+    } else if actual_dir.starts_with("tests/cases/") {
+        PathBuf::from("tests/ref/cases")
+    } else {
+        PathBuf::from("tests/ref/examples") // fallback
+    };
+
+    let ref_dir = ref_base.join(test_name).join("pdf");
 
     if !ref_dir.exists() {
         panic!(
