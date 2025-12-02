@@ -1,8 +1,10 @@
 ///! HTML compilation using Typst's HtmlDocument.
 ///!
-///! Provides HTML compilation with link transformation for
-///! cross-file navigation.
+///! Provides unified compile_html_new() that routes to appropriate implementation
+///! based on compilation options (fresh vs incremental).
 
+use crate::compile::RheoCompileOptions;
+use crate::config::HtmlOptions;
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use regex::Regex;
@@ -70,13 +72,17 @@ pub fn compile_document_to_string(
     transform_html_links(&html_string, input, root, xhtml)
 }
 
-/// Compile a Typst document to HTML
+// ============================================================================
+// Single-file HTML compilation (implementation functions)
+// ============================================================================
+
+/// Implementation: Compile a Typst document to HTML (fresh compilation)
 ///
 /// Uses the typst library with:
 /// - Root set to content_dir or project root (for local file imports across directories)
 /// - Shared resources available via repo_root in src/typst/ (rheo.typ)
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
+fn compile_html_impl_fresh(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
     let doc = compile_html_to_document(input, root, repo_root)?;
     let html_string = compile_document_to_string(&doc, input, root, false)?;
 
@@ -89,7 +95,7 @@ pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) 
     Ok(())
 }
 
-/// Compile a Typst document to HTML using an existing World (for watch mode).
+/// Implementation: Compile a Typst document to HTML (incremental compilation)
 ///
 /// This function reuses an existing RheoWorld instance, enabling incremental
 /// compilation through Typst's comemo caching system. The World should have
@@ -101,7 +107,7 @@ pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) 
 /// * `output` - Path where the HTML should be written
 /// * `root` - Project root path (for link validation)
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-pub fn compile_html_incremental(
+fn compile_html_impl(
     world: &RheoWorld,
     input: &Path,
     output: &Path,
@@ -163,6 +169,68 @@ pub fn compile_html_incremental(
     info!(output = %output.display(), "successfully compiled to HTML");
     Ok(())
 }
+
+// ============================================================================
+// Unified public API
+// ============================================================================
+
+/// Compile Typst document to HTML (unified API).
+///
+/// Routes to the appropriate implementation based on options:
+/// - Fresh compilation: compile_html_impl_fresh() (when options.world is None)
+/// - Incremental compilation: compile_html_impl() (when options.world is Some)
+///
+/// # Arguments
+/// * `options` - Compilation options (input, output, root, repo_root, world)
+/// * `_html_options` - HTML-specific options (currently unused but for future extensibility)
+///
+/// # Returns
+/// * `Result<()>` - Success or compilation error
+pub fn compile_html_new(options: RheoCompileOptions, _html_options: HtmlOptions) -> Result<()> {
+    match options.world {
+        // Incremental compilation (reuse existing world)
+        Some(world) => {
+            compile_html_impl(world, &options.input, &options.output, &options.root)
+        }
+        // Fresh compilation (create new world)
+        None => {
+            compile_html_impl_fresh(&options.input, &options.output, &options.root, &options.repo_root)
+        }
+    }
+}
+
+// ============================================================================
+// Backward compatibility wrappers (deprecated, for existing call sites)
+// ============================================================================
+
+/// Compile a Typst document to HTML (deprecated 4-parameter signature).
+///
+/// **Deprecated:** Use `compile_html_new()` with `RheoCompileOptions` instead.
+///
+/// This function is kept for backward compatibility with existing call sites in cli.rs.
+#[deprecated(since = "0.1.0", note = "Use compile_html_new() with RheoCompileOptions")]
+pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
+    compile_html_impl_fresh(input, output, root, repo_root)
+}
+
+/// Compile a Typst document to HTML using incremental world (deprecated).
+///
+/// **Deprecated:** Use `compile_html_new()` with `RheoCompileOptions` instead.
+///
+/// This is a compatibility shim for existing call sites.
+#[deprecated(since = "0.1.0", note = "Use compile_html_new() with RheoCompileOptions")]
+pub fn compile_html_incremental(
+    world: &RheoWorld,
+    input: &Path,
+    output: &Path,
+    root: &Path,
+) -> Result<()> {
+    compile_html_impl(world, input, output, root)
+}
+
+// ============================================================================
+// Helper functions
+// ============================================================================
 
 pub fn transform_html_links(
     html: &str,
