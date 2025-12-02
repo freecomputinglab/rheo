@@ -4,6 +4,57 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::{debug, info};
 
+/// PDF compilation options.
+///
+/// Controls PDF-specific behavior like merged vs single-file output.
+#[derive(Debug, Clone)]
+pub struct PdfOptions {
+    /// Whether this is a merged PDF compilation
+    pub merged: bool,
+}
+
+impl PdfOptions {
+    /// Create options for single-file PDF compilation.
+    pub fn single() -> Self {
+        Self { merged: false }
+    }
+
+    /// Create options for merged PDF compilation.
+    pub fn merged() -> Self {
+        Self { merged: true }
+    }
+}
+
+impl Default for PdfOptions {
+    fn default() -> Self {
+        Self::single()
+    }
+}
+
+/// HTML compilation options.
+///
+/// Currently empty, but provides extensibility for future HTML-specific settings
+/// (e.g., CSS themes, script injection, minification).
+#[derive(Debug, Clone, Default)]
+pub struct HtmlOptions {}
+
+/// EPUB compilation options.
+///
+/// Wraps the EpubConfig for use in the unified compilation interface.
+#[derive(Debug, Clone)]
+pub struct EpubOptions {
+    /// Reference to the EPUB configuration
+    pub config: EpubConfig,
+}
+
+impl From<&EpubConfig> for EpubOptions {
+    fn from(config: &EpubConfig) -> Self {
+        Self {
+            config: config.clone(),
+        }
+    }
+}
+
 fn default_formats() -> Vec<OutputFormat> {
     OutputFormat::all_variants()
 }

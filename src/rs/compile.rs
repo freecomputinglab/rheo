@@ -18,6 +18,102 @@ use tracing::{debug, error, info, instrument, warn};
 use typst::layout::PagedDocument;
 use typst_pdf::PdfOptions;
 
+/// Common compilation options used across all output formats.
+///
+/// This struct encapsulates the core parameters needed for any compilation:
+/// - Input file (the .typ file to compile)
+/// - Output file (where to write the result)
+/// - Root directory (for resolving imports)
+/// - Repository root (for rheo.typ template)
+/// - Optional RheoWorld (for incremental compilation)
+pub struct RheoCompileOptions<'a> {
+    /// The input .typ file to compile
+    pub input: PathBuf,
+    /// The output file path
+    pub output: PathBuf,
+    /// Root directory for resolving imports
+    pub root: PathBuf,
+    /// Repository root for rheo.typ
+    pub repo_root: PathBuf,
+    /// Optional existing RheoWorld for incremental compilation
+    pub world: Option<&'a mut RheoWorld>,
+}
+
+impl<'a> RheoCompileOptions<'a> {
+    /// Create compilation options for a fresh (non-incremental) compilation.
+    ///
+    /// # Arguments
+    /// * `input` - The input .typ file to compile
+    /// * `output` - The output file path
+    /// * `root` - Root directory for resolving imports
+    /// * `repo_root` - Repository root for rheo.typ
+    pub fn new(
+        input: impl Into<PathBuf>,
+        output: impl Into<PathBuf>,
+        root: impl Into<PathBuf>,
+        repo_root: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            input: input.into(),
+            output: output.into(),
+            root: root.into(),
+            repo_root: repo_root.into(),
+            world: None,
+        }
+    }
+
+    /// Create compilation options for incremental compilation.
+    ///
+    /// Reuses an existing RheoWorld for faster recompilation.
+    ///
+    /// # Arguments
+    /// * `input` - The input .typ file to compile
+    /// * `output` - The output file path
+    /// * `root` - Root directory for resolving imports
+    /// * `repo_root` - Repository root for rheo.typ
+    /// * `world` - Mutable reference to existing RheoWorld
+    pub fn incremental(
+        input: impl Into<PathBuf>,
+        output: impl Into<PathBuf>,
+        root: impl Into<PathBuf>,
+        repo_root: impl Into<PathBuf>,
+        world: &'a mut RheoWorld,
+    ) -> Self {
+        Self {
+            input: input.into(),
+            output: output.into(),
+            root: root.into(),
+            repo_root: repo_root.into(),
+            world: Some(world),
+        }
+    }
+
+    /// Create compilation options for merged PDF compilation.
+    ///
+    /// Note: For merged compilation, the input file is typically a temporary
+    /// file containing concatenated sources.
+    ///
+    /// # Arguments
+    /// * `temp_input` - Temporary file with concatenated sources
+    /// * `output` - The output PDF path
+    /// * `root` - Project root directory
+    /// * `repo_root` - Repository root for rheo.typ
+    pub fn merged(
+        temp_input: impl Into<PathBuf>,
+        output: impl Into<PathBuf>,
+        root: impl Into<PathBuf>,
+        repo_root: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            input: temp_input.into(),
+            output: output.into(),
+            root: root.into(),
+            repo_root: repo_root.into(),
+            world: None,
+        }
+    }
+}
+
 /// Compile a single file to a specific format.
 ///
 /// Note: EPUB is not supported (requires EpubConfig).
