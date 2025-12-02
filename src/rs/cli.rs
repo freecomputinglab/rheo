@@ -287,7 +287,7 @@ fn perform_compilation(
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            match crate::compile::compile_html(
+            match crate::formats::html::compile_html(
                 typ_file,
                 &output_path,
                 &compilation_root,
@@ -469,7 +469,7 @@ fn perform_compilation_incremental(
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            match crate::compile::compile_html_incremental(
+            match crate::formats::html::compile_html_incremental(
                 world,
                 typ_file,
                 &output_path,

@@ -1,5 +1,4 @@
 use crate::{
-    compile,
     config::EpubConfig,
     epub::{
         package::{Identifier, Item, ItemRef, Manifest, Meta, Metadata, Package, Spine},
@@ -293,12 +292,12 @@ fn text_to_id(s: &str) -> EcoString {
 impl EpubItem {
     pub fn create(path: PathBuf, root: &Path, repo_root: &Path) -> Result<Self> {
         info!(file = %path.display(), "compiling spine file");
-        let document = compile::compile_html_to_document(&path, root, repo_root)?;
+        let document = crate::formats::html::compile_html_to_document(&path, root, repo_root)?;
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
         let (heading_ids, outline) = Self::outline(&document, &href);
-        let html_string = compile::compile_document_to_string(&document, &path, root, true)?;
+        let html_string = crate::formats::html::compile_document_to_string(&document, &path, root, true)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
         Ok(EpubItem {
