@@ -1,9 +1,9 @@
 use crate::config::{EpubConfig, PdfConfig};
-use crate::epub::EpubItem;
-use crate::{Result, RheoError, epub};
+use crate::formats::epub;
+use crate::Result;
 use regex::Regex;
 use std::path::{Path, PathBuf};
-use tracing::{info, instrument, warn};
+use tracing::{instrument, warn};
 
 /// Compile a set of Typst documents to EPUB.
 pub fn compile_epub(
@@ -12,26 +12,7 @@ pub fn compile_epub(
     root: &Path,
     repo_root: &Path,
 ) -> Result<()> {
-    let inner = || -> anyhow::Result<()> {
-        let spine = epub::generate_spine(root, config)?;
-
-        let mut items = spine
-            .into_iter()
-            .map(|path| EpubItem::create(path, root, repo_root))
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        let nav_xhtml = epub::generate_nav_xhtml(&mut items);
-        let package_string = epub::generate_package(&items, config)?;
-        epub::zip_epub(epub_path, package_string, nav_xhtml, &items)
-    };
-
-    inner().map_err(|e| RheoError::EpubGeneration {
-        count: 1,
-        errors: e.to_string(),
-    })?;
-
-    info!(output = %epub_path.display(), "successfully generated EPUB");
-    Ok(())
+    epub::compile_epub(config, epub_path, root, repo_root)
 }
 
 /// Generates the PDF spine as a list of canonicalized paths to .typ files.
@@ -117,6 +98,8 @@ pub fn remove_relative_typ_links(source: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_remove_relative_typ_links_basic() {

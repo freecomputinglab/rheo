@@ -2,7 +2,6 @@ pub mod assets;
 pub mod cli;
 pub mod compile;
 pub mod config;
-pub mod epub;
 pub mod error;
 pub mod logging;
 pub mod output;

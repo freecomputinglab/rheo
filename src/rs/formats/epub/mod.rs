@@ -1,11 +1,12 @@
-use crate::{
-    config::EpubConfig,
-    epub::{
-        package::{Identifier, Item, ItemRef, Manifest, Meta, Metadata, Package, Spine},
-        xhtml::HtmlInfo,
-    },
-};
-use anyhow::Result;
+mod package;
+mod xhtml;
+
+use package::{Identifier, Item, ItemRef, Manifest, Meta, Metadata, Package, Spine};
+use xhtml::HtmlInfo;
+
+use crate::config::EpubConfig;
+use crate::{Result, RheoError};
+use anyhow::Result as AnyhowResult;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
@@ -26,9 +27,6 @@ use typst::{
 use typst_html::HtmlDocument;
 use uuid::Uuid;
 use zip::{result::ZipError, write::SimpleFileOptions};
-
-mod package;
-mod xhtml;
 
 const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
@@ -108,7 +106,7 @@ fn date_format(dt: &DateTime<Utc>) -> EcoString {
 /// Generates the package.opf XML string from the generated EPUB items.
 ///
 /// See: EPUB 3.3 Package document <https://www.w3.org/TR/epub-33/#sec-package-doc>
-pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> Result<String> {
+pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> AnyhowResult<String> {
     let info = &items[0].document.info;
     let language = info.locale.unwrap_or_default().rfc_3066();
     let title = match &config.merge {
@@ -220,7 +218,7 @@ pub fn zip_epub(
     package_string: String,
     nav_xhtml: String,
     items: &[EpubItem],
-) -> Result<()> {
+) -> AnyhowResult<()> {
     let file = File::create(epub_path).map_err(ZipError::Io)?;
     let file = BufWriter::new(file);
     let mut zip = zip::ZipWriter::new(file);
@@ -260,11 +258,32 @@ pub fn zip_epub(
     Ok(())
 }
 
-/// Generates the EPUB spine as a list of canonicalized paths to .typ files.
-///
-/// If no spine is provided, then the workspace must contain exactly one .typ file, and that is used as the spine.
-pub fn generate_spine(root: &Path, config: &EpubConfig) -> Result<Vec<PathBuf>> {
-    Ok(crate::spine::generate_spine(root, config.merge.as_ref(), false)?)
+pub fn compile_epub(
+    config: &EpubConfig,
+    epub_path: &Path,
+    root: &Path,
+    repo_root: &Path,
+) -> Result<()> {
+    let inner = || -> AnyhowResult<()> {
+        let spine = crate::spine::generate_spine(root, config.merge.as_ref(), false)?;
+
+        let mut items = spine
+            .into_iter()
+            .map(|path| EpubItem::create(path, root, repo_root))
+            .collect::<AnyhowResult<Vec<_>>>()?;
+
+        let nav_xhtml = generate_nav_xhtml(&mut items);
+        let package_string = generate_package(&items, config)?;
+        zip_epub(epub_path, package_string, nav_xhtml, &items)
+    };
+
+    inner().map_err(|e| RheoError::EpubGeneration {
+        count: 1,
+        errors: e.to_string(),
+    })?;
+
+    info!(output = %epub_path.display(), "successfully generated EPUB");
+    Ok(())
 }
 
 pub struct EpubItem {
@@ -290,7 +309,7 @@ fn text_to_id(s: &str) -> EcoString {
 }
 
 impl EpubItem {
-    pub fn create(path: PathBuf, root: &Path, repo_root: &Path) -> Result<Self> {
+    pub fn create(path: PathBuf, root: &Path, repo_root: &Path) -> AnyhowResult<Self> {
         info!(file = %path.display(), "compiling spine file");
         let document = crate::formats::html::compile_html_to_document(&path, root, repo_root)?;
         let parent = path.parent().unwrap();
