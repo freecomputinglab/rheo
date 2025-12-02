@@ -1,7 +1,7 @@
 ///! EPUB compilation and packaging.
 ///!
-///! Compiles multiple Typst files to EPUB format with
-///! navigation, metadata, and packaging.
+///! Provides unified compile_epub_new() that routes to the appropriate
+///! implementation based on compilation options.
 
 mod package;
 mod xhtml;
@@ -9,7 +9,8 @@ mod xhtml;
 use package::{Identifier, Item, ItemRef, Manifest, Meta, Metadata, Package, Spine};
 use xhtml::HtmlInfo;
 
-use crate::config::EpubConfig;
+use crate::compile::RheoCompileOptions;
+use crate::config::{EpubConfig, EpubOptions};
 use crate::{Result, RheoError};
 use anyhow::Result as AnyhowResult;
 use chrono::{DateTime, Utc};
@@ -263,7 +264,15 @@ pub fn zip_epub(
     Ok(())
 }
 
-pub fn compile_epub(
+// ============================================================================
+// EPUB compilation (implementation function)
+// ============================================================================
+
+/// Implementation: Compile multiple Typst files to EPUB format.
+///
+/// Generates a spine from the EPUB configuration, compiles each file to HTML,
+/// generates navigation, and packages everything into a .epub (zip) file.
+fn compile_epub_impl(
     config: &EpubConfig,
     epub_path: &Path,
     root: &Path,
@@ -289,6 +298,46 @@ pub fn compile_epub(
 
     info!(output = %epub_path.display(), "successfully generated EPUB");
     Ok(())
+}
+
+// ============================================================================
+// Unified public API
+// ============================================================================
+
+/// Compile Typst documents to EPUB (unified API).
+///
+/// Currently routes to the implementation function. EPUB compilation does not
+/// yet support incremental compilation (only fresh compilation is available).
+///
+/// # Arguments
+/// * `options` - Compilation options (input, output, root, repo_root, world)
+/// * `epub_options` - EPUB-specific options (wraps EpubConfig)
+///
+/// # Returns
+/// * `Result<()>` - Success or compilation error
+pub fn compile_epub_new(options: RheoCompileOptions, epub_options: EpubOptions) -> Result<()> {
+    // Note: EPUB doesn't support incremental compilation yet, so we ignore options.world
+    // and always do fresh compilation
+    compile_epub_impl(&epub_options.config, &options.output, &options.root, &options.repo_root)
+}
+
+// ============================================================================
+// Backward compatibility wrappers (deprecated, for existing call sites)
+// ============================================================================
+
+/// Compile multiple Typst files to EPUB (deprecated 4-parameter signature).
+///
+/// **Deprecated:** Use `compile_epub_new()` with `RheoCompileOptions` instead.
+///
+/// This function is kept for backward compatibility with existing call sites in cli.rs.
+#[deprecated(since = "0.1.0", note = "Use compile_epub_new() with RheoCompileOptions")]
+pub fn compile_epub(
+    config: &EpubConfig,
+    epub_path: &Path,
+    root: &Path,
+    repo_root: &Path,
+) -> Result<()> {
+    compile_epub_impl(config, epub_path, root, repo_root)
 }
 
 pub struct EpubItem {
