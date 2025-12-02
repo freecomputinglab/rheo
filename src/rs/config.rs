@@ -52,13 +52,29 @@ impl Default for RheoConfig {
     }
 }
 
+/// Configuration for merging outputs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Merge {
+    /// Title for merged document
+    pub title: String,
+
+    /// Glob patterns for files to include in the combined document
+    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
+    /// Output of patterns are sorted lexicographically
+    /// Example: ["cover.typ", "chapters/**"]"
+    pub spine: Vec<String>,
+}
+
 /// HTML output configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HtmlConfig {}
 
 /// PDF output configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PdfConfig {}
+pub struct PdfConfig {
+    /// Configuration for a merged PDF with multiple chapters.
+    pub merge: Option<Merge>,
+}
 
 /// EPUB output configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -76,21 +92,8 @@ pub struct EpubConfig {
     /// See: EPUB 3.3, The `dc:date` element <https://www.w3.org/TR/epub-33/#sec-opf-dcdate>
     pub date: Option<DateTime<Utc>>,
 
-    /// Configuration for a combined EPUB with multiple chapters.
-    pub combined: Option<Combined>,
-}
-
-/// Configuration for combining outputs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Combined {
-    /// Title for combined document
-    pub title: String,
-
-    /// Glob patterns for files to include in the combined document
-    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
-    /// Output of patterns are sorted lexicographically
-    /// Example: ["cover.typ", "chapters/**"]"
-    pub spine: Vec<String>,
+    /// Configuration for a merged EPUB with multiple chapters.
+    pub merge: Option<Merge>,
 }
 
 impl RheoConfig {

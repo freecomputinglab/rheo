@@ -113,7 +113,7 @@ fn date_format(dt: &DateTime<Utc>) -> EcoString {
 pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> Result<String> {
     let info = &items[0].document.info;
     let language = info.locale.unwrap_or_default().rfc_3066();
-    let title = match &config.combined {
+    let title = match &config.merge {
         None => items[0].title(),
         Some(combined) => combined.title.clone().into(),
     };
@@ -266,7 +266,7 @@ pub fn zip_epub(
 ///
 /// If no spine is provided, then the workspace must contain exactly one .typ file, and that is used as the spine.
 pub fn generate_spine(root: &Path, config: &EpubConfig) -> Result<Vec<PathBuf>> {
-    match &config.combined {
+    match &config.merge {
         None => {
             let typst_files = WalkDir::new(root)
                 .into_iter()
@@ -284,7 +284,7 @@ pub fn generate_spine(root: &Path, config: &EpubConfig) -> Result<Vec<PathBuf>> 
             match typst_files.len() {
                 0 => bail!("need at least one .typ file"),
                 1 => Ok(typst_files),
-                _ => bail!("multiple .typ files found, specify a spine in [epub.combined]"),
+                _ => bail!("multiple .typ files found, specify a spine in [epub.merge]"),
             }
         }
 

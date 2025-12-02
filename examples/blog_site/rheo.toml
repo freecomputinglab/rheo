@@ -7,6 +7,6 @@ content_dir = "content"
 # Default: ["pdf", "html"]
 formats = ["html", "pdf"]
 
-[epub.combined]
+[epub.merge]
 spine = ["severance-*.typ"]
 title = "Severance Analysis"
