@@ -9,6 +9,7 @@ pub mod output;
 pub mod project;
 pub mod server;
 pub mod spine;
+pub mod formats;
 pub mod watch;
 pub mod world;
 
