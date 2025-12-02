@@ -11,7 +11,8 @@ use std::env;
 use std::path::PathBuf;
 
 #[test_case("examples/blog_site")]
-#[test_case("examples/web_book")]
+#[test_case("examples/blog_post")]
+#[test_case("examples/job_application")]
 #[test_case("tests/cases/pdf_merge")]
 fn run_test_case(name: &str) {
     let test_case = TestCase::new(name);

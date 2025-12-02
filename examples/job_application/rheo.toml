@@ -1,0 +1,3 @@
+# Compile to PDF only
+formats = ["pdf"]
+

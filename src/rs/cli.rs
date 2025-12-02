@@ -1,7 +1,7 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::{EpubOptions, HtmlOptions};
 use crate::formats::{epub, html, pdf};
-use crate::{FilterPatterns, OutputFormat, Result};
+use crate::{OutputFormat, Result};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
@@ -277,24 +277,6 @@ fn perform_compilation(
         }
     }
 
-    // Copy assets for HTML
-    if formats.contains(&OutputFormat::Html) {
-        info!("copying HTML assets");
-        // TODO: make this configurable via rheo.toml
-        let html_filter =
-            FilterPatterns::from_patterns(&["!**/*.typ".to_string(), "!img/**".to_string()])?;
-        let content_dir = project.config.content_dir.as_deref().map(Path::new);
-
-        if let Err(e) = crate::assets::copy_html_assets(
-            &project.root,
-            &output_config.html_dir,
-            &html_filter,
-            content_dir,
-        ) {
-            error!(error = %e, "failed to copy HTML assets");
-        }
-    }
-
     // Generate merged PDF if configured
     if formats.contains(&OutputFormat::Pdf) && project.config.pdf.merge.is_some() {
         let pdf_filename = format!("{}.pdf", project.name);
@@ -498,24 +480,6 @@ fn perform_compilation_incremental(
                     html_failed += 1;
                 }
             }
-        }
-    }
-
-    // Copy assets for HTML
-    if formats.contains(&OutputFormat::Html) {
-        info!("copying HTML assets");
-        // TODO: make this configurable via rheo.toml
-        let html_filter =
-            FilterPatterns::from_patterns(&["!**/*.typ".to_string(), "!img/**".to_string()])?;
-        let content_dir = project.config.content_dir.as_deref().map(Path::new);
-
-        if let Err(e) = crate::assets::copy_html_assets(
-            &project.root,
-            &output_config.html_dir,
-            &html_filter,
-            content_dir,
-        ) {
-            error!(error = %e, "failed to copy HTML assets");
         }
     }
 
