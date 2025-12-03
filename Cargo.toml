@@ -25,6 +25,7 @@ comemo = "0.5"
 clap = { version = "4.5", features = ["derive"] }
 walkdir = "2.5"
 thiserror = "1.0"
+opener = "0.7"
 parking_lot = "0.12"
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
