@@ -227,9 +227,16 @@ impl RheoConfig {
         })
     }
 
-    /// Default exclusion patterns
-    pub fn default_exclude_patterns() -> Vec<String> {
-        vec!["lib/**/*.typ".to_string()]
+    pub fn has_pdf(&self) -> bool {
+        self.formats.contains(&OutputFormat::Pdf)
+    }
+
+    pub fn has_html(&self) -> bool {
+        self.formats.contains(&OutputFormat::Html)
+    }
+
+    pub fn has_epub(&self) -> bool {
+        self.formats.contains(&OutputFormat::Epub)
     }
 }
 

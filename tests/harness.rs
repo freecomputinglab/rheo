@@ -6,7 +6,7 @@ use helpers::{
     reference::{update_html_references, update_pdf_references},
 };
 use ntest::test_case;
-use rheo::project::ProjectConfig;
+use rheo::{RheoConfig, project::ProjectConfig};
 use std::env;
 use std::path::PathBuf;
 
@@ -25,7 +25,11 @@ fn run_test_case(name: &str) {
 
     // Load project
     let project_path = test_case.project_path();
-    let _project = ProjectConfig::from_path(project_path, None).expect("Failed to load project");
+    let project = ProjectConfig::from_path(project_path, None).expect("Failed to load project");
+    let config = RheoConfig::load(&project.root);
+
+    let run_html = config.as_ref().is_ok_and(|cfg| cfg.has_html());
+    let run_pdf = config.as_ref().is_ok_and(|cfg| cfg.has_pdf());
 
     // Get build directory
     let build_dir = project_path.join("build");
@@ -59,8 +63,6 @@ fn run_test_case(name: &str) {
         );
     }
 
-    let run_html = env::var("RUN_HTML_TESTS").is_ok() || env::var("RUN_HTML_TESTS").is_err();
-    let run_pdf = env::var("RUN_PDF_TESTS").is_ok() || env::var("RUN_PDF_TESTS").is_err();
     // let run_epub = env::var("RUN_EPUB_TESTS").is_ok() || env::var("RUN_EPUB_TESTS").is_err();
 
     // Test HTML output
