@@ -1,5 +1,0 @@
-* War and Rabble: Modern Contradictions in Hegel's Philosophy 
-
-An project to translate an unpublished book from a Polish manuscript into English.
-
-Primary target outputs: PDF, EPUB.

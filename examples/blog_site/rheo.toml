@@ -1,29 +1,16 @@
-# Relative to the rheo folder, if you specify a `oontent_dir`, 
+# Relative to the rheo folder, if you specify a `oontent_dir`,
 # all of the `exclude` patterns become relative to this folder.
 content_dir = "content"
 
-[compile]
 # Default formats to compile (if not specified via CLI flags)
 # Options: "pdf", "html", "epub"
 # Default: ["pdf", "html"]
-formats = ["html", "pdf"]
+# formats = ["html", "pdf"]
 
-# Global exclude patterns applied to ALL output formats
-# These patterns are combined with format-specific excludes
-# Example: exclude bibliography files from all formats
-exclude = ["**/*.bib", "lib/**/*.typ"]
-
-[html]
-# Unified exclude patterns support both exclude and include-only modes:
-# - Regular patterns (e.g., "*.tmp") exclude matching files
-# - Negated patterns (e.g., "!**/*.typ") include ONLY matching files
-#
-# The pattern below includes ONLY .typ files and img/** files for HTML output:
-exclude = ["!**/*.typ", "!img/**"]
-
-[pdf]
-exclude = ["index.typ"]
-
-[epub.combined]
+[pdf.merge]
 spine = ["severance-*.typ"]
-title = "Severance Analysis"
+title = "Screening the Subject | Severance"
+
+[epub.merge]
+spine = ["severance-*.typ"]
+title = "Screening the Subject | Severance"

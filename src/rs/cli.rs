@@ -1,15 +1,10 @@
-use crate::Result;
+use crate::compile::RheoCompileOptions;
+use crate::config::{EpubOptions, HtmlOptions};
+use crate::formats::{epub, html, pdf};
+use crate::{OutputFormat, Result};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
-
-/// Output format for compilation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OutputFormat {
-    Pdf,
-    Html,
-    Epub,
-}
 
 /// CLI format flags (what the user requested via command-line)
 #[derive(Debug, Clone, Copy)]
@@ -26,7 +21,10 @@ impl FormatFlags {
 }
 
 /// Determine which formats to compile based on CLI flags and config defaults
-fn determine_formats(flags: FormatFlags, config_defaults: &[String]) -> Result<Vec<OutputFormat>> {
+fn determine_formats(
+    flags: FormatFlags,
+    config_defaults: &[OutputFormat],
+) -> Result<Vec<OutputFormat>> {
     // If any CLI flags are set, use those
     if flags.any_set() {
         let mut formats = Vec::new();
@@ -42,29 +40,12 @@ fn determine_formats(flags: FormatFlags, config_defaults: &[String]) -> Result<V
         return Ok(formats);
     }
 
-    // Otherwise, use config defaults
-    let mut formats = Vec::new();
-    for format_str in config_defaults {
-        match format_str.to_lowercase().as_str() {
-            "pdf" => formats.push(OutputFormat::Pdf),
-            "html" => formats.push(OutputFormat::Html),
-            "epub" => formats.push(OutputFormat::Epub),
-            _ => {
-                return Err(crate::RheoError::project_config(format!(
-                    "invalid format in config: '{}' (must be 'pdf', 'html', or 'epub')",
-                    format_str
-                )));
-            }
-        }
+    // Otherwise, use config defaults provided not empty
+    if !config_defaults.is_empty() {
+        Ok(config_defaults.to_vec())
+    } else {
+        Ok(OutputFormat::all_variants())
     }
-
-    // Fallback if config has no formats specified
-    if formats.is_empty() {
-        formats.push(OutputFormat::Pdf);
-        formats.push(OutputFormat::Html);
-    }
-
-    Ok(formats)
 }
 
 #[derive(Parser, Debug)]
@@ -156,19 +137,6 @@ pub enum Commands {
         #[arg(long)]
         build_dir: Option<PathBuf>,
     },
-
-    /// Initialize a new Typst project from a template
-    Init {
-        /// Name of the new project
-        name: String,
-
-        /// Template type (book, thesis, blog, cv)
-        #[arg(long, default_value = "book")]
-        template: String,
-    },
-
-    /// List available example projects
-    ListExamples,
 }
 
 /// Resolve a path relative to a base directory
@@ -194,48 +162,37 @@ fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
         })
 }
 
-/// Determine which formats should be compiled for a given file
-/// based on per-format exclusion patterns and requested formats
-fn get_file_formats(
-    file: &Path,
-    project_root: &Path,
+/// Determine which formats should be compiled for a given file.
+///
+/// Logic:
+/// - HTML: Always compile (one HTML per .typ file)
+/// - PDF: Only if pdf.merge is NOT configured (merged PDF is handled separately)
+/// - EPUB: Never (EPUB is always merged and handled separately)
+fn get_per_file_formats(
     config: &crate::RheoConfig,
     requested_formats: &[OutputFormat],
-) -> Result<Vec<OutputFormat>> {
-    // Determine the base path for relative pattern matching
-    let base_path = if let Some(content_dir) = config.resolve_content_dir(project_root) {
-        content_dir
-    } else {
-        project_root.to_path_buf()
-    };
-
-    // Make path relative to base_path for matching
-    let relative_path = file.strip_prefix(&base_path).map_err(|_| {
-        crate::RheoError::path(
-            file,
-            format!("file is not within base path {}", base_path.display()),
-        )
-    })?;
-
-    // Build filter patterns for each format (combines global + format-specific)
-    let html_filter = config.get_html_filter_patterns()?;
-    let pdf_filter = config.get_pdf_filter_patterns()?;
-
+) -> Vec<OutputFormat> {
     let mut formats = Vec::new();
 
     for &format in requested_formats {
-        let should_compile = match format {
-            OutputFormat::Pdf => pdf_filter.should_include(relative_path),
-            OutputFormat::Html => html_filter.should_include(relative_path),
-            OutputFormat::Epub => true,
-        };
-
-        if should_compile {
-            formats.push(format);
+        match format {
+            OutputFormat::Html => {
+                // HTML is always compiled per-file
+                formats.push(format);
+            }
+            OutputFormat::Pdf => {
+                // PDF is only compiled per-file if merge config is absent
+                if config.pdf.merge.is_none() {
+                    formats.push(format);
+                }
+            }
+            OutputFormat::Epub => {
+                // EPUB is never compiled per-file (always merged)
+            }
         }
     }
 
-    Ok(formats)
+    formats
 }
 
 /// Perform compilation for a project with specified formats
@@ -282,17 +239,18 @@ fn perform_compilation(
         .resolve_content_dir(&project.root)
         .unwrap_or_else(|| project.root.clone());
 
+    // Determine which formats should be compiled per-file
+    let per_file_formats = get_per_file_formats(&project.config, formats);
+
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
 
-        // Determine which formats this file should be compiled to
-        let file_formats = get_file_formats(typ_file, &project.root, &project.config, formats)?;
-
-        // Compile to PDF
-        if file_formats.contains(&OutputFormat::Pdf) {
+        // Compile to PDF (per-file mode)
+        if per_file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-            match crate::compile::compile_pdf(typ_file, &output_path, &compilation_root, &repo_root)
-            {
+            let options =
+                RheoCompileOptions::new(typ_file, &output_path, &compilation_root, &repo_root);
+            match pdf::compile_pdf_new(options, None) {
                 Ok(_) => pdf_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
@@ -302,17 +260,14 @@ fn perform_compilation(
         }
 
         // Compile to HTML
-        if file_formats.contains(&OutputFormat::Html) {
+        if per_file_formats.contains(&OutputFormat::Html) {
             let output_path = output_config
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            match crate::compile::compile_html(
-                typ_file,
-                &output_path,
-                &compilation_root,
-                &repo_root,
-            ) {
+            let options =
+                RheoCompileOptions::new(typ_file, &output_path, &compilation_root, &repo_root);
+            match html::compile_html_new(options, HtmlOptions::default()) {
                 Ok(_) => html_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
@@ -322,19 +277,22 @@ fn perform_compilation(
         }
     }
 
-    // Copy assets for HTML
-    if formats.contains(&OutputFormat::Html) {
-        info!("copying HTML assets");
-        let html_filter = project.config.get_html_filter_patterns()?;
-        let content_dir = project.config.content_dir.as_deref().map(Path::new);
+    // Generate merged PDF if configured
+    if formats.contains(&OutputFormat::Pdf) && project.config.pdf.merge.is_some() {
+        let pdf_filename = format!("{}.pdf", project.name);
+        let pdf_path = output_config.pdf_dir.join(&pdf_filename);
 
-        if let Err(e) = crate::assets::copy_html_assets(
-            &project.root,
-            &output_config.html_dir,
-            &html_filter,
-            content_dir,
-        ) {
-            warn!(error = %e, "failed to copy HTML assets, continuing");
+        let options =
+            RheoCompileOptions::new(PathBuf::new(), &pdf_path, &compilation_root, &repo_root);
+        match pdf::compile_pdf_new(options, Some(&project.config.pdf)) {
+            Ok(_) => {
+                pdf_succeeded = 1;
+                info!(output = %pdf_path.display(), "PDF merge complete");
+            }
+            Err(e) => {
+                error!(error = %e, "PDF merge failed");
+                pdf_failed = 1;
+            }
         }
     }
 
@@ -343,12 +301,10 @@ fn perform_compilation(
         let epub_filename = format!("{}.epub", project.name);
         let epub_path = output_config.epub_dir.join(&epub_filename);
 
-        match crate::compile::compile_epub(
-            &project.config.epub,
-            &epub_path,
-            &compilation_root,
-            &repo_root,
-        ) {
+        let options =
+            RheoCompileOptions::new(PathBuf::new(), &epub_path, &compilation_root, &repo_root);
+        let epub_options = EpubOptions::from(&project.config.epub);
+        match epub::compile_epub_new(options, epub_options) {
             Ok(_) => {
                 epub_succeeded += 1;
                 info!(output = %epub_path.display(), "EPUB generation complete");
@@ -475,20 +431,27 @@ fn perform_compilation_incremental(
     let mut html_succeeded = 0;
     let mut html_failed = 0;
 
+    // Determine which formats should be compiled per-file
+    let per_file_formats = get_per_file_formats(&project.config, formats);
+
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
-
-        // Determine which formats this file should be compiled to
-        let file_formats = get_file_formats(typ_file, &project.root, &project.config, formats)?;
 
         // Update world for this file and reset cache
         world.set_main(typ_file)?;
         world.reset();
 
-        // Compile to PDF
-        if file_formats.contains(&OutputFormat::Pdf) {
+        // Compile to PDF (per-file mode)
+        if per_file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-            match crate::compile::compile_pdf_incremental(world, &output_path) {
+            let options = RheoCompileOptions::incremental(
+                typ_file,
+                &output_path,
+                &project.root,
+                PathBuf::new(),
+                world,
+            );
+            match pdf::compile_pdf_new(options, None) {
                 Ok(_) => pdf_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
@@ -498,17 +461,19 @@ fn perform_compilation_incremental(
         }
 
         // Compile to HTML
-        if file_formats.contains(&OutputFormat::Html) {
+        if per_file_formats.contains(&OutputFormat::Html) {
             let output_path = output_config
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            match crate::compile::compile_html_incremental(
-                world,
+            let options = RheoCompileOptions::incremental(
                 typ_file,
                 &output_path,
                 &project.root,
-            ) {
+                PathBuf::new(),
+                world,
+            );
+            match html::compile_html_new(options, HtmlOptions::default()) {
                 Ok(_) => html_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
@@ -518,19 +483,33 @@ fn perform_compilation_incremental(
         }
     }
 
-    // Copy assets for HTML
-    if formats.contains(&OutputFormat::Html) {
-        info!("copying HTML assets");
-        let html_filter = project.config.get_html_filter_patterns()?;
-        let content_dir = project.config.content_dir.as_deref().map(Path::new);
+    // Generate merged PDF if configured
+    if formats.contains(&OutputFormat::Pdf) && project.config.pdf.merge.is_some() {
+        let pdf_filename = format!("{}.pdf", project.name);
+        let pdf_path = output_config.pdf_dir.join(&pdf_filename);
 
-        if let Err(e) = crate::assets::copy_html_assets(
-            &project.root,
-            &output_config.html_dir,
-            &html_filter,
-            content_dir,
-        ) {
-            error!(error = %e, "failed to copy HTML assets");
+        // Get compilation root for PDF merge
+        let compilation_root = project
+            .config
+            .resolve_content_dir(&project.root)
+            .unwrap_or_else(|| project.root.clone());
+
+        let options = RheoCompileOptions::incremental(
+            PathBuf::new(),
+            &pdf_path,
+            &compilation_root,
+            PathBuf::new(),
+            world,
+        );
+        match pdf::compile_pdf_new(options, Some(&project.config.pdf)) {
+            Ok(_) => {
+                pdf_succeeded = 1;
+                info!(output = %pdf_path.display(), "PDF merge complete");
+            }
+            Err(e) => {
+                error!(error = %e, "PDF merge failed");
+                pdf_failed = 1;
+            }
         }
     }
 
@@ -628,7 +607,7 @@ impl Cli {
 
                 // Determine which formats to compile using CLI flags or config defaults
                 let flags = FormatFlags { pdf, html, epub };
-                let formats = determine_formats(flags, &project.config.compile.formats)?;
+                let formats = determine_formats(flags, &project.config.formats)?;
 
                 // Resolve build_dir with priority: CLI > config > default
                 let resolved_build_dir = if let Some(cli_path) = build_dir {
@@ -673,7 +652,7 @@ impl Cli {
 
                 // Determine which formats to compile using CLI flags or config defaults
                 let flags = FormatFlags { pdf, html, epub };
-                let formats = determine_formats(flags, &project.config.compile.formats)?;
+                let formats = determine_formats(flags, &project.config.formats)?;
 
                 // Log TODOs for --open with formats that aren't ready yet
                 if open {
@@ -877,16 +856,6 @@ impl Cli {
                 info!(project = %project.name, "cleaned project build artifacts");
                 Ok(())
             }
-            Commands::Init { name, template } => {
-                info!(name, template, "initializing new project");
-                // TODO: Implement init logic
-                Ok(())
-            }
-            Commands::ListExamples => {
-                info!("listing available example projects");
-                // TODO: Implement list-examples logic
-                Ok(())
-            }
         }
     }
 }
@@ -895,146 +864,10 @@ impl Cli {
 mod tests {
     use super::*;
 
-    fn build_test_config(html_exclude: &[&str], pdf_exclude: &[&str]) -> crate::RheoConfig {
-        let mut config = crate::RheoConfig::default();
-        config.html.exclude = html_exclude.iter().map(|s| s.to_string()).collect();
-        config.pdf.exclude = pdf_exclude.iter().map(|s| s.to_string()).collect();
-        config
-    }
-
-    #[test]
-    fn test_no_exclusions_compiles_all_formats() {
-        let config = build_test_config(&[], &[]);
-        let project_root = std::path::PathBuf::from("/tmp/project");
-        let file = project_root.join("content/test.typ");
-        let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
-
-        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
-
-        assert_eq!(formats.len(), 2);
-        assert!(formats.contains(&OutputFormat::Pdf));
-        assert!(formats.contains(&OutputFormat::Html));
-    }
-
-    #[test]
-    fn test_pdf_exclusion_excludes_pdf() {
-        let config = build_test_config(&[], &["content/index.typ"]);
-        let project_root = std::path::PathBuf::from("/tmp/project");
-        let file = project_root.join("content/index.typ");
-        let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
-
-        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
-
-        assert_eq!(formats.len(), 1);
-        assert!(formats.contains(&OutputFormat::Html));
-        assert!(!formats.contains(&OutputFormat::Pdf));
-    }
-
-    #[test]
-    fn test_html_exclusion_excludes_html() {
-        let config = build_test_config(&["content/print/**/*.typ"], &[]);
-        let project_root = std::path::PathBuf::from("/tmp/project");
-        let file = project_root.join("content/print/document.typ");
-        let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
-
-        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
-
-        assert_eq!(formats.len(), 1);
-        assert!(formats.contains(&OutputFormat::Pdf));
-        assert!(!formats.contains(&OutputFormat::Html));
-    }
-
-    #[test]
-    fn test_html_and_pdf_exclusions_leave_only_epub() {
-        let config = build_test_config(&["content/ebook/**/*.typ"], &["content/ebook/**/*.typ"]);
-        let project_root = std::path::PathBuf::from("/tmp/project");
-        let file = project_root.join("content/ebook/chapter1.typ");
-        let requested = vec![OutputFormat::Pdf, OutputFormat::Html, OutputFormat::Epub];
-
-        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
-
-        assert_eq!(formats.len(), 1);
-        assert!(formats.contains(&OutputFormat::Epub));
-        assert!(!formats.contains(&OutputFormat::Pdf));
-        assert!(!formats.contains(&OutputFormat::Html));
-    }
-
-    #[test]
-    fn test_file_not_matching_exclusions_gets_all_formats() {
-        let config = build_test_config(&["content/index.typ"], &["content/print/**/*.typ"]);
-        let project_root = std::path::PathBuf::from("/tmp/project");
-        let file = project_root.join("content/other/document.typ");
-        let requested = vec![OutputFormat::Pdf, OutputFormat::Html];
-
-        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
-
-        assert_eq!(formats.len(), 2);
-        assert!(formats.contains(&OutputFormat::Pdf));
-        assert!(formats.contains(&OutputFormat::Html));
-    }
-
-    #[test]
-    fn test_respects_requested_formats() {
-        let config = build_test_config(&[], &[]);
-        let project_root = std::path::PathBuf::from("/tmp/project");
-        let file = project_root.join("content/test.typ");
-        let requested = vec![OutputFormat::Pdf]; // Only PDF requested
-
-        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
-
-        assert_eq!(formats.len(), 1);
-        assert!(formats.contains(&OutputFormat::Pdf));
-        assert!(!formats.contains(&OutputFormat::Html));
-    }
-
-    #[test]
-    fn test_html_excluded_file_with_html_requested() {
-        let config = build_test_config(&["content/index.typ"], &[]);
-        let project_root = std::path::PathBuf::from("/tmp/project");
-        let file = project_root.join("content/index.typ");
-        let requested = vec![OutputFormat::Html]; // Only HTML requested, but file is html-excluded
-
-        let formats = get_file_formats(&file, &project_root, &config, &requested).unwrap();
-
-        // File is excluded from HTML, so it shouldn't compile to HTML even if requested
-        assert_eq!(formats.len(), 0);
-    }
-
-    #[test]
-    fn test_glob_pattern_matching() {
-        let config = build_test_config(&[], &["content/web/**/*.typ"]);
-        let project_root = std::path::PathBuf::from("/tmp/project");
-
-        // File matching the PDF exclusion pattern
-        let file1 = project_root.join("content/web/blog/post.typ");
-        let formats1 = get_file_formats(
-            &file1,
-            &project_root,
-            &config,
-            &[OutputFormat::Pdf, OutputFormat::Html],
-        )
-        .unwrap();
-        assert_eq!(formats1.len(), 1);
-        assert!(formats1.contains(&OutputFormat::Html));
-
-        // File not matching the exclusion pattern
-        let file2 = project_root.join("content/print/document.typ");
-        let formats2 = get_file_formats(
-            &file2,
-            &project_root,
-            &config,
-            &[OutputFormat::Pdf, OutputFormat::Html],
-        )
-        .unwrap();
-        assert_eq!(formats2.len(), 2);
-        assert!(formats2.contains(&OutputFormat::Pdf));
-        assert!(formats2.contains(&OutputFormat::Html));
-    }
-
     #[test]
     fn test_determine_formats_cli_flags_override_config() {
         // CLI flags should override config defaults
-        let config_defaults = vec!["pdf".to_string(), "html".to_string()];
+        let config_defaults = vec![OutputFormat::Pdf];
         let flags = FormatFlags {
             pdf: true,
             html: false,
@@ -1048,7 +881,7 @@ mod tests {
 
     #[test]
     fn test_determine_formats_uses_config_defaults_when_no_flags() {
-        let config_defaults = vec!["html".to_string()];
+        let config_defaults = vec![OutputFormat::Html];
         let flags = FormatFlags {
             pdf: false,
             html: false,
@@ -1061,7 +894,7 @@ mod tests {
     }
 
     #[test]
-    fn test_determine_formats_falls_back_to_pdf_html_when_empty() {
+    fn test_determine_formats_falls_back_to_all_when_empty() {
         let config_defaults = vec![];
         let flags = FormatFlags {
             pdf: false,
@@ -1070,45 +903,15 @@ mod tests {
         };
 
         let formats = determine_formats(flags, &config_defaults).unwrap();
-        assert_eq!(formats.len(), 2);
+        assert_eq!(formats.len(), 3);
         assert!(formats.contains(&OutputFormat::Pdf));
         assert!(formats.contains(&OutputFormat::Html));
-    }
-
-    #[test]
-    fn test_determine_formats_handles_case_insensitive() {
-        let config_defaults = vec!["PDF".to_string(), "HtMl".to_string()];
-        let flags = FormatFlags {
-            pdf: false,
-            html: false,
-            epub: false,
-        };
-
-        let formats = determine_formats(flags, &config_defaults).unwrap();
-        assert_eq!(formats.len(), 2);
-        assert!(formats.contains(&OutputFormat::Pdf));
-        assert!(formats.contains(&OutputFormat::Html));
-    }
-
-    #[test]
-    fn test_determine_formats_rejects_invalid_format() {
-        let config_defaults = vec!["pdf".to_string(), "invalid".to_string()];
-        let flags = FormatFlags {
-            pdf: false,
-            html: false,
-            epub: false,
-        };
-
-        let result = determine_formats(flags, &config_defaults);
-        assert!(result.is_err());
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains("invalid format"));
-        assert!(err_msg.contains("invalid"));
+        assert!(formats.contains(&OutputFormat::Epub));
     }
 
     #[test]
     fn test_determine_formats_multiple_cli_flags() {
-        let config_defaults = vec!["epub".to_string()];
+        let config_defaults = vec![OutputFormat::Epub];
         let flags = FormatFlags {
             pdf: true,
             html: true,
@@ -1123,7 +926,7 @@ mod tests {
 
     #[test]
     fn test_determine_formats_all_three_formats() {
-        let config_defaults = vec!["pdf".to_string(), "html".to_string(), "epub".to_string()];
+        let config_defaults = OutputFormat::all_variants();
         let flags = FormatFlags {
             pdf: false,
             html: false,

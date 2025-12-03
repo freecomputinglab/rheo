@@ -14,3 +14,6 @@ result-*
 /target
 
 .rustfmt.toml
+
+# Test store (generated test outputs)
+/tests/store/

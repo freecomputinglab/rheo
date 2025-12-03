@@ -1,148 +1,66 @@
-use crate::Result;
+use crate::{OutputFormat, Result};
 use chrono::{DateTime, Utc};
-use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-/// Pattern type for FilterPatterns
-#[derive(Debug, Clone)]
-enum PatternType {
-    /// Exclude pattern: files matching this are excluded
-    Exclude(Glob),
-    /// Include pattern: files must match at least one of these (if any exist)
-    Include(Glob),
-}
-
-impl PatternType {
-    /// Parse a pattern string into a PatternType
-    /// Patterns starting with '!' are include-only patterns
-    /// Regular patterns are exclude patterns
-    fn from_string(pattern: &str) -> Result<Self> {
-        if let Some(stripped) = pattern.strip_prefix('!') {
-            if stripped.is_empty() {
-                return Err(crate::RheoError::project_config(
-                    "negated pattern '!' must have content after '!'".to_string(),
-                ));
-            }
-            Glob::new(stripped).map(PatternType::Include).map_err(|e| {
-                crate::RheoError::project_config(format!(
-                    "invalid include pattern '{}': {}",
-                    pattern, e
-                ))
-            })
-        } else {
-            Glob::new(pattern).map(PatternType::Exclude).map_err(|e| {
-                crate::RheoError::project_config(format!(
-                    "invalid exclude pattern '{}': {}",
-                    pattern, e
-                ))
-            })
-        }
-    }
-}
-
-/// Filter patterns for include/exclude logic
+/// PDF compilation options.
 ///
-/// Supports both exclude patterns and include-only patterns (negated with '!').
-/// A file is included if:
-/// 1. It doesn't match any exclude pattern, AND
-/// 2. If include patterns exist, it matches at least one
-#[derive(Debug)]
-pub struct FilterPatterns {
-    /// Files matching these patterns are excluded
-    exclude_set: GlobSet,
-    /// If non-empty, only files matching these patterns are included
-    include_set: GlobSet,
+/// Controls PDF-specific behavior like merged vs single-file output.
+#[derive(Debug, Clone)]
+pub struct PdfOptions {
+    /// Whether this is a merged PDF compilation
+    pub merged: bool,
 }
 
-impl FilterPatterns {
-    /// Build FilterPatterns from a list of pattern strings
-    ///
-    /// Patterns starting with '!' are include-only patterns.
-    /// Regular patterns are exclude patterns.
-    ///
-    /// # Examples
-    ///
-    /// Include only .typ files:
-    /// ```
-    /// # use rheo::config::FilterPatterns;
-    /// let filter = FilterPatterns::from_patterns(&["!**/*.typ".to_string()])?;
-    /// # Ok::<(), rheo::RheoError>(())
-    /// ```
-    ///
-    /// Exclude temps:
-    /// ```
-    /// # use rheo::config::FilterPatterns;
-    /// let filter = FilterPatterns::from_patterns(&["*.tmp".to_string()])?;
-    /// # Ok::<(), rheo::RheoError>(())
-    /// ```
-    ///
-    /// Mixed (include .typ and images, exclude temps):
-    /// ```
-    /// # use rheo::config::FilterPatterns;
-    /// let filter = FilterPatterns::from_patterns(&[
-    ///     "!**/*.typ".to_string(),
-    ///     "!img/**".to_string(),
-    ///     "*.tmp".to_string(),
-    /// ])?;
-    /// # Ok::<(), rheo::RheoError>(())
-    /// ```
-    pub fn from_patterns(patterns: &[String]) -> Result<Self> {
-        let mut exclude_builder = GlobSetBuilder::new();
-        let mut include_builder = GlobSetBuilder::new();
-
-        for pattern in patterns {
-            match PatternType::from_string(pattern)? {
-                PatternType::Exclude(glob) => {
-                    exclude_builder.add(glob);
-                    debug!(pattern = %pattern, "added exclude pattern");
-                }
-                PatternType::Include(glob) => {
-                    include_builder.add(glob);
-                    debug!(pattern = %pattern, "added include pattern");
-                }
-            }
-        }
-
-        let exclude_set = exclude_builder.build().map_err(|e| {
-            crate::RheoError::project_config(format!("failed to build exclude patterns: {}", e))
-        })?;
-
-        let include_set = include_builder.build().map_err(|e| {
-            crate::RheoError::project_config(format!("failed to build include patterns: {}", e))
-        })?;
-
-        Ok(FilterPatterns {
-            exclude_set,
-            include_set,
-        })
+impl PdfOptions {
+    /// Create options for single-file PDF compilation.
+    pub fn single() -> Self {
+        Self { merged: false }
     }
 
-    /// Check if a file should be included based on the filter patterns
-    ///
-    /// Logic:
-    /// - If file matches any exclude pattern, return false
-    /// - If include patterns exist and file doesn't match any, return false
-    /// - Otherwise return true
-    pub fn should_include(&self, path: &Path) -> bool {
-        // Excluded if matches any exclude pattern
-        if self.exclude_set.is_match(path) {
-            return false;
-        }
-
-        // If include patterns exist, must match at least one
-        if !self.include_set.is_empty() {
-            return self.include_set.is_match(path);
-        }
-
-        // No include patterns and not excluded = include
-        true
+    /// Create options for merged PDF compilation.
+    pub fn merged() -> Self {
+        Self { merged: true }
     }
+}
+
+impl Default for PdfOptions {
+    fn default() -> Self {
+        Self::single()
+    }
+}
+
+/// HTML compilation options.
+///
+/// Currently empty, but provides extensibility for future HTML-specific settings
+/// (e.g., CSS themes, script injection, minification).
+#[derive(Debug, Clone, Default)]
+pub struct HtmlOptions {}
+
+/// EPUB compilation options.
+///
+/// Wraps the EpubConfig for use in the unified compilation interface.
+#[derive(Debug, Clone)]
+pub struct EpubOptions {
+    /// Reference to the EPUB configuration
+    pub config: EpubConfig,
+}
+
+impl From<&EpubConfig> for EpubOptions {
+    fn from(config: &EpubConfig) -> Self {
+        Self {
+            config: config.clone(),
+        }
+    }
+}
+
+fn default_formats() -> Vec<OutputFormat> {
+    OutputFormat::all_variants()
 }
 
 /// Configuration for rheo compilation
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RheoConfig {
     /// Directory containing .typ content files (relative to project root)
     /// If not specified, searches entire project root
@@ -154,8 +72,10 @@ pub struct RheoConfig {
     /// Examples: "output", "../shared-build", "/tmp/rheo-build"
     pub build_dir: Option<String>,
 
-    #[serde(default)]
-    pub compile: CompileConfig,
+    /// Default formats to compile (if none specified via CLI).
+    /// Example: ["pdf", "html", "epub"]
+    #[serde(default = "default_formats")]
+    pub formats: Vec<OutputFormat>,
 
     /// HTML-specific configuration
     #[serde(default)]
@@ -170,74 +90,23 @@ pub struct RheoConfig {
     pub epub: EpubConfig,
 }
 
-/// Compilation-specific configuration
+impl Default for RheoConfig {
+    fn default() -> Self {
+        Self {
+            content_dir: Some("./".to_string()),
+            build_dir: Some("./build".to_string()),
+            formats: default_formats(),
+            html: HtmlConfig::default(),
+            pdf: PdfConfig::default(),
+            epub: EpubConfig::default(),
+        }
+    }
+}
+
+/// Configuration for merging outputs
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompileConfig {
-    /// Glob patterns for files to exclude from compilation
-    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
-    /// Example: ["lib/**/*.typ", "_*/**"]
-    #[serde(default = "default_exclude_patterns")]
-    pub exclude: Vec<String>,
-
-    /// Default formats to compile (if none specified via CLI)
-    /// Example: ["pdf", "html"]
-    #[serde(default = "default_formats")]
-    pub formats: Vec<String>,
-}
-
-/// HTML output configuration
-///
-/// Supports unified exclude/include patterns via the `exclude` field.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct HtmlConfig {
-    /// Glob patterns for files to include/exclude from HTML output
-    ///
-    /// Supports both exclude and include-only patterns:
-    /// - Regular patterns (e.g., "*.tmp") exclude matching files
-    /// - Negated patterns (e.g., "!**/*.typ") include ONLY matching files
-    ///
-    /// For .typ files: excluded files won't be compiled
-    /// For other files: excluded files won't be copied to output
-    ///
-    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
-    ///
-    /// # Examples
-    ///
-    /// Include only .typ files and images:
-    /// ```toml
-    /// [html]
-    /// exclude = ["!**/*.typ", "!img/**"]
-    /// ```
-    ///
-    /// Exclude temps and drafts:
-    /// ```toml
-    /// [html]
-    /// exclude = ["*.tmp", "_drafts/**"]
-    /// ```
-    ///
-    /// Mixed (include .typ and images, exclude temps):
-    /// ```toml
-    /// [html]
-    /// exclude = ["!**/*.typ", "!img/**", "*.tmp"]
-    /// ```
-    #[serde(default)]
-    pub exclude: Vec<String>,
-}
-
-/// PDF output configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PdfConfig {
-    /// Glob patterns for files to exclude from PDF compilation
-    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
-    /// Example: ["index.typ", "web-only/**"]
-    #[serde(default)]
-    pub exclude: Vec<String>,
-}
-
-/// Configuration for combining outputs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Combined {
-    /// Title for combined document
+pub struct Merge {
+    /// Title for merged document
     pub title: String,
 
     /// Glob patterns for files to include in the combined document
@@ -245,6 +114,17 @@ pub struct Combined {
     /// Output of patterns are sorted lexicographically
     /// Example: ["cover.typ", "chapters/**"]"
     pub spine: Vec<String>,
+}
+
+/// HTML output configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HtmlConfig {}
+
+/// PDF output configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PdfConfig {
+    /// Configuration for a merged PDF with multiple chapters.
+    pub merge: Option<Merge>,
 }
 
 /// EPUB output configuration
@@ -263,27 +143,8 @@ pub struct EpubConfig {
     /// See: EPUB 3.3, The `dc:date` element <https://www.w3.org/TR/epub-33/#sec-opf-dcdate>
     pub date: Option<DateTime<Utc>>,
 
-    /// Configuration for a combined EPUB with multiple chapters.
-    pub combined: Option<Combined>,
-}
-
-impl Default for CompileConfig {
-    fn default() -> Self {
-        Self {
-            exclude: default_exclude_patterns(),
-            formats: default_formats(),
-        }
-    }
-}
-
-/// Default exclusion patterns
-fn default_exclude_patterns() -> Vec<String> {
-    vec!["lib/**/*.typ".to_string()]
-}
-
-/// Default output formats
-fn default_formats() -> Vec<String> {
-    vec!["pdf".to_string(), "html".to_string()]
+    /// Configuration for a merged EPUB with multiple chapters.
+    pub merge: Option<Merge>,
 }
 
 impl RheoConfig {
@@ -304,7 +165,6 @@ impl RheoConfig {
         let config: RheoConfig = toml::from_str(&contents)
             .map_err(|e| crate::RheoError::project_config(format!("invalid rheo.toml: {}", e)))?;
 
-        debug!(exclude_patterns = ?config.compile.exclude, "loaded configuration");
         Ok(config)
     }
 
@@ -349,27 +209,6 @@ impl RheoConfig {
         Ok(config)
     }
 
-    /// Build a GlobSet from the exclusion patterns for efficient matching
-    pub fn build_exclusion_set(&self) -> Result<GlobSet> {
-        let mut builder = GlobSetBuilder::new();
-
-        for pattern in &self.compile.exclude {
-            match Glob::new(pattern) {
-                Ok(glob) => {
-                    builder.add(glob);
-                    debug!(pattern = %pattern, "added exclusion pattern");
-                }
-                Err(e) => {
-                    warn!(pattern = %pattern, error = %e, "invalid glob pattern, skipping");
-                }
-            }
-        }
-
-        builder.build().map_err(|e| {
-            crate::RheoError::project_config(format!("failed to build exclusion set: {}", e))
-        })
-    }
-
     /// Resolve content_dir to an absolute path if configured
     ///
     /// # Arguments
@@ -388,66 +227,19 @@ impl RheoConfig {
         })
     }
 
-    /// Get unified HTML filter patterns with backward compatibility and global patterns
-    ///
-    /// Combines global `compile.exclude` patterns with HTML-specific patterns.
-    /// If new `html.exclude` patterns exist, combines them with global patterns.
-    /// If neither exists, uses only global patterns.
-    ///
-    /// A file is excluded from HTML if it matches EITHER global OR HTML-specific patterns.
-    pub fn get_html_filter_patterns(&self) -> Result<FilterPatterns> {
-        let mut patterns = self.compile.exclude.clone();
-
-        if !self.html.exclude.is_empty() {
-            patterns.extend(self.html.exclude.clone());
-            return FilterPatterns::from_patterns(&patterns);
-        }
-
-        // No HTML-specific patterns: use only global patterns
-        FilterPatterns::from_patterns(&patterns)
+    pub fn has_pdf(&self) -> bool {
+        self.formats.contains(&OutputFormat::Pdf)
     }
 
-    /// Get combined filter patterns for PDF (global + PDF-specific)
-    ///
-    /// Combines global `compile.exclude` patterns with `pdf.exclude` patterns.
-    /// A file is excluded from PDF if it matches EITHER global OR PDF-specific patterns.
-    pub fn get_pdf_filter_patterns(&self) -> Result<FilterPatterns> {
-        let mut patterns = self.compile.exclude.clone();
-        patterns.extend(self.pdf.exclude.clone());
-        FilterPatterns::from_patterns(&patterns)
+    pub fn has_html(&self) -> bool {
+        self.formats.contains(&OutputFormat::Html)
     }
 
-    /// Build GlobSet for HTML exclusions
-    pub fn build_html_exclusion_set(&self) -> Result<GlobSet> {
-        Self::build_globset(&self.html.exclude, "html.exclude")
-    }
-
-    /// Build GlobSet for PDF exclusions
-    pub fn build_pdf_exclusion_set(&self) -> Result<GlobSet> {
-        Self::build_globset(&self.pdf.exclude, "pdf.exclude")
-    }
-
-    /// Helper to build a GlobSet from validated patterns
-    fn build_globset(patterns: &[String], name: &str) -> Result<GlobSet> {
-        let mut builder = GlobSetBuilder::new();
-
-        for pattern in patterns {
-            // Patterns are already validated, so this should not fail
-            let glob = Glob::new(pattern).map_err(|e| {
-                crate::RheoError::project_config(format!(
-                    "failed to build {} glob from validated pattern '{}': {}",
-                    name, pattern, e
-                ))
-            })?;
-            builder.add(glob);
-            debug!(pattern = %pattern, filter = %name, "added format-specific pattern");
-        }
-
-        builder.build().map_err(|e| {
-            crate::RheoError::project_config(format!("failed to build {} globset: {}", name, e))
-        })
+    pub fn has_epub(&self) -> bool {
+        self.formats.contains(&OutputFormat::Epub)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,428 +247,96 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = RheoConfig::default();
-        assert_eq!(config.compile.exclude, vec!["lib/**/*.typ"]);
-        assert_eq!(config.compile.formats, vec!["pdf", "html"]);
+        assert_eq!(config.formats, OutputFormat::all_variants());
     }
 
     #[test]
-    fn test_exclusion_set() {
-        let config = RheoConfig::default();
-        let exclusions = config.build_exclusion_set().unwrap();
+    fn test_formats_from_config() {
+        let toml = r#"
+        formats = ["pdf"]
+        "#;
 
-        // Should match lib files
-        assert!(exclusions.is_match("lib/foo.typ"));
-        assert!(exclusions.is_match("lib/subdir/bar.typ"));
-
-        // Should not match non-lib files
-        assert!(!exclusions.is_match("main.typ"));
-        assert!(!exclusions.is_match("src/main.typ"));
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.formats, vec![OutputFormat::Pdf]);
     }
-}
 
-#[test]
-fn test_per_format_exclusions_default_empty() {
-    let config = RheoConfig::default();
-    assert!(config.html.exclude.is_empty());
-    assert!(config.pdf.exclude.is_empty());
-}
+    #[test]
+    fn test_formats_defaults_when_not_specified() {
+        let toml = r#""#;
 
-#[test]
-fn test_per_format_exclusion_patterns() {
-    let toml = r#"
-            [html]
-            exclude = ["pdf-only/**/*.typ"]
-            
-            [pdf]
-            exclude = ["index.typ", "web/**/*.typ"]            
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.formats, OutputFormat::all_variants());
+    }
+
+    #[test]
+    fn test_formats_multiple_values() {
+        let toml = r#"
+        formats = ["html", "epub"]
         "#;
 
-    let config: RheoConfig = toml::from_str(toml).unwrap();
-    assert_eq!(config.html.exclude, vec!["pdf-only/**/*.typ"]);
-    assert_eq!(config.pdf.exclude, vec!["index.typ", "web/**/*.typ"]);
-}
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.formats, vec![OutputFormat::Html, OutputFormat::Epub]);
+    }
 
-#[test]
-fn test_build_per_format_exclusion_sets() {
-    let toml = r#"
-            [html]
-            exclude = ["pdf-only/**/*.typ"]
-            
-            [pdf]
-            exclude = ["web/**/*.typ"]
+    #[test]
+    fn test_formats_case_insensitive() {
+        let toml = r#"
+        formats = ["PDF", "Html", "ePub"]
         "#;
 
-    let config: RheoConfig = toml::from_str(toml).unwrap();
-    let html_exclusions = config.build_html_exclusion_set().unwrap();
-    let pdf_exclusions = config.build_pdf_exclusion_set().unwrap();
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.formats,
+            vec![OutputFormat::Pdf, OutputFormat::Html, OutputFormat::Epub]
+        );
+    }
 
-    // Test HTML exclusions
-    assert!(html_exclusions.is_match("pdf-only/doc.typ"));
-    assert!(!html_exclusions.is_match("web/index.typ"));
-
-    // Test PDF exclusions
-    assert!(pdf_exclusions.is_match("web/index.typ"));
-    assert!(!pdf_exclusions.is_match("pdf-only/doc.typ"));
-}
-
-#[test]
-fn test_formats_from_config() {
-    let toml = r#"
-            [compile]
-            formats = ["pdf"]
+    #[test]
+    fn test_formats_invalid_format_name() {
+        let toml = r#"
+        formats = ["invalid"]
         "#;
 
-    let config: RheoConfig = toml::from_str(toml).unwrap();
-    assert_eq!(config.compile.formats, vec!["pdf"]);
-}
+        let result = toml::from_str::<RheoConfig>(toml);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("unknown variant"));
+    }
 
-#[test]
-fn test_formats_defaults_when_not_specified() {
-    let toml = r#"
-            [compile]
-            exclude = ["lib/**/*.typ"]
-        "#;
+    #[test]
+    fn test_load_from_path_not_found() {
+        use std::path::PathBuf;
 
-    let config: RheoConfig = toml::from_str(toml).unwrap();
-    assert_eq!(config.compile.formats, vec!["pdf", "html"]);
-}
+        let path = PathBuf::from("/tmp/nonexistent_config_12345_rheo_test.toml");
+        let result = RheoConfig::load_from_path(&path);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("config file does not exist"));
+    }
 
-#[test]
-fn test_formats_multiple_values() {
-    let toml = r#"
-            [compile]
-            formats = ["html", "epub"]
-        "#;
+    #[test]
+    fn test_load_from_path_is_directory() {
+        use tempfile::TempDir;
 
-    let config: RheoConfig = toml::from_str(toml).unwrap();
-    assert_eq!(config.compile.formats, vec!["html", "epub"]);
-}
+        let temp = TempDir::new().unwrap();
+        let result = RheoConfig::load_from_path(temp.path());
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("must be a file, not a directory"));
+    }
 
-#[test]
-fn test_filter_patterns_include_only_typ() {
-    let filter = FilterPatterns::from_patterns(&["!**/*.typ".to_string()]).unwrap();
-    assert!(filter.should_include(Path::new("doc.typ")));
-    assert!(filter.should_include(Path::new("subdir/article.typ")));
-    assert!(!filter.should_include(Path::new("image.png")));
-    assert!(!filter.should_include(Path::new("data.json")));
-}
+    #[test]
+    fn test_load_from_path_invalid_toml() {
+        use std::fs;
+        use tempfile::TempDir;
 
-#[test]
-fn test_filter_patterns_include_only_images() {
-    let filter = FilterPatterns::from_patterns(&["!img/**".to_string()]).unwrap();
-    assert!(filter.should_include(Path::new("img/photo.jpg")));
-    assert!(filter.should_include(Path::new("img/icons/star.svg")));
-    assert!(!filter.should_include(Path::new("doc.typ")));
-    assert!(!filter.should_include(Path::new("data.json")));
-}
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("invalid.toml");
+        fs::write(&config_path, "[this is not valid toml").unwrap();
 
-#[test]
-fn test_filter_patterns_exclude_only_temps() {
-    let filter = FilterPatterns::from_patterns(&["*.tmp".to_string()]).unwrap();
-    assert!(!filter.should_include(Path::new("file.tmp")));
-    assert!(filter.should_include(Path::new("file.txt")));
-    assert!(filter.should_include(Path::new("doc.typ")));
-}
-
-#[test]
-fn test_filter_patterns_exclude_directory() {
-    let filter = FilterPatterns::from_patterns(&["_drafts/**".to_string()]).unwrap();
-    assert!(!filter.should_include(Path::new("_drafts/article.typ")));
-    assert!(!filter.should_include(Path::new("_drafts/subdir/notes.typ")));
-    assert!(filter.should_include(Path::new("published/article.typ")));
-}
-
-#[test]
-fn test_filter_patterns_mixed_include_typ_and_images() {
-    let filter =
-        FilterPatterns::from_patterns(&["!**/*.typ".to_string(), "!img/**".to_string()]).unwrap();
-    assert!(filter.should_include(Path::new("doc.typ")));
-    assert!(filter.should_include(Path::new("img/photo.jpg")));
-    assert!(!filter.should_include(Path::new("data.json")));
-    assert!(!filter.should_include(Path::new("script.js")));
-}
-
-#[test]
-fn test_filter_patterns_mixed_include_with_exclude() {
-    let filter =
-        FilterPatterns::from_patterns(&["!img/**".to_string(), "*.tmp".to_string()]).unwrap();
-    // Include img files
-    assert!(filter.should_include(Path::new("img/photo.jpg")));
-    // But exclude .tmp files even in img/
-    assert!(!filter.should_include(Path::new("img/temp.tmp")));
-    // Non-img files not included (because of include filter)
-    assert!(!filter.should_include(Path::new("doc.typ")));
-}
-
-#[test]
-fn test_filter_patterns_multiple_includes_or_logic() {
-    let filter = FilterPatterns::from_patterns(&[
-        "!**/*.typ".to_string(),
-        "!img/**".to_string(),
-        "!css/**".to_string(),
-    ])
-    .unwrap();
-    // All these should be included
-    assert!(filter.should_include(Path::new("doc.typ")));
-    assert!(filter.should_include(Path::new("img/photo.jpg")));
-    assert!(filter.should_include(Path::new("css/style.css")));
-    // But not this
-    assert!(!filter.should_include(Path::new("data.json")));
-}
-
-#[test]
-fn test_filter_patterns_empty_defaults_to_include_all() {
-    let filter = FilterPatterns::from_patterns(&[]).unwrap();
-    assert!(filter.should_include(Path::new("anything.txt")));
-    assert!(filter.should_include(Path::new("doc.typ")));
-    assert!(filter.should_include(Path::new("image.png")));
-}
-
-#[test]
-fn test_filter_patterns_exclude_takes_precedence() {
-    let filter = FilterPatterns::from_patterns(&[
-        "!**/*.typ".to_string(),
-        "**/*.typ".to_string(), // Exclude all .typ
-    ])
-    .unwrap();
-    // Exclude wins over include
-    assert!(!filter.should_include(Path::new("doc.typ")));
-}
-
-#[test]
-fn test_filter_patterns_invalid_glob() {
-    let result = FilterPatterns::from_patterns(&["[invalid".to_string()]);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_filter_patterns_empty_negated_pattern() {
-    let result = FilterPatterns::from_patterns(&["!".to_string()]);
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("must have content after '!'"));
-}
-
-#[test]
-fn test_filter_patterns_complex_scenario() {
-    // Include only .typ and img, but exclude drafts and temps
-    let filter = FilterPatterns::from_patterns(&[
-        "!**/*.typ".to_string(),
-        "!img/**".to_string(),
-        "_drafts/**".to_string(),
-        "*.tmp".to_string(),
-    ])
-    .unwrap();
-
-    // .typ files included
-    assert!(filter.should_include(Path::new("article.typ")));
-    // Images included
-    assert!(filter.should_include(Path::new("img/photo.jpg")));
-    // But not drafts
-    assert!(!filter.should_include(Path::new("_drafts/article.typ")));
-    // And not temps
-    assert!(!filter.should_include(Path::new("temp.tmp")));
-    // And not other files
-    assert!(!filter.should_include(Path::new("data.json")));
-}
-
-#[test]
-fn test_html_filter_patterns_new_syntax() {
-    let toml = r#"
-        [html]
-        exclude = ["!**/*.typ", "!img/**"]
-    "#;
-    let config: RheoConfig = toml::from_str(toml).unwrap();
-    let filter = config.get_html_filter_patterns().unwrap();
-
-    assert!(filter.should_include(Path::new("doc.typ")));
-    assert!(filter.should_include(Path::new("img/photo.jpg")));
-    assert!(!filter.should_include(Path::new("data.json")));
-}
-
-#[test]
-fn test_html_filter_patterns_default_empty() {
-    let config = RheoConfig::default();
-    let filter = config.get_html_filter_patterns().unwrap();
-
-    // No patterns = include everything
-    assert!(filter.should_include(Path::new("anything.txt")));
-    assert!(filter.should_include(Path::new("doc.typ")));
-    assert!(filter.should_include(Path::new("img/photo.jpg")));
-}
-
-#[test]
-fn test_html_filter_patterns_new_syntax_takes_precedence() {
-    let toml = r#"
-        [html]
-        static_files = ["css/**"]
-        exclude = ["!**/*.typ", "!img/**"]
-    "#;
-    let config: RheoConfig = toml::from_str(toml).unwrap();
-    let filter = config.get_html_filter_patterns().unwrap();
-
-    // New syntax (exclude) should be used, not static_files
-    assert!(filter.should_include(Path::new("doc.typ")));
-    assert!(filter.should_include(Path::new("img/photo.jpg")));
-    assert!(!filter.should_include(Path::new("css/style.css")));
-}
-
-// Tests for global + format-specific pattern combination
-
-#[test]
-fn test_pdf_filter_combines_global_and_specific() {
-    let toml = r#"
-        [compile]
-        exclude = ["**/*.bib"]
-
-        [pdf]
-        exclude = ["index.typ"]
-    "#;
-    let config: RheoConfig = toml::from_str(toml).unwrap();
-    let filter = config.get_pdf_filter_patterns().unwrap();
-
-    // Global pattern applies
-    assert!(!filter.should_include(Path::new("refs.bib")));
-    assert!(!filter.should_include(Path::new("lib/refs.bib")));
-
-    // PDF-specific pattern applies
-    assert!(!filter.should_include(Path::new("index.typ")));
-
-    // Other files included
-    assert!(filter.should_include(Path::new("article.typ")));
-}
-
-#[test]
-fn test_html_filter_combines_global_and_specific() {
-    let toml = r#"
-        [compile]
-        exclude = ["**/*.bib"]
-
-        [html]
-        exclude = ["img/**"]
-    "#;
-    let config: RheoConfig = toml::from_str(toml).unwrap();
-    let filter = config.get_html_filter_patterns().unwrap();
-
-    // Global pattern applies
-    assert!(!filter.should_include(Path::new("refs.bib")));
-
-    // HTML-specific pattern applies
-    assert!(!filter.should_include(Path::new("img/photo.jpg")));
-
-    // Other files included
-    assert!(filter.should_include(Path::new("article.typ")));
-}
-
-#[test]
-fn test_global_excludes_all_formats() {
-    let toml = r#"
-        [compile]
-        exclude = ["**/*.bib"]
-    "#;
-    let config: RheoConfig = toml::from_str(toml).unwrap();
-
-    let html_filter = config.get_html_filter_patterns().unwrap();
-    let pdf_filter = config.get_pdf_filter_patterns().unwrap();
-
-    // All formats exclude .bib files
-    assert!(!html_filter.should_include(Path::new("refs.bib")));
-    assert!(!pdf_filter.should_include(Path::new("refs.bib")));
-}
-
-#[test]
-fn test_global_with_negated_format_patterns() {
-    let toml = r#"
-        [compile]
-        exclude = ["**/*.bib"]
-
-        [html]
-        exclude = ["!**/*.typ", "!img/**"]
-    "#;
-    let config: RheoConfig = toml::from_str(toml).unwrap();
-    let filter = config.get_html_filter_patterns().unwrap();
-
-    // Global exclude applies even with include-only HTML patterns
-    assert!(!filter.should_include(Path::new("refs.bib")));
-
-    // HTML include patterns apply
-    assert!(filter.should_include(Path::new("article.typ")));
-    assert!(filter.should_include(Path::new("img/photo.jpg")));
-
-    // Non-included files excluded
-    assert!(!filter.should_include(Path::new("data.json")));
-}
-
-#[test]
-fn test_empty_global_excludes_works() {
-    let toml = r#"
-        [compile]
-        exclude = []
-
-        [pdf]
-        exclude = ["index.typ"]
-    "#;
-    let config: RheoConfig = toml::from_str(toml).unwrap();
-    let filter = config.get_pdf_filter_patterns().unwrap();
-
-    // Only PDF-specific pattern applies
-    assert!(!filter.should_include(Path::new("index.typ")));
-    assert!(filter.should_include(Path::new("article.typ")));
-    assert!(filter.should_include(Path::new("refs.bib")));
-}
-
-#[test]
-fn test_load_from_path_valid_config() {
-    use std::fs;
-    use tempfile::TempDir;
-
-    let temp = TempDir::new().unwrap();
-    let config_path = temp.path().join("test.toml");
-    let config_content = r#"
-        [compile]
-        exclude = ["test/**/*.typ"]
-        formats = ["html"]
-    "#;
-    fs::write(&config_path, config_content).unwrap();
-
-    let config = RheoConfig::load_from_path(&config_path).unwrap();
-    assert_eq!(config.compile.exclude, vec!["test/**/*.typ"]);
-    assert_eq!(config.compile.formats, vec!["html"]);
-}
-
-#[test]
-fn test_load_from_path_not_found() {
-    use std::path::PathBuf;
-
-    let path = PathBuf::from("/tmp/nonexistent_config_12345_rheo_test.toml");
-    let result = RheoConfig::load_from_path(&path);
-    assert!(result.is_err());
-    let err_msg = format!("{}", result.unwrap_err());
-    assert!(err_msg.contains("config file does not exist"));
-}
-
-#[test]
-fn test_load_from_path_is_directory() {
-    use tempfile::TempDir;
-
-    let temp = TempDir::new().unwrap();
-    let result = RheoConfig::load_from_path(temp.path());
-    assert!(result.is_err());
-    let err_msg = format!("{}", result.unwrap_err());
-    assert!(err_msg.contains("must be a file, not a directory"));
-}
-
-#[test]
-fn test_load_from_path_invalid_toml() {
-    use std::fs;
-    use tempfile::TempDir;
-
-    let temp = TempDir::new().unwrap();
-    let config_path = temp.path().join("invalid.toml");
-    fs::write(&config_path, "[this is not valid toml").unwrap();
-
-    let result = RheoConfig::load_from_path(&config_path);
-    assert!(result.is_err());
-    let err_msg = format!("{}", result.unwrap_err());
-    assert!(err_msg.contains("invalid config file"));
+        let result = RheoConfig::load_from_path(&config_path);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("invalid config file"));
+    }
 }

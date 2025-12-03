@@ -52,9 +52,14 @@ anyhow = "1.0.100"
 iref = { version = "3.2.2", features = ["serde"] }
 itertools = "0.14.0"
 uuid = { version = "1.18.1", features = ["v4"] }
+tempfile = "3.8"
 
 [dev-dependencies]
-tempfile = "3.8"
+serde_json = "1.0"
+similar = "2.5"
+glob = "0.3"
+lopdf = "0.34"
+ntest = "0.9.3"
 
 [profile.release]
 opt-level = 3

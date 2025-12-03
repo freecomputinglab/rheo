@@ -1,311 +1,102 @@
-use crate::config::EpubConfig;
-use crate::epub::EpubItem;
 use crate::world::RheoWorld;
-use crate::{Result, RheoError, epub};
 use regex::Regex;
-use std::path::Path;
-use tracing::{debug, error, info, instrument, warn};
-use typst::layout::PagedDocument;
-use typst_html::HtmlDocument;
-use typst_pdf::PdfOptions;
+use std::path::PathBuf;
+use tracing::{instrument, warn};
 
-/// Compile a Typst document to PDF
+/// Common compilation options used across all output formats.
 ///
-/// Uses the typst library with:
-/// - Root set to content_dir or project root (for local file imports across directories)
-/// - Shared resources available via repo_root in src/typst/ (rheo.typ)
-#[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-pub fn compile_pdf(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
-    // Create the compilation world
-    // For standalone PDF compilation, remove relative .typ links from source
-    let world = RheoWorld::new(root, input, repo_root, true)?;
+/// This struct encapsulates the core parameters needed for any compilation:
+/// - Input file (the .typ file to compile)
+/// - Output file (where to write the result)
+/// - Root directory (for resolving imports)
+/// - Repository root (for rheo.typ template)
+/// - Optional RheoWorld (for incremental compilation)
+pub struct RheoCompileOptions<'a> {
+    /// The input .typ file to compile
+    pub input: PathBuf,
+    /// The output file path
+    pub output: PathBuf,
+    /// Root directory for resolving imports
+    pub root: PathBuf,
+    /// Repository root for rheo.typ
+    pub repo_root: PathBuf,
+    /// Optional existing RheoWorld for incremental compilation
+    pub world: Option<&'a mut RheoWorld>,
+}
 
-    // Compile the document
-    info!(input = %input.display(), "compiling to PDF");
-    let result = typst::compile::<PagedDocument>(&world);
-
-    // Print warnings
-    for warning in &result.warnings {
-        warn!(message = %warning.message, "compilation warning");
+impl<'a> RheoCompileOptions<'a> {
+    /// Create compilation options for a fresh (non-incremental) compilation.
+    ///
+    /// # Arguments
+    /// * `input` - The input .typ file to compile
+    /// * `output` - The output file path
+    /// * `root` - Root directory for resolving imports
+    /// * `repo_root` - Repository root for rheo.typ
+    pub fn new(
+        input: impl Into<PathBuf>,
+        output: impl Into<PathBuf>,
+        root: impl Into<PathBuf>,
+        repo_root: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            input: input.into(),
+            output: output.into(),
+            root: root.into(),
+            repo_root: repo_root.into(),
+            world: None,
+        }
     }
 
-    // Get the document or return errors
-    let document = match result.output {
-        Ok(doc) => doc,
-        Err(errors) => {
-            for err in &errors {
-                error!(message = %err.message, "compilation error");
-            }
-            let error_messages: Vec<String> =
-                errors.iter().map(|e| e.message.to_string()).collect();
-            return Err(RheoError::Compilation {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            });
+    /// Create compilation options for incremental compilation.
+    ///
+    /// Reuses an existing RheoWorld for faster recompilation.
+    ///
+    /// # Arguments
+    /// * `input` - The input .typ file to compile
+    /// * `output` - The output file path
+    /// * `root` - Root directory for resolving imports
+    /// * `repo_root` - Repository root for rheo.typ
+    /// * `world` - Mutable reference to existing RheoWorld
+    pub fn incremental(
+        input: impl Into<PathBuf>,
+        output: impl Into<PathBuf>,
+        root: impl Into<PathBuf>,
+        repo_root: impl Into<PathBuf>,
+        world: &'a mut RheoWorld,
+    ) -> Self {
+        Self {
+            input: input.into(),
+            output: output.into(),
+            root: root.into(),
+            repo_root: repo_root.into(),
+            world: Some(world),
         }
-    };
-
-    // Export to PDF
-    debug!(output = %output.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default()).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "PDF export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::PdfGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })?;
-
-    // Write to file
-    debug!(size = pdf_bytes.len(), "writing PDF file");
-    std::fs::write(output, &pdf_bytes)
-        .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output)))?;
-
-    info!(output = %output.display(), "successfully compiled to PDF");
-    Ok(())
-}
-
-pub fn compile_html_to_document(
-    input: &Path,
-    root: &Path,
-    repo_root: &Path,
-) -> Result<HtmlDocument> {
-    // Create the compilation world
-    // For HTML compilation, keep .typ links so we can transform them to .html
-    let world = RheoWorld::new(root, input, repo_root, false)?;
-
-    // Compile the document to HtmlDocument
-    info!(input = %input.display(), "compiling to HTML");
-    let result = typst::compile::<HtmlDocument>(&world);
-
-    // Print warnings (filter out known Typst HTML development warning)
-    for warning in &result.warnings {
-        // Skip the "html export is under active development" warning from Typst
-        if warning
-            .message
-            .contains("html export is under active development and incomplete")
-        {
-            continue;
-        }
-        warn!(message = %warning.message, "compilation warning");
     }
 
-    // Get the document or return errors
-    result.output.map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "compilation error");
+    /// Create compilation options for merged PDF compilation.
+    ///
+    /// Note: For merged compilation, the input file is typically a temporary
+    /// file containing concatenated sources.
+    ///
+    /// # Arguments
+    /// * `temp_input` - Temporary file with concatenated sources
+    /// * `output` - The output PDF path
+    /// * `root` - Project root directory
+    /// * `repo_root` - Repository root for rheo.typ
+    pub fn merged(
+        temp_input: impl Into<PathBuf>,
+        output: impl Into<PathBuf>,
+        root: impl Into<PathBuf>,
+        repo_root: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            input: temp_input.into(),
+            output: output.into(),
+            root: root.into(),
+            repo_root: repo_root.into(),
+            world: None,
         }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::Compilation {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })
-}
-
-pub fn compile_document_to_string(
-    document: &HtmlDocument,
-    input: &Path,
-    root: &Path,
-    xhtml: bool,
-) -> Result<String> {
-    // Export to HTML string
-    let html_string = typst_html::html(document).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "HTML export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::HtmlGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })?;
-
-    // Transform .typ links to .html links
-    transform_html_links(&html_string, input, root, xhtml)
-}
-
-/// Compile a Typst document to HTML
-///
-/// Uses the typst library with:
-/// - Root set to content_dir or project root (for local file imports across directories)
-/// - Shared resources available via repo_root in src/typst/ (rheo.typ)
-#[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-pub fn compile_html(input: &Path, output: &Path, root: &Path, repo_root: &Path) -> Result<()> {
-    let doc = compile_html_to_document(input, root, repo_root)?;
-    let html_string = compile_document_to_string(&doc, input, root, false)?;
-
-    // Write to file
-    debug!(size = html_string.len(), "writing HTML file");
-    std::fs::write(output, &html_string)
-        .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
-
-    info!(output = %output.display(), "successfully compiled to HTML");
-    Ok(())
-}
-
-/// Compile a set of Typst documents to EPUB.
-pub fn compile_epub(
-    config: &EpubConfig,
-    epub_path: &Path,
-    root: &Path,
-    repo_root: &Path,
-) -> Result<()> {
-    let inner = || -> anyhow::Result<()> {
-        let spine = epub::generate_spine(root, config)?;
-
-        let mut items = spine
-            .into_iter()
-            .map(|path| EpubItem::create(path, root, repo_root))
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        let nav_xhtml = epub::generate_nav_xhtml(&mut items);
-        let package_string = epub::generate_package(&items, config)?;
-        epub::zip_epub(epub_path, package_string, nav_xhtml, &items)
-    };
-
-    inner().map_err(|e| RheoError::EpubGeneration {
-        count: 1,
-        errors: e.to_string(),
-    })?;
-
-    info!(output = %epub_path.display(), "successfully generated EPUB");
-    Ok(())
-}
-
-/// Compile a Typst document to PDF using an existing World (for watch mode).
-///
-/// This function reuses an existing RheoWorld instance, enabling incremental
-/// compilation through Typst's comemo caching system. The World should have
-/// its main file set via `set_main()` and `reset()` called before compilation.
-///
-/// # Arguments
-/// * `world` - Existing RheoWorld instance with main file already set
-/// * `output` - Path where the PDF should be written
-#[instrument(skip_all, fields(output = %output.display()))]
-pub fn compile_pdf_incremental(world: &RheoWorld, output: &Path) -> Result<()> {
-    // Compile the document
-    info!("compiling to PDF");
-    let result = typst::compile::<PagedDocument>(world);
-
-    // Print warnings
-    for warning in &result.warnings {
-        warn!(message = %warning.message, "compilation warning");
     }
-
-    // Get the document or return errors
-    let document = match result.output {
-        Ok(doc) => doc,
-        Err(errors) => {
-            for err in &errors {
-                error!(message = %err.message, "compilation error");
-            }
-            let error_messages: Vec<String> =
-                errors.iter().map(|e| e.message.to_string()).collect();
-            return Err(RheoError::Compilation {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            });
-        }
-    };
-
-    // Export to PDF
-    debug!(output = %output.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default()).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "PDF export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::PdfGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })?;
-
-    // Write to file
-    debug!(size = pdf_bytes.len(), "writing PDF file");
-    std::fs::write(output, &pdf_bytes)
-        .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output)))?;
-
-    info!(output = %output.display(), "successfully compiled to PDF");
-    Ok(())
-}
-
-/// Compile a Typst document to HTML using an existing World (for watch mode).
-///
-/// This function reuses an existing RheoWorld instance, enabling incremental
-/// compilation through Typst's comemo caching system. The World should have
-/// its main file set via `set_main()` and `reset()` called before compilation.
-///
-/// # Arguments
-/// * `world` - Existing RheoWorld instance with main file already set
-/// * `input` - Path to the source .typ file (for link transformation)
-/// * `output` - Path where the HTML should be written
-/// * `root` - Project root path (for link validation)
-#[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-pub fn compile_html_incremental(
-    world: &RheoWorld,
-    input: &Path,
-    output: &Path,
-    root: &Path,
-) -> Result<()> {
-    // Compile the document to HtmlDocument
-    info!("compiling to HTML");
-    let result = typst::compile::<HtmlDocument>(world);
-
-    // Print warnings (filter out known Typst HTML development warning)
-    for warning in &result.warnings {
-        // Skip the "html export is under active development" warning from Typst
-        if warning
-            .message
-            .contains("html export is under active development and incomplete")
-        {
-            continue;
-        }
-        warn!(message = %warning.message, "compilation warning");
-    }
-
-    // Get the document or return errors
-    let document = match result.output {
-        Ok(doc) => doc,
-        Err(errors) => {
-            for err in &errors {
-                error!(message = %err.message, "compilation error");
-            }
-            let error_messages: Vec<String> =
-                errors.iter().map(|e| e.message.to_string()).collect();
-            return Err(RheoError::Compilation {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            });
-        }
-    };
-
-    // Export to HTML string
-    debug!(output = %output.display(), "exporting to HTML");
-    let html_string = typst_html::html(&document).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "HTML export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::HtmlGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })?;
-
-    // Transform .typ links to .html links
-    let html_string = transform_html_links(&html_string, input, root, false)?;
-
-    // Write to file
-    debug!(size = html_string.len(), "writing HTML file");
-    std::fs::write(output, &html_string)
-        .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
-
-    info!(output = %output.display(), "successfully compiled to HTML");
-    Ok(())
 }
 
 /// Remove relative .typ links from Typst source code for PDF/EPUB compilation.
@@ -375,188 +166,10 @@ pub fn remove_relative_typ_links(source: &str) -> String {
     result.to_string()
 }
 
-/// Transform relative .typ links to .html links in HTML output,
-/// validating that the linked files exist.
-///
-/// # Arguments
-/// * `html` - The HTML string to transform
-/// * `source_file` - Path to the source .typ file (for resolving relative links)
-/// * `root` - Project root path (for validating file existence)
-///
-/// # Returns
-/// * `Ok(String)` - Transformed HTML with .typ links changed to .html
-/// * `Err(RheoError)` - If a linked .typ file doesn't exist
-#[instrument(skip(html), fields(source = %source_file.display()))]
-pub fn transform_html_links(
-    html: &str,
-    source_file: &Path,
-    root: &Path,
-    xhtml: bool,
-) -> Result<String> {
-    // Regex to match href="..." attributes
-    // Captures the href value in group 1
-    let re = Regex::new(r#"href="([^"]*)""#).expect("invalid regex pattern");
-
-    let source_dir = source_file
-        .parent()
-        .ok_or_else(|| RheoError::path(source_file, "source file has no parent directory"))?;
-
-    let mut errors = Vec::new();
-    let mut result = html.to_string();
-
-    // Find all matches and collect them (to avoid borrowing issues)
-    let matches: Vec<_> = re
-        .captures_iter(html)
-        .map(|cap| cap[1].to_string())
-        .collect();
-
-    for href in matches {
-        // Skip external URLs
-        if href.starts_with("http://")
-            || href.starts_with("https://")
-            || href.starts_with("mailto:")
-            || href.starts_with("//")
-        {
-            continue;
-        }
-
-        // Skip fragment-only links
-        if href.starts_with('#') {
-            continue;
-        }
-
-        // Check if this is a .typ link
-        if href.ends_with(".typ") {
-            // Resolve the path relative to the source file directory
-            let linked_path = if href.starts_with('/') {
-                // Absolute path from root
-                root.join(href.trim_start_matches('/'))
-            } else {
-                // Relative path from source file directory
-                source_dir.join(&href)
-            };
-
-            // Normalize the path
-            let linked_path = match linked_path.canonicalize() {
-                Ok(p) => p,
-                Err(_) => {
-                    // File doesn't exist, record error
-                    errors.push(format!(
-                        "error: file not found: {}\n  ┌─ {}:1:1\n  │\n  │ link target '{}' does not exist in the project\n  │\n  = help: ensure the file exists or remove the link",
-                        href,
-                        source_file.display(),
-                        href
-                    ));
-                    continue;
-                }
-            };
-
-            // Check if the resolved path is within the project
-            let root_canonical = root
-                .canonicalize()
-                .map_err(|e| RheoError::io(e, format!("canonicalizing root path {:?}", root)))?;
-
-            if !linked_path.starts_with(&root_canonical) {
-                errors.push(format!(
-                    "error: file outside project: {}\n  ┌─ {}:1:1\n  │\n  │ link target '{}' is outside the project root\n  │\n  = help: only link to files within the project",
-                    href,
-                    source_file.display(),
-                    href
-                ));
-                continue;
-            }
-
-            // Transform the link from .typ to .html
-            let new_ext = if xhtml { ".xhtml" } else { ".html" };
-            let new_href = href.replace(".typ", new_ext);
-            result = result.replace(
-                &format!(r#"href="{}""#, href),
-                &format!(r#"href="{}""#, new_href),
-            );
-            debug!(from = %href, to = %new_href, "transformed link");
-        }
-    }
-
-    // If there were any errors, return them
-    if !errors.is_empty() {
-        return Err(RheoError::Compilation {
-            count: errors.len(),
-            errors: errors.join("\n\n"),
-        });
-    }
-
-    Ok(result)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use tempfile::TempDir;
-
-    #[test]
-    fn test_transform_html_links_basic() {
-        let temp_dir = TempDir::new().unwrap();
-        let root = temp_dir.path();
-
-        // Create test files
-        let source_file = root.join("index.typ");
-        let target_file = root.join("about.typ");
-        fs::write(&source_file, "").unwrap();
-        fs::write(&target_file, "").unwrap();
-
-        let html = r#"<a href="./about.typ">About</a>"#;
-        let result = transform_html_links(html, &source_file, root, false).unwrap();
-
-        assert_eq!(result, r#"<a href="./about.html">About</a>"#);
-    }
-
-    #[test]
-    fn test_transform_html_links_preserves_external() {
-        let temp_dir = TempDir::new().unwrap();
-        let root = temp_dir.path();
-        let source_file = root.join("index.typ");
-        fs::write(&source_file, "").unwrap();
-
-        let html = r#"<a href="https://example.com">Example</a> <a href="mailto:test@example.com">Email</a>"#;
-        let result = transform_html_links(html, &source_file, root, false).unwrap();
-
-        assert_eq!(result, html);
-    }
-
-    #[test]
-    fn test_transform_html_links_preserves_fragments() {
-        let temp_dir = TempDir::new().unwrap();
-        let root = temp_dir.path();
-        let source_file = root.join("index.typ");
-        fs::write(&source_file, "").unwrap();
-
-        let html = r##"<a href="#section">Section</a>"##;
-        let result = transform_html_links(html, &source_file, root, false).unwrap();
-
-        assert_eq!(result, html);
-    }
-
-    #[test]
-    fn test_transform_html_links_missing_file_error() {
-        let temp_dir = TempDir::new().unwrap();
-        let root = temp_dir.path();
-        let source_file = root.join("index.typ");
-        fs::write(&source_file, "").unwrap();
-
-        let html = r#"<a href="./missing.typ">Missing</a>"#;
-        let result = transform_html_links(html, &source_file, root, false);
-
-        assert!(result.is_err());
-        match result {
-            Err(RheoError::Compilation { count, errors }) => {
-                assert_eq!(count, 1);
-                assert!(errors.contains("file not found"));
-                assert!(errors.contains("missing.typ"));
-            }
-            _ => panic!("expected Compilation error"),
-        }
-    }
+    use crate::formats::pdf;
 
     #[test]
     fn test_remove_relative_typ_links_basic() {
@@ -610,5 +223,240 @@ mod tests {
         let result = remove_relative_typ_links(source);
         // .pdf files should be preserved since they're not .typ files
         assert_eq!(result, source);
+    }
+
+    #[test]
+    fn test_sanitize_label_name() {
+        assert_eq!(pdf::sanitize_label_name("chapter 01.typ"), "chapter_01_typ");
+        assert_eq!(pdf::sanitize_label_name("chapter 01"), "chapter_01");
+        assert_eq!(
+            pdf::sanitize_label_name("severance-01.typ"),
+            "severance-01_typ"
+        );
+        assert_eq!(pdf::sanitize_label_name("severance-01"), "severance-01");
+        assert_eq!(pdf::sanitize_label_name("my_file!@#.typ"), "my_file____typ");
+        assert_eq!(pdf::sanitize_label_name("my_file!@#"), "my_file___");
+    }
+
+    #[test]
+    fn test_transform_typ_links_basic() {
+        let source = r#"See #link("./chapter2.typ")[next chapter]."#;
+        let spine = vec![PathBuf::from("chapter1.typ"), PathBuf::from("chapter2.typ")];
+        let current = PathBuf::from("chapter1.typ");
+        let result = pdf::transform_typ_links_to_labels(source, &spine, &current).unwrap();
+        assert_eq!(result, r#"See #link(<chapter2>)[next chapter]."#);
+    }
+
+    #[test]
+    fn test_transform_typ_links_relative_paths() {
+        let source = r#"See #link("../intro.typ")[intro] and #link("./chapter2.typ")[next]."#;
+        let spine = vec![
+            PathBuf::from("intro.typ"),
+            PathBuf::from("chapter1.typ"),
+            PathBuf::from("chapter2.typ"),
+        ];
+        let current = PathBuf::from("chapter1.typ");
+        let result = pdf::transform_typ_links_to_labels(source, &spine, &current).unwrap();
+        assert_eq!(
+            result,
+            r#"See #link(<intro>)[intro] and #link(<chapter2>)[next]."#
+        );
+    }
+
+    #[test]
+    fn test_transform_typ_links_not_in_spine() {
+        let source = r#"See #link("./missing.typ")[missing]."#;
+        let spine = vec![PathBuf::from("chapter1.typ")];
+        let current = PathBuf::from("chapter1.typ");
+        let result = pdf::transform_typ_links_to_labels(source, &spine, &current);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not found in spine"));
+    }
+
+    #[test]
+    fn test_transform_typ_links_preserves_external() {
+        let source = r#"Visit #link("https://example.com")[our website] or #link("mailto:test@example.com")[email us]."#;
+        let spine = vec![PathBuf::from("chapter1.typ")];
+        let current = PathBuf::from("chapter1.typ");
+        let result = pdf::transform_typ_links_to_labels(source, &spine, &current).unwrap();
+        assert_eq!(result, source); // Should be unchanged
+    }
+
+    #[test]
+    fn test_transform_typ_links_preserves_fragments() {
+        let source = r##"See #link("#heading")[section]."##;
+        let spine = vec![PathBuf::from("chapter1.typ")];
+        let current = PathBuf::from("chapter1.typ");
+        let result = pdf::transform_typ_links_to_labels(source, &spine, &current).unwrap();
+        assert_eq!(result, source); // Should be unchanged
+    }
+
+    #[test]
+    fn test_concatenate_typst_sources_basic() {
+        use std::io::Write;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+
+        // Create temporary files with test content
+        let path1 = dir.path().join("chapter1.typ");
+        let mut file1 = std::fs::File::create(&path1).unwrap();
+        write!(file1, "= Chapter 1\nThis is chapter one.").unwrap();
+
+        let path2 = dir.path().join("chapter2.typ");
+        let mut file2 = std::fs::File::create(&path2).unwrap();
+        write!(file2, "= Chapter 2\nThis is chapter two.").unwrap();
+
+        let spine = vec![path1, path2];
+        let result = pdf::concatenate_typst_sources(&spine).unwrap();
+
+        // Check that heading-based labels are injected (derived from filename)
+        // These should appear at the start of each section
+        assert!(result.contains("<chapter1>"));
+        assert!(result.contains("<chapter2>"));
+
+        // Check for generated headings with labels
+        assert!(
+            result.contains("= Chapter1 <chapter1>") || result.contains("= Chapter 1 <chapter1>")
+        );
+        assert!(
+            result.contains("= Chapter2 <chapter2>") || result.contains("= Chapter 2 <chapter2>")
+        );
+
+        // Check that content is preserved
+        assert!(result.contains("This is chapter one."));
+        assert!(result.contains("This is chapter two."));
+    }
+
+    #[test]
+    fn test_concatenate_typst_sources_label_injection() {
+        use std::io::Write;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test-file.typ");
+        let mut file = std::fs::File::create(&path).unwrap();
+        write!(file, "Content here").unwrap();
+
+        let spine = vec![path];
+        let result = pdf::concatenate_typst_sources(&spine).unwrap();
+
+        // Heading with label should be injected (title derived from filename)
+        assert!(result.starts_with("= Test File <test-file>"));
+    }
+
+    #[test]
+    fn test_concatenate_typst_sources_duplicate_filenames() {
+        use std::io::Write;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+
+        // Create two files with same name in different directories
+        let dir1 = dir.path().join("dir1");
+        std::fs::create_dir_all(&dir1).unwrap();
+        let path1 = dir1.join("chapter.typ");
+        let mut file1 = std::fs::File::create(&path1).unwrap();
+        write!(file1, "Content 1").unwrap();
+
+        let dir2 = dir.path().join("dir2");
+        std::fs::create_dir_all(&dir2).unwrap();
+        let path2 = dir2.join("chapter.typ");
+        let mut file2 = std::fs::File::create(&path2).unwrap();
+        write!(file2, "Content 2").unwrap();
+
+        let spine = vec![path1, path2];
+        let result = pdf::concatenate_typst_sources(&spine);
+
+        // Should fail with duplicate filename error
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("duplicate filename in spine"));
+    }
+
+    #[test]
+    fn test_concatenate_typst_sources_link_transformation() {
+        use std::io::Write;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+
+        let path1 = dir.path().join("chapter1.typ");
+        let mut file1 = std::fs::File::create(&path1).unwrap();
+        write!(file1, r#"See #link("./chapter2.typ")[next chapter]"#).unwrap();
+
+        let path2 = dir.path().join("chapter2.typ");
+        let mut file2 = std::fs::File::create(&path2).unwrap();
+        write!(file2, "= Chapter 2").unwrap();
+
+        let spine = vec![path1, path2];
+        let result = pdf::concatenate_typst_sources(&spine).unwrap();
+
+        // Link should be transformed to label
+        assert!(result.contains("#link(<chapter2>)[next chapter]"));
+    }
+
+    #[test]
+    fn test_filename_to_title() {
+        assert_eq!(pdf::filename_to_title("severance-ep-1"), "Severance Ep 1");
+        assert_eq!(pdf::filename_to_title("my_document"), "My Document");
+        assert_eq!(pdf::filename_to_title("chapter-01"), "Chapter 01");
+        assert_eq!(pdf::filename_to_title("hello_world"), "Hello World");
+        assert_eq!(pdf::filename_to_title("single"), "Single");
+    }
+
+    // strip_typst_markup tests moved to formats::pdf module (now private)
+
+    #[test]
+    fn test_extract_document_title_from_metadata() {
+        let source = r#"#set document(title: [My Great Title])
+
+= Chapter 1
+Content here."#;
+
+        let title = pdf::extract_document_title(source, "fallback");
+        assert_eq!(title, "My Great Title");
+    }
+
+    #[test]
+    fn test_extract_document_title_fallback() {
+        let source = r#"= Chapter 1
+Content here."#;
+
+        let title = pdf::extract_document_title(source, "my-chapter");
+        assert_eq!(title, "My Chapter");
+    }
+
+    #[test]
+    fn test_extract_document_title_with_markup() {
+        let source = r#"#set document(title: [Good news about hell - #emph[Severance]])"#;
+
+        let title = pdf::extract_document_title(source, "fallback");
+        // Should strip #emph and underscores
+        // Note: complex nested bracket handling is limited by regex
+        assert!(title.contains("Good news"));
+        assert!(title.contains("Severance"));
+    }
+
+    #[test]
+    fn test_extract_document_title_empty() {
+        let source = r#"#set document(title: [])
+
+Content"#;
+
+        let title = pdf::extract_document_title(source, "default-name");
+        // Empty title should fall back to filename
+        assert_eq!(title, "Default Name");
+    }
+
+    #[test]
+    fn test_extract_document_title_complex() {
+        let source = r#"#set document(title: [Half Loop - _Severance_ [s1/e2]], author: [Test])"#;
+
+        let title = pdf::extract_document_title(source, "fallback");
+        // Should extract title and strip markup
+        assert!(title.contains("Half Loop"));
+        assert!(title.contains("Severance"));
     }
 }

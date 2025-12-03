@@ -1,0 +1,3 @@
+[pdf.merge]
+spine = ["intro.typ", "chapter*.typ", "conclusion.typ"]
+title = "Test Merged Document"
