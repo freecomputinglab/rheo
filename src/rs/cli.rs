@@ -242,6 +242,11 @@ fn perform_compilation(
     // Determine which formats should be compiled per-file
     let per_file_formats = get_per_file_formats(&project.config, formats);
 
+    // Copy HTML assets (style.css) if HTML compilation is requested
+    if per_file_formats.contains(&OutputFormat::Html) {
+        output_config.copy_html_assets(project.style_css.as_deref())?;
+    }
+
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
 
@@ -433,6 +438,11 @@ fn perform_compilation_incremental(
 
     // Determine which formats should be compiled per-file
     let per_file_formats = get_per_file_formats(&project.config, formats);
+
+    // Copy HTML assets (style.css) if HTML compilation is requested
+    if per_file_formats.contains(&OutputFormat::Html) {
+        output_config.copy_html_assets(project.style_css.as_deref())?;
+    }
 
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
