@@ -200,12 +200,37 @@ fn validate_binary_file_from_metadata(
                 PathBuf::from(file_str.strip_suffix(".metadata.json").unwrap_or(&file_str))
             });
 
-        if !actual_dir.join(&build_relative_path).exists() {
+        let actual_file_path = actual_dir.join(&build_relative_path);
+
+        if !actual_file_path.exists() {
             errors.push(format!(
                 "Missing binary file: {} (expected at {})",
                 metadata.path.as_deref().unwrap_or(""),
                 build_relative_path.display()
             ));
+            return;
+        }
+
+        // Validate CSS metadata
+        if metadata.filetype == "css" {
+            match extract_css_metadata(&actual_file_path) {
+                Ok(actual_metadata) => {
+                    if let Err(e) = compare_css_metadata(&metadata, &actual_metadata) {
+                        errors.push(format!(
+                            "CSS validation failed for {}: {}",
+                            build_relative_path.display(),
+                            e
+                        ));
+                    }
+                }
+                Err(e) => {
+                    errors.push(format!(
+                        "Failed to extract CSS metadata for {}: {}",
+                        build_relative_path.display(),
+                        e
+                    ));
+                }
+            }
         }
     }
 }
@@ -249,6 +274,8 @@ pub struct BinaryFileMetadata {
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
 }
 
 fn default_filetype() -> String {
@@ -270,6 +297,29 @@ pub fn extract_pdf_metadata(pdf_path: &Path) -> Result<BinaryFileMetadata, Strin
         file_size,
         path: None,
         page_count: Some(page_count),
+        hash: None,
+    })
+}
+
+pub fn extract_css_metadata(css_path: &Path) -> Result<BinaryFileMetadata, String> {
+    use sha2::{Digest, Sha256};
+
+    let file_size = fs::metadata(css_path)
+        .map_err(|e| format!("Failed to read CSS metadata: {}", e))?
+        .len();
+
+    let contents = fs::read(css_path)
+        .map_err(|e| format!("Failed to read CSS contents: {}", e))?;
+
+    let hash_bytes = Sha256::digest(&contents);
+    let hash = format!("{:x}", hash_bytes);
+
+    Ok(BinaryFileMetadata {
+        filetype: "css".to_string(),
+        file_size,
+        path: None,
+        page_count: None,
+        hash: Some(hash),
     })
 }
 
@@ -300,6 +350,40 @@ fn compare_pdf_metadata(
         errors.push(format!(
             "File size mismatch beyond 10% tolerance: expected {}, got {} (diff: {})",
             reference.file_size, actual.file_size, size_diff
+        ));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
+fn compare_css_metadata(
+    reference: &BinaryFileMetadata,
+    actual: &BinaryFileMetadata,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+
+    if reference.filetype != actual.filetype {
+        errors.push(format!(
+            "Filetype mismatch: expected {}, got {}",
+            reference.filetype, actual.filetype
+        ));
+    }
+
+    if reference.hash != actual.hash {
+        errors.push(format!(
+            "Hash mismatch: expected {:?}, got {:?}",
+            reference.hash, actual.hash
+        ));
+    }
+
+    if reference.file_size != actual.file_size {
+        errors.push(format!(
+            "File size mismatch: expected {}, got {}",
+            reference.file_size, actual.file_size
         ));
     }
 

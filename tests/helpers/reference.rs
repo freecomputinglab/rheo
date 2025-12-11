@@ -139,7 +139,7 @@ fn is_binary_file(path: &Path) -> bool {
         let ext_str = ext.to_string_lossy().to_lowercase();
         matches!(
             ext_str.as_str(),
-            "png" | "jpg" | "jpeg" | "gif" | "webp" | "mp4" | "webm" | "pdf"
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "mp4" | "webm" | "pdf" | "css"
         )
     } else {
         false
@@ -162,9 +162,22 @@ fn create_binary_metadata(
         .unwrap_or("unknown")
         .to_lowercase();
 
+    // Compute hash for CSS files
+    let hash = if filetype == "css" {
+        use sha2::{Digest, Sha256};
+        let contents = fs::read(file_path)
+            .map_err(|e| format!("Failed to read file contents: {}", e))?;
+        let digest = Sha256::digest(&contents);
+        Some(format!("{:x}", digest))
+    } else {
+        None
+    };
+
     // Detect source file location to create repo-relative path
-    // Try content/ subdirectory first, then project root
-    let repo_relative_path = if project_path.join("content").join(rel_path).exists() {
+    // For CSS files, use the common source location since they're copied from src/css/
+    let repo_relative_path = if filetype == "css" {
+        PathBuf::from("src/css").join(rel_path)
+    } else if project_path.join("content").join(rel_path).exists() {
         project_path.join("content").join(rel_path)
     } else if project_path.join(rel_path).exists() {
         project_path.join(rel_path)
@@ -178,5 +191,6 @@ fn create_binary_metadata(
         file_size,
         path: Some(repo_relative_path.to_string_lossy().to_string()),
         page_count: None,
+        hash,
     })
 }
