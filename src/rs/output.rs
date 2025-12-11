@@ -1,6 +1,7 @@
 use crate::{Result, RheoError};
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::info;
 
 /// Output directory configuration for a project
 #[derive(Debug)]
@@ -60,6 +61,47 @@ impl OutputConfig {
             fs::remove_dir_all(project_build_dir).map_err(|e| {
                 RheoError::io(e, format!("removing directory {:?}", project_build_dir))
             })?;
+        }
+
+        Ok(())
+    }
+
+    /// Copy style.css to HTML output directory
+    ///
+    /// Priority:
+    /// 1. If project has style.css in its root, use that (project-specific override)
+    /// 2. Otherwise, use bundled default style.css
+    ///
+    /// # Arguments
+    /// * `project_style_css` - Optional path to project-specific style.css
+    ///
+    /// # Returns
+    /// * `Ok(())` if style.css was successfully copied
+    /// * `Err` if copying failed
+    pub fn copy_html_assets(&self, project_style_css: Option<&Path>) -> Result<()> {
+        // Default bundled CSS (embedded at compile time)
+        const DEFAULT_CSS: &str = include_str!("../css/style.css");
+
+        let dest_path = self.html_dir.join("style.css");
+
+        if let Some(project_css) = project_style_css {
+            // Copy project-specific style.css
+            fs::copy(project_css, &dest_path).map_err(|e| {
+                RheoError::io(
+                    e,
+                    format!(
+                        "copying project style.css from {:?} to {:?}",
+                        project_css, dest_path
+                    ),
+                )
+            })?;
+            info!(source = %project_css.display(), dest = %dest_path.display(), "copied project-specific style.css");
+        } else {
+            // Write bundled default CSS
+            fs::write(&dest_path, DEFAULT_CSS).map_err(|e| {
+                RheoError::io(e, format!("writing default style.css to {:?}", dest_path))
+            })?;
+            info!(dest = %dest_path.display(), "copied default style.css");
         }
 
         Ok(())

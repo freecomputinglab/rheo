@@ -1,7 +1,7 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::{EpubOptions, HtmlOptions};
 use crate::formats::{epub, html, pdf};
-use crate::{OutputFormat, Result};
+use crate::{OutputFormat, Result, open_all_files_in_folder};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
@@ -242,6 +242,11 @@ fn perform_compilation(
     // Determine which formats should be compiled per-file
     let per_file_formats = get_per_file_formats(&project.config, formats);
 
+    // Copy HTML assets (style.css) if HTML compilation is requested
+    if per_file_formats.contains(&OutputFormat::Html) {
+        output_config.copy_html_assets(project.style_css.as_deref())?;
+    }
+
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
 
@@ -433,6 +438,11 @@ fn perform_compilation_incremental(
 
     // Determine which formats should be compiled per-file
     let per_file_formats = get_per_file_formats(&project.config, formats);
+
+    // Copy HTML assets (style.css) if HTML compilation is requested
+    if per_file_formats.contains(&OutputFormat::Html) {
+        output_config.copy_html_assets(project.style_css.as_deref())?;
+    }
 
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
@@ -640,11 +650,6 @@ impl Cli {
                 epub,
                 open,
             } => {
-                // Warn if EPUB requested
-                if epub {
-                    warn!("EPUB format is not yet supported and will be ignored");
-                }
-
                 // Detect project configuration first to get config defaults
                 info!(path = %path.display(), "detecting project configuration");
                 let project = crate::project::ProjectConfig::from_path(&path, config.as_deref())?;
@@ -653,20 +658,6 @@ impl Cli {
                 // Determine which formats to compile using CLI flags or config defaults
                 let flags = FormatFlags { pdf, html, epub };
                 let formats = determine_formats(flags, &project.config.formats)?;
-
-                // Log TODOs for --open with formats that aren't ready yet
-                if open {
-                    if formats.contains(&OutputFormat::Pdf) {
-                        info!(
-                            "TODO: PDF opening not yet implemented (need to decide on multi-file handling)"
-                        );
-                    }
-                    if formats.contains(&OutputFormat::Epub) {
-                        info!(
-                            "TODO: EPUB opening not yet implemented (need bene viewer integration)"
-                        );
-                    }
-                }
 
                 // Resolve build_dir with priority: CLI > config > default
                 let resolved_build_dir = if let Some(cli_path) = build_dir {
@@ -712,6 +703,18 @@ impl Cli {
                 } else {
                     None
                 };
+
+                // Open PDF(s) if --open and PDF is in formats
+                if open && formats.contains(&OutputFormat::Pdf) {
+                    let pdf_dir = output_config.pdf_dir.clone();
+                    open_all_files_in_folder(pdf_dir, OutputFormat::Pdf)?;
+                }
+
+                // Open EPUB if --open and EPUB is in formats
+                if open && formats.contains(&OutputFormat::Epub) {
+                    let epub_dir = output_config.epub_dir.clone();
+                    open_all_files_in_folder(epub_dir, OutputFormat::Epub)?;
+                }
 
                 // Set up file watcher with interior mutability for project and world updates
                 use std::cell::RefCell;
