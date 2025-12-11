@@ -33,10 +33,31 @@ impl Default for PdfOptions {
 
 /// HTML compilation options.
 ///
-/// Currently empty, but provides extensibility for future HTML-specific settings
-/// (e.g., CSS themes, script injection, minification).
-#[derive(Debug, Clone, Default)]
-pub struct HtmlOptions {}
+/// Controls HTML-specific behavior like stylesheet and font injection.
+#[derive(Debug, Clone)]
+pub struct HtmlOptions {
+    /// Stylesheet paths to inject (relative to build dir)
+    pub stylesheets: Vec<String>,
+    /// Font URLs to inject
+    pub fonts: Vec<String>,
+}
+
+impl Default for HtmlOptions {
+    fn default() -> Self {
+        Self {
+            stylesheets: default_stylesheets(),
+            fonts: default_fonts(),
+        }
+    }
+}
+
+fn default_stylesheets() -> Vec<String> {
+    vec!["style.css".to_string()]
+}
+
+fn default_fonts() -> Vec<String> {
+    vec!["https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap".to_string()]
+}
 
 /// EPUB compilation options.
 ///
@@ -117,8 +138,25 @@ pub struct Merge {
 }
 
 /// HTML output configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct HtmlConfig {}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HtmlConfig {
+    /// Stylesheet paths to inject (relative to build dir)
+    #[serde(default = "default_stylesheets")]
+    pub stylesheets: Vec<String>,
+
+    /// Font URLs to inject
+    #[serde(default = "default_fonts")]
+    pub fonts: Vec<String>,
+}
+
+impl Default for HtmlConfig {
+    fn default() -> Self {
+        Self {
+            stylesheets: default_stylesheets(),
+            fonts: default_fonts(),
+        }
+    }
+}
 
 /// PDF output configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -338,5 +376,55 @@ mod tests {
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("invalid config file"));
+    }
+
+    #[test]
+    fn test_html_config_defaults() {
+        let config = HtmlConfig::default();
+        assert_eq!(config.stylesheets, vec!["style.css"]);
+        assert_eq!(config.fonts.len(), 1);
+        assert!(config.fonts[0].contains("fonts.googleapis.com"));
+    }
+
+    #[test]
+    fn test_html_config_custom_stylesheets() {
+        let toml = r#"
+        [html]
+        stylesheets = ["custom.css", "theme.css"]
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.html.stylesheets, vec!["custom.css", "theme.css"]);
+        // Fonts should use default
+        assert_eq!(config.html.fonts.len(), 1);
+    }
+
+    #[test]
+    fn test_html_config_custom_fonts() {
+        let toml = r#"
+        [html]
+        fonts = ["https://example.com/font.css"]
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.html.fonts, vec!["https://example.com/font.css"]);
+        // Stylesheets should use default
+        assert_eq!(config.html.stylesheets, vec!["style.css"]);
+    }
+
+    #[test]
+    fn test_html_config_both_custom() {
+        let toml = r#"
+        [html]
+        stylesheets = ["a.css", "b.css"]
+        fonts = ["https://fonts.com/font1.css", "https://fonts.com/font2.css"]
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.html.stylesheets, vec!["a.css", "b.css"]);
+        assert_eq!(
+            config.html.fonts,
+            vec!["https://fonts.com/font1.css", "https://fonts.com/font2.css"]
+        );
     }
 }
