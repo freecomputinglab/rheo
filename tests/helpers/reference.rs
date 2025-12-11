@@ -165,8 +165,8 @@ fn create_binary_metadata(
     // Compute hash for CSS files
     let hash = if filetype == "css" {
         use sha2::{Digest, Sha256};
-        let contents = fs::read(file_path)
-            .map_err(|e| format!("Failed to read file contents: {}", e))?;
+        let contents =
+            fs::read(file_path).map_err(|e| format!("Failed to read file contents: {}", e))?;
         let digest = Sha256::digest(&contents);
         Some(format!("{:x}", digest))
     } else {

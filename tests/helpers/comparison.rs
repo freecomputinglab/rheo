@@ -308,8 +308,7 @@ pub fn extract_css_metadata(css_path: &Path) -> Result<BinaryFileMetadata, Strin
         .map_err(|e| format!("Failed to read CSS metadata: {}", e))?
         .len();
 
-    let contents = fs::read(css_path)
-        .map_err(|e| format!("Failed to read CSS contents: {}", e))?;
+    let contents = fs::read(css_path).map_err(|e| format!("Failed to read CSS contents: {}", e))?;
 
     let hash_bytes = Sha256::digest(&contents);
     let hash = format!("{:x}", hash_bytes);
