@@ -1,10 +1,11 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::HtmlOptions;
+use crate::formats::common::{handle_export_errors, unwrap_compilation_result, ExportErrorType};
 use crate::formats::postprocess;
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use std::path::Path;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument};
 use typst_html::HtmlDocument;
 
 pub fn compile_html_to_document(
@@ -20,43 +21,18 @@ pub fn compile_html_to_document(
     info!(input = %input.display(), "compiling to HTML");
     let result = typst::compile::<HtmlDocument>(&world);
 
-    // Print warnings (filter out known Typst HTML development warning)
-    for warning in &result.warnings {
-        // Skip the "html export is under active development" warning from Typst
-        if warning
-            .message
+    // Filter out HTML development warning
+    let html_filter = |w: &typst::diag::SourceDiagnostic| {
+        !w.message
             .contains("html export is under active development and incomplete")
-        {
-            continue;
-        }
-        warn!(message = %warning.message, "compilation warning");
-    }
+    };
 
-    // Get the document or return errors
-    result.output.map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "compilation error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::Compilation {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })
+    unwrap_compilation_result(result, Some(html_filter))
 }
 
 pub fn compile_document_to_string(document: &HtmlDocument) -> Result<String> {
     // Export to HTML string (no post-processing - that happens in the compilation pipeline)
-    typst_html::html(document).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "HTML export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::HtmlGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })
+    typst_html::html(document).map_err(|e| handle_export_errors(e, ExportErrorType::Html))
 }
 
 // ============================================================================
@@ -131,46 +107,18 @@ fn compile_html_impl(
     info!("compiling to HTML");
     let result = typst::compile::<HtmlDocument>(world);
 
-    // Print warnings (filter out known Typst HTML development warning)
-    for warning in &result.warnings {
-        // Skip the "html export is under active development" warning from Typst
-        if warning
-            .message
+    // Filter out HTML development warning
+    let html_filter = |w: &typst::diag::SourceDiagnostic| {
+        !w.message
             .contains("html export is under active development and incomplete")
-        {
-            continue;
-        }
-        warn!(message = %warning.message, "compilation warning");
-    }
-
-    // Get the document or return errors
-    let document = match result.output {
-        Ok(doc) => doc,
-        Err(errors) => {
-            for err in &errors {
-                error!(message = %err.message, "compilation error");
-            }
-            let error_messages: Vec<String> =
-                errors.iter().map(|e| e.message.to_string()).collect();
-            return Err(RheoError::Compilation {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            });
-        }
     };
+
+    let document = unwrap_compilation_result(result, Some(html_filter))?;
 
     // 2. Export to HTML string
     debug!(output = %output.display(), "exporting to HTML");
-    let html_string = typst_html::html(&document).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "HTML export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::HtmlGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })?;
+    let html_string =
+        typst_html::html(&document).map_err(|e| handle_export_errors(e, ExportErrorType::Html))?;
 
     // 3. Transform .typ links to .html links
     let html_string = postprocess::transform_links(&html_string, input, root, ".html")?;
