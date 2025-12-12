@@ -3,7 +3,7 @@
 //! This module provides shared functionality for transforming Typst file references
 //! into appropriate output format links (e.g., .typ → .html or .typ → .xhtml).
 
-use crate::{RheoError, Result};
+use crate::{Result, RheoError};
 use regex::Regex;
 use std::path::Path;
 use tracing::debug;

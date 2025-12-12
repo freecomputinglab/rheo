@@ -88,7 +88,11 @@ fn compile_html_impl_fresh(
     let html_string = postprocess::transform_links(&html_string, input, root, ".html")?;
 
     // 4. Inject CSS and font links into <head>
-    let stylesheets: Vec<&str> = html_options.stylesheets.iter().map(|s| s.as_str()).collect();
+    let stylesheets: Vec<&str> = html_options
+        .stylesheets
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
     let fonts: Vec<&str> = html_options.fonts.iter().map(|s| s.as_str()).collect();
     let html_string = postprocess::inject_head_links(&html_string, &stylesheets, &fonts)?;
 
@@ -172,7 +176,11 @@ fn compile_html_impl(
     let html_string = postprocess::transform_links(&html_string, input, root, ".html")?;
 
     // 4. Inject CSS and font links into <head>
-    let stylesheets: Vec<&str> = html_options.stylesheets.iter().map(|s| s.as_str()).collect();
+    let stylesheets: Vec<&str> = html_options
+        .stylesheets
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
     let fonts: Vec<&str> = html_options.fonts.iter().map(|s| s.as_str()).collect();
     let html_string = postprocess::inject_head_links(&html_string, &stylesheets, &fonts)?;
 
@@ -225,5 +233,3 @@ pub fn compile_html_new(options: RheoCompileOptions, html_options: HtmlOptions) 
 // ============================================================================
 // Helper functions
 // ============================================================================
-
-

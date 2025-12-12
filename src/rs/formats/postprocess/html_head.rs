@@ -25,11 +25,7 @@ use super::dom;
 /// - HTML parsing fails
 /// - <head> element is not found
 /// - HTML serialization fails
-pub fn inject_head_links(
-    html: &str,
-    stylesheets: &[&str],
-    fonts: &[&str],
-) -> Result<String> {
+pub fn inject_head_links(html: &str, stylesheets: &[&str], fonts: &[&str]) -> Result<String> {
     // Parse the HTML document
     let dom = dom::parse_html(html)?;
 
@@ -76,7 +72,9 @@ mod tests {
 
         // Verify stylesheet comes after <head> opening tag
         let head_pos = result.find("<head>").unwrap();
-        let link_pos = result.find(r#"<link rel="stylesheet" href="style.css">"#).unwrap();
+        let link_pos = result
+            .find(r#"<link rel="stylesheet" href="style.css">"#)
+            .unwrap();
         assert!(link_pos > head_pos);
     }
 
@@ -101,7 +99,9 @@ mod tests {
         let result = inject_head_links(html, &["style.css"], fonts).unwrap();
 
         assert!(result.contains(r#"<link rel="stylesheet" href="style.css">"#));
-        assert!(result.contains(r#"<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">"#));
+        assert!(result.contains(
+            r#"<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">"#
+        ));
 
         // Verify order: fonts should come before stylesheets
         let font_pos = result.find(r#"fonts.googleapis.com"#).unwrap();

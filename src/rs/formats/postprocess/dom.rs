@@ -4,7 +4,7 @@
 //! serializing HTML/XHTML using the html5ever parser.
 
 use crate::{Result, RheoError};
-use html5ever::{tendril::TendrilSink, ParseOpts};
+use html5ever::{ParseOpts, tendril::TendrilSink};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use std::fmt::Write as _;
 
@@ -75,7 +75,7 @@ pub fn find_element_by_tag(handle: &Handle, tag_name: &str) -> Option<Handle> {
 /// Handle to the newly created link element
 pub fn create_link_element(rel: &str, href: &str) -> Handle {
     use html5ever::tendril::StrTendril;
-    use html5ever::{ns, Attribute, LocalName, QualName};
+    use html5ever::{Attribute, LocalName, QualName, ns};
     use markup5ever_rcdom::Node;
     use std::cell::RefCell;
 
@@ -90,14 +90,12 @@ pub fn create_link_element(rel: &str, href: &str) -> Handle {
         },
     ];
 
-    let node = Node::new(NodeData::Element {
+    Node::new(NodeData::Element {
         name: QualName::new(None, ns!(html), LocalName::from("link")),
         attrs: RefCell::new(attrs),
         template_contents: RefCell::new(None),
         mathml_annotation_xml_integration_point: false,
-    });
-
-    node
+    })
 }
 
 /// Prepend a child node to a parent node.
@@ -146,16 +144,17 @@ fn serialize_node(handle: &Handle, output: &mut String) -> Result<()> {
             })?;
 
             for attr in attrs.borrow().iter() {
-                write!(output, " {}=\"{}\"", attr.name.local, attr.value)
-                    .map_err(|e| RheoError::HtmlGeneration {
+                write!(output, " {}=\"{}\"", attr.name.local, attr.value).map_err(|e| {
+                    RheoError::HtmlGeneration {
                         count: 1,
                         errors: format!("failed to serialize attribute: {}", e),
-                    })?;
+                    }
+                })?;
             }
 
             // Check for self-closing tags
             if is_void_element(&name.local) {
-                output.push_str(">");
+                output.push('>');
             } else {
                 output.push('>');
                 for child in handle.children.borrow().iter() {
@@ -208,7 +207,7 @@ mod tests {
     fn test_parse_html() {
         let html = "<html><head><title>Test</title></head><body></body></html>";
         let dom = parse_html(html).unwrap();
-        assert!(dom.document.children.borrow().len() > 0);
+        assert!(!dom.document.children.borrow().is_empty());
     }
 
     #[test]
