@@ -1,6 +1,8 @@
 use similar::{ChangeTag, TextDiff};
+use std::collections::hash_map::DefaultHasher;
 use std::env;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -48,7 +50,43 @@ pub fn verify_pdf_output(test_name: &str, actual_dir: &Path) {
     });
 }
 
+/// Compute a short hash of a file path for reference directory naming
+fn compute_file_hash(path: &Path) -> String {
+    let mut hasher = DefaultHasher::new();
+    path.to_string_lossy().hash(&mut hasher);
+    format!("{:08x}", hasher.finish())
+}
+
 fn get_reference_dir(actual_dir: &Path, test_name: &str, output_type: &str) -> PathBuf {
+    // Check if this is a single-file test (test name contains file path components)
+    if test_name.contains("_slash")
+        && (test_name.contains("_full_stop") || test_name.ends_with("typ"))
+    {
+        // This is likely a single-file test
+        // Extract the original file path from the sanitized test name
+        let file_path_guess = test_name
+            .replace("_slash", "/")
+            .replace("_full_stop", ".")
+            .replace("_colon", ":")
+            .replace("_minus", "-");
+
+        // Try to find the file path portion after "file:"
+        if let Some(file_part) = file_path_guess.strip_prefix("file:") {
+            let file_path = Path::new(file_part);
+            let hash = compute_file_hash(file_path);
+            let filename = file_path
+                .file_stem()
+                .unwrap_or_else(|| file_path.as_os_str())
+                .to_string_lossy();
+
+            return PathBuf::from("tests/ref/files")
+                .join(&hash)
+                .join(filename.as_ref())
+                .join(output_type);
+        }
+    }
+
+    // Default: project-based references
     let ref_base = if actual_dir.starts_with("examples/") {
         PathBuf::from("tests/ref/examples")
     } else if actual_dir.starts_with("tests/cases/") {
