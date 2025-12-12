@@ -315,3 +315,121 @@ Content from dir2.
         stdout
     );
 }
+
+/// Test HTML post-processing: CSS link injection
+#[test]
+fn test_html_css_link_injection() {
+    let test_case = TestCase::new("examples/blog_site");
+    let project_path = test_case.project_path();
+
+    // Clean and compile
+    let clean_output = std::process::Command::new("cargo")
+        .args(["run", "--", "clean", project_path.to_str().unwrap()])
+        .output()
+        .expect("Failed to run rheo clean");
+
+    if !clean_output.status.success() {
+        eprintln!(
+            "Warning: Clean failed: {}",
+            String::from_utf8_lossy(&clean_output.stderr)
+        );
+    }
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+        ])
+        .output()
+        .expect("Failed to run rheo compile");
+
+    if !output.status.success() {
+        panic!(
+            "Compilation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // Read compiled HTML
+    let html_path = project_path.join("build/html/index.html");
+    let html = std::fs::read_to_string(&html_path).expect("Failed to read HTML file");
+
+    // Test 1: CSS stylesheet link is present in head
+    assert!(
+        html.contains(r#"<link rel="stylesheet" href="style.css">"#),
+        "Should have stylesheet link in HTML"
+    );
+
+    // Test 2: Font link is present in head
+    assert!(
+        html.contains("fonts.googleapis.com"),
+        "Should have font link in HTML"
+    );
+
+    // Test 3: Links are in the <head> section
+    let head_start = html.find("<head>").expect("HTML should have <head> tag");
+    let head_end = html.find("</head>").expect("HTML should have </head> tag");
+    let head = &html[head_start..head_end];
+
+    assert!(
+        head.contains("style.css"),
+        "CSS link should be in head section"
+    );
+    assert!(
+        head.contains("fonts.googleapis.com"),
+        "Font link should be in head section"
+    );
+
+    // Test 4: NO JavaScript DOM manipulation hack
+    assert!(
+        !html.contains("document.createElement"),
+        "Should not have JavaScript DOM manipulation"
+    );
+    assert!(
+        !html.contains("var cssLink"),
+        "Should not have old JavaScript hack"
+    );
+    assert!(
+        !html.contains("console.log(\"CSS and font inserted.\")"),
+        "Should not have JavaScript console.log from old hack"
+    );
+
+    // Test 5: Existing head content is preserved
+    assert!(
+        html.contains(r#"<meta charset="utf-8">"#),
+        "Should preserve meta charset"
+    );
+    assert!(
+        html.contains(r#"<meta name="viewport""#),
+        "Should preserve viewport meta tag"
+    );
+
+    // Test 6: Verify correct order - fonts before stylesheets
+    let font_pos = html
+        .find("fonts.googleapis.com")
+        .expect("Should find font link");
+    let style_pos = html
+        .find(r#"href="style.css""#)
+        .expect("Should find stylesheet link");
+
+    assert!(
+        font_pos < style_pos,
+        "Font link should come before stylesheet link"
+    );
+
+    // Clean up
+    let clean_output = std::process::Command::new("cargo")
+        .args(["run", "--", "clean", project_path.to_str().unwrap()])
+        .output()
+        .expect("Failed to run rheo clean");
+
+    if !clean_output.status.success() {
+        eprintln!(
+            "Warning: Clean failed: {}",
+            String::from_utf8_lossy(&clean_output.stderr)
+        );
+    }
+}

@@ -5,6 +5,7 @@ pub mod error;
 pub mod formats;
 pub mod logging;
 pub mod output;
+pub mod postprocess;
 pub mod project;
 pub mod server;
 pub mod spine;

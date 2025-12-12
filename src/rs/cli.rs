@@ -272,7 +272,12 @@ fn perform_compilation(
                 .with_extension("html");
             let options =
                 RheoCompileOptions::new(typ_file, &output_path, &compilation_root, &repo_root);
-            match html::compile_html_new(options, HtmlOptions::default()) {
+            // Get HTML options from config
+            let html_options = HtmlOptions {
+                stylesheets: project.config.html.stylesheets.clone(),
+                fonts: project.config.html.fonts.clone(),
+            };
+            match html::compile_html_new(options, html_options) {
                 Ok(_) => html_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
@@ -483,7 +488,12 @@ fn perform_compilation_incremental(
                 PathBuf::new(),
                 world,
             );
-            match html::compile_html_new(options, HtmlOptions::default()) {
+            // Get HTML options from config
+            let html_options = HtmlOptions {
+                stylesheets: project.config.html.stylesheets.clone(),
+                fonts: project.config.html.fonts.clone(),
+            };
+            match html::compile_html_new(options, html_options) {
                 Ok(_) => html_succeeded += 1,
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
