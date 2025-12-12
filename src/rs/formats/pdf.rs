@@ -1,5 +1,6 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::PdfConfig;
+use crate::formats::common::{handle_export_errors, unwrap_compilation_result, ExportErrorType};
 use crate::spine::generate_spine;
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
@@ -9,7 +10,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument};
 use typst::layout::PagedDocument;
 use typst_pdf::PdfOptions;
 
@@ -36,40 +37,12 @@ fn compile_pdf_single_impl_fresh(
     // Compile the document
     info!(input = %input.display(), "compiling to PDF");
     let result = typst::compile::<PagedDocument>(&world);
-
-    // Print warnings
-    for warning in &result.warnings {
-        warn!(message = %warning.message, "compilation warning");
-    }
-
-    // Get the document or return errors
-    let document = match result.output {
-        Ok(doc) => doc,
-        Err(errors) => {
-            for err in &errors {
-                error!(message = %err.message, "compilation error");
-            }
-            let error_messages: Vec<String> =
-                errors.iter().map(|e| e.message.to_string()).collect();
-            return Err(RheoError::Compilation {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            });
-        }
-    };
+    let document = unwrap_compilation_result(result, None::<fn(&_) -> bool>)?;
 
     // Export to PDF
     debug!(output = %output.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default()).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "PDF export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::PdfGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })?;
+    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default())
+        .map_err(|e| handle_export_errors(e, ExportErrorType::Pdf))?;
 
     // Write to file
     debug!(size = pdf_bytes.len(), "writing PDF file");
@@ -85,40 +58,12 @@ fn compile_pdf_single_impl(world: &RheoWorld, output: &Path) -> Result<()> {
     // Compile the document
     info!("compiling to PDF");
     let result = typst::compile::<PagedDocument>(world);
-
-    // Print warnings
-    for warning in &result.warnings {
-        warn!(message = %warning.message, "compilation warning");
-    }
-
-    // Get the document or return errors
-    let document = match result.output {
-        Ok(doc) => doc,
-        Err(errors) => {
-            for err in &errors {
-                error!(message = %err.message, "compilation error");
-            }
-            let error_messages: Vec<String> =
-                errors.iter().map(|e| e.message.to_string()).collect();
-            return Err(RheoError::Compilation {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            });
-        }
-    };
+    let document = unwrap_compilation_result(result, None::<fn(&_) -> bool>)?;
 
     // Export to PDF
     debug!(output = %output.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default()).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "PDF export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::PdfGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })?;
+    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default())
+        .map_err(|e| handle_export_errors(e, ExportErrorType::Pdf))?;
 
     // Write to file
     debug!(size = pdf_bytes.len(), "writing PDF file");
@@ -446,41 +391,13 @@ fn compile_pdf_merged_impl_fresh(
     // Compile to PagedDocument
     info!(output = %output_path.display(), "compiling merged PDF");
     let result = typst::compile::<PagedDocument>(&world);
-
-    // Print warnings
-    for warning in &result.warnings {
-        warn!(message = %warning.message, "compilation warning");
-    }
-
-    // Get the document or return errors
-    let document = match result.output {
-        Ok(doc) => doc,
-        Err(errors) => {
-            for err in &errors {
-                error!(message = %err.message, "compilation error");
-            }
-            let error_messages: Vec<String> =
-                errors.iter().map(|e| e.message.to_string()).collect();
-            return Err(RheoError::Compilation {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            });
-        }
-    };
+    let document = unwrap_compilation_result(result, None::<fn(&_) -> bool>)?;
 
     // Export PDF bytes
     // Note: PDF title is set via document metadata in Typst source, not PdfOptions
     debug!(output = %output_path.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default()).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "PDF export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::PdfGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })?;
+    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default())
+        .map_err(|e| handle_export_errors(e, ExportErrorType::Pdf))?;
 
     // Write to output file
     debug!(size = pdf_bytes.len(), "writing PDF file");
@@ -533,41 +450,13 @@ fn compile_pdf_merged_impl(
     // Compile to PagedDocument
     info!("compiling merged PDF");
     let result = typst::compile::<PagedDocument>(world);
-
-    // Print warnings
-    for warning in &result.warnings {
-        warn!(message = %warning.message, "compilation warning");
-    }
-
-    // Get the document or return errors
-    let document = match result.output {
-        Ok(doc) => doc,
-        Err(errors) => {
-            for err in &errors {
-                error!(message = %err.message, "compilation error");
-            }
-            let error_messages: Vec<String> =
-                errors.iter().map(|e| e.message.to_string()).collect();
-            return Err(RheoError::Compilation {
-                count: errors.len(),
-                errors: error_messages.join("\n"),
-            });
-        }
-    };
+    let document = unwrap_compilation_result(result, None::<fn(&_) -> bool>)?;
 
     // Export PDF bytes
     // Note: PDF title is set via document metadata in Typst source, not PdfOptions
     debug!(output = %output_path.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default()).map_err(|errors| {
-        for err in &errors {
-            error!(message = %err.message, "PDF export error");
-        }
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::PdfGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        }
-    })?;
+    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default())
+        .map_err(|e| handle_export_errors(e, ExportErrorType::Pdf))?;
 
     // Write to output file
     debug!(size = pdf_bytes.len(), "writing PDF file");
