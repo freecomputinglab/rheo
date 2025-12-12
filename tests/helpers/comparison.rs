@@ -1,4 +1,5 @@
 use similar::{ChangeTag, TextDiff};
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -12,7 +13,7 @@ pub fn verify_html_output(test_name: &str, actual_dir: &Path) {
     for_each_file_with_ext(&ref_dir, "html", |entry| {
         let rel_path = entry.path().strip_prefix(&ref_dir).unwrap();
         let actual_file = actual_dir.join(rel_path);
-        compare_html_content(entry.path(), &actual_file).expect("HTML content mismatch");
+        compare_html_content(entry.path(), &actual_file, test_name).expect("HTML content mismatch");
     });
 }
 
@@ -89,7 +90,7 @@ fn extract_build_relative_path(repo_relative_path: &str) -> PathBuf {
         .to_path_buf()
 }
 
-fn compare_html_content(reference: &Path, actual: &Path) -> Result<(), String> {
+fn compare_html_content(reference: &Path, actual: &Path, test_name: &str) -> Result<(), String> {
     let ref_content =
         fs::read_to_string(reference).map_err(|e| format!("Failed to read reference: {}", e))?;
     let actual_content =
@@ -99,36 +100,92 @@ fn compare_html_content(reference: &Path, actual: &Path) -> Result<(), String> {
         Ok(())
     } else {
         let diff = compute_html_diff(&ref_content, &actual_content);
-        Err(format!(
-            "HTML content mismatch for {}\n{}",
+
+        // Generate test-specific update command
+        let test_name_sanitized = test_name.replace('/', "_slash");
+        let update_cmd = format!(
+            "UPDATE_REFERENCES=1 cargo test run_test_case_{} -- --nocapture",
+            test_name_sanitized
+        );
+
+        // Check diff limit for additional suggestion
+        let diff_limit = env::var("RHEO_TEST_DIFF_LIMIT")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(2000);
+
+        let mut error_msg = format!(
+            "HTML content mismatch for {}\n\n{}\n\nTo update this reference, run:\n  {}",
             reference.display(),
-            diff
-        ))
+            diff,
+            update_cmd
+        );
+
+        // If diff was truncated, suggest increasing the limit
+        if diff.contains("showing first") {
+            error_msg.push_str(&format!(
+                "\n\nOr to see full diff:\n  RHEO_TEST_DIFF_LIMIT={} cargo test run_test_case_{} -- --nocapture",
+                diff_limit * 5,
+                test_name_sanitized
+            ));
+        }
+
+        Err(error_msg)
     }
 }
 
 fn compute_html_diff(reference: &str, actual: &str) -> String {
     let diff = TextDiff::from_lines(reference, actual);
-    let mut output = String::new();
 
+    // Collect statistics
+    let mut insertions = 0;
+    let mut deletions = 0;
+    let mut unchanged = 0;
+
+    let mut diff_output = String::new();
     for change in diff.iter_all_changes() {
         let sign = match change.tag() {
-            ChangeTag::Delete => "-",
-            ChangeTag::Insert => "+",
-            ChangeTag::Equal => " ",
+            ChangeTag::Delete => {
+                deletions += 1;
+                "-"
+            }
+            ChangeTag::Insert => {
+                insertions += 1;
+                "+"
+            }
+            ChangeTag::Equal => {
+                unchanged += 1;
+                " "
+            }
         };
-        output.push_str(&format!("{}{}", sign, change));
+        diff_output.push_str(&format!("{}{}", sign, change));
     }
 
-    if output.len() > 2000 {
-        format!(
-            "{}... (truncated, {} bytes total)",
-            &output[..2000],
-            output.len()
-        )
+    // Get diff limit from environment variable or use default
+    let diff_limit = env::var("RHEO_TEST_DIFF_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2000);
+
+    // Build output with statistics
+    let mut output = String::new();
+    output.push_str(&format!(
+        "Diff: {} insertions(+), {} deletions(-), {} lines unchanged\n\n",
+        insertions, deletions, unchanged
+    ));
+
+    if diff_output.len() > diff_limit {
+        output.push_str(&diff_output[..diff_limit]);
+        output.push_str(&format!(
+            "\n\n... (showing first {} chars of {} bytes total)",
+            diff_limit,
+            diff_output.len()
+        ));
     } else {
-        output
+        output.push_str(&diff_output);
     }
+
+    output
 }
 
 fn collect_files_by_predicate<F>(dir: &Path, predicate: F) -> Vec<PathBuf>
@@ -157,7 +214,12 @@ fn validate_html_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), S
 
     for ref_file in &ref_files {
         if !actual_dir.join(ref_file).exists() {
-            errors.push(format!("Missing file: {}", ref_file.display()));
+            errors.push(format!(
+                "Missing file: {}\n      Expected in: {}\n      Referenced from: {}",
+                ref_file.display(),
+                actual_dir.display(),
+                reference_dir.display()
+            ));
         }
     }
 
@@ -170,14 +232,23 @@ fn validate_html_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), S
 
     for actual_file in &actual_files {
         if !expected_files.contains(actual_file) {
-            errors.push(format!("Unexpected file: {}", actual_file.display()));
+            errors.push(format!(
+                "Unexpected file: {}\n      Found in: {}\n      Not defined in references: {}\n      This file may need to be added to reference or excluded in rheo.toml",
+                actual_file.display(),
+                actual_dir.join(actual_file).display(),
+                reference_dir.display()
+            ));
         }
     }
 
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(errors.join("\n"))
+        let mut error_msg = String::from("HTML asset validation failed:\n\n");
+        for (i, error) in errors.iter().enumerate() {
+            error_msg.push_str(&format!("{}. {}\n\n", i + 1, error));
+        }
+        Err(error_msg)
     }
 }
 
@@ -335,27 +406,46 @@ fn compare_pdf_metadata(
         ));
     }
 
+    // Enhanced page count error with more context
     if reference.page_count != actual.page_count {
+        let ref_count = reference.page_count.unwrap_or(0);
+        let actual_count = actual.page_count.unwrap_or(0);
+        let page_diff = (actual_count as i32 - ref_count as i32).abs();
+        let change_type = if actual_count > ref_count {
+            "added"
+        } else {
+            "removed"
+        };
+
         errors.push(format!(
-            "Page count mismatch: expected {:?}, got {:?}",
-            reference.page_count, actual.page_count
+            "Page count: expected {}, got {} ({} pages {})",
+            ref_count, actual_count, page_diff, change_type
         ));
     }
 
+    // Enhanced file size error with percentage
     let size_diff = (actual.file_size as i64 - reference.file_size as i64).unsigned_abs();
     let tolerance = reference.file_size / 10;
 
     if size_diff > tolerance {
+        let size_percent_diff =
+            ((size_diff as f64 / reference.file_size as f64) * 100.0).round() as u32;
+
         errors.push(format!(
-            "File size mismatch beyond 10% tolerance: expected {}, got {} (diff: {})",
-            reference.file_size, actual.file_size, size_diff
+            "File size: expected {} bytes, got {} bytes ({}% diff, beyond 10% tolerance)",
+            reference.file_size, actual.file_size, size_percent_diff
         ));
     }
 
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(errors.join("\n"))
+        let mut error_msg = String::from("PDF metadata mismatch:\n");
+        for error in &errors {
+            error_msg.push_str(&format!("  - {}\n", error));
+        }
+        error_msg.push_str("\nThis may indicate a change in content or formatting.");
+        Err(error_msg)
     }
 }
 
@@ -417,20 +507,39 @@ fn validate_pdf_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), St
 
     for ref_file in &ref_files {
         if !actual_dir.join(ref_file).exists() {
-            errors.push(format!("Missing file: {}", ref_file));
+            errors.push(format!(
+                "Missing PDF file: {}\n      Expected in: {}\n      Metadata reference: {}",
+                ref_file,
+                actual_dir.display(),
+                reference_dir
+                    .join(format!(
+                        "{}.metadata.json",
+                        ref_file.strip_suffix(".pdf").unwrap_or(ref_file)
+                    ))
+                    .display()
+            ));
         }
     }
 
     for actual_file in &actual_files {
         if !ref_files.contains(actual_file) {
-            errors.push(format!("Unexpected file: {}", actual_file));
+            errors.push(format!(
+                "Unexpected PDF file: {}\n      Found in: {}\n      Not defined in references: {}\n      Run UPDATE_REFERENCES=1 to add this file to references",
+                actual_file,
+                actual_dir.join(actual_file).display(),
+                reference_dir.display()
+            ));
         }
     }
 
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(errors.join("\n"))
+        let mut error_msg = String::from("PDF asset validation failed:\n\n");
+        for (i, error) in errors.iter().enumerate() {
+            error_msg.push_str(&format!("{}. {}\n\n", i + 1, error));
+        }
+        Err(error_msg)
     }
 }
 
