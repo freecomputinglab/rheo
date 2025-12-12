@@ -1,3 +1,7 @@
+// @rheo:test
+// @rheo:formats html
+// @rheo:description Blog post with HTML video elements and custom functions
+
 #let video(path, width: "auto", height: "auto", controls: "true", autoplay: "false", loop: "false") = {
   html.elem("video", attrs: (
     src: path,

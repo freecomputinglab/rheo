@@ -1,3 +1,7 @@
+// @rheo:test
+// @rheo:formats pdf
+// @rheo:description Job application cover letter with custom formatting
+
 #import "@preview/aspirationally:0.1.0": aspirationally
 
 #let role = [Tenure Track Assistant Professor in Typographic Theory]
