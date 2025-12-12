@@ -2955,6 +2955,7 @@ dependencies = [
  "chrono",
  "clap",
  "comemo",
+ "ecow",
  "glob",
  "globset",
  "html5ever",
