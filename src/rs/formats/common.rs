@@ -10,7 +10,7 @@ use typst::diag::{SourceDiagnostic, SourceResult, Warned};
 /// * `filter_fn` - Optional filter predicate (returns true to KEEP warning)
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// // Filter out HTML development warning
 /// handle_typst_warnings(&result.warnings, Some(|w| {
 ///     !w.message.contains("html export is under active development")
@@ -21,10 +21,10 @@ where
     F: Fn(&SourceDiagnostic) -> bool,
 {
     for warning in warnings {
-        if let Some(ref filter) = filter_fn {
-            if !filter(warning) {
-                continue;
-            }
+        if let Some(ref filter) = filter_fn
+            && !filter(warning)
+        {
+            continue;
         }
         warn!(message = %warning.message, "compilation warning");
     }
@@ -54,7 +54,7 @@ pub fn handle_typst_errors(errors: EcoVec<SourceDiagnostic>) -> RheoError {
 /// The compiled output or RheoError::Compilation
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// let result = typst::compile::<PagedDocument>(&world);
 /// let document = unwrap_compilation_result(result, None)?;
 /// ```
@@ -92,7 +92,7 @@ impl ExportErrorType {
 /// * `error_type` - Which RheoError variant to use
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default())
 ///     .map_err(|e| handle_export_errors(e, ExportErrorType::Pdf))?;
 /// ```
@@ -218,7 +218,8 @@ mod tests {
 
         // Filter out HTML development warning
         let filter = |w: &SourceDiagnostic| {
-            !w.message.contains("html export is under active development")
+            !w.message
+                .contains("html export is under active development")
         };
 
         let output = unwrap_compilation_result(result, Some(filter));
@@ -293,10 +294,7 @@ mod tests {
 
     #[test]
     fn test_handle_export_errors_html_multiple() {
-        let errors = eco_vec![
-            create_error("HTML error 1"),
-            create_error("HTML error 2"),
-        ];
+        let errors = eco_vec![create_error("HTML error 1"), create_error("HTML error 2"),];
         let result = handle_export_errors(errors, ExportErrorType::Html);
 
         match result {
@@ -328,10 +326,7 @@ mod tests {
     fn test_unwrap_compilation_result_filter_keeps_all() {
         let result = Warned {
             output: Ok(100),
-            warnings: eco_vec![
-                create_warning("keep this"),
-                create_warning("keep that"),
-            ],
+            warnings: eco_vec![create_warning("keep this"), create_warning("keep that"),],
         };
 
         // Filter that keeps everything
@@ -346,10 +341,7 @@ mod tests {
     fn test_unwrap_compilation_result_filter_removes_all() {
         let result = Warned {
             output: Ok(200),
-            warnings: eco_vec![
-                create_warning("remove this"),
-                create_warning("remove that"),
-            ],
+            warnings: eco_vec![create_warning("remove this"), create_warning("remove that"),],
         };
 
         // Filter that removes everything

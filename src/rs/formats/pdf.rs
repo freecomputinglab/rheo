@@ -1,6 +1,6 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::PdfConfig;
-use crate::formats::common::{handle_export_errors, unwrap_compilation_result, ExportErrorType};
+use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::spine::generate_spine;
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
