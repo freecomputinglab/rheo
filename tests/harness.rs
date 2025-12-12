@@ -28,8 +28,17 @@ fn run_test_case(name: &str) {
     let project = ProjectConfig::from_path(project_path, None).expect("Failed to load project");
     let config = RheoConfig::load(&project.root);
 
-    let run_html = config.as_ref().is_ok_and(|cfg| cfg.has_html());
-    let run_pdf = config.as_ref().is_ok_and(|cfg| cfg.has_pdf());
+    // Check environment variables for format filtering
+    let env_html = env::var("RUN_HTML_TESTS").is_ok();
+    let env_pdf = env::var("RUN_PDF_TESTS").is_ok();
+    let env_epub = env::var("RUN_EPUB_TESTS").is_ok();
+
+    // If no env vars set, run formats specified by project config (default)
+    let run_all = !env_html && !env_pdf && !env_epub;
+
+    // Run format if: (env var set OR default mode) AND project supports format
+    let run_html = (run_all || env_html) && config.as_ref().is_ok_and(|cfg| cfg.has_html());
+    let run_pdf = (run_all || env_pdf) && config.as_ref().is_ok_and(|cfg| cfg.has_pdf());
 
     // Get build directory
     let build_dir = project_path.join("build");
