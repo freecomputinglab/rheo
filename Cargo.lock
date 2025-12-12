@@ -2989,6 +2989,7 @@ dependencies = [
  "typst-kit",
  "typst-library",
  "typst-pdf",
+ "typst-syntax",
  "uuid",
  "walkdir",
  "webbrowser",
