@@ -1,7 +1,7 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::HtmlOptions;
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
-use crate::formats::postprocess;
+use crate::postprocess;
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use std::path::Path;
