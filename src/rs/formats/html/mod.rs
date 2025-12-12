@@ -45,14 +45,9 @@ pub fn compile_html_to_document(
     })
 }
 
-pub fn compile_document_to_string(
-    document: &HtmlDocument,
-    input: &Path,
-    root: &Path,
-    xhtml: bool,
-) -> Result<String> {
-    // Export to HTML string
-    let html_string = typst_html::html(document).map_err(|errors| {
+pub fn compile_document_to_string(document: &HtmlDocument) -> Result<String> {
+    // Export to HTML string (no post-processing - that happens in the compilation pipeline)
+    typst_html::html(document).map_err(|errors| {
         for err in &errors {
             error!(message = %err.message, "HTML export error");
         }
@@ -61,11 +56,7 @@ pub fn compile_document_to_string(
             count: errors.len(),
             errors: error_messages.join("\n"),
         }
-    })?;
-
-    // Transform .typ links to target extension
-    let target_ext = if xhtml { ".xhtml" } else { ".html" };
-    postprocess::transform_links(&html_string, input, root, target_ext)
+    })
 }
 
 // ============================================================================
@@ -77,17 +68,31 @@ pub fn compile_document_to_string(
 /// Uses the typst library with:
 /// - Root set to content_dir or project root (for local file imports across directories)
 /// - Shared resources available via repo_root in src/typst/ (rheo.typ)
+///
+/// Pipeline: Compile → Export → Transform Links → Inject Head → Write
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 fn compile_html_impl_fresh(
     input: &Path,
     output: &Path,
     root: &Path,
     repo_root: &Path,
+    html_options: &HtmlOptions,
 ) -> Result<()> {
+    // 1. Compile to HtmlDocument
     let doc = compile_html_to_document(input, root, repo_root)?;
-    let html_string = compile_document_to_string(&doc, input, root, false)?;
 
-    // Write to file
+    // 2. Export to raw HTML string
+    let html_string = compile_document_to_string(&doc)?;
+
+    // 3. Transform .typ links to .html links
+    let html_string = postprocess::transform_links(&html_string, input, root, ".html")?;
+
+    // 4. Inject CSS and font links into <head>
+    let stylesheets: Vec<&str> = html_options.stylesheets.iter().map(|s| s.as_str()).collect();
+    let fonts: Vec<&str> = html_options.fonts.iter().map(|s| s.as_str()).collect();
+    let html_string = postprocess::inject_head_links(&html_string, &stylesheets, &fonts)?;
+
+    // 5. Write to file
     debug!(size = html_string.len(), "writing HTML file");
     std::fs::write(output, &html_string)
         .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
@@ -102,14 +107,23 @@ fn compile_html_impl_fresh(
 /// compilation through Typst's comemo caching system. The World should have
 /// its main file set via `set_main()` and `reset()` called before compilation.
 ///
+/// Pipeline: Compile → Export → Transform Links → Inject Head → Write
+///
 /// # Arguments
 /// * `world` - Existing RheoWorld instance with main file already set
 /// * `input` - Path to the source .typ file (for link transformation)
 /// * `output` - Path where the HTML should be written
 /// * `root` - Project root path (for link validation)
+/// * `html_options` - HTML-specific options (stylesheets, fonts)
 #[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
-fn compile_html_impl(world: &RheoWorld, input: &Path, output: &Path, root: &Path) -> Result<()> {
-    // Compile the document to HtmlDocument
+fn compile_html_impl(
+    world: &RheoWorld,
+    input: &Path,
+    output: &Path,
+    root: &Path,
+    html_options: &HtmlOptions,
+) -> Result<()> {
+    // 1. Compile the document to HtmlDocument
     info!("compiling to HTML");
     let result = typst::compile::<HtmlDocument>(world);
 
@@ -141,7 +155,7 @@ fn compile_html_impl(world: &RheoWorld, input: &Path, output: &Path, root: &Path
         }
     };
 
-    // Export to HTML string
+    // 2. Export to HTML string
     debug!(output = %output.display(), "exporting to HTML");
     let html_string = typst_html::html(&document).map_err(|errors| {
         for err in &errors {
@@ -154,10 +168,15 @@ fn compile_html_impl(world: &RheoWorld, input: &Path, output: &Path, root: &Path
         }
     })?;
 
-    // Transform .typ links to .html links
+    // 3. Transform .typ links to .html links
     let html_string = postprocess::transform_links(&html_string, input, root, ".html")?;
 
-    // Write to file
+    // 4. Inject CSS and font links into <head>
+    let stylesheets: Vec<&str> = html_options.stylesheets.iter().map(|s| s.as_str()).collect();
+    let fonts: Vec<&str> = html_options.fonts.iter().map(|s| s.as_str()).collect();
+    let html_string = postprocess::inject_head_links(&html_string, &stylesheets, &fonts)?;
+
+    // 5. Write to file
     debug!(size = html_string.len(), "writing HTML file");
     std::fs::write(output, &html_string)
         .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
@@ -178,20 +197,27 @@ fn compile_html_impl(world: &RheoWorld, input: &Path, output: &Path, root: &Path
 ///
 /// # Arguments
 /// * `options` - Compilation options (input, output, root, repo_root, world)
-/// * `_html_options` - HTML-specific options (currently unused but for future extensibility)
+/// * `html_options` - HTML-specific options (stylesheets, fonts for head injection)
 ///
 /// # Returns
 /// * `Result<()>` - Success or compilation error
-pub fn compile_html_new(options: RheoCompileOptions, _html_options: HtmlOptions) -> Result<()> {
+pub fn compile_html_new(options: RheoCompileOptions, html_options: HtmlOptions) -> Result<()> {
     match options.world {
         // Incremental compilation (reuse existing world)
-        Some(world) => compile_html_impl(world, &options.input, &options.output, &options.root),
+        Some(world) => compile_html_impl(
+            world,
+            &options.input,
+            &options.output,
+            &options.root,
+            &html_options,
+        ),
         // Fresh compilation (create new world)
         None => compile_html_impl_fresh(
             &options.input,
             &options.output,
             &options.root,
             &options.repo_root,
+            &html_options,
         ),
     }
 }

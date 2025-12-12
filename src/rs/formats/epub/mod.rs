@@ -347,8 +347,9 @@ impl EpubItem {
         let bare_file = path.strip_prefix(parent).unwrap();
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
         let (heading_ids, outline) = Self::outline(&document, &href);
-        let html_string =
-            crate::formats::html::compile_document_to_string(&document, &path, root, true)?;
+        // Export to HTML and transform links for XHTML
+        let html_string = crate::formats::html::compile_document_to_string(&document)?;
+        let html_string = crate::formats::postprocess::transform_links(&html_string, &path, root, ".xhtml")?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
         Ok(EpubItem {
