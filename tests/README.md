@@ -6,16 +6,24 @@ This directory contains the integration test suite for rheo compilation. The tes
 
 ```
 tests/
-├── integration_test.rs       # Main test file
+├── harness.rs                # Main test file with #[test_case] declarations
 ├── helpers/                  # Test helper modules
 │   ├── mod.rs               # Module declarations
-│   ├── fixtures.rs          # TestCase types and setup/cleanup
+│   ├── fixtures.rs          # TestCase types (Directory and SingleFile)
 │   ├── comparison.rs        # HTML/PDF comparison and validation
-│   └── reference.rs         # Reference generation
+│   ├── reference.rs         # Reference generation
+│   └── markers.rs           # Test marker parser for .typ files
 ├── ref/                     # Reference outputs (committed to git)
-│   └── blog_site/
-│       ├── html/           # Reference HTML outputs
-│       └── pdf/            # Reference PDF metadata (*.metadata.json)
+│   ├── examples/            # Project tests
+│   │   └── blog_site/
+│   │       ├── html/        # Reference HTML outputs
+│   │       └── pdf/         # Reference PDF metadata (*.metadata.json)
+│   ├── cases/               # Custom project tests
+│   └── files/               # Single-file tests (NEW)
+│       └── <hash>/          # Hash-based directory for each file
+│           └── <filename>/
+│               ├── html/
+│               └── pdf/
 └── store/                   # Temporary test outputs (gitignored)
 ```
 
@@ -54,19 +62,34 @@ After updating, commit the changed reference files to git.
 
 ## Test Filtering
 
-### Run only HTML tests
+### Run only HTML tests (across all projects that support HTML)
 ```bash
 RUN_HTML_TESTS=1 cargo test --test integration_test
 ```
 
-### Run only PDF tests
+### Run only PDF tests (across all projects that support PDF)
 ```bash
 RUN_PDF_TESTS=1 cargo test --test integration_test
 ```
 
-Note: By default, both HTML and PDF tests run unless you set these environment variables.
+### Run both formats explicitly
+```bash
+RUN_HTML_TESTS=1 RUN_PDF_TESTS=1 cargo test
+```
+
+### Increase diff output limit (default: 2000 chars)
+```bash
+RHEO_TEST_DIFF_LIMIT=10000 cargo test -- --nocapture
+```
+
+**Behavior**:
+- **Default** (no env vars): Run all formats specified by project's `rheo.toml`
+- **With env vars**: Filter to specified formats, respecting project capabilities
+- Environment variables override project defaults but still respect what the project supports
 
 ## How Tests Work
+
+Rheo supports two test modes: **Directory Tests** (full projects) and **Single-File Tests** (individual .typ files).
 
 ### Directory Mode Tests
 
@@ -75,6 +98,46 @@ Note: By default, both HTML and PDF tests run unless you set these environment v
 3. **Verification**: Compares output against reference files:
    - **HTML**: Byte-for-byte comparison of HTML content and asset validation
    - **PDF**: Metadata comparison (page count exact, file size within 10% tolerance)
+
+### Single-File Mode Tests (NEW)
+
+Single-file tests allow testing individual .typ files without creating a full project structure.
+
+**Adding test markers to .typ files**:
+```typst
+// @rheo:test
+// @rheo:formats html,pdf
+// @rheo:description Main blog index page with post listings
+
+= My Document
+Content here...
+```
+
+**Test marker syntax**:
+- `// @rheo:test` (required) - Marks file as test case
+- `// @rheo:formats <list>` (optional) - Comma-separated formats (html, pdf, epub). Default: html,pdf
+- `// @rheo:description <text>` (optional) - Human-readable test description
+
+**Declaring single-file tests** in `tests/harness.rs`:
+```rust
+#[test_case("file:examples/blog_site/content/index.typ")]
+#[test_case("file:examples/blog_site/content/severance-ep-1.typ")]
+fn run_test_case(name: &str) { ... }
+```
+
+**Reference storage**:
+- Projects: `tests/ref/examples/<project>/html/`
+- Single files: `tests/ref/files/<hash>/<filename>/html/`
+- Hash prevents conflicts between files with the same name
+
+**Running single-file tests**:
+```bash
+# Run specific single-file test
+cargo test run_test_case_file_colonexamples_slashblog_site_slashcontent_slashindex_full_stoptyp
+
+# Update references for single-file test
+UPDATE_REFERENCES=1 cargo test run_test_case_file_colonexamples_slashblog_site_slashcontent_slashindex_full_stoptyp
+```
 
 ### HTML Verification
 
@@ -120,12 +183,53 @@ Run `UPDATE_REFERENCES=1 cargo test` to generate missing references.
 
 ### HTML content mismatch
 
-The test will show a unified diff. Common causes:
+The test will show an improved unified diff with:
+- **Statistics**: Insertion/deletion counts
+- **Diff preview**: First N characters (configurable via `RHEO_TEST_DIFF_LIMIT`)
+- **Update command**: Test-specific command to update references
+- **Full diff option**: Command to see complete diff if truncated
+
+Example error:
+```
+HTML content mismatch for tests/ref/examples/blog_site/html/index.html
+
+Diff: 12 insertions(+), 8 deletions(-), 145 lines unchanged
+
+ <div class='content'>
+-  <h1>Old Title</h1>
++  <h1>New Title</h1>
++  <p>Additional paragraph</p>
+ </div>
+
+... (showing first 2000 chars of 5000 bytes total)
+
+To update this reference, run:
+  UPDATE_REFERENCES=1 cargo test run_test_case_examples_slashblog_site -- --nocapture
+
+Or to see full diff:
+  RHEO_TEST_DIFF_LIMIT=10000 cargo test run_test_case_examples_slashblog_site -- --nocapture
+```
+
+Common causes:
 - Typst version changed (update references)
 - Intentional output change (update references)
 - Unintentional regression (fix the code)
 
 ### PDF metadata mismatch
+
+Enhanced error messages now show:
+- **Page count changes**: Shows exact difference (e.g., "3 pages added")
+- **File size changes**: Shows percentage difference
+- **Context**: Suggests this may indicate content or formatting changes
+
+Example error:
+```
+PDF metadata mismatch:
+  - Page count: expected 16, got 15 (1 pages removed)
+  - File size: expected 24560 bytes, got 27200 bytes (11% diff, beyond 10% tolerance)
+
+This may indicate a change in content or formatting.
+```
 
 Common causes:
 - Typst version changed rendering (update references if expected)

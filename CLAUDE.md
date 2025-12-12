@@ -87,19 +87,33 @@ RUST_LOG=rheo=trace cargo run -- compile <project-path>
 cargo test
 
 # Run integration tests only
-cargo test --test integration_test
+cargo test --test harness
 
 # Update test references (after intentional output changes)
-UPDATE_REFERENCES=1 cargo test --test integration_test
+UPDATE_REFERENCES=1 cargo test --test harness
 
-# Run only HTML tests
-RUN_HTML_TESTS=1 cargo test --test integration_test
+# Run only HTML tests (across all projects that support it)
+RUN_HTML_TESTS=1 cargo test --test harness
 
-# Run only PDF tests
-RUN_PDF_TESTS=1 cargo test --test integration_test
+# Run only PDF tests (across all projects that support it)
+RUN_PDF_TESTS=1 cargo test --test harness
+
+# Increase diff output limit (default: 2000 chars)
+RHEO_TEST_DIFF_LIMIT=10000 cargo test --test harness -- --nocapture
+
+# Run tests sequentially (to avoid parallel conflicts)
+cargo test --test harness -- --test-threads=1
 ```
 
 See `tests/README.md` for detailed documentation on the integration test suite.
+
+**Test Suite Features:**
+- **Directory Tests**: Full project compilation with rheo.toml
+- **Single-File Tests**: Individual .typ files with test markers
+- **Test Markers**: Embedded comments in .typ files declaring test metadata
+- **Format Filtering**: Environment variables to run only HTML or PDF tests
+- **Improved Error Messages**: Detailed diffs with statistics and update commands
+- **Hash-Based References**: Prevents conflicts between single-file tests
 
 ### Configuration (rheo.toml)
 
