@@ -35,7 +35,7 @@ pub fn generate_spine(
     match merge_config {
         None => {
             // EPUB fallback: auto-discover .typ files
-            let typst_files: Vec<PathBuf> = WalkDir::new(root)
+            let mut typst_files: Vec<PathBuf> = WalkDir::new(root)
                 .into_iter()
                 .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
                 .filter(|entry| {
@@ -47,11 +47,41 @@ pub fn generate_spine(
                 })
                 .collect();
 
+            // Sort lexicographically for consistent ordering
+            typst_files.sort();
+
             match typst_files.len() {
                 0 => Err(RheoError::project_config("need at least one .typ file")),
                 1 => Ok(typst_files),
                 _ => Err(RheoError::project_config(
                     "multiple .typ files found, specify spine in merge config",
+                )),
+            }
+        }
+
+        Some(merge) if merge.spine.is_empty() => {
+            // Empty spine pattern: auto-discover single file only
+            // This is used for single-file mode with default EPUB merge config
+            let mut typst_files: Vec<PathBuf> = WalkDir::new(root)
+                .into_iter()
+                .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
+                .filter(|entry| {
+                    entry
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|ext| ext == "typ")
+                        .unwrap_or(false)
+                })
+                .collect();
+
+            // Sort lexicographically for consistent ordering
+            typst_files.sort();
+
+            match typst_files.len() {
+                0 => Err(RheoError::project_config("need at least one .typ file")),
+                1 => Ok(typst_files),
+                _ => Err(RheoError::project_config(
+                    "multiple .typ files found with empty spine pattern",
                 )),
             }
         }
@@ -224,5 +254,50 @@ mod tests {
                 .to_string()
                 .contains("merge spine matched no .typ files")
         );
+    }
+
+    #[test]
+    fn test_generate_spine_empty_pattern_single_file() {
+        let temp = create_test_dir_with_files(&["single.typ"]);
+        let merge = Merge {
+            title: "Test".to_string(),
+            spine: vec![], // Empty spine
+        };
+
+        let result = generate_spine(temp.path(), Some(&merge), false);
+        assert!(result.is_ok());
+        let files = result.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file_name().unwrap(), "single.typ");
+    }
+
+    #[test]
+    fn test_generate_spine_empty_pattern_multiple_files_error() {
+        let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
+        let merge = Merge {
+            title: "Test".to_string(),
+            spine: vec![], // Empty spine with multiple files
+        };
+
+        let result = generate_spine(temp.path(), Some(&merge), false);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("multiple .typ files")
+        );
+    }
+
+    #[test]
+    fn test_fallback_lexicographic_ordering() {
+        let temp = create_test_dir_with_files(&["single.typ"]);
+
+        // Test that fallback with single file works and is ordered
+        let result = generate_spine(temp.path(), None, false);
+        assert!(result.is_ok());
+        let files = result.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file_name().unwrap(), "single.typ");
     }
 }
