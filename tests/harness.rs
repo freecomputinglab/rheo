@@ -6,14 +6,14 @@ use helpers::{
     reference::{update_html_references, update_pdf_references},
 };
 use ntest::test_case;
-use rheo::{RheoConfig, project::ProjectConfig, OutputFormat};
+use rheo::{OutputFormat, RheoConfig, project::ProjectConfig};
 use std::env;
 use std::path::PathBuf;
 
 #[test_case("examples/blog_site")]
 #[test_case("examples/blog_post")]
-#[test_case("examples/job_application")]
 #[test_case("tests/cases/pdf_merge")]
+#[test_case("file:examples/cover-letter.typ")]
 #[test_case("file:examples/blog_site/content/index.typ")]
 #[test_case("file:examples/blog_site/content/severance-ep-1.typ")]
 #[test_case("file:examples/blog_post/portable_epubs.typ")]

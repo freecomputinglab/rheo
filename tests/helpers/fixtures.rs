@@ -106,6 +106,7 @@ impl TestCase {
     }
 
     /// Returns the file path for SingleFile tests, or None for Directory tests
+    #[allow(unused)]
     pub fn file_path(&self) -> Option<&PathBuf> {
         match self {
             TestCase::Directory { .. } => None,
@@ -114,6 +115,7 @@ impl TestCase {
     }
 
     /// Returns the project root directory for the test case
+    #[allow(unused)]
     pub fn project_root(&self) -> PathBuf {
         match self {
             TestCase::Directory { project_path, .. } => project_path.clone(),

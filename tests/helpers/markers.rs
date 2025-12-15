@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn test_read_test_metadata_pdf_only() {
         // Test reading PDF-only markers
-        let path = Path::new("examples/job_application/cover-letter.typ");
+        let path = Path::new("examples/cover-letter.typ");
         let metadata = read_test_metadata(path).unwrap();
         assert_eq!(metadata.formats, vec!["pdf"]);
         assert_eq!(
