@@ -15,11 +15,11 @@ use std::path::PathBuf;
 #[test_case("tests/cases/pdf_merge")]
 #[test_case("tests/cases/multi_file_epub_default")]
 #[test_case("tests/cases/epub_explicit_config")]
-#[test_case("file:tests/cases/single_file_epub_default/test.typ")]
-#[test_case("file:examples/cover-letter.typ")]
-#[test_case("file:examples/blog_site/content/index.typ")]
-#[test_case("file:examples/blog_site/content/severance-ep-1.typ")]
-#[test_case("file:examples/blog_post/portable_epubs.typ")]
+#[test_case("tests/cases/single_file_epub_default/test.typ")]
+#[test_case("examples/cover-letter.typ")]
+#[test_case("examples/blog_site/content/index.typ")]
+#[test_case("examples/blog_site/content/severance-ep-1.typ")]
+#[test_case("examples/blog_post/portable_epubs.typ")]
 fn run_test_case(name: &str) {
     let test_case = TestCase::new(name);
     let update_mode = env::var("UPDATE_REFERENCES").is_ok();
