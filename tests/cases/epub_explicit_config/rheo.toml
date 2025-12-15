@@ -1,0 +1,3 @@
+[epub.merge]
+title = "Explicit Title"
+spine = ["chapter.typ", "intro.typ"]  # Reverse order to test explicit config
