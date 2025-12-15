@@ -6,7 +6,7 @@ use helpers::{
     reference::{update_html_references, update_pdf_references},
 };
 use ntest::test_case;
-use rheo::{RheoConfig, project::ProjectConfig};
+use rheo::{RheoConfig, project::ProjectConfig, OutputFormat};
 use std::env;
 use std::path::PathBuf;
 
@@ -31,17 +31,29 @@ fn run_test_case(name: &str) {
     let project = ProjectConfig::from_path(project_path, None).expect("Failed to load project");
     let config = RheoConfig::load(&project.root);
 
+    // Get declared formats from test case (respects markers for single-file tests)
+    let declared_formats = test_case.formats();
+
     // Check environment variables for format filtering
     let env_html = env::var("RUN_HTML_TESTS").is_ok();
     let env_pdf = env::var("RUN_PDF_TESTS").is_ok();
     let env_epub = env::var("RUN_EPUB_TESTS").is_ok();
 
-    // If no env vars set, run formats specified by project config (default)
+    // If no env vars set, run all declared formats
     let run_all = !env_html && !env_pdf && !env_epub;
 
-    // Run format if: (env var set OR default mode) AND project supports format
-    let run_html = (run_all || env_html) && config.as_ref().is_ok_and(|cfg| cfg.has_html());
-    let run_pdf = (run_all || env_pdf) && config.as_ref().is_ok_and(|cfg| cfg.has_pdf());
+    // Compute which formats to actually run
+    // For single-file tests: use declared formats (config check optional, markers are authoritative)
+    // For directory tests: require config support (preserve existing behavior)
+    let run_html = declared_formats.contains(&OutputFormat::Html)
+        && (run_all || env_html)
+        && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_html()));
+    let run_pdf = declared_formats.contains(&OutputFormat::Pdf)
+        && (run_all || env_pdf)
+        && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_pdf()));
+    let run_epub = declared_formats.contains(&OutputFormat::Epub)
+        && (run_all || env_epub)
+        && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_epub()));
 
     // Get build directory
     let build_dir = project_path.join("build");
@@ -60,10 +72,26 @@ fn run_test_case(name: &str) {
         );
     }
 
+    // Build compile command with format flags
+    let mut compile_args = vec!["run", "--", "compile", project_path.to_str().unwrap()];
+
+    // For single-file tests, add explicit format flags based on declared formats
+    // For directory tests, let rheo use config/defaults (no flags = backward compatible)
+    if test_case.is_single_file() {
+        if run_html {
+            compile_args.push("--html");
+        }
+        if run_pdf {
+            compile_args.push("--pdf");
+        }
+        if run_epub {
+            compile_args.push("--epub");
+        }
+    }
+
     // Compile the project using rheo CLI logic
-    // We'll invoke the rheo binary directly for simplicity
     let output = std::process::Command::new("cargo")
-        .args(["run", "--", "compile", project_path.to_str().unwrap()])
+        .args(&compile_args)
         .output()
         .expect("Failed to run rheo compile");
 
