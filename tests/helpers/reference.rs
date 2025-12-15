@@ -1,4 +1,5 @@
 use crate::helpers::comparison::{BinaryFileMetadata, extract_pdf_metadata};
+use crate::helpers::is_single_file_test;
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -29,8 +30,8 @@ pub fn update_html_references(
             .replace("_colon", ":")
             .replace("_minus", "-");
 
-        if let Some(file_part) = file_path_guess.strip_prefix("file:") {
-            let file_path = Path::new(file_part);
+        if is_single_file_test(&file_path_guess) {
+            let file_path = Path::new(&file_path_guess);
             let hash = compute_file_hash(file_path);
             let filename = file_path
                 .file_stem()
@@ -92,8 +93,8 @@ pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), S
             .replace("_colon", ":")
             .replace("_minus", "-");
 
-        if let Some(file_part) = file_path_guess.strip_prefix("file:") {
-            let file_path = Path::new(file_part);
+        if is_single_file_test(&file_path_guess) {
+            let file_path = Path::new(&file_path_guess);
             let hash = compute_file_hash(file_path);
             let filename = file_path
                 .file_stem()

@@ -2,7 +2,7 @@ use rheo::OutputFormat;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::markers::read_test_metadata;
+use super::{is_single_file_test, markers::read_test_metadata};
 
 /// Test case variants for different compilation modes
 #[derive(Debug, Clone)]
@@ -25,9 +25,9 @@ pub enum TestCase {
 
 impl TestCase {
     pub fn new(raw_path: &str) -> Self {
-        // Check if the path starts with "file:" prefix
-        if let Some(file_path_str) = raw_path.strip_prefix("file:") {
-            let file_path = Path::new(file_path_str);
+        // Check if the path is a .typ file
+        if is_single_file_test(raw_path) {
+            let file_path = Path::new(raw_path);
             let name = file_path
                 .to_string_lossy()
                 .replace('/', "_slash")

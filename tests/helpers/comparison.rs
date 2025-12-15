@@ -6,6 +6,8 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
+use super::is_single_file_test;
+
 pub fn verify_html_output(test_name: &str, actual_dir: &Path) {
     let ref_dir = get_reference_dir(actual_dir, test_name, "html");
     ensure_reference_exists(&ref_dir, test_name, "HTML");
@@ -70,9 +72,9 @@ fn get_reference_dir(actual_dir: &Path, test_name: &str, output_type: &str) -> P
             .replace("_colon", ":")
             .replace("_minus", "-");
 
-        // Try to find the file path portion after "file:"
-        if let Some(file_part) = file_path_guess.strip_prefix("file:") {
-            let file_path = Path::new(file_part);
+        // Check if this is a single .typ file test
+        if is_single_file_test(&file_path_guess) {
+            let file_path = Path::new(&file_path_guess);
             let hash = compute_file_hash(file_path);
             let filename = file_path
                 .file_stem()
