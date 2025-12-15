@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Project Description
 
-**rheo** is a tool for flowing Typst documents into publishable outputs. It compiles Typst files to multiple output formats including PDF, HTML, and (planned) EPUB.
+**rheo** is a tool for flowing Typst documents into publishable outputs. It compiles Typst files to multiple output formats including PDF, HTML, and EPUB.
 
 **Architecture:**
 - Written in Rust using the Typst compiler as a library
@@ -17,13 +17,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Uses typst-kit for font discovery and management
 
 **Key Features:**
-- Multi-format compilation (PDF and HTML currently supported)
+- Multi-format compilation (PDF, HTML, and EPUB)
 - Project-based compilation (compiles all .typ files in a directory)
 - **Incremental compilation in watch mode** using Typst's comemo caching
 - Automatic asset copying (CSS, images) for HTML output
 - Clean command for removing build artifacts
 - Template injection for consistent document formatting
 - Configurable default output formats via rheo.toml
+- **Smart defaults for EPUB** (automatic title and spine inference)
 
 **Project Structure:**
 - `src/rs/` - Rust source code
@@ -43,7 +44,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Each project creates its own `build/` directory (gitignored) containing:
 - `pdf/` - PDF outputs
 - `html/` - HTML outputs
-- `epub/` - EPUB outputs (planned)
+- `epub/` - EPUB outputs
 
 ### Development Commands
 
@@ -58,15 +59,18 @@ cargo build
 cargo run -- compile <project-path>
 cargo run -- compile <project-path> --pdf    # PDF only
 cargo run -- compile <project-path> --html   # HTML only
+cargo run -- compile <project-path> --epub   # EPUB only
 
 # Compile a single .typ file
 cargo run -- compile <file.typ>              # All formats
 cargo run -- compile <file.typ> --pdf        # PDF only
 cargo run -- compile <file.typ> --html       # HTML only
+cargo run -- compile <file.typ> --epub       # EPUB only
 
 # Examples
 cargo run -- compile examples/blog_site                      # Directory mode
 cargo run -- compile examples/blog_site/content/index.typ    # Single file mode
+cargo run -- compile examples/blog_post --epub               # EPUB with defaults
 ```
 
 **Clean build artifacts:**
@@ -97,6 +101,9 @@ RUN_HTML_TESTS=1 cargo test --test harness
 
 # Run only PDF tests (across all projects that support it)
 RUN_PDF_TESTS=1 cargo test --test harness
+
+# Run only EPUB tests (across all projects that support it)
+RUN_EPUB_TESTS=1 cargo test --test harness
 
 # Increase diff output limit (default: 2000 chars)
 RHEO_TEST_DIFF_LIMIT=10000 cargo test --test harness -- --nocapture
@@ -134,6 +141,41 @@ formats = ["html", "pdf"]
 - CLI flags (`--pdf`, `--html`, `--epub`) override config file formats
 - If no CLI flags are specified, uses `compile.formats` from config
 - If `compile.formats` is empty or not specified, defaults to `["pdf", "html"]`
+
+### Default Behavior Without rheo.toml
+
+When no `rheo.toml` exists, rheo automatically infers sensible defaults for EPUB compilation:
+
+**Title Inference:**
+- **Single-file mode**: Derived from filename (e.g., `my-document.typ` → "My Document")
+- **Directory mode**: Derived from folder name (e.g., `my_book` → "My Book")
+
+**EPUB Spine Inference:**
+- **Single-file mode**: Just the single file
+- **Directory mode**: All `.typ` files sorted lexicographically (equivalent to `**/*.typ` pattern)
+
+**Format Behavior:**
+- **HTML**: Works per-file (one HTML file per `.typ` file)
+- **PDF**: Works per-file by default (merge requires explicit config)
+- **EPUB**: Always merged (uses inferred title and spine)
+
+**Example - Single file without config:**
+```bash
+# Compile a single file to EPUB without any config
+cargo run -- compile document.typ --epub
+# Generates document.epub with title "Document"
+```
+
+**Example - Directory without config:**
+```bash
+# Compile a directory to EPUB without any config
+cargo run -- compile my_project/ --epub
+# Generates my_project.epub with:
+#   - Title: "My Project"
+#   - Spine: All .typ files in lexicographic order
+```
+
+**Note:** Existing projects with explicit `rheo.toml` configurations are not affected—explicit configs always take precedence over inferred defaults.
 
 ### Incremental Compilation
 
