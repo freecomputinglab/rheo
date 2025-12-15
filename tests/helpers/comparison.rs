@@ -78,7 +78,7 @@ fn get_reference_dir(actual_dir: &Path, test_name: &str, output_type: &str) -> P
             let hash = compute_file_hash(file_path);
             let filename = file_path
                 .file_stem()
-                .unwrap_or_else(|| file_path.as_os_str())
+                .unwrap_or(file_path.as_os_str())
                 .to_string_lossy();
 
             return PathBuf::from("tests/ref/files")

@@ -35,7 +35,7 @@ pub fn update_html_references(
             let hash = compute_file_hash(file_path);
             let filename = file_path
                 .file_stem()
-                .unwrap_or_else(|| file_path.as_os_str())
+                .unwrap_or(file_path.as_os_str())
                 .to_string_lossy();
 
             PathBuf::from("tests/ref/files")
@@ -98,7 +98,7 @@ pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), S
             let hash = compute_file_hash(file_path);
             let filename = file_path
                 .file_stem()
-                .unwrap_or_else(|| file_path.as_os_str())
+                .unwrap_or(file_path.as_os_str())
                 .to_string_lossy();
 
             PathBuf::from("tests/ref/files")
