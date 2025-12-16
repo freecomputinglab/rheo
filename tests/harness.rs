@@ -59,7 +59,15 @@ fn run_test_case(name: &str) {
         && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_epub()));
 
     // Get build directory
-    let build_dir = project_path.join("build");
+    // For single-file tests, use parent directory since project_path is the file path
+    let build_dir = if test_case.is_single_file() {
+        project_path
+            .parent()
+            .expect("Single file should have parent directory")
+            .join("build")
+    } else {
+        project_path.join("build")
+    };
 
     // Clean build directory before test to avoid stale artifacts
     let clean_output = std::process::Command::new("cargo")

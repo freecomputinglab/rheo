@@ -31,7 +31,9 @@ impl TestCase {
             let name = file_path
                 .to_string_lossy()
                 .replace('/', "_slash")
-                .replace(".typ", "");
+                .replace('.', "_full_stop")
+                .replace(':', "_colon")
+                .replace('-', "_minus");
 
             // Read test markers to determine formats
             let formats = read_test_metadata(file_path)

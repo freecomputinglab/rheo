@@ -1,4 +1,3 @@
-[compile]
 # Only compile EPUB for this test
 formats = ["epub"]
 

@@ -142,7 +142,11 @@ fn compare_html_content(reference: &Path, actual: &Path, test_name: &str) -> Res
         let diff = compute_html_diff(&ref_content, &actual_content);
 
         // Generate test-specific update command
-        let test_name_sanitized = test_name.replace('/', "_slash");
+        let test_name_sanitized = test_name
+            .replace('/', "_slash")
+            .replace('.', "_full_stop")
+            .replace(':', "_colon")
+            .replace('-', "_minus");
         let update_cmd = format!(
             "UPDATE_REFERENCES=1 cargo test run_test_case_{} -- --nocapture",
             test_name_sanitized

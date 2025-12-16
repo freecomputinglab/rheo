@@ -1,3 +1,2 @@
-[compile]
 # Only compile EPUB for this test (tests default EPUB behavior)
 formats = ["epub"]
