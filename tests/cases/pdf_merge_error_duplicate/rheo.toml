@@ -1,0 +1,3 @@
+[pdf.merge]
+spine = ["dir1/chapter.typ", "dir2/chapter.typ"]
+title = "Test Duplicate Error"

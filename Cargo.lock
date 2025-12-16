@@ -1863,8 +1863,9 @@ dependencies = [
 
 [[package]]
 name = "krilla"
-version = "0.5.0"
-source = "git+https://github.com/LaurenzV/krilla?rev=f22a936#f22a9365bafa46bbe26c8c56c88208eb50063e63"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0ddfec86fec13d068075e14f22a7e217c281f3ed69ddcb427bf3f5d504fd674"
 dependencies = [
  "base64",
  "bumpalo",
@@ -1875,6 +1876,7 @@ dependencies = [
  "hayro-write",
  "image-webp",
  "imagesize 0.14.0",
+ "indexmap",
  "once_cell",
  "pdf-writer",
  "png 0.17.16",
@@ -1893,8 +1895,9 @@ dependencies = [
 
 [[package]]
 name = "krilla-svg"
-version = "0.2.0"
-source = "git+https://github.com/LaurenzV/krilla?rev=f22a936#f22a9365bafa46bbe26c8c56c88208eb50063e63"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f485e1a850201a01dcd8d73e7cf09f2cd4c4cc85c2cd296359094d49336d8ef7"
 dependencies = [
  "flate2",
  "fontdb",
@@ -1968,9 +1971,9 @@ dependencies = [
 
 [[package]]
 name = "libz-rs-sys"
-version = "0.5.2"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "840db8cf39d9ec4dd794376f38acc40d0fc65eec2a8f484f7fd375b84602becd"
+checksum = "15413ef615ad868d4d65dce091cb233b229419c7c0c4bcaa746c0901c49ff39c"
 dependencies = [
  "zlib-rs",
 ]
@@ -2421,15 +2424,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
-name = "openssl-src"
-version = "300.5.4+3.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a507b3792995dae9b0df8a1c1e3771e8418b7c2d9f0baeba32e6fe8b06c7cb72"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "openssl-sys"
 version = "0.9.111"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2437,7 +2431,6 @@ checksum = "82cab2d520aa75e3c58898289429321eb788c3106963d0dc886ec7a5f4adc321"
 dependencies = [
  "cc",
  "libc",
- "openssl-src",
  "pkg-config",
  "vcpkg",
 ]
@@ -2989,7 +2982,7 @@ dependencies = [
  "typst-kit",
  "typst-library",
  "typst-pdf",
- "typst-syntax",
+ "typst-syntax 0.14.0",
  "uuid",
  "walkdir",
  "webbrowser",
@@ -3972,10 +3965,10 @@ checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 
 [[package]]
 name = "typst"
-version = "0.14.0"
-source = "git+https://github.com/typst/typst?branch=main#a4be7778e5bbc443f54c963711187470de2decc0"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f6511ee598476f4f322b4d13891083d96dbacb8f9c2b908604c7094ba390653"
 dependencies = [
- "arrayvec",
  "comemo",
  "ecow",
  "rustc-hash",
@@ -3985,20 +3978,22 @@ dependencies = [
  "typst-library",
  "typst-macros",
  "typst-realize",
- "typst-syntax",
- "typst-timing",
- "typst-utils",
+ "typst-syntax 0.14.2",
+ "typst-timing 0.14.2",
+ "typst-utils 0.14.2",
 ]
 
 [[package]]
 name = "typst-assets"
-version = "0.14.0"
-source = "git+https://github.com/typst/typst-assets?rev=d6a4834#d6a48348174f11bed3ab9f5dccdb6f4e894528d0"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5613cb719a6222fe9b74027c3625d107767ec187bff26b8fc931cf58942c834f"
 
 [[package]]
 name = "typst-eval"
-version = "0.14.0"
-source = "git+https://github.com/typst/typst?branch=main#a4be7778e5bbc443f54c963711187470de2decc0"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "687757487dfc0c1e941344d5024cf7a28364e70c3e304faad89ac65597f62526"
 dependencies = [
  "comemo",
  "ecow",
@@ -4008,16 +4003,17 @@ dependencies = [
  "toml",
  "typst-library",
  "typst-macros",
- "typst-syntax",
- "typst-timing",
- "typst-utils",
+ "typst-syntax 0.14.2",
+ "typst-timing 0.14.2",
+ "typst-utils 0.14.2",
  "unicode-segmentation",
 ]
 
 [[package]]
 name = "typst-html"
-version = "0.14.0"
-source = "git+https://github.com/typst/typst?branch=main#a4be7778e5bbc443f54c963711187470de2decc0"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e29f8da4f964d4c90739c3c1e0288b0ba1bccc3cc50623a6d558300b86ca8aad"
 dependencies = [
  "bumpalo",
  "comemo",
@@ -4029,15 +4025,16 @@ dependencies = [
  "typst-library",
  "typst-macros",
  "typst-svg",
- "typst-syntax",
- "typst-timing",
- "typst-utils",
+ "typst-syntax 0.14.2",
+ "typst-timing 0.14.2",
+ "typst-utils 0.14.2",
 ]
 
 [[package]]
 name = "typst-kit"
-version = "0.14.0"
-source = "git+https://github.com/typst/typst?branch=main#a4be7778e5bbc443f54c963711187470de2decc0"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31476ec753e080ffdd543a0e74b6d319355449ff3eca3f216634f31cfd09a92a"
 dependencies = [
  "dirs",
  "ecow",
@@ -4051,18 +4048,18 @@ dependencies = [
  "serde",
  "serde_json",
  "tar",
- "typst-assets",
  "typst-library",
- "typst-syntax",
- "typst-timing",
- "typst-utils",
+ "typst-syntax 0.14.2",
+ "typst-timing 0.14.2",
+ "typst-utils 0.14.2",
  "ureq",
 ]
 
 [[package]]
 name = "typst-layout"
-version = "0.14.0"
-source = "git+https://github.com/typst/typst?branch=main#a4be7778e5bbc443f54c963711187470de2decc0"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cab0200105831a9158e63718a0f6141c78cb2c1722ed17d19ad28941e3b8491"
 dependencies = [
  "az",
  "bumpalo",
@@ -4085,9 +4082,9 @@ dependencies = [
  "typst-assets",
  "typst-library",
  "typst-macros",
- "typst-syntax",
- "typst-timing",
- "typst-utils",
+ "typst-syntax 0.14.2",
+ "typst-timing 0.14.2",
+ "typst-utils 0.14.2",
  "unicode-bidi",
  "unicode-math-class",
  "unicode-script",
@@ -4096,10 +4093,10 @@ dependencies = [
 
 [[package]]
 name = "typst-library"
-version = "0.14.0"
-source = "git+https://github.com/typst/typst?branch=main#a4be7778e5bbc443f54c963711187470de2decc0"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e276a5de53020c43efe2111ec236252e54ea4480b5ac18063e663dfbe03d9d1b"
 dependencies = [
- "arrayvec",
  "az",
  "bitflags 2.10.0",
  "bumpalo",
@@ -4147,9 +4144,9 @@ dependencies = [
  "typed-arena",
  "typst-assets",
  "typst-macros",
- "typst-syntax",
- "typst-timing",
- "typst-utils",
+ "typst-syntax 0.14.2",
+ "typst-timing 0.14.2",
+ "typst-utils 0.14.2",
  "unicode-math-class",
  "unicode-normalization",
  "unicode-segmentation",
@@ -4162,8 +4159,9 @@ dependencies = [
 
 [[package]]
 name = "typst-macros"
-version = "0.14.0"
-source = "git+https://github.com/typst/typst?branch=main#a4be7778e5bbc443f54c963711187470de2decc0"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "141cbd1027129fbf6bda1013f52a264df7befc7388cc8f47767d65e803fd3a59"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -4173,8 +4171,9 @@ dependencies = [
 
 [[package]]
 name = "typst-pdf"
-version = "0.14.0"
-source = "git+https://github.com/typst/typst?branch=main#a4be7778e5bbc443f54c963711187470de2decc0"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37c8a4630754767cd10d48e8b8186e7dc784631a30a3a93521edf7d77aebd0c0"
 dependencies = [
  "az",
  "bytemuck",
@@ -4191,15 +4190,16 @@ dependencies = [
  "typst-assets",
  "typst-library",
  "typst-macros",
- "typst-syntax",
- "typst-timing",
- "typst-utils",
+ "typst-syntax 0.14.2",
+ "typst-timing 0.14.2",
+ "typst-utils 0.14.2",
 ]
 
 [[package]]
 name = "typst-realize"
-version = "0.14.0"
-source = "git+https://github.com/typst/typst?branch=main#a4be7778e5bbc443f54c963711187470de2decc0"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7ffe964757fb93d2e98978aa2a74ee85b0f94c8643e8f3550737258b58f39d8"
 dependencies = [
  "arrayvec",
  "bumpalo",
@@ -4208,15 +4208,16 @@ dependencies = [
  "regex",
  "typst-library",
  "typst-macros",
- "typst-syntax",
- "typst-timing",
- "typst-utils",
+ "typst-syntax 0.14.2",
+ "typst-timing 0.14.2",
+ "typst-utils 0.14.2",
 ]
 
 [[package]]
 name = "typst-svg"
-version = "0.14.0"
-source = "git+https://github.com/typst/typst?branch=main#a4be7778e5bbc443f54c963711187470de2decc0"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e46b811837ade1f0243ef0d8bf3fb06d166443090eac22c28643f374c2ccdc9d"
 dependencies = [
  "base64",
  "comemo",
@@ -4230,8 +4231,8 @@ dependencies = [
  "typst-assets",
  "typst-library",
  "typst-macros",
- "typst-timing",
- "typst-utils",
+ "typst-timing 0.14.2",
+ "typst-utils 0.14.2",
  "xmlparser",
  "xmlwriter",
 ]
@@ -4245,8 +4246,27 @@ dependencies = [
  "rustc-hash",
  "serde",
  "toml",
- "typst-timing",
- "typst-utils",
+ "typst-timing 0.14.0",
+ "typst-utils 0.14.0",
+ "unicode-ident",
+ "unicode-math-class",
+ "unicode-script",
+ "unicode-segmentation",
+ "unscanny",
+]
+
+[[package]]
+name = "typst-syntax"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a95d9192060e23b1e491b0b94dff676acddc92a4d672aeb8ca3890a5a734e879"
+dependencies = [
+ "ecow",
+ "rustc-hash",
+ "serde",
+ "toml",
+ "typst-timing 0.14.2",
+ "typst-utils 0.14.2",
  "unicode-ident",
  "unicode-math-class",
  "unicode-script",
@@ -4265,9 +4285,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "typst-timing"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7be94f8faf19841b49574ef5c7fd7a12e2deb7c3d8deba5a596f35d2222024cd"
+dependencies = [
+ "parking_lot",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "typst-utils"
 version = "0.14.0"
 source = "git+https://github.com/typst/typst?branch=main#a4be7778e5bbc443f54c963711187470de2decc0"
+dependencies = [
+ "once_cell",
+ "portable-atomic",
+ "rayon",
+ "rustc-hash",
+ "siphasher",
+ "thin-vec",
+ "unicode-math-class",
+]
+
+[[package]]
+name = "typst-utils"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3966c92e8fa48c7ce898130d07000d985f18206d92b250f0f939287fbccdee3"
 dependencies = [
  "once_cell",
  "portable-atomic",
@@ -4583,9 +4629,9 @@ dependencies = [
 
 [[package]]
 name = "wasmi"
-version = "0.51.2"
+version = "0.51.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "118030b2d125bc893e0cc5b1ce156eb41461f4373308cb5f2e3c698533b5e547"
+checksum = "bb321403ce594274827657a908e13d1d9918aa02257b8bf8391949d9764023ff"
 dependencies = [
  "spin",
  "wasmi_collections",
@@ -4596,24 +4642,24 @@ dependencies = [
 
 [[package]]
 name = "wasmi_collections"
-version = "0.51.2"
+version = "0.51.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "653fa20efc966818934524dceb54b1b81e6f845bbcc2e155d6e9fc32becf667e"
+checksum = "e9b8e98e45a2a534489f8225e765cbf1cb9a3078072605e58158910cf4749172"
 
 [[package]]
 name = "wasmi_core"
-version = "0.51.2"
+version = "0.51.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65701f60308c7e46cca85f273ad17e80c60998cc63d3fa168ac393f62b123038"
+checksum = "c25f375c0cdf14810eab07f532f61f14d4966f09c747a55067fdf3196e8512e6"
 dependencies = [
  "libm",
 ]
 
 [[package]]
 name = "wasmi_ir"
-version = "0.51.2"
+version = "0.51.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6539f63bf2a6838f27876e2877f0b00a088e84f91e92445620cc6b977fde032"
+checksum = "624e2a68a4293ecb8f564260b68394b29cf3b3edba6bce35532889a2cb33c3d9"
 dependencies = [
  "wasmi_core",
 ]
@@ -5313,9 +5359,9 @@ dependencies = [
 
 [[package]]
 name = "zlib-rs"
-version = "0.5.2"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f06ae92f42f5e5c42443fd094f245eb656abf56dd7cce9b8b263236565e00f2"
+checksum = "51f936044d677be1a1168fae1d03b583a285a5dd9d8cbf7b24c23aa1fc775235"
 
 [[package]]
 name = "zune-core"
