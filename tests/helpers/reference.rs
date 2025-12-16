@@ -1,7 +1,17 @@
 use crate::helpers::comparison::{BinaryFileMetadata, extract_pdf_metadata};
+use crate::helpers::is_single_file_test;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+/// Compute a short hash of a file path for reference directory naming
+fn compute_file_hash(path: &Path) -> String {
+    let mut hasher = DefaultHasher::new();
+    path.to_string_lossy().hash(&mut hasher);
+    format!("{:08x}", hasher.finish())
+}
 
 /// Update HTML reference files from test output
 pub fn update_html_references(
@@ -9,16 +19,37 @@ pub fn update_html_references(
     actual_dir: &Path,
     project_path: &Path,
 ) -> Result<(), String> {
-    // Determine reference path based on project location
-    let ref_base = if project_path.starts_with("examples/") {
-        PathBuf::from("tests/ref/examples")
-    } else if project_path.starts_with("tests/cases/") {
-        PathBuf::from("tests/ref/cases")
-    } else {
-        PathBuf::from("tests/ref/examples") // fallback
-    };
+    // Determine if this is a single-file test
+    let ref_dir = if test_name.contains("_slash")
+        && (test_name.contains("_full_stop") || test_name.ends_with("typ"))
+    {
+        // Single-file test - use hash-based path
+        let file_path_guess = test_name
+            .replace("_slash", "/")
+            .replace("_full_stop", ".")
+            .replace("_colon", ":")
+            .replace("_minus", "-");
 
-    let ref_dir = ref_base.join(test_name).join("html");
+        if is_single_file_test(&file_path_guess) {
+            let file_path = Path::new(&file_path_guess);
+            let hash = compute_file_hash(file_path);
+            let filename = file_path
+                .file_stem()
+                .unwrap_or(file_path.as_os_str())
+                .to_string_lossy();
+
+            PathBuf::from("tests/ref/files")
+                .join(&hash)
+                .join(filename.as_ref())
+                .join("html")
+        } else {
+            // Fallback to project-based path
+            get_project_ref_dir(project_path, test_name, "html")
+        }
+    } else {
+        // Project-based test
+        get_project_ref_dir(project_path, test_name, "html")
+    };
 
     // Remove existing references
     if ref_dir.exists() {
@@ -37,18 +68,65 @@ pub fn update_html_references(
     Ok(())
 }
 
-/// Update PDF metadata references from test output
-pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), String> {
-    // Determine reference path based on actual_dir location
-    let ref_base = if actual_dir.starts_with("examples/") {
+/// Get project-based reference directory
+fn get_project_ref_dir(project_path: &Path, test_name: &str, output_type: &str) -> PathBuf {
+    let ref_base = if project_path.starts_with("examples/") {
         PathBuf::from("tests/ref/examples")
-    } else if actual_dir.starts_with("tests/cases/") {
+    } else if project_path.starts_with("tests/cases/") {
         PathBuf::from("tests/ref/cases")
     } else {
         PathBuf::from("tests/ref/examples") // fallback
     };
+    ref_base.join(test_name).join(output_type)
+}
 
-    let ref_dir = ref_base.join(test_name).join("pdf");
+/// Update PDF metadata references from test output
+pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), String> {
+    // Determine if this is a single-file test
+    let ref_dir = if test_name.contains("_slash")
+        && (test_name.contains("_full_stop") || test_name.ends_with("typ"))
+    {
+        // Single-file test - use hash-based path
+        let file_path_guess = test_name
+            .replace("_slash", "/")
+            .replace("_full_stop", ".")
+            .replace("_colon", ":")
+            .replace("_minus", "-");
+
+        if is_single_file_test(&file_path_guess) {
+            let file_path = Path::new(&file_path_guess);
+            let hash = compute_file_hash(file_path);
+            let filename = file_path
+                .file_stem()
+                .unwrap_or(file_path.as_os_str())
+                .to_string_lossy();
+
+            PathBuf::from("tests/ref/files")
+                .join(&hash)
+                .join(filename.as_ref())
+                .join("pdf")
+        } else {
+            // Fallback to project-based path
+            let ref_base = if actual_dir.starts_with("examples/") {
+                PathBuf::from("tests/ref/examples")
+            } else if actual_dir.starts_with("tests/cases/") {
+                PathBuf::from("tests/ref/cases")
+            } else {
+                PathBuf::from("tests/ref/examples")
+            };
+            ref_base.join(test_name).join("pdf")
+        }
+    } else {
+        // Project-based test
+        let ref_base = if actual_dir.starts_with("examples/") {
+            PathBuf::from("tests/ref/examples")
+        } else if actual_dir.starts_with("tests/cases/") {
+            PathBuf::from("tests/ref/cases")
+        } else {
+            PathBuf::from("tests/ref/examples")
+        };
+        ref_base.join(test_name).join("pdf")
+    };
 
     // Remove existing references
     if ref_dir.exists() {
@@ -92,6 +170,106 @@ pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), S
         }
     }
 
+    Ok(())
+}
+
+/// Update EPUB metadata references from test output
+pub fn update_epub_references(test_name: &str, actual_dir: &Path) -> Result<(), String> {
+    use crate::helpers::comparison::extract_epub_metadata;
+
+    // Determine if this is a single-file test
+    let ref_dir = if test_name.contains("_slash")
+        && (test_name.contains("_full_stop") || test_name.ends_with("typ"))
+    {
+        // Single-file test - use hash-based path
+        let file_path_guess = test_name
+            .replace("_slash", "/")
+            .replace("_full_stop", ".")
+            .replace("_colon", ":")
+            .replace("_minus", "-");
+
+        if is_single_file_test(&file_path_guess) {
+            let file_path = Path::new(&file_path_guess);
+            let hash = compute_file_hash(file_path);
+            let filename = file_path
+                .file_stem()
+                .unwrap_or(file_path.as_os_str())
+                .to_string_lossy();
+
+            PathBuf::from("tests/ref/files")
+                .join(&hash)
+                .join(filename.as_ref())
+                .join("epub")
+        } else {
+            // Fallback to project-based path
+            let ref_base = if actual_dir.starts_with("examples/") {
+                PathBuf::from("tests/ref/examples")
+            } else if actual_dir.starts_with("tests/cases/") {
+                PathBuf::from("tests/ref/cases")
+            } else {
+                PathBuf::from("tests/ref/examples")
+            };
+            ref_base.join(test_name).join("epub")
+        }
+    } else {
+        // Project-based test
+        let ref_base = if actual_dir.starts_with("examples/") {
+            PathBuf::from("tests/ref/examples")
+        } else if actual_dir.starts_with("tests/cases/") {
+            PathBuf::from("tests/ref/cases")
+        } else {
+            PathBuf::from("tests/ref/examples")
+        };
+        ref_base.join(test_name).join("epub")
+    };
+
+    // Remove existing references
+    if ref_dir.exists() {
+        fs::remove_dir_all(&ref_dir)
+            .map_err(|e| format!("Failed to remove old references: {}", e))?;
+    }
+
+    // Create reference directory
+    fs::create_dir_all(&ref_dir)
+        .map_err(|e| format!("Failed to create EPUB reference directory: {}", e))?;
+
+    // Find all EPUB files in actual output
+    for entry in WalkDir::new(actual_dir) {
+        if let Ok(entry) = entry
+            && entry.file_type().is_file()
+            && let Some(ext) = entry.path().extension()
+            && ext == "epub"
+        {
+            // Extract metadata
+            let metadata = extract_epub_metadata(entry.path())?;
+
+            // Get relative path
+            let rel_path = entry
+                .path()
+                .strip_prefix(actual_dir)
+                .map_err(|e| format!("Failed to get relative path: {}", e))?;
+
+            // Save metadata JSON
+            let metadata_file = ref_dir.join(format!(
+                "{}.metadata.json",
+                rel_path.file_stem().unwrap().to_string_lossy()
+            ));
+
+            let json = serde_json::to_string_pretty(&metadata)
+                .map_err(|e| format!("Failed to serialize metadata: {}", e))?;
+
+            fs::write(&metadata_file, json)
+                .map_err(|e| format!("Failed to write metadata: {}", e))?;
+
+            println!("Updated EPUB metadata for {}", rel_path.display());
+        }
+    }
+
+    println!(
+        "Updated EPUB references for {} at {}",
+        test_name,
+        ref_dir.display()
+    );
     Ok(())
 }
 

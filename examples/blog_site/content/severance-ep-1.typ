@@ -1,3 +1,7 @@
+// @rheo:test
+// @rheo:formats html,pdf
+// @rheo:description Blog post with images, footnotes, and bibliography
+
 #set document(title: [Good news about hell - #emph[Severance] [s1/e1]])
 
 #title()

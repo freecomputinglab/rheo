@@ -1,7 +1,12 @@
 use similar::{ChangeTag, TextDiff};
+use std::collections::hash_map::DefaultHasher;
+use std::env;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+use super::is_single_file_test;
 
 pub fn verify_html_output(test_name: &str, actual_dir: &Path) {
     let ref_dir = get_reference_dir(actual_dir, test_name, "html");
@@ -12,7 +17,7 @@ pub fn verify_html_output(test_name: &str, actual_dir: &Path) {
     for_each_file_with_ext(&ref_dir, "html", |entry| {
         let rel_path = entry.path().strip_prefix(&ref_dir).unwrap();
         let actual_file = actual_dir.join(rel_path);
-        compare_html_content(entry.path(), &actual_file).expect("HTML content mismatch");
+        compare_html_content(entry.path(), &actual_file, test_name).expect("HTML content mismatch");
     });
 }
 
@@ -47,7 +52,43 @@ pub fn verify_pdf_output(test_name: &str, actual_dir: &Path) {
     });
 }
 
+/// Compute a short hash of a file path for reference directory naming
+fn compute_file_hash(path: &Path) -> String {
+    let mut hasher = DefaultHasher::new();
+    path.to_string_lossy().hash(&mut hasher);
+    format!("{:08x}", hasher.finish())
+}
+
 fn get_reference_dir(actual_dir: &Path, test_name: &str, output_type: &str) -> PathBuf {
+    // Check if this is a single-file test (test name contains file path components)
+    if test_name.contains("_slash")
+        && (test_name.contains("_full_stop") || test_name.ends_with("typ"))
+    {
+        // This is likely a single-file test
+        // Extract the original file path from the sanitized test name
+        let file_path_guess = test_name
+            .replace("_slash", "/")
+            .replace("_full_stop", ".")
+            .replace("_colon", ":")
+            .replace("_minus", "-");
+
+        // Check if this is a single .typ file test
+        if is_single_file_test(&file_path_guess) {
+            let file_path = Path::new(&file_path_guess);
+            let hash = compute_file_hash(file_path);
+            let filename = file_path
+                .file_stem()
+                .unwrap_or(file_path.as_os_str())
+                .to_string_lossy();
+
+            return PathBuf::from("tests/ref/files")
+                .join(&hash)
+                .join(filename.as_ref())
+                .join(output_type);
+        }
+    }
+
+    // Default: project-based references
     let ref_base = if actual_dir.starts_with("examples/") {
         PathBuf::from("tests/ref/examples")
     } else if actual_dir.starts_with("tests/cases/") {
@@ -89,7 +130,7 @@ fn extract_build_relative_path(repo_relative_path: &str) -> PathBuf {
         .to_path_buf()
 }
 
-fn compare_html_content(reference: &Path, actual: &Path) -> Result<(), String> {
+fn compare_html_content(reference: &Path, actual: &Path, test_name: &str) -> Result<(), String> {
     let ref_content =
         fs::read_to_string(reference).map_err(|e| format!("Failed to read reference: {}", e))?;
     let actual_content =
@@ -99,36 +140,96 @@ fn compare_html_content(reference: &Path, actual: &Path) -> Result<(), String> {
         Ok(())
     } else {
         let diff = compute_html_diff(&ref_content, &actual_content);
-        Err(format!(
-            "HTML content mismatch for {}\n{}",
+
+        // Generate test-specific update command
+        let test_name_sanitized = test_name
+            .replace('/', "_slash")
+            .replace('.', "_full_stop")
+            .replace(':', "_colon")
+            .replace('-', "_minus");
+        let update_cmd = format!(
+            "UPDATE_REFERENCES=1 cargo test run_test_case_{} -- --nocapture",
+            test_name_sanitized
+        );
+
+        // Check diff limit for additional suggestion
+        let diff_limit = env::var("RHEO_TEST_DIFF_LIMIT")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(2000);
+
+        let mut error_msg = format!(
+            "HTML content mismatch for {}\n\n{}\n\nTo update this reference, run:\n  {}",
             reference.display(),
-            diff
-        ))
+            diff,
+            update_cmd
+        );
+
+        // If diff was truncated, suggest increasing the limit
+        if diff.contains("showing first") {
+            error_msg.push_str(&format!(
+                "\n\nOr to see full diff:\n  RHEO_TEST_DIFF_LIMIT={} cargo test run_test_case_{} -- --nocapture",
+                diff_limit * 5,
+                test_name_sanitized
+            ));
+        }
+
+        Err(error_msg)
     }
 }
 
 fn compute_html_diff(reference: &str, actual: &str) -> String {
     let diff = TextDiff::from_lines(reference, actual);
-    let mut output = String::new();
 
+    // Collect statistics
+    let mut insertions = 0;
+    let mut deletions = 0;
+    let mut unchanged = 0;
+
+    let mut diff_output = String::new();
     for change in diff.iter_all_changes() {
         let sign = match change.tag() {
-            ChangeTag::Delete => "-",
-            ChangeTag::Insert => "+",
-            ChangeTag::Equal => " ",
+            ChangeTag::Delete => {
+                deletions += 1;
+                "-"
+            }
+            ChangeTag::Insert => {
+                insertions += 1;
+                "+"
+            }
+            ChangeTag::Equal => {
+                unchanged += 1;
+                " "
+            }
         };
-        output.push_str(&format!("{}{}", sign, change));
+        diff_output.push_str(&format!("{}{}", sign, change));
     }
 
-    if output.len() > 2000 {
-        format!(
-            "{}... (truncated, {} bytes total)",
-            &output[..2000],
-            output.len()
-        )
+    // Get diff limit from environment variable or use default
+    let diff_limit = env::var("RHEO_TEST_DIFF_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2000);
+
+    // Build output with statistics
+    let mut output = String::new();
+    output.push_str(&format!(
+        "Diff: {} insertions(+), {} deletions(-), {} lines unchanged\n\n",
+        insertions, deletions, unchanged
+    ));
+
+    if diff_output.len() > diff_limit {
+        output.push_str(&diff_output[..diff_limit]);
+        output.push_str(&format!(
+            "\n\n... (showing first {} chars of {} bytes total)",
+            diff_limit,
+            diff_output.len()
+        ));
     } else {
-        output
+        output.push_str(&diff_output);
     }
+
+    output
 }
 
 fn collect_files_by_predicate<F>(dir: &Path, predicate: F) -> Vec<PathBuf>
@@ -157,7 +258,12 @@ fn validate_html_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), S
 
     for ref_file in &ref_files {
         if !actual_dir.join(ref_file).exists() {
-            errors.push(format!("Missing file: {}", ref_file.display()));
+            errors.push(format!(
+                "Missing file: {}\n      Expected in: {}\n      Referenced from: {}",
+                ref_file.display(),
+                actual_dir.display(),
+                reference_dir.display()
+            ));
         }
     }
 
@@ -170,14 +276,23 @@ fn validate_html_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), S
 
     for actual_file in &actual_files {
         if !expected_files.contains(actual_file) {
-            errors.push(format!("Unexpected file: {}", actual_file.display()));
+            errors.push(format!(
+                "Unexpected file: {}\n      Found in: {}\n      Not defined in references: {}\n      This file may need to be added to reference or excluded in rheo.toml",
+                actual_file.display(),
+                actual_dir.join(actual_file).display(),
+                reference_dir.display()
+            ));
         }
     }
 
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(errors.join("\n"))
+        let mut error_msg = String::from("HTML asset validation failed:\n\n");
+        for (i, error) in errors.iter().enumerate() {
+            error_msg.push_str(&format!("{}. {}\n\n", i + 1, error));
+        }
+        Err(error_msg)
     }
 }
 
@@ -282,6 +397,16 @@ fn default_filetype() -> String {
     "pdf".to_string()
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EpubMetadata {
+    pub filetype: String,
+    pub file_size: u64,
+    pub title: String,
+    pub language: String,
+    pub spine_files: Vec<String>,
+    pub has_nav: bool,
+}
+
 pub fn extract_pdf_metadata(pdf_path: &Path) -> Result<BinaryFileMetadata, String> {
     use lopdf::Document;
 
@@ -322,6 +447,69 @@ pub fn extract_css_metadata(css_path: &Path) -> Result<BinaryFileMetadata, Strin
     })
 }
 
+pub fn extract_epub_metadata(epub_path: &Path) -> Result<EpubMetadata, String> {
+    use rheo::formats::epub::package::Package;
+    use std::io::Read;
+    use zip::ZipArchive;
+
+    // Get file size
+    let file_size = fs::metadata(epub_path)
+        .map_err(|e| format!("Failed to read EPUB metadata: {}", e))?
+        .len();
+
+    // Open EPUB as ZIP archive
+    let file = fs::File::open(epub_path).map_err(|e| format!("Failed to open EPUB file: {}", e))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| format!("Failed to read EPUB archive: {}", e))?;
+
+    // Read package.opf
+    let opf_contents = {
+        let mut opf_file = archive
+            .by_name("EPUB/package.opf")
+            .map_err(|e| format!("Failed to find package.opf: {}", e))?;
+        let mut contents = String::new();
+        opf_file
+            .read_to_string(&mut contents)
+            .map_err(|e| format!("Failed to read package.opf: {}", e))?;
+        contents
+    };
+
+    // Parse package.opf XML
+    let package: Package = serde_xml_rs::from_str(&opf_contents)
+        .map_err(|e| format!("Failed to parse package.opf: {}", e))?;
+
+    // Extract metadata
+    let title = package.metadata.title.to_string();
+    let language = package.metadata.language.to_string();
+
+    // Extract spine files - map idrefs to hrefs via manifest
+    let spine_files: Vec<String> = package
+        .spine
+        .itemref
+        .iter()
+        .filter_map(|itemref| {
+            package
+                .manifest
+                .items
+                .iter()
+                .find(|item| item.id == itemref.idref)
+                .map(|item| item.href.to_string())
+        })
+        .collect();
+
+    // Check if nav.xhtml exists (opf_file is dropped, so we can borrow archive again)
+    let has_nav = archive.by_name("EPUB/nav.xhtml").is_ok();
+
+    Ok(EpubMetadata {
+        filetype: "epub".to_string(),
+        file_size,
+        title,
+        language,
+        spine_files,
+        has_nav,
+    })
+}
+
 fn compare_pdf_metadata(
     reference: &BinaryFileMetadata,
     actual: &BinaryFileMetadata,
@@ -335,27 +523,46 @@ fn compare_pdf_metadata(
         ));
     }
 
+    // Enhanced page count error with more context
     if reference.page_count != actual.page_count {
+        let ref_count = reference.page_count.unwrap_or(0);
+        let actual_count = actual.page_count.unwrap_or(0);
+        let page_diff = (actual_count as i32 - ref_count as i32).abs();
+        let change_type = if actual_count > ref_count {
+            "added"
+        } else {
+            "removed"
+        };
+
         errors.push(format!(
-            "Page count mismatch: expected {:?}, got {:?}",
-            reference.page_count, actual.page_count
+            "Page count: expected {}, got {} ({} pages {})",
+            ref_count, actual_count, page_diff, change_type
         ));
     }
 
+    // Enhanced file size error with percentage
     let size_diff = (actual.file_size as i64 - reference.file_size as i64).unsigned_abs();
     let tolerance = reference.file_size / 10;
 
     if size_diff > tolerance {
+        let size_percent_diff =
+            ((size_diff as f64 / reference.file_size as f64) * 100.0).round() as u32;
+
         errors.push(format!(
-            "File size mismatch beyond 10% tolerance: expected {}, got {} (diff: {})",
-            reference.file_size, actual.file_size, size_diff
+            "File size: expected {} bytes, got {} bytes ({}% diff, beyond 10% tolerance)",
+            reference.file_size, actual.file_size, size_percent_diff
         ));
     }
 
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(errors.join("\n"))
+        let mut error_msg = String::from("PDF metadata mismatch:\n");
+        for error in &errors {
+            error_msg.push_str(&format!("  - {}\n", error));
+        }
+        error_msg.push_str("\nThis may indicate a change in content or formatting.");
+        Err(error_msg)
     }
 }
 
@@ -393,6 +600,75 @@ fn compare_css_metadata(
     }
 }
 
+fn compare_epub_metadata(reference: &EpubMetadata, actual: &EpubMetadata) -> Result<(), String> {
+    let mut errors = Vec::new();
+
+    if reference.filetype != actual.filetype {
+        errors.push(format!(
+            "Filetype mismatch: expected {}, got {}",
+            reference.filetype, actual.filetype
+        ));
+    }
+
+    if reference.title != actual.title {
+        errors.push(format!(
+            "Title mismatch: expected '{}', got '{}'",
+            reference.title, actual.title
+        ));
+    }
+
+    if reference.language != actual.language {
+        errors.push(format!(
+            "Language mismatch: expected '{}', got '{}'",
+            reference.language, actual.language
+        ));
+    }
+
+    if reference.spine_files != actual.spine_files {
+        errors.push(format!(
+            "Spine order mismatch:\n  Expected: [{}]\n  Got: [{}]",
+            reference.spine_files.join(", "),
+            actual.spine_files.join(", ")
+        ));
+    }
+
+    if reference.has_nav != actual.has_nav {
+        errors.push(format!(
+            "Navigation file: expected {}, got {}",
+            if reference.has_nav {
+                "present"
+            } else {
+                "missing"
+            },
+            if actual.has_nav { "present" } else { "missing" }
+        ));
+    }
+
+    // File size with 10% tolerance (like PDF)
+    let size_diff = (actual.file_size as i64 - reference.file_size as i64).unsigned_abs();
+    let tolerance = reference.file_size / 10;
+
+    if size_diff > tolerance {
+        let size_percent_diff =
+            ((size_diff as f64 / reference.file_size as f64) * 100.0).round() as u32;
+
+        errors.push(format!(
+            "File size: expected {} bytes, got {} bytes ({}% diff, beyond 10% tolerance)",
+            reference.file_size, actual.file_size, size_percent_diff
+        ));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        let mut error_msg = String::from("EPUB metadata mismatch:\n");
+        for error in &errors {
+            error_msg.push_str(&format!("  - {}\n", error));
+        }
+        Err(error_msg)
+    }
+}
+
 fn validate_pdf_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), String> {
     let ref_files: Vec<String> = collect_files_by_predicate(reference_dir, |e| {
         e.path().extension().and_then(|s| s.to_str()) == Some("json")
@@ -417,21 +693,131 @@ fn validate_pdf_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), St
 
     for ref_file in &ref_files {
         if !actual_dir.join(ref_file).exists() {
-            errors.push(format!("Missing file: {}", ref_file));
+            errors.push(format!(
+                "Missing PDF file: {}\n      Expected in: {}\n      Metadata reference: {}",
+                ref_file,
+                actual_dir.display(),
+                reference_dir
+                    .join(format!(
+                        "{}.metadata.json",
+                        ref_file.strip_suffix(".pdf").unwrap_or(ref_file)
+                    ))
+                    .display()
+            ));
         }
     }
 
     for actual_file in &actual_files {
         if !ref_files.contains(actual_file) {
-            errors.push(format!("Unexpected file: {}", actual_file));
+            errors.push(format!(
+                "Unexpected PDF file: {}\n      Found in: {}\n      Not defined in references: {}\n      Run UPDATE_REFERENCES=1 to add this file to references",
+                actual_file,
+                actual_dir.join(actual_file).display(),
+                reference_dir.display()
+            ));
         }
     }
 
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(errors.join("\n"))
+        let mut error_msg = String::from("PDF asset validation failed:\n\n");
+        for (i, error) in errors.iter().enumerate() {
+            error_msg.push_str(&format!("{}. {}\n\n", i + 1, error));
+        }
+        Err(error_msg)
     }
+}
+
+fn validate_epub_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), String> {
+    let ref_files: Vec<String> = collect_files_by_predicate(reference_dir, |e| {
+        e.path().extension().and_then(|s| s.to_str()) == Some("json")
+    })
+    .into_iter()
+    .filter_map(|p| {
+        p.file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.strip_suffix(".metadata"))
+            .map(|s| format!("{}.epub", s))
+    })
+    .collect();
+
+    let actual_files: Vec<String> = collect_files_by_predicate(actual_dir, |e| {
+        e.path().extension().and_then(|s| s.to_str()) == Some("epub")
+    })
+    .into_iter()
+    .map(|p| p.to_string_lossy().to_string())
+    .collect();
+
+    let mut errors = Vec::new();
+
+    for ref_file in &ref_files {
+        if !actual_dir.join(ref_file).exists() {
+            errors.push(format!(
+                "Missing EPUB file: {}\n      Expected in: {}\n      Metadata reference: {}",
+                ref_file,
+                actual_dir.display(),
+                reference_dir
+                    .join(format!(
+                        "{}.metadata.json",
+                        ref_file.strip_suffix(".epub").unwrap_or(ref_file)
+                    ))
+                    .display()
+            ));
+        }
+    }
+
+    for actual_file in &actual_files {
+        if !ref_files.contains(actual_file) {
+            errors.push(format!(
+                "Unexpected EPUB file: {}\n      Found in: {}\n      Not defined in references: {}\n      Run UPDATE_REFERENCES=1 to add this file to references",
+                actual_file,
+                actual_dir.join(actual_file).display(),
+                reference_dir.display()
+            ));
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        let mut error_msg = String::from("EPUB asset validation failed:\n\n");
+        for (i, error) in errors.iter().enumerate() {
+            error_msg.push_str(&format!("{}. {}\n\n", i + 1, error));
+        }
+        Err(error_msg)
+    }
+}
+
+pub fn verify_epub_output(test_name: &str, actual_dir: &Path) {
+    let ref_dir = get_reference_dir(actual_dir, test_name, "epub");
+    ensure_reference_exists(&ref_dir, test_name, "EPUB");
+
+    validate_epub_assets(&ref_dir, actual_dir).expect("EPUB asset validation failed");
+
+    for_each_file_with_ext(actual_dir, "epub", |entry| {
+        let rel_path = entry.path().strip_prefix(actual_dir).unwrap();
+        let metadata_file = ref_dir.join(format!(
+            "{}.metadata.json",
+            rel_path.file_stem().unwrap().to_string_lossy()
+        ));
+
+        if !metadata_file.exists() {
+            panic!(
+                "EPUB metadata reference not found: {}. Run with UPDATE_REFERENCES=1",
+                metadata_file.display()
+            );
+        }
+
+        let ref_metadata_json =
+            fs::read_to_string(&metadata_file).expect("Failed to read reference metadata");
+        let ref_metadata: EpubMetadata =
+            serde_json::from_str(&ref_metadata_json).expect("Failed to parse reference metadata");
+        let actual_metadata =
+            extract_epub_metadata(entry.path()).expect("Failed to extract EPUB metadata");
+
+        compare_epub_metadata(&ref_metadata, &actual_metadata).expect("EPUB metadata mismatch");
+    });
 }
 
 #[allow(unused)]

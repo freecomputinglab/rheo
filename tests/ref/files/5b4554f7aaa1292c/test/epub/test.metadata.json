@@ -1,0 +1,10 @@
+{
+  "filetype": "epub",
+  "file_size": 2971,
+  "title": "Test",
+  "language": "en",
+  "spine_files": [
+    "test.xhtml"
+  ],
+  "has_nav": true
+}

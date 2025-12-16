@@ -1,3 +1,5 @@
+use crate::config::Merge;
+use crate::formats::pdf::filename_to_title;
 use crate::{Result, RheoConfig, RheoError};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
@@ -92,6 +94,13 @@ impl ProjectConfig {
             (config, loaded_path)
         };
 
+        // Apply smart defaults if no config file was loaded
+        let config = if loaded_config_path.is_none() {
+            apply_smart_defaults(config, &name, ProjectMode::Directory)
+        } else {
+            config
+        };
+
         // Determine search directory: content_dir if configured, otherwise project root
         let search_dir = config
             .resolve_content_dir(&root)
@@ -162,6 +171,13 @@ impl ProjectConfig {
             (RheoConfig::default(), None)
         };
 
+        // Apply smart defaults if no config file was loaded
+        let config = if loaded_config_path.is_none() {
+            apply_smart_defaults(config, &name, ProjectMode::SingleFile)
+        } else {
+            config
+        };
+
         // Single file in typ_files list
         let typ_files = vec![file_path.clone()];
 
@@ -183,6 +199,31 @@ impl ProjectConfig {
             config_path: loaded_config_path,
         })
     }
+}
+
+/// Apply smart defaults when no rheo.toml exists.
+///
+/// This generates sensible merge configurations for EPUB based on the project
+/// mode and name. PDF is not modified to maintain backwards compatibility
+/// (users expect per-file PDFs by default).
+fn apply_smart_defaults(
+    mut config: RheoConfig,
+    project_name: &str,
+    mode: ProjectMode,
+) -> RheoConfig {
+    // Generate human-readable title from project/file name
+    let title = filename_to_title(project_name);
+
+    // Apply EPUB defaults if merge not configured
+    if config.epub.merge.is_none() {
+        let spine = match mode {
+            ProjectMode::SingleFile => vec![], // Empty: will auto-discover single file
+            ProjectMode::Directory => vec!["**/*.typ".to_string()], // All files
+        };
+        config.epub.merge = Some(Merge { title, spine });
+    }
+
+    config
 }
 
 #[cfg(test)]
@@ -289,5 +330,71 @@ mod tests {
 
         // Single-file mode without custom config should have None
         assert!(project.config_path.is_none());
+    }
+
+    #[test]
+    fn test_single_file_epub_default_merge() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.path().join("my-document.typ");
+        fs::write(&file, "#heading[Test]").unwrap();
+
+        let project = ProjectConfig::from_path(&file, None).unwrap();
+
+        // Should have default merge config for EPUB
+        assert!(project.config.epub.merge.is_some());
+        let merge = project.config.epub.merge.as_ref().unwrap();
+        assert_eq!(merge.title, "My Document");
+        assert!(merge.spine.is_empty());
+    }
+
+    #[test]
+    fn test_directory_epub_default_merge() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("a.typ"), "A").unwrap();
+        fs::write(temp.path().join("b.typ"), "B").unwrap();
+
+        let project = ProjectConfig::from_path(temp.path(), None).unwrap();
+
+        // Should have default merge config for EPUB
+        assert!(project.config.epub.merge.is_some());
+        let merge = project.config.epub.merge.as_ref().unwrap();
+        assert_eq!(merge.spine, vec!["**/*.typ"]);
+        // Title should be based on temp directory name (will vary)
+        assert!(!merge.title.is_empty());
+    }
+
+    #[test]
+    fn test_explicit_config_not_modified() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("rheo.toml");
+        fs::write(
+            &config_path,
+            r#"
+[epub.merge]
+title = "Custom Title"
+spine = ["custom.typ"]
+"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("custom.typ"), "content").unwrap();
+
+        let project = ProjectConfig::from_path(temp.path(), None).unwrap();
+
+        // Should preserve explicit config
+        let merge = project.config.epub.merge.as_ref().unwrap();
+        assert_eq!(merge.title, "Custom Title");
+        assert_eq!(merge.spine, vec!["custom.typ"]);
+    }
+
+    #[test]
+    fn test_pdf_not_auto_merged() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("a.typ"), "A").unwrap();
+        fs::write(temp.path().join("b.typ"), "B").unwrap();
+
+        let project = ProjectConfig::from_path(temp.path(), None).unwrap();
+
+        // PDF should not get default merge config (backwards compatibility)
+        assert!(project.config.pdf.merge.is_none());
     }
 }

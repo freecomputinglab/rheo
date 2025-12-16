@@ -1,3 +1,7 @@
+// @rheo:test
+// @rheo:formats html,pdf
+// @rheo:description Main blog index page with post listings
+
 = Screening the subject
 
 _Screening the subject_ is a blog that analyses content on both the big and small screen in reasonable detail, i.e. episode-by-episode or scene-by-scene. 

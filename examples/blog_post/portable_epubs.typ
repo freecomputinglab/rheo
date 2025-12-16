@@ -1,3 +1,7 @@
+// @rheo:test
+// @rheo:formats html,pdf
+// @rheo:description Long-form article with custom HTML elements and code examples
+
 #let html-element(body, name: "div", attrs: (:)) = context {
     if target() == "html" {
       html.elem(name, attrs: attrs, body)

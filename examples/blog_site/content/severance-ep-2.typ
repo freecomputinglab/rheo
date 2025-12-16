@@ -1,3 +1,7 @@
+// @rheo:test
+// @rheo:formats html,pdf
+// @rheo:description Blog post about Severance episode 2
+
 #set document(title: [Half Loop - _Severance_ [s1/e2]])
 
 #title()

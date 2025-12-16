@@ -1,0 +1,10 @@
+{
+  "filetype": "epub",
+  "file_size": 6720377,
+  "title": "Blog Post",
+  "language": "en",
+  "spine_files": [
+    "portable_epubs.xhtml"
+  ],
+  "has_nav": true
+}
