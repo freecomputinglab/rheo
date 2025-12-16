@@ -1,4 +1,4 @@
-mod package;
+pub mod package;
 mod xhtml;
 
 use package::{Identifier, Item, ItemRef, Manifest, Meta, Metadata, Package, Spine};

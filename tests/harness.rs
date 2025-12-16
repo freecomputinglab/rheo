@@ -1,9 +1,9 @@
 mod helpers;
 
 use helpers::{
-    comparison::{verify_html_output, verify_pdf_output},
+    comparison::{verify_html_output, verify_pdf_output, verify_epub_output},
     fixtures::TestCase,
-    reference::{update_html_references, update_pdf_references},
+    reference::{update_html_references, update_pdf_references, update_epub_references},
 };
 use ntest::test_case;
 use rheo::{OutputFormat, RheoConfig, project::ProjectConfig};
@@ -134,18 +134,18 @@ fn run_test_case(name: &str) {
         }
     }
 
-    // TODO: Test EPUB output
-    // if run_epub {
-    //     let epub_output = build_dir.join("epub");
-    //     if epub_output.exists() {
-    //         if update_mode {
-    //             update_epub_references(test_name, &epub_output, project_path)
-    //                 .expect("Failed to update EPUB references");
-    //         } else {
-    //             verify_epub_output(test_name, &epub_output);
-    //         }
-    //     }
-    // }
+    // Test EPUB output
+    if run_epub {
+        let epub_output = build_dir.join("epub");
+        if epub_output.exists() {
+            if update_mode {
+                update_epub_references(test_name, &epub_output)
+                    .expect("Failed to update EPUB references");
+            } else {
+                verify_epub_output(test_name, &epub_output);
+            }
+        }
+    }
 
     // Clean build directory after test
     let clean_output = std::process::Command::new("cargo")

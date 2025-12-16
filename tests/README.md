@@ -153,6 +153,104 @@ UPDATE_REFERENCES=1 cargo test run_test_case_file_colonexamples_slashblog_site_s
 - Compares file size (must be within 10% tolerance)
 - Verifies exclusion patterns (e.g., blog_site excludes `index.typ` from PDF)
 
+### EPUB Testing
+
+EPUB reference testing validates the structure and metadata of generated EPUB files using a lightweight metadata approach.
+
+#### Approach
+
+Unlike HTML (full content comparison) and similar to PDF (metadata only), EPUB testing uses metadata validation:
+
+**What's Validated:**
+- Title (from config or inferred from filename/directory)
+- Language (from document metadata)
+- Spine files (ordered list of content files, exact match)
+- Navigation file existence (nav.xhtml)
+- File size (10% tolerance)
+
+**What's NOT Validated:**
+- Timestamps (dcterms:modified changes every build)
+- UUIDs (generated fresh each time)
+- Exact XHTML content (already tested via HTML tests)
+
+**Rationale:**
+- EPUB content is derived from HTML compilation
+- XHTML conversion is deterministic and unit tested
+- Focus on structural integrity and configuration correctness
+- Lightweight (no binary files in repo)
+
+#### Reference Files
+
+EPUB metadata stored as JSON:
+```
+tests/ref/
+├── examples/
+│   └── blog_post/
+│       └── epub/
+│           └── blog_post.metadata.json
+└── cases/
+    └── epub_explicit_config/
+        └── epub/
+            └── epub_explicit_config.metadata.json
+```
+
+Example metadata file:
+```json
+{
+  "filetype": "epub",
+  "file_size": 12453,
+  "title": "Blog Post",
+  "language": "en",
+  "spine_files": ["portable_epubs.xhtml"],
+  "has_nav": true
+}
+```
+
+#### Running EPUB Tests
+
+```bash
+# Run only EPUB tests
+RUN_EPUB_TESTS=1 cargo test --test harness
+
+# Run specific EPUB test
+cargo test run_test_case_examples_slashblog_post -- --nocapture
+
+# Update EPUB references
+UPDATE_REFERENCES=1 RUN_EPUB_TESTS=1 cargo test --test harness
+
+# Run all formats (HTML, PDF, EPUB)
+cargo test --test harness
+```
+
+#### When to Update References
+
+Update EPUB references when:
+- Changing EPUB title inference logic
+- Changing spine ordering logic
+- Changing EPUB compilation configuration
+- Adding new EPUB test cases
+
+DO NOT update for:
+- Minor formatting changes (within 10% file size tolerance)
+- Timestamp/UUID changes (not validated)
+
+#### Troubleshooting
+
+**File size mismatch beyond 10% tolerance:**
+- Indicates significant structural change
+- Review EPUB configuration or spine changes
+- Update reference if intentional change
+
+**Spine order mismatch:**
+- Check rheo.toml spine configuration
+- Verify file naming for default lexicographic sorting
+- Update reference if intentional change
+
+**Title/language mismatch:**
+- Check rheo.toml [epub] configuration
+- Verify document language metadata
+- Update reference if intentional change
+
 ## Adding New Tests
 
 ### Add a new project test

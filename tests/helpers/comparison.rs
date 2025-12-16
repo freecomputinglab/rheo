@@ -393,6 +393,16 @@ fn default_filetype() -> String {
     "pdf".to_string()
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EpubMetadata {
+    pub filetype: String,
+    pub file_size: u64,
+    pub title: String,
+    pub language: String,
+    pub spine_files: Vec<String>,
+    pub has_nav: bool,
+}
+
 pub fn extract_pdf_metadata(pdf_path: &Path) -> Result<BinaryFileMetadata, String> {
     use lopdf::Document;
 
@@ -430,6 +440,70 @@ pub fn extract_css_metadata(css_path: &Path) -> Result<BinaryFileMetadata, Strin
         path: None,
         page_count: None,
         hash: Some(hash),
+    })
+}
+
+pub fn extract_epub_metadata(epub_path: &Path) -> Result<EpubMetadata, String> {
+    use rheo::formats::epub::package::Package;
+    use std::io::Read;
+    use zip::ZipArchive;
+
+    // Get file size
+    let file_size = fs::metadata(epub_path)
+        .map_err(|e| format!("Failed to read EPUB metadata: {}", e))?
+        .len();
+
+    // Open EPUB as ZIP archive
+    let file = fs::File::open(epub_path)
+        .map_err(|e| format!("Failed to open EPUB file: {}", e))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|e| format!("Failed to read EPUB archive: {}", e))?;
+
+    // Read package.opf
+    let opf_contents = {
+        let mut opf_file = archive
+            .by_name("EPUB/package.opf")
+            .map_err(|e| format!("Failed to find package.opf: {}", e))?;
+        let mut contents = String::new();
+        opf_file
+            .read_to_string(&mut contents)
+            .map_err(|e| format!("Failed to read package.opf: {}", e))?;
+        contents
+    };
+
+    // Parse package.opf XML
+    let package: Package = serde_xml_rs::from_str(&opf_contents)
+        .map_err(|e| format!("Failed to parse package.opf: {}", e))?;
+
+    // Extract metadata
+    let title = package.metadata.title.to_string();
+    let language = package.metadata.language.to_string();
+
+    // Extract spine files - map idrefs to hrefs via manifest
+    let spine_files: Vec<String> = package
+        .spine
+        .itemref
+        .iter()
+        .filter_map(|itemref| {
+            package
+                .manifest
+                .items
+                .iter()
+                .find(|item| item.id == itemref.idref)
+                .map(|item| item.href.to_string())
+        })
+        .collect();
+
+    // Check if nav.xhtml exists (opf_file is dropped, so we can borrow archive again)
+    let has_nav = archive.by_name("EPUB/nav.xhtml").is_ok();
+
+    Ok(EpubMetadata {
+        filetype: "epub".to_string(),
+        file_size,
+        title,
+        language,
+        spine_files,
+        has_nav,
     })
 }
 
@@ -523,6 +597,74 @@ fn compare_css_metadata(
     }
 }
 
+fn compare_epub_metadata(
+    reference: &EpubMetadata,
+    actual: &EpubMetadata,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+
+    if reference.filetype != actual.filetype {
+        errors.push(format!(
+            "Filetype mismatch: expected {}, got {}",
+            reference.filetype, actual.filetype
+        ));
+    }
+
+    if reference.title != actual.title {
+        errors.push(format!(
+            "Title mismatch: expected '{}', got '{}'",
+            reference.title, actual.title
+        ));
+    }
+
+    if reference.language != actual.language {
+        errors.push(format!(
+            "Language mismatch: expected '{}', got '{}'",
+            reference.language, actual.language
+        ));
+    }
+
+    if reference.spine_files != actual.spine_files {
+        errors.push(format!(
+            "Spine order mismatch:\n  Expected: [{}]\n  Got: [{}]",
+            reference.spine_files.join(", "),
+            actual.spine_files.join(", ")
+        ));
+    }
+
+    if reference.has_nav != actual.has_nav {
+        errors.push(format!(
+            "Navigation file: expected {}, got {}",
+            if reference.has_nav { "present" } else { "missing" },
+            if actual.has_nav { "present" } else { "missing" }
+        ));
+    }
+
+    // File size with 10% tolerance (like PDF)
+    let size_diff = (actual.file_size as i64 - reference.file_size as i64).unsigned_abs();
+    let tolerance = reference.file_size / 10;
+
+    if size_diff > tolerance {
+        let size_percent_diff =
+            ((size_diff as f64 / reference.file_size as f64) * 100.0).round() as u32;
+
+        errors.push(format!(
+            "File size: expected {} bytes, got {} bytes ({}% diff, beyond 10% tolerance)",
+            reference.file_size, actual.file_size, size_percent_diff
+        ));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        let mut error_msg = String::from("EPUB metadata mismatch:\n");
+        for error in &errors {
+            error_msg.push_str(&format!("  - {}\n", error));
+        }
+        Err(error_msg)
+    }
+}
+
 fn validate_pdf_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), String> {
     let ref_files: Vec<String> = collect_files_by_predicate(reference_dir, |e| {
         e.path().extension().and_then(|s| s.to_str()) == Some("json")
@@ -581,6 +723,97 @@ fn validate_pdf_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), St
         }
         Err(error_msg)
     }
+}
+
+fn validate_epub_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), String> {
+    let ref_files: Vec<String> = collect_files_by_predicate(reference_dir, |e| {
+        e.path().extension().and_then(|s| s.to_str()) == Some("json")
+    })
+    .into_iter()
+    .filter_map(|p| {
+        p.file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.strip_suffix(".metadata"))
+            .map(|s| format!("{}.epub", s))
+    })
+    .collect();
+
+    let actual_files: Vec<String> = collect_files_by_predicate(actual_dir, |e| {
+        e.path().extension().and_then(|s| s.to_str()) == Some("epub")
+    })
+    .into_iter()
+    .map(|p| p.to_string_lossy().to_string())
+    .collect();
+
+    let mut errors = Vec::new();
+
+    for ref_file in &ref_files {
+        if !actual_dir.join(ref_file).exists() {
+            errors.push(format!(
+                "Missing EPUB file: {}\n      Expected in: {}\n      Metadata reference: {}",
+                ref_file,
+                actual_dir.display(),
+                reference_dir
+                    .join(format!(
+                        "{}.metadata.json",
+                        ref_file.strip_suffix(".epub").unwrap_or(ref_file)
+                    ))
+                    .display()
+            ));
+        }
+    }
+
+    for actual_file in &actual_files {
+        if !ref_files.contains(actual_file) {
+            errors.push(format!(
+                "Unexpected EPUB file: {}\n      Found in: {}\n      Not defined in references: {}\n      Run UPDATE_REFERENCES=1 to add this file to references",
+                actual_file,
+                actual_dir.join(actual_file).display(),
+                reference_dir.display()
+            ));
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        let mut error_msg = String::from("EPUB asset validation failed:\n\n");
+        for (i, error) in errors.iter().enumerate() {
+            error_msg.push_str(&format!("{}. {}\n\n", i + 1, error));
+        }
+        Err(error_msg)
+    }
+}
+
+pub fn verify_epub_output(test_name: &str, actual_dir: &Path) {
+    let ref_dir = get_reference_dir(actual_dir, test_name, "epub");
+    ensure_reference_exists(&ref_dir, test_name, "EPUB");
+
+    validate_epub_assets(&ref_dir, actual_dir).expect("EPUB asset validation failed");
+
+    for_each_file_with_ext(actual_dir, "epub", |entry| {
+        let rel_path = entry.path().strip_prefix(actual_dir).unwrap();
+        let metadata_file = ref_dir.join(format!(
+            "{}.metadata.json",
+            rel_path.file_stem().unwrap().to_string_lossy()
+        ));
+
+        if !metadata_file.exists() {
+            panic!(
+                "EPUB metadata reference not found: {}. Run with UPDATE_REFERENCES=1",
+                metadata_file.display()
+            );
+        }
+
+        let ref_metadata_json =
+            fs::read_to_string(&metadata_file).expect("Failed to read reference metadata");
+        let ref_metadata: EpubMetadata =
+            serde_json::from_str(&ref_metadata_json).expect("Failed to parse reference metadata");
+        let actual_metadata =
+            extract_epub_metadata(entry.path()).expect("Failed to extract EPUB metadata");
+
+        compare_epub_metadata(&ref_metadata, &actual_metadata).expect("EPUB metadata mismatch");
+    });
 }
 
 #[allow(unused)]
