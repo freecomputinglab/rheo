@@ -3,13 +3,9 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 /// Copies project source files to test store directory, excluding build artifacts
-pub fn copy_project_to_test_store(
-    project_path: &Path,
-    test_store: &Path,
-) -> Result<(), String> {
+pub fn copy_project_to_test_store(project_path: &Path, test_store: &Path) -> Result<(), String> {
     // Create test store
-    fs::create_dir_all(test_store)
-        .map_err(|e| format!("Failed to create test store: {}", e))?;
+    fs::create_dir_all(test_store).map_err(|e| format!("Failed to create test store: {}", e))?;
 
     // Copy all project files except build/
     for entry in WalkDir::new(project_path) {

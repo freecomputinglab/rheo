@@ -1,9 +1,9 @@
 mod helpers;
 
 use helpers::{
-    comparison::{verify_html_output, verify_pdf_output, verify_epub_output},
+    comparison::{verify_epub_output, verify_html_output, verify_pdf_output},
     fixtures::TestCase,
-    reference::{update_html_references, update_pdf_references, update_epub_references},
+    reference::{update_epub_references, update_html_references, update_pdf_references},
     test_store::copy_project_to_test_store,
 };
 use ntest::test_case;

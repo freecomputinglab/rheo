@@ -458,10 +458,9 @@ pub fn extract_epub_metadata(epub_path: &Path) -> Result<EpubMetadata, String> {
         .len();
 
     // Open EPUB as ZIP archive
-    let file = fs::File::open(epub_path)
-        .map_err(|e| format!("Failed to open EPUB file: {}", e))?;
-    let mut archive = ZipArchive::new(file)
-        .map_err(|e| format!("Failed to read EPUB archive: {}", e))?;
+    let file = fs::File::open(epub_path).map_err(|e| format!("Failed to open EPUB file: {}", e))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| format!("Failed to read EPUB archive: {}", e))?;
 
     // Read package.opf
     let opf_contents = {
@@ -601,10 +600,7 @@ fn compare_css_metadata(
     }
 }
 
-fn compare_epub_metadata(
-    reference: &EpubMetadata,
-    actual: &EpubMetadata,
-) -> Result<(), String> {
+fn compare_epub_metadata(reference: &EpubMetadata, actual: &EpubMetadata) -> Result<(), String> {
     let mut errors = Vec::new();
 
     if reference.filetype != actual.filetype {
@@ -639,7 +635,11 @@ fn compare_epub_metadata(
     if reference.has_nav != actual.has_nav {
         errors.push(format!(
             "Navigation file: expected {}, got {}",
-            if reference.has_nav { "present" } else { "missing" },
+            if reference.has_nav {
+                "present"
+            } else {
+                "missing"
+            },
             if actual.has_nav { "present" } else { "missing" }
         ));
     }
