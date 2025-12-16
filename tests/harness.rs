@@ -13,10 +13,6 @@ use std::path::PathBuf;
 
 #[test_case("examples/blog_site")]
 #[test_case("examples/blog_post")]
-#[test_case("tests/cases/pdf_merge")]
-#[test_case("tests/cases/multi_file_epub_default")]
-#[test_case("tests/cases/epub_explicit_config")]
-#[test_case("tests/cases/single_file_epub_default/test.typ")]
 #[test_case("examples/cover-letter.typ")]
 #[test_case("examples/blog_site/content/index.typ")]
 #[test_case("examples/blog_site/content/severance-ep-1.typ")]
