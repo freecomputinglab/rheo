@@ -4,6 +4,7 @@ use helpers::{
     comparison::{verify_html_output, verify_pdf_output, verify_epub_output},
     fixtures::TestCase,
     reference::{update_html_references, update_pdf_references, update_epub_references},
+    test_store::copy_project_to_test_store,
 };
 use ntest::test_case;
 use rheo::{OutputFormat, RheoConfig, project::ProjectConfig};
@@ -24,14 +25,47 @@ fn run_test_case(name: &str) {
     let test_case = TestCase::new(name);
     let update_mode = env::var("UPDATE_REFERENCES").is_ok();
     let test_name = test_case.name();
+    let original_project_path = test_case.project_path();
 
-    // Set up test environment
+    // Create isolated test store
     let test_store = PathBuf::from("tests/store").join(test_name);
+
+    // Clean previous test artifacts
+    if test_store.exists() {
+        std::fs::remove_dir_all(&test_store).expect("Failed to clean test store");
+    }
     std::fs::create_dir_all(&test_store).expect("Failed to create test store");
 
-    // Load project
-    let project_path = test_case.project_path();
-    let project = ProjectConfig::from_path(project_path, None).expect("Failed to load project");
+    // Copy project to test store for isolation
+    if test_case.is_single_file() {
+        // For single-file tests, copy just the file and its parent directory structure
+        let parent = original_project_path
+            .parent()
+            .expect("Single file should have parent");
+        copy_project_to_test_store(parent, &test_store)
+            .expect("Failed to copy project to test store");
+    } else {
+        // For directory tests, copy the whole project
+        copy_project_to_test_store(original_project_path, &test_store)
+            .expect("Failed to copy project to test store");
+    }
+
+    // Use test store as project path
+    let project_path = if test_case.is_single_file() {
+        let rel_path = original_project_path
+            .strip_prefix(
+                original_project_path
+                    .parent()
+                    .expect("Single file should have parent"),
+            )
+            .expect("Failed to get relative path");
+        test_store.join(rel_path)
+    } else {
+        test_store.clone()
+    };
+
+    // Load project from isolated copy
+    let project = ProjectConfig::from_path(&project_path, None).expect("Failed to load project");
     let config = RheoConfig::load(&project.root);
 
     // Get declared formats from test case (respects markers for single-file tests)
@@ -58,33 +92,15 @@ fn run_test_case(name: &str) {
         && (run_all || env_epub)
         && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_epub()));
 
-    // Get build directory
-    // For single-file tests, use parent directory since project_path is the file path
-    let build_dir = if test_case.is_single_file() {
-        project_path
-            .parent()
-            .expect("Single file should have parent directory")
-            .join("build")
-    } else {
-        project_path.join("build")
-    };
-
-    // Clean build directory before test to avoid stale artifacts
-    let clean_output = std::process::Command::new("cargo")
-        .args(["run", "--", "clean", project_path.to_str().unwrap()])
-        .output()
-        .expect("Failed to run rheo clean");
-
-    if !clean_output.status.success() {
-        eprintln!(
-            "Warning: Clean failed for {}: {}",
-            test_name,
-            String::from_utf8_lossy(&clean_output.stderr)
-        );
-    }
+    // Get build directory in test store
+    let build_dir = test_store.join("build");
 
     // Build compile command with format flags
     let mut compile_args = vec!["run", "--", "compile", project_path.to_str().unwrap()];
+
+    // Use isolated build directory
+    compile_args.push("--build-dir");
+    compile_args.push(build_dir.to_str().unwrap());
 
     // For single-file tests, add explicit format flags based on declared formats
     // For directory tests, let rheo use config/defaults (no flags = backward compatible)
@@ -121,7 +137,7 @@ fn run_test_case(name: &str) {
         let html_output = build_dir.join("html");
         if html_output.exists() {
             if update_mode {
-                update_html_references(test_name, &html_output, project_path)
+                update_html_references(test_name, &html_output, &project_path)
                     .expect("Failed to update HTML references");
             } else {
                 verify_html_output(test_name, &html_output);
@@ -155,18 +171,9 @@ fn run_test_case(name: &str) {
         }
     }
 
-    // Clean build directory after test
-    let clean_output = std::process::Command::new("cargo")
-        .args(["run", "--", "clean", project_path.to_str().unwrap()])
-        .output()
-        .expect("Failed to run rheo clean");
-
-    if !clean_output.status.success() {
-        eprintln!(
-            "Warning: Clean failed for {}: {}",
-            test_name,
-            String::from_utf8_lossy(&clean_output.stderr)
-        );
+    // Clean test store after test
+    if test_store.exists() {
+        std::fs::remove_dir_all(&test_store).ok();
     }
 }
 
