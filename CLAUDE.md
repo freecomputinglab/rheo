@@ -112,6 +112,8 @@ RHEO_TEST_DIFF_LIMIT=10000 cargo test --test harness -- --nocapture
 cargo test --test harness -- --test-threads=1
 ```
 
+**Note:** Tests automatically use embedded fonts (`TYPST_IGNORE_SYSTEM_FONTS=1`) for consistent output across environments. This is passed to all subprocess invocations by the test harness.
+
 See `tests/README.md` for detailed documentation on the integration test suite.
 
 **Test Suite Features:**

@@ -100,7 +100,11 @@ impl RheoWorld {
         let library = Library::builder().with_features(features).build();
 
         // Search for fonts using typst-kit
-        let font_search = Fonts::searcher().include_system_fonts(true).search();
+        // Respect TYPST_IGNORE_SYSTEM_FONTS for test consistency
+        let include_system_fonts = std::env::var("TYPST_IGNORE_SYSTEM_FONTS").is_err();
+        let font_search = Fonts::searcher()
+            .include_system_fonts(include_system_fonts)
+            .search();
 
         // Create package storage with default paths and downloader
         let package_storage = PackageStorage::new(

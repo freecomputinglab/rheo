@@ -44,6 +44,30 @@ cargo test --test integration_test
 cargo test -- --nocapture
 ```
 
+## Font Consistency
+
+To ensure tests produce identical output across different environments (local machines and CI), tests automatically use only Typst's embedded fonts. This prevents font-related rendering differences that cause page count and layout variations.
+
+**The test harness automatically sets `TYPST_IGNORE_SYSTEM_FONTS=1`**, so you can simply run:
+```bash
+cargo test --test harness
+```
+
+**Why this matters:**
+- Different machines have different system fonts installed
+- Font metrics (line height, character width) affect text layout
+- Layout differences cause page breaks to vary → different page counts
+- CI (Ubuntu) has different fonts than macOS/Windows
+
+**Typst's embedded fonts** (New Computer Modern, Libertinus) are:
+- Bundled with the Typst compiler
+- Identical across all platforms
+- Deterministic in rendering behavior
+
+**Implementation:** The environment variable is automatically passed to all `cargo run` subprocess invocations in `tests/harness.rs`.
+
+**Note:** This only affects tests. Normal `rheo compile` commands still use system fonts as expected.
+
 ## Updating Reference Outputs
 
 When you make intentional changes to rheo's output, update the reference files:
