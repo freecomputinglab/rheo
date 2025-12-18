@@ -115,6 +115,7 @@ fn run_test_case(name: &str) {
     // Compile the project using rheo CLI logic
     let output = std::process::Command::new("cargo")
         .args(&compile_args)
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
 
@@ -205,6 +206,7 @@ fn test_pdf_merge() {
             project_path.to_str().unwrap(),
             "--pdf",
         ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
 
@@ -285,6 +287,7 @@ Content here.
     // Try to compile - should fail or warn
     let output = std::process::Command::new("cargo")
         .args(["run", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
 
@@ -349,6 +352,7 @@ Content from dir2.
     // Try to compile - should fail with duplicate label error
     let output = std::process::Command::new("cargo")
         .args(["run", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
 
@@ -397,6 +401,7 @@ fn test_html_css_link_injection() {
             project_path.to_str().unwrap(),
             "--html",
         ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
 

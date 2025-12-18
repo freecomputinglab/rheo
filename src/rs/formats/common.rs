@@ -122,7 +122,7 @@ mod tests {
     use super::*;
     use ecow::eco_vec;
     use typst::diag::{EcoString, Severity};
-    use typst_syntax::Span;
+    use typst::syntax::Span;
 
     // Helper to create mock SourceDiagnostic for testing
     fn create_diagnostic(message: &str, severity: Severity) -> SourceDiagnostic {

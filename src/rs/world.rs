@@ -100,9 +100,10 @@ impl RheoWorld {
         let library = Library::builder().with_features(features).build();
 
         // Search for fonts using typst-kit
+        // Respect TYPST_IGNORE_SYSTEM_FONTS for test consistency
+        let include_system_fonts = std::env::var("TYPST_IGNORE_SYSTEM_FONTS").is_err();
         let font_search = Fonts::searcher()
-            .include_system_fonts(true)
-            .include_embedded_fonts(true)
+            .include_system_fonts(include_system_fonts)
             .search();
 
         // Create package storage with default paths and downloader
@@ -117,8 +118,8 @@ impl RheoWorld {
             repo_root,
             main,
             library: LazyHash::new(library),
-            book: font_search.book,
-            fonts: font_search.slots,
+            book: font_search.book.into(),
+            fonts: font_search.fonts,
             slots: Mutex::new(HashMap::new()),
             package_storage,
             remove_typ_links,

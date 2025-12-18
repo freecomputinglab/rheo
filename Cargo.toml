@@ -2,10 +2,24 @@
 name = "rheo"
 version = "0.1.0"
 edition = "2024"
-authors = ["rheo contributors"]
-description = "A tool for flowing Typst documents into publishable outputs"
+authors = ["Lachlan Kermode <lachie@ohrg.org>"]
+description = "A tool for flowing typst into html, epub, and pdf simultaneously"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/yourusername/rheo"
+repository = "https://github.com/breezykermo/rheo"
+exclude = [
+  "docs/",
+  "tests/",
+  "examples/",
+  ".github/",
+  ".beads/",
+  ".claude/",
+  "flake.nix",
+  "flake.lock",
+  ".envrc",
+  "CLAUDE.md",
+  "Justfile",
+  "header.png"
+]
 
 [[bin]]
 name = "rheo"
@@ -16,11 +30,11 @@ name = "rheo"
 path = "src/rs/lib.rs"
 
 [dependencies]
-typst = { git = "https://github.com/typst/typst", branch = "main" }
-typst-library = { git = "https://github.com/typst/typst", branch = "main" }
-typst-pdf = { git = "https://github.com/typst/typst", branch = "main" }
-typst-html = { git = "https://github.com/typst/typst", branch = "main" }
-typst-kit = { git = "https://github.com/typst/typst", branch = "main", default-features = false, features = ["fonts", "embed-fonts", "packages", "vendor-openssl"] }
+typst = "0.14.2"
+typst-library = "0.14.2"
+typst-pdf = "0.14.2"
+typst-html = "0.14.2"
+typst-kit = "0.14.2"
 comemo = "0.5"
 ecow = "0.2"
 clap = { version = "4.5", features = ["derive"] }

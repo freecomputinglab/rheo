@@ -28,3 +28,5 @@ jobs:
 
       - name: Run tests
         run: cargo test --all-targets --all-features
+        env:
+          TYPST_IGNORE_SYSTEM_FONTS: "1"
