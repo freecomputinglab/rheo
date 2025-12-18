@@ -27,7 +27,7 @@ pub fn compile_html_to_document(
             .contains("html export is under active development and incomplete")
     };
 
-    unwrap_compilation_result(result, Some(html_filter))
+    unwrap_compilation_result(Some(&world), result, Some(html_filter))
 }
 
 pub fn compile_document_to_string(document: &HtmlDocument) -> Result<String> {
@@ -113,7 +113,7 @@ fn compile_html_impl(
             .contains("html export is under active development and incomplete")
     };
 
-    let document = unwrap_compilation_result(result, Some(html_filter))?;
+    let document = unwrap_compilation_result(Some(world), result, Some(html_filter))?;
 
     // 2. Export to HTML string
     debug!(output = %output.display(), "exporting to HTML");

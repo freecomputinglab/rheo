@@ -1,42 +1,135 @@
 use crate::error::RheoError;
-use ecow::EcoVec;
+use crate::world::RheoWorld;
+use codespan_reporting::diagnostic::{Diagnostic, Label};
+use codespan_reporting::term;
+use ecow::{eco_format, EcoVec};
 use tracing::{error, warn};
-use typst::diag::{SourceDiagnostic, SourceResult, Warned};
+use typst::diag::{Severity, SourceDiagnostic, SourceResult, Warned};
+use typst::WorldExt;
 
-/// Process Typst compilation warnings with optional filtering.
+/// Print diagnostic messages to stderr using codespan-reporting.
+///
+/// This renders diagnostics with rich source context, color coding, and
+/// helpful hints/traces. Similar to how the Typst CLI displays errors.
 ///
 /// # Arguments
+/// * `world` - The RheoWorld for source file access
+/// * `errors` - Error diagnostics to display
+/// * `warnings` - Warning diagnostics to display
+///
+/// # Returns
+/// Returns an error if diagnostic rendering fails (rare)
+pub fn print_diagnostics(
+    world: &RheoWorld,
+    errors: &[SourceDiagnostic],
+    warnings: &[SourceDiagnostic],
+) -> std::result::Result<(), codespan_reporting::files::Error> {
+    let config = term::Config {
+        tab_width: 2,
+        ..Default::default()
+    };
+
+    // Use stderr for diagnostic output
+    let mut stderr = term::termcolor::StandardStream::stderr(term::termcolor::ColorChoice::Auto);
+
+    for diagnostic in warnings.iter().chain(errors.iter()) {
+        let diag = match diagnostic.severity {
+            Severity::Error => Diagnostic::error(),
+            Severity::Warning => Diagnostic::warning(),
+        }
+        .with_message(diagnostic.message.clone())
+        .with_notes(
+            diagnostic
+                .hints
+                .iter()
+                .map(|s| (eco_format!("hint: {}", s)).into())
+                .collect(),
+        )
+        .with_labels(
+            label(world, diagnostic.span)
+                .into_iter()
+                .collect(),
+        );
+
+        term::emit(&mut stderr, &config, world, &diag)?;
+
+        // Stacktrace-like helper diagnostics (trace)
+        for point in &diagnostic.trace {
+            let message = point.v.to_string();
+            let help = Diagnostic::help()
+                .with_message(message)
+                .with_labels(label(world, point.span).into_iter().collect());
+
+            term::emit(&mut stderr, &config, world, &help)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Create a label for a span.
+///
+/// This converts a Typst span into a codespan-reporting label pointing
+/// to the primary location of an error or warning.
+fn label(world: &RheoWorld, span: typst::syntax::Span) -> Option<Label<typst::syntax::FileId>> {
+    Some(Label::primary(span.id()?, world.range(span)?))
+}
+
+/// Process Typst compilation warnings.
+///
+/// When a world is provided, uses codespan-reporting for rich terminal output.
+/// Otherwise falls back to simple logging.
+///
+/// # Arguments
+/// * `world` - Optional RheoWorld for rich diagnostic rendering
 /// * `warnings` - Warnings from compilation result
-/// * `filter_fn` - Optional filter predicate (returns true to KEEP warning)
 ///
 /// # Example
 /// ```ignore
-/// // Filter out HTML development warning
-/// handle_typst_warnings(&result.warnings, Some(|w| {
-///     !w.message.contains("html export is under active development")
-/// }));
+/// handle_typst_warnings(Some(&world), &result.warnings);
 /// ```
-pub fn handle_typst_warnings<F>(warnings: &[SourceDiagnostic], filter_fn: Option<F>)
-where
-    F: Fn(&SourceDiagnostic) -> bool,
-{
-    for warning in warnings {
-        if let Some(ref filter) = filter_fn
-            && !filter(warning)
-        {
-            continue;
+pub fn handle_typst_warnings(
+    world: Option<&RheoWorld>,
+    warnings: &[SourceDiagnostic],
+) {
+    if warnings.is_empty() {
+        return;
+    }
+
+    // Use rich diagnostics if world is available
+    if let Some(world) = world {
+        // Ignore errors from diagnostic printing (shouldn't happen)
+        let _ = print_diagnostics(world, &[], warnings);
+    } else {
+        // Fall back to simple logging
+        for warning in warnings {
+            warn!(message = %warning.message, "compilation warning");
         }
-        warn!(message = %warning.message, "compilation warning");
     }
 }
 
 /// Convert Typst compilation errors to RheoError::Compilation.
 ///
-/// Logs all errors and aggregates them into a single error with count.
-pub fn handle_typst_errors(errors: EcoVec<SourceDiagnostic>) -> RheoError {
-    for err in &errors {
-        error!(message = %err.message, "compilation error");
+/// When a world is provided, uses codespan-reporting for rich terminal output.
+/// Otherwise falls back to simple logging. Always returns a RheoError for
+/// error handling.
+///
+/// # Arguments
+/// * `world` - Optional RheoWorld for rich diagnostic rendering
+/// * `errors` - Compilation errors
+pub fn handle_typst_errors(world: Option<&RheoWorld>, errors: EcoVec<SourceDiagnostic>) -> RheoError {
+    // Use rich diagnostics if world is available
+    if let Some(world) = world {
+        // Ignore errors from diagnostic printing (shouldn't happen)
+        let _ = print_diagnostics(world, &errors, &[]);
+    } else {
+        // Fall back to simple logging
+        for err in &errors {
+            error!(message = %err.message, "compilation error");
+        }
     }
+
+    // Always return RheoError for error handling
     let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
     RheoError::Compilation {
         count: errors.len(),
@@ -46,7 +139,10 @@ pub fn handle_typst_errors(errors: EcoVec<SourceDiagnostic>) -> RheoError {
 
 /// Process compilation result: handle warnings and unwrap output.
 ///
+/// When a world is provided, uses codespan-reporting for rich error/warning display.
+///
 /// # Arguments
+/// * `world` - Optional RheoWorld for rich diagnostic rendering
 /// * `result` - Typst compilation result
 /// * `filter_warnings` - Optional warning filter function (returns true to KEEP)
 ///
@@ -56,17 +152,24 @@ pub fn handle_typst_errors(errors: EcoVec<SourceDiagnostic>) -> RheoError {
 /// # Example
 /// ```ignore
 /// let result = typst::compile::<PagedDocument>(&world);
-/// let document = unwrap_compilation_result(result, None)?;
+/// let document = unwrap_compilation_result(Some(&world), result, None)?;
 /// ```
 pub fn unwrap_compilation_result<T, F>(
+    world: Option<&RheoWorld>,
     result: Warned<SourceResult<T>>,
     filter_warnings: Option<F>,
 ) -> crate::Result<T>
 where
     F: Fn(&SourceDiagnostic) -> bool,
 {
-    handle_typst_warnings(&result.warnings, filter_warnings);
-    result.output.map_err(handle_typst_errors)
+    // Filter warnings if filter function provided
+    if let Some(filter_fn) = filter_warnings {
+        let filtered: Vec<_> = result.warnings.iter().filter(|w| filter_fn(w)).cloned().collect();
+        handle_typst_warnings(world, &filtered);
+    } else {
+        handle_typst_warnings(world, &result.warnings);
+    }
+    result.output.map_err(|e| handle_typst_errors(world, e))
 }
 
 /// Export error type for generic error handling
@@ -146,7 +249,7 @@ mod tests {
     #[test]
     fn test_handle_typst_errors_single() {
         let errors = eco_vec![create_error("test error")];
-        let result = handle_typst_errors(errors);
+        let result = handle_typst_errors(None, errors);
 
         match result {
             RheoError::Compilation { count, errors } => {
@@ -164,7 +267,7 @@ mod tests {
             create_error("error 2"),
             create_error("error 3"),
         ];
-        let result = handle_typst_errors(errors);
+        let result = handle_typst_errors(None, errors);
 
         match result {
             RheoError::Compilation { count, errors } => {
@@ -182,7 +285,7 @@ mod tests {
             warnings: eco_vec![create_warning("test warning")],
         };
 
-        let output = unwrap_compilation_result(result, None::<fn(&SourceDiagnostic) -> bool>);
+        let output = unwrap_compilation_result(None, result, None::<fn(&SourceDiagnostic) -> bool>);
         assert!(output.is_ok());
         assert_eq!(output.unwrap(), 42);
     }
@@ -194,7 +297,7 @@ mod tests {
             warnings: eco_vec![],
         };
 
-        let output = unwrap_compilation_result(result, None::<fn(&SourceDiagnostic) -> bool>);
+        let output = unwrap_compilation_result(None, result, None::<fn(&SourceDiagnostic) -> bool>);
         assert!(output.is_err());
 
         match output.unwrap_err() {
@@ -222,7 +325,7 @@ mod tests {
                 .contains("html export is under active development")
         };
 
-        let output = unwrap_compilation_result(result, Some(filter));
+        let output = unwrap_compilation_result(None, result, Some(filter));
         assert!(output.is_ok());
         assert_eq!(output.unwrap(), 42);
     }
@@ -267,7 +370,7 @@ mod tests {
     #[test]
     fn test_handle_typst_errors_empty() {
         let errors = eco_vec![];
-        let result = handle_typst_errors(errors);
+        let result = handle_typst_errors(None, errors);
 
         match result {
             RheoError::Compilation { count, errors } => {
@@ -317,7 +420,7 @@ mod tests {
             ],
         };
 
-        let output = unwrap_compilation_result(result, None::<fn(&SourceDiagnostic) -> bool>);
+        let output = unwrap_compilation_result(None, result, None::<fn(&SourceDiagnostic) -> bool>);
         assert!(output.is_ok());
         assert_eq!(output.unwrap(), "success");
     }
@@ -332,7 +435,7 @@ mod tests {
         // Filter that keeps everything
         let filter = |_w: &SourceDiagnostic| true;
 
-        let output = unwrap_compilation_result(result, Some(filter));
+        let output = unwrap_compilation_result(None, result, Some(filter));
         assert!(output.is_ok());
         assert_eq!(output.unwrap(), 100);
     }
@@ -347,7 +450,7 @@ mod tests {
         // Filter that removes everything
         let filter = |_w: &SourceDiagnostic| false;
 
-        let output = unwrap_compilation_result(result, Some(filter));
+        let output = unwrap_compilation_result(None, result, Some(filter));
         assert!(output.is_ok());
         assert_eq!(output.unwrap(), 200);
     }
@@ -359,7 +462,7 @@ mod tests {
             warnings: eco_vec![],
         };
 
-        let output = unwrap_compilation_result(result, None::<fn(&SourceDiagnostic) -> bool>);
+        let output = unwrap_compilation_result(None, result, None::<fn(&SourceDiagnostic) -> bool>);
         assert!(output.is_ok());
         assert_eq!(output.unwrap(), "no warnings");
     }
@@ -375,7 +478,7 @@ mod tests {
             warnings: eco_vec![create_warning("warning before errors")],
         };
 
-        let output = unwrap_compilation_result(result, None::<fn(&SourceDiagnostic) -> bool>);
+        let output = unwrap_compilation_result(None, result, None::<fn(&SourceDiagnostic) -> bool>);
         assert!(output.is_err());
 
         match output.unwrap_err() {

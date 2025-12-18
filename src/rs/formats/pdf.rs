@@ -37,7 +37,7 @@ fn compile_pdf_single_impl_fresh(
     // Compile the document
     info!(input = %input.display(), "compiling to PDF");
     let result = typst::compile::<PagedDocument>(&world);
-    let document = unwrap_compilation_result(result, None::<fn(&_) -> bool>)?;
+    let document = unwrap_compilation_result(Some(&world), result, None::<fn(&_) -> bool>)?;
 
     // Export to PDF
     debug!(output = %output.display(), "exporting to PDF");
@@ -58,7 +58,7 @@ fn compile_pdf_single_impl(world: &RheoWorld, output: &Path) -> Result<()> {
     // Compile the document
     info!("compiling to PDF");
     let result = typst::compile::<PagedDocument>(world);
-    let document = unwrap_compilation_result(result, None::<fn(&_) -> bool>)?;
+    let document = unwrap_compilation_result(Some(world), result, None::<fn(&_) -> bool>)?;
 
     // Export to PDF
     debug!(output = %output.display(), "exporting to PDF");
@@ -391,7 +391,7 @@ fn compile_pdf_merged_impl_fresh(
     // Compile to PagedDocument
     info!(output = %output_path.display(), "compiling merged PDF");
     let result = typst::compile::<PagedDocument>(&world);
-    let document = unwrap_compilation_result(result, None::<fn(&_) -> bool>)?;
+    let document = unwrap_compilation_result(Some(&world), result, None::<fn(&_) -> bool>)?;
 
     // Export PDF bytes
     // Note: PDF title is set via document metadata in Typst source, not PdfOptions
@@ -450,7 +450,7 @@ fn compile_pdf_merged_impl(
     // Compile to PagedDocument
     info!("compiling merged PDF");
     let result = typst::compile::<PagedDocument>(world);
-    let document = unwrap_compilation_result(result, None::<fn(&_) -> bool>)?;
+    let document = unwrap_compilation_result(Some(world), result, None::<fn(&_) -> bool>)?;
 
     // Export PDF bytes
     // Note: PDF title is set via document metadata in Typst source, not PdfOptions
