@@ -4,10 +4,11 @@ use std::path::{Path, PathBuf};
 
 use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
+use codespan_reporting::files::{Error as CodespanError, Files};
 use parking_lot::Mutex;
 use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Datetime};
-use typst::syntax::{FileId, Source, VirtualPath};
+use typst::syntax::{FileId, Lines, Source, VirtualPath};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
@@ -234,6 +235,38 @@ impl RheoWorld {
 
         Ok(path)
     }
+
+    /// Look up the lines of a source file.
+    ///
+    /// This is used by the codespan-reporting integration to provide source
+    /// context when displaying diagnostics. Returns the lines from either the
+    /// cached source or loaded file bytes.
+    pub fn lookup(&self, id: FileId) -> Lines<String> {
+        // Try to get from source cache first
+        if let Some(slot) = self.slots.lock().get(&id)
+            && let Some(source) = &slot.source
+        {
+            return source.lines().clone();
+        }
+
+        // Try to load the source using World trait
+        if let Ok(source) = World::source(self, id) {
+            return source.lines().clone();
+        }
+
+        // If source loading failed, try to get as bytes and convert
+        if let Some(slot) = self.slots.lock().get(&id)
+            && let Some(bytes) = &slot.file
+        {
+            // Attempt to convert bytes to Lines
+            if let Ok(lines) = Lines::try_from(bytes) {
+                return lines;
+            }
+        }
+
+        // Last resort: return empty Lines
+        Lines::new(String::new())
+    }
 }
 
 impl World for RheoWorld {
@@ -329,6 +362,61 @@ impl World for RheoWorld {
             with_offset.month().try_into().ok()?,
             with_offset.day().try_into().ok()?,
         )
+    }
+}
+
+/// Implement the Files trait from codespan-reporting for diagnostic rendering.
+///
+/// This allows RheoWorld to provide file information (name, source lines, line ranges)
+/// to codespan-reporting's diagnostic formatter.
+impl<'a> Files<'a> for RheoWorld {
+    type FileId = FileId;
+    type Name = String;
+    type Source = Lines<String>;
+
+    fn name(&'a self, id: FileId) -> std::result::Result<Self::Name, CodespanError> {
+        let vpath = id.vpath();
+        Ok(if let Some(package) = id.package() {
+            // For package files, show package name + path
+            format!("{package}{}", vpath.as_rooted_path().display())
+        } else {
+            // For local files, try to show relative path from root
+            vpath
+                .resolve(&self.root)
+                .and_then(|abs| pathdiff::diff_paths(abs, &self.root))
+                .as_deref()
+                .unwrap_or_else(|| vpath.as_rootless_path())
+                .to_string_lossy()
+                .into()
+        })
+    }
+
+    fn source(&'a self, id: FileId) -> std::result::Result<Self::Source, CodespanError> {
+        Ok(self.lookup(id))
+    }
+
+    fn line_index(&'a self, id: FileId, given: usize) -> std::result::Result<usize, CodespanError> {
+        let source = self.lookup(id);
+        source
+            .byte_to_line(given)
+            .ok_or_else(|| CodespanError::IndexTooLarge {
+                given,
+                max: source.len_bytes(),
+            })
+    }
+
+    fn line_range(
+        &'a self,
+        id: FileId,
+        given: usize,
+    ) -> std::result::Result<std::ops::Range<usize>, CodespanError> {
+        let source = self.lookup(id);
+        source
+            .line_to_range(given)
+            .ok_or_else(|| CodespanError::LineTooLarge {
+                given,
+                max: source.len_lines(),
+            })
     }
 }
 
