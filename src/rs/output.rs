@@ -1,7 +1,7 @@
 use crate::{Result, RheoError};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Output directory configuration for a project
 #[derive(Debug)]

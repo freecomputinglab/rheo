@@ -2,7 +2,7 @@ use crate::{OutputFormat, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tracing::{debug, info};
+use tracing::debug;
 
 /// PDF compilation options.
 ///

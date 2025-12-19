@@ -2,7 +2,7 @@ use crate::config::Merge;
 use crate::formats::pdf::filename_to_title;
 use crate::{Result, RheoConfig, RheoError};
 use std::path::{Path, PathBuf};
-use tracing::{debug, info};
+use tracing::debug;
 use walkdir::WalkDir;
 
 /// Mode for project compilation
