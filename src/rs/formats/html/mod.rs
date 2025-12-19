@@ -2,9 +2,10 @@ use crate::compile::RheoCompileOptions;
 use crate::config::HtmlOptions;
 use crate::constants::HTML_EXT;
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
+use crate::formats::compiler::FormatCompiler;
 use crate::postprocess;
 use crate::world::RheoWorld;
-use crate::{Result, RheoError};
+use crate::{OutputFormat, Result, RheoError};
 use std::path::Path;
 use tracing::{debug, info};
 use typst_html::HtmlDocument;
@@ -174,6 +175,30 @@ pub fn compile_html_new(options: RheoCompileOptions, html_options: HtmlOptions) 
             &options.repo_root,
             &html_options,
         ),
+    }
+}
+
+// ============================================================================
+// FormatCompiler trait implementation
+// ============================================================================
+
+/// HTML compiler implementation
+pub use crate::formats::compiler::HtmlCompiler;
+
+impl FormatCompiler for HtmlCompiler {
+    type Config = HtmlOptions;
+
+    fn format(&self) -> OutputFormat {
+        OutputFormat::Html
+    }
+
+    fn supports_per_file(&self, _config: &Self::Config) -> bool {
+        // HTML always supports per-file
+        true
+    }
+
+    fn compile(&self, options: RheoCompileOptions, config: &Self::Config) -> Result<()> {
+        compile_html_new(options, config.clone())
     }
 }
 
