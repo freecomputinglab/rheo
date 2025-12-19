@@ -130,8 +130,8 @@ pub fn remove_relative_typ_links(source: &str) -> String {
     let code_ranges = find_backtick_ranges(source);
 
     // Apply regex transformation only outside code blocks
-    let re = Regex::new(r#"#link\("([^"]+)"\)(\[[^\]]+\]|,\s*[^)]+)"#)
-        .expect("invalid regex pattern");
+    let re =
+        Regex::new(r#"#link\("([^"]+)"\)(\[[^\]]+\]|,\s*[^)]+)"#).expect("invalid regex pattern");
 
     let mut result = String::new();
     let mut last_pos = 0;
@@ -141,9 +141,9 @@ pub fn remove_relative_typ_links(source: &str) -> String {
         let match_end = mat.end();
 
         // Check if this match is inside a backtick-delimited code region
-        let in_code_block = code_ranges.iter().any(|(start, end)| {
-            match_start >= *start && match_end <= *end
-        });
+        let in_code_block = code_ranges
+            .iter()
+            .any(|(start, end)| match_start >= *start && match_end <= *end);
 
         // Add text before this match
         result.push_str(&source[last_pos..match_start]);
@@ -340,7 +340,8 @@ mod tests {
     #[test]
     fn test_syntax_aware_preserves_external() {
         // External links are preserved both in and out of code blocks
-        let source = r#"Visit #link("https://example.com")[site] or `#link("https://api.com")[API]`."#;
+        let source =
+            r#"Visit #link("https://example.com")[site] or `#link("https://api.com")[API]`."#;
         let result = remove_relative_typ_links(source);
         assert_eq!(result, source); // Should be unchanged
     }
@@ -446,10 +447,12 @@ mod tests {
 
         // Check for metadata with labels (new format)
         assert!(
-            result.contains("#metadata(\"Chapter1\") <chapter1>") || result.contains("#metadata(\"Chapter 1\") <chapter1>")
+            result.contains("#metadata(\"Chapter1\") <chapter1>")
+                || result.contains("#metadata(\"Chapter 1\") <chapter1>")
         );
         assert!(
-            result.contains("#metadata(\"Chapter2\") <chapter2>") || result.contains("#metadata(\"Chapter 2\") <chapter2>")
+            result.contains("#metadata(\"Chapter2\") <chapter2>")
+                || result.contains("#metadata(\"Chapter 2\") <chapter2>")
         );
 
         // Check that content is preserved
