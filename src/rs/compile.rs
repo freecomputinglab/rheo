@@ -1,7 +1,6 @@
 use crate::world::RheoWorld;
 use regex::Regex;
 use std::path::PathBuf;
-use tracing::{instrument, warn};
 
 /// Common compilation options used across all output formats.
 ///
@@ -125,7 +124,6 @@ impl<'a> RheoCompileOptions<'a> {
 /// # TODO
 /// When multi-file PDF compilation is implemented, relative links should
 /// become document anchors instead of being removed.
-#[instrument(skip(source))]
 pub fn remove_relative_typ_links(source: &str) -> String {
     // Regex to match Typst link function calls
     // Captures: #link("url")[body] or #link("url", body)
