@@ -56,6 +56,14 @@ pub enum RheoError {
         source: notify::Error,
         context: String,
     },
+
+    /// Parse error for invalid input data
+    #[error("Parse error: {message}")]
+    ParseError { message: String },
+
+    /// Invalid data error
+    #[error("Invalid data: {message}")]
+    InvalidData { message: String },
 }
 
 impl RheoError {
@@ -87,6 +95,20 @@ impl RheoError {
         RheoError::FileWatcher {
             source,
             context: context.into(),
+        }
+    }
+
+    /// Helper to create a parse error
+    pub fn parse_error(message: impl Into<String>) -> Self {
+        RheoError::ParseError {
+            message: message.into(),
+        }
+    }
+
+    /// Helper to create an invalid data error
+    pub fn invalid_data(message: impl Into<String>) -> Self {
+        RheoError::InvalidData {
+            message: message.into(),
         }
     }
 }

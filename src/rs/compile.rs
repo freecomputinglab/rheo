@@ -153,24 +153,28 @@ pub fn remove_relative_typ_links(source: &str) -> String {
             result.push_str(mat.as_str());
         } else {
             // Transform the link if it's outside code blocks
-            let caps = re.captures(mat.as_str()).unwrap();
-            let url = &caps[1];
-            let body = &caps[2];
+            if let Some(caps) = re.captures(mat.as_str()) {
+                let url = &caps[1];
+                let body = &caps[2];
 
-            let is_relative_typ = url.ends_with(".typ")
-                && !url.starts_with("http://")
-                && !url.starts_with("https://")
-                && !url.starts_with("mailto:");
+                let is_relative_typ = url.ends_with(".typ")
+                    && !url.starts_with("http://")
+                    && !url.starts_with("https://")
+                    && !url.starts_with("mailto:");
 
-            if is_relative_typ {
-                // Remove the link, keep just the body
-                if body.starts_with('[') {
-                    result.push_str(body);
+                if is_relative_typ {
+                    // Remove the link, keep just the body
+                    if body.starts_with('[') {
+                        result.push_str(body);
+                    } else {
+                        result.push_str(body.trim_start_matches(',').trim());
+                    }
                 } else {
-                    result.push_str(body.trim_start_matches(',').trim());
+                    // Preserve external links
+                    result.push_str(mat.as_str());
                 }
             } else {
-                // Preserve external links
+                // Preserve original text if captures unexpectedly fail
                 result.push_str(mat.as_str());
             }
         }

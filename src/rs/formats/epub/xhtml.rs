@@ -92,13 +92,15 @@ pub fn html_to_portable_xhtml(html_string: &str, heading_ids: &[EcoString]) -> (
                     }
 
                     let mut chars = name.local.chars();
-                    if chars.next().unwrap() == 'h'
-                        && let Some(c) = chars.next()
-                        && c.is_numeric()
-                        && c != '1'
-                    {
-                        let id = self.heading_ids.next().expect("missing heading id!");
-                        write!(self.buf, " id=\"{id}\"").unwrap();
+                    if let Some(first_char) = chars.next() {
+                        if first_char == 'h'
+                            && let Some(c) = chars.next()
+                            && c.is_numeric()
+                            && c != '1'
+                        {
+                            let id = self.heading_ids.next().expect("missing heading id!");
+                            write!(self.buf, " id=\"{id}\"").unwrap();
+                        }
                     }
 
                     write!(self.buf, ">").unwrap();
