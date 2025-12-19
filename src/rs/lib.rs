@@ -46,6 +46,27 @@ impl OutputFormat {
     pub fn compiler(&self) -> formats::compiler::FormatCompilerInstance {
         formats::compiler::FormatCompilerInstance::from_format(*self)
     }
+
+    /// Check if this format supports per-file compilation with the given config
+    ///
+    /// Returns true if this format should be compiled once per .typ file,
+    /// or false if it requires merged/batch compilation.
+    pub fn supports_per_file(&self, config: &RheoConfig) -> bool {
+        match self {
+            OutputFormat::Html => {
+                // HTML is always compiled per-file
+                true
+            }
+            OutputFormat::Pdf => {
+                // PDF is only per-file if merge config is absent
+                config.pdf.merge.is_none()
+            }
+            OutputFormat::Epub => {
+                // EPUB is never per-file (always merged)
+                false
+            }
+        }
+    }
 }
 
 impl fmt::Display for OutputFormat {

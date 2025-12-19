@@ -172,27 +172,11 @@ fn get_per_file_formats(
     config: &crate::RheoConfig,
     requested_formats: &[OutputFormat],
 ) -> Vec<OutputFormat> {
-    let mut formats = Vec::new();
-
-    for &format in requested_formats {
-        match format {
-            OutputFormat::Html => {
-                // HTML is always compiled per-file
-                formats.push(format);
-            }
-            OutputFormat::Pdf => {
-                // PDF is only compiled per-file if merge config is absent
-                if config.pdf.merge.is_none() {
-                    formats.push(format);
-                }
-            }
-            OutputFormat::Epub => {
-                // EPUB is never compiled per-file (always merged)
-            }
-        }
-    }
-
-    formats
+    requested_formats
+        .iter()
+        .copied()
+        .filter(|format| format.supports_per_file(config))
+        .collect()
 }
 
 /// Perform compilation for a project with specified formats
