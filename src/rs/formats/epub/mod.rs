@@ -7,7 +7,8 @@ use xhtml::HtmlInfo;
 use crate::compile::RheoCompileOptions;
 use crate::config::{EpubConfig, EpubOptions};
 use crate::constants::XHTML_EXT;
-use crate::{Result, RheoError};
+use crate::formats::compiler::FormatCompiler;
+use crate::{OutputFormat, Result, RheoError};
 use anyhow::Result as AnyhowResult;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
@@ -323,6 +324,34 @@ pub fn compile_epub_new(options: RheoCompileOptions, epub_options: EpubOptions) 
         &options.repo_root,
     )
 }
+
+// ============================================================================
+// FormatCompiler trait implementation
+// ============================================================================
+
+/// EPUB compiler implementation
+pub use crate::formats::compiler::EpubCompiler;
+
+impl FormatCompiler for EpubCompiler {
+    type Config = EpubOptions;
+
+    fn format(&self) -> OutputFormat {
+        OutputFormat::Epub
+    }
+
+    fn supports_per_file(&self, _config: &Self::Config) -> bool {
+        // EPUB never supports per-file (always merged)
+        false
+    }
+
+    fn compile(&self, options: RheoCompileOptions, config: &Self::Config) -> Result<()> {
+        compile_epub_new(options, config.clone())
+    }
+}
+
+// ============================================================================
+// EPUB compilation implementation
+// ============================================================================
 
 pub struct EpubItem {
     href: IriRefBuf,
