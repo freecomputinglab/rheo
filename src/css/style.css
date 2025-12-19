@@ -53,9 +53,7 @@ ul, ol {
   margin: 1em 0;
 }
 
-li {
-  margin-bottom: 0.5em;
-}
+li {}
 
 /* ============================================
    Media
@@ -87,6 +85,12 @@ blockquote {
   border-left: 2px solid var(--blockquote-border);
   color: var(--blockquote-text);
   font-style: italic;
+}
+
+hr {
+  height: 1px;
+  background-color: var(--blockquote-border); 
+  border: none; /* removes default border */
 }
 
 /* ============================================
