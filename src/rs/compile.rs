@@ -120,48 +120,119 @@ impl<'a> RheoCompileOptions<'a> {
 ///
 /// # Note
 /// External URLs (http://, https://, etc.) are preserved unchanged.
+/// Links inside code blocks (backtick-delimited) are preserved unchanged.
 ///
 /// # TODO
 /// When multi-file PDF compilation is implemented, relative links should
 /// become document anchors instead of being removed.
 pub fn remove_relative_typ_links(source: &str) -> String {
-    // Regex to match Typst link function calls
-    // Captures: #link("url")[body] or #link("url", body)
-    // We need to handle:
-    // 1. #link("./file.typ")[text] -> [text]
-    // 2. #link("../dir/file.typ")[text] -> [text]
-    // 3. #link("/abs/path.typ")[text] -> [text]
-    // 4. #link("https://example.com")[text] -> preserve
+    // Find all backtick-delimited code regions (both inline ` and block ```)
+    let code_ranges = find_backtick_ranges(source);
 
-    let re =
-        Regex::new(r#"#link\("([^"]+)"\)(\[[^\]]+\]|,\s*[^)]+)"#).expect("invalid regex pattern");
+    // Apply regex transformation only outside code blocks
+    let re = Regex::new(r#"#link\("([^"]+)"\)(\[[^\]]+\]|,\s*[^)]+)"#)
+        .expect("invalid regex pattern");
 
-    let result = re.replace_all(source, |caps: &regex::Captures| {
-        let url = &caps[1];
-        let body = &caps[2];
+    let mut result = String::new();
+    let mut last_pos = 0;
 
-        // Check if this is a relative .typ link
-        let is_relative_typ = url.ends_with(".typ")
-            && !url.starts_with("http://")
-            && !url.starts_with("https://")
-            && !url.starts_with("mailto:");
+    for mat in re.find_iter(source) {
+        let match_start = mat.start();
+        let match_end = mat.end();
 
-        if is_relative_typ {
-            // Remove the link, keep just the body
-            if body.starts_with('[') {
-                // #link("url")[body] -> [body]
-                body.to_string()
+        // Check if this match is inside a backtick-delimited code region
+        let in_code_block = code_ranges.iter().any(|(start, end)| {
+            match_start >= *start && match_end <= *end
+        });
+
+        // Add text before this match
+        result.push_str(&source[last_pos..match_start]);
+
+        if in_code_block {
+            // Preserve the link as-is if it's in a code block
+            result.push_str(mat.as_str());
+        } else {
+            // Transform the link if it's outside code blocks
+            let caps = re.captures(mat.as_str()).unwrap();
+            let url = &caps[1];
+            let body = &caps[2];
+
+            let is_relative_typ = url.ends_with(".typ")
+                && !url.starts_with("http://")
+                && !url.starts_with("https://")
+                && !url.starts_with("mailto:");
+
+            if is_relative_typ {
+                // Remove the link, keep just the body
+                if body.starts_with('[') {
+                    result.push_str(body);
+                } else {
+                    result.push_str(body.trim_start_matches(',').trim());
+                }
             } else {
-                // #link("url", body) -> body (without comma)
-                body.trim_start_matches(',').trim().to_string()
+                // Preserve external links
+                result.push_str(mat.as_str());
+            }
+        }
+
+        last_pos = match_end;
+    }
+
+    // Add remaining text
+    result.push_str(&source[last_pos..]);
+    result
+}
+
+/// Find all backtick-delimited code ranges in the source
+fn find_backtick_ranges(source: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let chars: Vec<char> = source.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '`' {
+            // Count consecutive backticks
+            let mut backtick_count = 1;
+            while i + backtick_count < chars.len() && chars[i + backtick_count] == '`' {
+                backtick_count += 1;
+            }
+
+            // Find matching closing backticks
+            let start = i;
+            let mut j = i + backtick_count;
+            let mut found_end = false;
+
+            while j < chars.len() {
+                if chars[j] == '`' {
+                    // Count closing backticks
+                    let mut closing_count = 1;
+                    while j + closing_count < chars.len() && chars[j + closing_count] == '`' {
+                        closing_count += 1;
+                    }
+
+                    if closing_count == backtick_count {
+                        // Found matching closing backticks
+                        let end = j + backtick_count;
+                        ranges.push((start, end));
+                        i = end;
+                        found_end = true;
+                        break;
+                    }
+                    j += closing_count;
+                } else {
+                    j += 1;
+                }
+            }
+
+            if !found_end {
+                i += backtick_count;
             }
         } else {
-            // Preserve the full link for external URLs
-            format!("#link(\"{}\"){}", url, body)
+            i += 1;
         }
-    });
+    }
 
-    result.to_string()
+    ranges
 }
 
 #[cfg(test)]
@@ -221,6 +292,65 @@ mod tests {
         let result = remove_relative_typ_links(source);
         // .pdf files should be preserved since they're not .typ files
         assert_eq!(result, source);
+    }
+
+    #[test]
+    fn test_syntax_aware_basic() {
+        // Verify function works with basic case
+        let source = r#"See #link("./other.typ")[the other page] for details."#;
+        let result = remove_relative_typ_links(source);
+        assert_eq!(result, r#"See [the other page] for details."#);
+    }
+
+    #[test]
+    fn test_syntax_aware_preserves_code_blocks() {
+        // Links in code blocks (backtick-fenced) remain unchanged
+        let source = r#"Example: `#link("./other.typ")[text]` is preserved."#;
+        let result = remove_relative_typ_links(source);
+        assert_eq!(result, source); // Should be unchanged
+    }
+
+    #[test]
+    fn test_syntax_aware_preserves_inline_code() {
+        // Links in inline backticks remain unchanged
+        let source = r#"Use `#link("./file.typ")[link]` in your code."#;
+        let result = remove_relative_typ_links(source);
+        assert_eq!(result, source); // Should be unchanged
+    }
+
+    #[test]
+    fn test_syntax_aware_transforms_real_links() {
+        // Links outside code blocks are transformed
+        let source = r#"See #link("./intro.typ")[intro] and #link("./chapter2.typ")[chapter 2]."#;
+        let result = remove_relative_typ_links(source);
+        assert_eq!(result, r#"See [intro] and [chapter 2]."#);
+    }
+
+    #[test]
+    fn test_syntax_aware_mixed_context() {
+        // Combination of code blocks, inline code, and real links
+        let source = r#"Real #link("./file.typ")[link] and code `#link("./code.typ")[example]`."#;
+        let result = remove_relative_typ_links(source);
+        assert_eq!(
+            result,
+            r#"Real [link] and code `#link("./code.typ")[example]`."#
+        );
+    }
+
+    #[test]
+    fn test_syntax_aware_preserves_external() {
+        // External links are preserved both in and out of code blocks
+        let source = r#"Visit #link("https://example.com")[site] or `#link("https://api.com")[API]`."#;
+        let result = remove_relative_typ_links(source);
+        assert_eq!(result, source); // Should be unchanged
+    }
+
+    #[test]
+    fn test_syntax_aware_multiple_typ_links() {
+        // Multiple .typ links should all be transformed
+        let source = r#"#link("./one.typ")[First], #link("./two.typ")[Second], and #link("./three.typ")[Third]."#;
+        let result = remove_relative_typ_links(source);
+        assert_eq!(result, r#"[First], [Second], and [Third]."#);
     }
 
     #[test]

@@ -17,6 +17,7 @@ use std::path::PathBuf;
 #[test_case("examples/blog_site/content/index.typ")]
 #[test_case("examples/blog_site/content/severance-ep-1.typ")]
 #[test_case("examples/blog_post/portable_epubs.typ")]
+#[test_case("tests/cases/code_blocks_with_links")]
 fn run_test_case(name: &str) {
     let test_case = TestCase::new(name);
     let update_mode = env::var("UPDATE_REFERENCES").is_ok();
