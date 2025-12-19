@@ -1,11 +1,10 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::PdfConfig;
-use crate::constants::TYP_EXT;
+use crate::constants::{TYP_EXT, TYPST_LABEL_PATTERN, TYPST_LINK_PATTERN};
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::spine::generate_spine;
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
-use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
@@ -118,8 +117,7 @@ pub fn filename_to_title(filename: &str) -> String {
 /// and italic markers (_) to extract plain text from formatted content.
 fn strip_typst_markup(text: &str) -> String {
     // Remove #emph[...], #strong[...], etc.
-    let re = Regex::new(r"#\w+\[([^\]]+)\]").expect("invalid regex");
-    let result = re.replace_all(text, "$1");
+    let result = TYPST_LABEL_PATTERN.replace_all(text, "$1");
 
     // Remove underscores (italic markers)
     let result = result.replace('_', "");
@@ -199,11 +197,8 @@ pub fn transform_typ_links_to_labels(
 
     // Regex to match Typst link function calls
     // Captures: #link("url")[body] or #link("url", body)
-    let re =
-        Regex::new(r#"#link\("([^"]+)"\)(\[[^\]]+\]|,\s*[^)]+)"#).expect("invalid regex pattern");
-
     let mut errors = Vec::new();
-    let result = re.replace_all(source, |caps: &regex::Captures| {
+    let result = TYPST_LINK_PATTERN.replace_all(source, |caps: &regex::Captures| {
         let url = &caps[1];
         let body = &caps[2];
 

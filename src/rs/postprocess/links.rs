@@ -3,9 +3,8 @@
 //! This module provides shared functionality for transforming Typst file references
 //! into appropriate output format links (e.g., .typ → .html or .typ → .xhtml).
 
-use crate::constants::TYP_EXT;
+use crate::constants::{HTML_HREF_PATTERN, TYP_EXT};
 use crate::{Result, RheoError};
-use regex::Regex;
 use std::path::Path;
 use tracing::debug;
 
@@ -33,10 +32,6 @@ pub fn transform_links(
     root: &Path,
     target_ext: &str,
 ) -> Result<String> {
-    // Regex to match href="..." attributes
-    // Captures the href value in group 1
-    let re = Regex::new(r#"href="([^"]*)""#).expect("invalid regex pattern");
-
     let source_dir = source_file
         .parent()
         .ok_or_else(|| RheoError::path(source_file, "source file has no parent directory"))?;
@@ -45,7 +40,7 @@ pub fn transform_links(
     let mut result = html.to_string();
 
     // Find all matches and collect them (to avoid borrowing issues)
-    let matches: Vec<_> = re
+    let matches: Vec<_> = HTML_HREF_PATTERN
         .captures_iter(html)
         .map(|cap| cap[1].to_string())
         .collect();

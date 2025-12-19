@@ -1,6 +1,5 @@
-use crate::constants::TYP_EXT;
+use crate::constants::{TYP_EXT, TYPST_LINK_PATTERN};
 use crate::world::RheoWorld;
-use regex::Regex;
 use std::path::PathBuf;
 
 /// Common compilation options used across all output formats.
@@ -200,13 +199,10 @@ pub fn remove_relative_typ_links(source: &str) -> String {
     let code_ranges = find_backtick_ranges(source);
 
     // Apply regex transformation only outside code blocks
-    let re =
-        Regex::new(r#"#link\("([^"]+)"\)(\[[^\]]+\]|,\s*[^)]+)"#).expect("invalid regex pattern");
-
     let mut result = String::new();
     let mut last_pos = 0;
 
-    for mat in re.find_iter(source) {
+    for mat in TYPST_LINK_PATTERN.find_iter(source) {
         let match_start = mat.start();
         let match_end = mat.end();
 
@@ -223,7 +219,7 @@ pub fn remove_relative_typ_links(source: &str) -> String {
             result.push_str(mat.as_str());
         } else {
             // Transform the link if it's outside code blocks
-            if let Some(caps) = re.captures(mat.as_str()) {
+            if let Some(caps) = TYPST_LINK_PATTERN.captures(mat.as_str()) {
                 let url = &caps[1];
                 let body = &caps[2];
 
