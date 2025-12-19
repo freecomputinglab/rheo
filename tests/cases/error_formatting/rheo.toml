@@ -1,0 +1,7 @@
+# Test project for error formatting validation
+
+[compile]
+formats = ["pdf"]
+
+[pdf]
+# Don't merge - test single file errors

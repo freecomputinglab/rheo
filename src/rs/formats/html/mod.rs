@@ -5,7 +5,7 @@ use crate::postprocess;
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use std::path::Path;
-use tracing::{debug, info, instrument};
+use tracing::{debug, info};
 use typst_html::HtmlDocument;
 
 pub fn compile_html_to_document(
@@ -27,7 +27,7 @@ pub fn compile_html_to_document(
             .contains("html export is under active development and incomplete")
     };
 
-    unwrap_compilation_result(result, Some(html_filter))
+    unwrap_compilation_result(Some(&world), result, Some(html_filter))
 }
 
 pub fn compile_document_to_string(document: &HtmlDocument) -> Result<String> {
@@ -46,7 +46,6 @@ pub fn compile_document_to_string(document: &HtmlDocument) -> Result<String> {
 /// - Shared resources available via repo_root in src/typst/ (rheo.typ)
 ///
 /// Pipeline: Compile → Export → Transform Links → Inject Head → Write
-#[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 fn compile_html_impl_fresh(
     input: &Path,
     output: &Path,
@@ -95,7 +94,6 @@ fn compile_html_impl_fresh(
 /// * `output` - Path where the HTML should be written
 /// * `root` - Project root path (for link validation)
 /// * `html_options` - HTML-specific options (stylesheets, fonts)
-#[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 fn compile_html_impl(
     world: &RheoWorld,
     input: &Path,
@@ -113,7 +111,7 @@ fn compile_html_impl(
             .contains("html export is under active development and incomplete")
     };
 
-    let document = unwrap_compilation_result(result, Some(html_filter))?;
+    let document = unwrap_compilation_result(Some(world), result, Some(html_filter))?;
 
     // 2. Export to HTML string
     debug!(output = %output.display(), "exporting to HTML");

@@ -10,7 +10,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
-use tracing::{debug, info, instrument};
+use tracing::{debug, info};
 use typst::layout::PagedDocument;
 use typst_pdf::PdfOptions;
 
@@ -23,7 +23,6 @@ use typst_pdf::PdfOptions;
 /// Uses the typst library with:
 /// - Root set to content_dir or project root (for local file imports across directories)
 /// - Shared resources available via repo_root in src/typst/ (rheo.typ)
-#[instrument(skip_all, fields(input = %input.display(), output = %output.display()))]
 fn compile_pdf_single_impl_fresh(
     input: &Path,
     output: &Path,
@@ -37,7 +36,7 @@ fn compile_pdf_single_impl_fresh(
     // Compile the document
     info!(input = %input.display(), "compiling to PDF");
     let result = typst::compile::<PagedDocument>(&world);
-    let document = unwrap_compilation_result(result, None::<fn(&_) -> bool>)?;
+    let document = unwrap_compilation_result(Some(&world), result, None::<fn(&_) -> bool>)?;
 
     // Export to PDF
     debug!(output = %output.display(), "exporting to PDF");
@@ -58,7 +57,7 @@ fn compile_pdf_single_impl(world: &RheoWorld, output: &Path) -> Result<()> {
     // Compile the document
     info!("compiling to PDF");
     let result = typst::compile::<PagedDocument>(world);
-    let document = unwrap_compilation_result(result, None::<fn(&_) -> bool>)?;
+    let document = unwrap_compilation_result(Some(world), result, None::<fn(&_) -> bool>)?;
 
     // Export to PDF
     debug!(output = %output.display(), "exporting to PDF");
@@ -180,7 +179,6 @@ pub fn extract_document_title(source: &str, filename: &str) -> String {
 /// For merged PDF outputs, links to other .typ files should reference the label
 /// at the start of each document section. This function transforms relative .typ
 /// links to label references using the document's filename.
-#[instrument(skip(source, spine_files))]
 pub fn transform_typ_links_to_labels(
     source: &str,
     spine_files: &[PathBuf],
@@ -266,7 +264,6 @@ pub fn transform_typ_links_to_labels(
 /// 3. Prefixed with a level-1 heading containing the title and a label derived from filename
 /// 4. Links to other .typ files transformed to label references
 /// 5. Concatenated together
-#[instrument(skip(spine_files))]
 pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
     // Check for duplicate filenames
     let mut seen_filenames: HashSet<String> = HashSet::new();
@@ -352,7 +349,6 @@ pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
 ///
 /// Generates a spine from the PDF merge configuration, concatenates all sources
 /// with labels and transformed links, then compiles to a single PDF document.
-#[instrument(skip_all, fields(output = %output_path.display()))]
 fn compile_pdf_merged_impl_fresh(
     config: &PdfConfig,
     output_path: &Path,
@@ -391,7 +387,7 @@ fn compile_pdf_merged_impl_fresh(
     // Compile to PagedDocument
     info!(output = %output_path.display(), "compiling merged PDF");
     let result = typst::compile::<PagedDocument>(&world);
-    let document = unwrap_compilation_result(result, None::<fn(&_) -> bool>)?;
+    let document = unwrap_compilation_result(Some(&world), result, None::<fn(&_) -> bool>)?;
 
     // Export PDF bytes
     // Note: PDF title is set via document metadata in Typst source, not PdfOptions
@@ -412,7 +408,6 @@ fn compile_pdf_merged_impl_fresh(
 ///
 /// Same as compile_pdf_merged_impl_fresh() but reuses an existing RheoWorld for faster
 /// recompilation in watch mode.
-#[instrument(skip(world), fields(output = %output_path.display()))]
 fn compile_pdf_merged_impl(
     world: &mut RheoWorld,
     config: &PdfConfig,
@@ -450,7 +445,7 @@ fn compile_pdf_merged_impl(
     // Compile to PagedDocument
     info!("compiling merged PDF");
     let result = typst::compile::<PagedDocument>(world);
-    let document = unwrap_compilation_result(result, None::<fn(&_) -> bool>)?;
+    let document = unwrap_compilation_result(Some(world), result, None::<fn(&_) -> bool>)?;
 
     // Export PDF bytes
     // Note: PDF title is set via document metadata in Typst source, not PdfOptions

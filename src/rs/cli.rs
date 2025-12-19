@@ -4,7 +4,7 @@ use crate::formats::{epub, html, pdf};
 use crate::{OutputFormat, Result, open_all_files_in_folder};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// CLI format flags (what the user requested via command-line)
 #[derive(Debug, Clone, Copy)]
@@ -392,9 +392,9 @@ fn perform_compilation(
     if pdf_fully_succeeded || html_fully_succeeded || epub_fully_succeeded {
         // At least one format succeeded completely
         if pdf_failed > 0 || html_failed > 0 || epub_failed > 0 {
-            info!("compilation succeeded with warnings (some formats failed)");
+            info!("compilation complete (some formats had errors)");
         } else {
-            info!("compilation succeeded");
+            info!("compilation complete");
         }
         Ok(())
     } else {
@@ -579,9 +579,9 @@ fn perform_compilation_incremental(
     if pdf_fully_succeeded || html_fully_succeeded {
         // At least one format succeeded completely
         if pdf_failed > 0 || html_failed > 0 {
-            info!("compilation succeeded with warnings (some formats failed)");
+            info!("compilation complete (some formats had errors)");
         } else {
-            info!("compilation succeeded");
+            info!("compilation complete");
         }
         Ok(())
     } else {
@@ -621,9 +621,14 @@ impl Cli {
                 epub,
             } => {
                 // Detect project configuration first to get config defaults
-                info!(path = %path.display(), "detecting project configuration");
+                info!(path = %path.display(), "loading project");
                 let project = crate::project::ProjectConfig::from_path(&path, config.as_deref())?;
-                info!(name = %project.name, files = project.typ_files.len(), "detected project");
+                let file_word = if project.typ_files.len() == 1 {
+                    "file"
+                } else {
+                    "files"
+                };
+                info!(name = %project.name, files = project.typ_files.len(), "found {} Typst {}", project.typ_files.len(), file_word);
 
                 // Determine which formats to compile using CLI flags or config defaults
                 let flags = FormatFlags { pdf, html, epub };
@@ -633,11 +638,11 @@ impl Cli {
                 let resolved_build_dir = if let Some(cli_path) = build_dir {
                     let cwd = std::env::current_dir()
                         .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
-                    info!(cli_build_dir = %cli_path.display(), "using build directory from CLI flag");
+                    debug!(dir = %cli_path.display(), "build directory");
                     Some(resolve_path(&cwd, &cli_path))
                 } else if let Some(config_path) = &project.config.build_dir {
                     let resolved = resolve_path(&project.root, Path::new(config_path));
-                    info!(config_build_dir = %resolved.display(), "using build directory from rheo.toml");
+                    debug!(dir = %resolved.display(), "build directory");
                     Some(resolved)
                 } else {
                     None
@@ -661,9 +666,14 @@ impl Cli {
                 open,
             } => {
                 // Detect project configuration first to get config defaults
-                info!(path = %path.display(), "detecting project configuration");
+                info!(path = %path.display(), "loading project");
                 let project = crate::project::ProjectConfig::from_path(&path, config.as_deref())?;
-                info!(name = %project.name, files = project.typ_files.len(), "detected project");
+                let file_word = if project.typ_files.len() == 1 {
+                    "file"
+                } else {
+                    "files"
+                };
+                info!(name = %project.name, files = project.typ_files.len(), "found {} Typst {}", project.typ_files.len(), file_word);
 
                 // Determine which formats to compile using CLI flags or config defaults
                 let flags = FormatFlags { pdf, html, epub };
@@ -673,11 +683,11 @@ impl Cli {
                 let resolved_build_dir = if let Some(cli_path) = build_dir {
                     let cwd = std::env::current_dir()
                         .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
-                    info!(cli_build_dir = %cli_path.display(), "using build directory from CLI flag");
+                    debug!(dir = %cli_path.display(), "build directory");
                     Some(resolve_path(&cwd, &cli_path))
                 } else if let Some(config_path) = &project.config.build_dir {
                     let resolved = resolve_path(&project.root, Path::new(config_path));
-                    info!(config_build_dir = %resolved.display(), "using build directory from rheo.toml");
+                    debug!(dir = %resolved.display(), "build directory");
                     Some(resolved)
                 } else {
                     None
@@ -689,7 +699,7 @@ impl Cli {
                 output_config.create_dirs()?;
 
                 // Perform initial compilation
-                info!("performing initial compilation");
+                info!("compiling project");
                 if let Err(e) = perform_compilation(&project, &output_config, &formats) {
                     warn!(error = %e, "initial compilation failed, continuing to watch");
                 }
@@ -758,11 +768,11 @@ impl Cli {
 
                 let world_cell = RefCell::new(world);
 
-                info!("starting file watcher");
+                info!("watching for changes");
                 crate::watch::watch_project(&project_cell.borrow(), |event| {
                     let result = match event {
                         crate::watch::WatchEvent::FilesChanged => {
-                            info!("files changed, recompiling");
+                            info!("change detected, recompiling");
                             perform_compilation_incremental(
                                 &mut world_cell.borrow_mut(),
                                 &project_cell.borrow(),
@@ -771,14 +781,19 @@ impl Cli {
                             )
                         }
                         crate::watch::WatchEvent::ConfigChanged => {
-                            info!("config changed, reloading project");
+                            info!("configuration changed, reloading");
                             // Reload project configuration
                             match crate::project::ProjectConfig::from_path(&path, config.as_deref())
                             {
                                 Ok(new_project) => {
                                     *project_cell.borrow_mut() = new_project;
                                     let borrowed = project_cell.borrow();
-                                    info!(name = %borrowed.name, files = borrowed.typ_files.len(), "reloaded project");
+                                    let file_word = if borrowed.typ_files.len() == 1 {
+                                        "file"
+                                    } else {
+                                        "files"
+                                    };
+                                    info!(name = %borrowed.name, files = borrowed.typ_files.len(), "reloaded ({} {})", borrowed.typ_files.len(), file_word);
 
                                     // Recreate World with new configuration
                                     let new_compilation_root = borrowed
@@ -845,18 +860,18 @@ impl Cli {
                 config,
                 build_dir,
             } => {
-                info!(path = %path.display(), "detecting project for cleanup");
+                info!(path = %path.display(), "loading project");
                 let project = crate::project::ProjectConfig::from_path(&path, config.as_deref())?;
 
                 // Resolve build_dir with priority: CLI > config > default
                 let resolved_build_dir = if let Some(cli_path) = build_dir {
                     let cwd = std::env::current_dir()
                         .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
-                    info!(cli_build_dir = %cli_path.display(), "using build directory from CLI flag");
+                    debug!(dir = %cli_path.display(), "build directory");
                     Some(resolve_path(&cwd, &cli_path))
                 } else if let Some(config_path) = &project.config.build_dir {
                     let resolved = resolve_path(&project.root, Path::new(config_path));
-                    info!(config_build_dir = %resolved.display(), "using build directory from rheo.toml");
+                    debug!(dir = %resolved.display(), "build directory");
                     Some(resolved)
                 } else {
                     None
@@ -864,9 +879,9 @@ impl Cli {
 
                 let output_config =
                     crate::output::OutputConfig::new(&project.root, resolved_build_dir);
-                info!(project = %project.name, "cleaning project build artifacts");
+                info!(project = %project.name, "cleaning build artifacts");
                 output_config.clean()?;
-                info!(project = %project.name, "cleaned project build artifacts");
+                info!(project = %project.name, "build artifacts removed");
                 Ok(())
             }
         }

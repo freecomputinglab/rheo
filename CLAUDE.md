@@ -225,6 +225,65 @@ echo "\n// Test change" >> examples/blog_site/content/index.typ
 - `src/rs/cli.rs` - Watch loop with World creation and reuse (lines 631-692)
 - `Cargo.toml` - `comemo = "0.5"` dependency for cache management
 
+### Error Formatting and Logging
+
+**Overview:**
+Rheo uses codespan-reporting for rich, user-friendly error and warning messages. Errors from Typst compilation are displayed with source context, line numbers, and color highlighting.
+
+**Error Output Format:**
+- **Colored output**: Automatically enabled when stderr is a TTY
+- **Source context**: Shows relevant code lines with error markers
+- **Line numbers**: Displays using `│` box-drawing characters
+- **Multi-error aggregation**: All errors reported before failing
+
+**Logging Levels:**
+- **Normal mode** (default): Shows user-friendly INFO-level messages
+  - Project loading, compilation progress, success/failure
+  - Example: ` INFO compiling to PDF input=portable_epubs.typ`
+- **Verbose mode** (`-v`): Shows DEBUG-level implementation details
+  - Build directory resolution, config loading, asset copying
+  - Example: ` DEBUG build directory dir=./build`
+- **Quiet mode** (`-q`): Only shows errors
+
+**Log Message Guidelines:**
+- INFO logs use natural language, not technical jargon
+- Avoid timestamps (removed for cleaner output)
+- No function names in user-facing logs (use spans for debugging)
+- Implementation details go to DEBUG level
+
+**Example Error Output:**
+```
+error: cannot add integer and string
+   ┌─ type_error.typ:10:15
+   │
+10 │ let result = x + y
+   │               ^^^^^
+```
+
+**Example Warning Output:**
+```
+warning: block may not occur inside of a paragraph and was ignored
+   ┌─ portable_epubs.typ:21:7
+   │
+21 │       block(body)
+   │       ^^^^^^^^^^^
+```
+
+**Testing Error Formatting:**
+```bash
+# Run error formatting tests
+cargo test test_error_formatting -- --nocapture
+
+# Run warning formatting tests
+cargo test test_warning_formatting -- --nocapture
+```
+
+**Implementation Files:**
+- `src/rs/formats/common.rs` - `print_diagnostics()` using codespan-reporting
+- `src/rs/world.rs` - `Files` trait implementation for RheoWorld
+- `src/rs/logging.rs` - Logging configuration (no timestamps, clean output)
+- `tests/cases/error_formatting/` - Test files with intentional errors
+
 ### Project-Specific Conventions
 
 **Commit Messages:**

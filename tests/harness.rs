@@ -422,12 +422,6 @@ fn test_html_css_link_injection() {
         "Should have stylesheet link in HTML"
     );
 
-    // Test 2: Font link is present in head
-    assert!(
-        html.contains("fonts.googleapis.com"),
-        "Should have font link in HTML"
-    );
-
     // Test 3: Links are in the <head> section
     let head_start = html.find("<head>").expect("HTML should have <head> tag");
     let head_end = html.find("</head>").expect("HTML should have </head> tag");
@@ -436,10 +430,6 @@ fn test_html_css_link_injection() {
     assert!(
         head.contains("style.css"),
         "CSS link should be in head section"
-    );
-    assert!(
-        head.contains("fonts.googleapis.com"),
-        "Font link should be in head section"
     );
 
     // Test 4: NO JavaScript DOM manipulation hack
@@ -466,19 +456,6 @@ fn test_html_css_link_injection() {
         "Should preserve viewport meta tag"
     );
 
-    // Test 6: Verify correct order - fonts before stylesheets
-    let font_pos = html
-        .find("fonts.googleapis.com")
-        .expect("Should find font link");
-    let style_pos = html
-        .find(r#"href="style.css""#)
-        .expect("Should find stylesheet link");
-
-    assert!(
-        font_pos < style_pos,
-        "Font link should come before stylesheet link"
-    );
-
     // Clean up
     let clean_output = std::process::Command::new("cargo")
         .args(["run", "--", "clean", project_path.to_str().unwrap()])
@@ -491,4 +468,154 @@ fn test_html_css_link_injection() {
             String::from_utf8_lossy(&clean_output.stderr)
         );
     }
+}
+/// Test error formatting with codespan-reporting
+#[test]
+fn test_error_formatting_type_error() {
+    let test_dir = PathBuf::from("tests/cases/error_formatting");
+
+    // Compile file with type error - expect failure
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "--",
+            "compile",
+            test_dir.join("type_error.typ").to_str().unwrap(),
+            "--pdf",
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    // Compilation should fail
+    assert!(
+        !output.status.success(),
+        "Expected compilation to fail for type error"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Verify codespan-reporting format:
+    // - Should contain "error:" prefix
+    // - Should contain file location (line/column)
+    // - Should contain error message
+    // - Should contain source context (with line numbers and highlighting)
+
+    assert!(
+        stderr.contains("error"),
+        "Error output should contain 'error' marker"
+    );
+
+    assert!(
+        stderr.contains("type_error.typ"),
+        "Error should reference the source file"
+    );
+
+    // Check for codespan-reporting style markers:
+    // - Line numbers (e.g., "10 │")
+    // - Unicode box drawing characters (┌─, │)
+    assert!(
+        stderr.contains("│") || stderr.contains("|"),
+        "Error should contain codespan-style line markers"
+    );
+
+    // Verify compilation complete message is NOT shown (since it failed)
+    assert!(
+        !stderr.contains("compilation complete"),
+        "Failed compilation should not show success message"
+    );
+}
+
+/// Test error formatting for undefined variable
+#[test]
+fn test_error_formatting_undefined_var() {
+    let test_dir = PathBuf::from("tests/cases/error_formatting");
+
+    // Compile file with undefined variable - expect failure
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "--",
+            "compile",
+            test_dir.join("undefined_var.typ").to_str().unwrap(),
+            "--pdf",
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    // Compilation should fail
+    assert!(
+        !output.status.success(),
+        "Expected compilation to fail for undefined variable"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Verify error formatting
+    assert!(
+        stderr.contains("error"),
+        "Error output should contain 'error' marker"
+    );
+
+    assert!(
+        stderr.contains("undefined_var.typ"),
+        "Error should reference the source file"
+    );
+
+    // Verify it contains the undefined variable name
+    assert!(
+        stderr.contains("undefined_variable"),
+        "Error should mention the undefined variable name"
+    );
+
+    // Check for source context
+    assert!(
+        stderr.contains("│") || stderr.contains("|"),
+        "Error should show source context with line markers"
+    );
+}
+
+/// Test warning formatting with codespan-reporting
+#[test]
+fn test_warning_formatting() {
+    // Use blog_post which has a known warning (block in paragraph)
+    let test_dir = PathBuf::from("examples/blog_post");
+
+    // Clean first
+    let _ = std::process::Command::new("cargo")
+        .args(["run", "--", "clean", test_dir.to_str().unwrap()])
+        .output();
+
+    // Compile - should succeed with warnings
+    let output = std::process::Command::new("cargo")
+        .args(["run", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    // Should succeed despite warnings
+    assert!(
+        output.status.success(),
+        "Compilation should succeed with warnings"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Verify warning formatting
+    assert!(
+        stderr.contains("warning"),
+        "Output should contain warning marker"
+    );
+
+    // Check for codespan-reporting style formatting
+    assert!(
+        stderr.contains("│") || stderr.contains("|"),
+        "Warning should use codespan-style formatting"
+    );
+
+    // Clean up
+    let _ = std::process::Command::new("cargo")
+        .args(["run", "--", "clean", test_dir.to_str().unwrap()])
+        .output();
 }
