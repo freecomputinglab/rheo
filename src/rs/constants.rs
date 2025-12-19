@@ -1,5 +1,4 @@
 /// File extension constants and shared regex patterns used throughout rheo
-
 use lazy_static::lazy_static;
 use regex::Regex;
 

@@ -23,10 +23,7 @@ impl FormatFlags {
 /// Compilation mode for perform_compilation
 enum CompilationMode<'a> {
     /// Fresh compilation (creates new World for each file)
-    Fresh {
-        root: PathBuf,
-        repo_root: PathBuf,
-    },
+    Fresh { root: PathBuf, repo_root: PathBuf },
     /// Incremental compilation (reuses existing World)
     Incremental {
         world: &'a mut crate::world::RheoWorld,
@@ -254,7 +251,7 @@ fn perform_compilation<'a>(
                             &output_path,
                             &project.root,
                             PathBuf::new(),
-                            *world,
+                            world,
                         )
                     } else {
                         unreachable!()
@@ -287,7 +284,7 @@ fn perform_compilation<'a>(
                             &output_path,
                             &project.root,
                             PathBuf::new(),
-                            *world,
+                            world,
                         )
                     } else {
                         unreachable!()
@@ -330,7 +327,7 @@ fn perform_compilation<'a>(
                         &pdf_path,
                         &compilation_root,
                         PathBuf::new(),
-                        *world,
+                        world,
                     )
                 } else {
                     unreachable!()
@@ -370,7 +367,7 @@ fn perform_compilation<'a>(
                         &epub_path,
                         &compilation_root,
                         world.root().to_path_buf(),
-                        *world,
+                        world,
                     )
                 } else {
                     unreachable!()
@@ -410,7 +407,7 @@ fn perform_compilation<'a>(
     } else {
         // All requested formats had failures or no compilations occurred
         Err(crate::RheoError::project_config(
-            "all formats failed or no files were compiled".to_string()
+            "all formats failed or no files were compiled".to_string(),
         ))
     }
 }

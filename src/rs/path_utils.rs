@@ -37,35 +37,23 @@ pub trait PathExt {
 impl PathExt for Path {
     fn file_name_str(&self) -> Result<&str> {
         self.file_name()
-            .ok_or_else(|| {
-                RheoError::path(self, "path has no file name component")
-            })?
+            .ok_or_else(|| RheoError::path(self, "path has no file name component"))?
             .to_str()
-            .ok_or_else(|| {
-                RheoError::path(self, "file name contains invalid UTF-8")
-            })
+            .ok_or_else(|| RheoError::path(self, "file name contains invalid UTF-8"))
     }
 
     fn file_stem_str(&self) -> Result<&str> {
         self.file_stem()
-            .ok_or_else(|| {
-                RheoError::path(self, "path has no file stem component")
-            })?
+            .ok_or_else(|| RheoError::path(self, "path has no file stem component"))?
             .to_str()
-            .ok_or_else(|| {
-                RheoError::path(self, "file stem contains invalid UTF-8")
-            })
+            .ok_or_else(|| RheoError::path(self, "file stem contains invalid UTF-8"))
     }
 
     fn extension_str(&self) -> Result<&str> {
         self.extension()
-            .ok_or_else(|| {
-                RheoError::path(self, "path has no extension")
-            })?
+            .ok_or_else(|| RheoError::path(self, "path has no extension"))?
             .to_str()
-            .ok_or_else(|| {
-                RheoError::path(self, "extension contains invalid UTF-8")
-            })
+            .ok_or_else(|| RheoError::path(self, "extension contains invalid UTF-8"))
     }
 }
 

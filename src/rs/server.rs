@@ -1,5 +1,5 @@
-use crate::constants::HTML_EXT;
 use crate::Result;
+use crate::constants::HTML_EXT;
 use axum::{
     Router,
     body::Body,

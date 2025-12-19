@@ -52,15 +52,12 @@ impl CompilationResults {
                 if result.failed == 0 {
                     info!(
                         format = format!("{:?}", format),
-                        "successfully compiled {} file(s)",
-                        result.succeeded
+                        "successfully compiled {} file(s)", result.succeeded
                     );
                 } else {
                     info!(
                         format = format!("{:?}", format),
-                        "compiled {} file(s), {} failed",
-                        result.succeeded,
-                        result.failed
+                        "compiled {} file(s), {} failed", result.succeeded, result.failed
                     );
                 }
             }

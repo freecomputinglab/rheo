@@ -12,6 +12,7 @@ pub mod project;
 pub mod results;
 pub mod server;
 pub mod spine;
+pub mod validation;
 pub mod watch;
 pub mod world;
 
@@ -19,9 +20,9 @@ pub use cli::Cli;
 pub use config::RheoConfig;
 pub use constants::*;
 pub use error::RheoError;
+pub use globset::{Glob, GlobSet, GlobSetBuilder};
 pub use path_utils::PathExt;
 pub use results::{CompilationResults, FormatResult};
-pub use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::fmt;
 use std::path::PathBuf;
 use tracing::{info, warn};
