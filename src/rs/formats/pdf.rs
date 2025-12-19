@@ -331,9 +331,9 @@ pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
         // Transform .typ links to labels
         let transformed_source = transform_typ_links_to_labels(&source, spine_files, spine_file)?;
 
-        // Inject heading with label at start: = Title <label>
+        // Inject heading with label attached to metadata: #metadata(title) <label>
         concatenated.push_str(&format!(
-            "= {} <{}>\n\n{}\n\n",
+            "#metadata(\"{}\") <{}>{}\n\n",
             title, label, transformed_source
         ));
     }
@@ -356,7 +356,7 @@ fn compile_pdf_merged_impl_fresh(
     repo_root: &Path,
 ) -> Result<()> {
     // Generate spine: ordered list of .typ files
-    let spine = generate_spine(root, config.merge.as_ref(), true)?;
+    let spine = generate_spine(root, config.merge.as_ref(), false)?;
     debug!(file_count = spine.len(), "generated PDF spine");
 
     // Concatenate sources with labels and transformed links
@@ -415,7 +415,7 @@ fn compile_pdf_merged_impl(
     root: &Path,
 ) -> Result<()> {
     // Generate spine: ordered list of .typ files
-    let spine = generate_spine(root, config.merge.as_ref(), true)?;
+    let spine = generate_spine(root, config.merge.as_ref(), false)?;
     debug!(file_count = spine.len(), "generated PDF spine");
 
     // Concatenate sources with labels and transformed links
