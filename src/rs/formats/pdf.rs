@@ -2,9 +2,10 @@ use crate::compile::RheoCompileOptions;
 use crate::config::PdfConfig;
 use crate::constants::{TYP_EXT, TYPST_LABEL_PATTERN, TYPST_LINK_PATTERN};
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
+use crate::formats::compiler::FormatCompiler;
 use crate::spine::generate_spine;
 use crate::world::RheoWorld;
-use crate::{Result, RheoError};
+use crate::{OutputFormat, Result, RheoError};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
@@ -509,5 +510,29 @@ pub fn compile_pdf_new(options: RheoCompileOptions, pdf_config: Option<&PdfConfi
             &options.root,
             &options.repo_root,
         ),
+    }
+}
+
+// ============================================================================
+// FormatCompiler trait implementation
+// ============================================================================
+
+/// PDF compiler implementation
+pub use crate::formats::compiler::PdfCompiler;
+
+impl FormatCompiler for PdfCompiler {
+    type Config = Option<PdfConfig>;
+
+    fn format(&self) -> OutputFormat {
+        OutputFormat::Pdf
+    }
+
+    fn supports_per_file(&self, config: &Self::Config) -> bool {
+        // Only per-file if not merging
+        config.as_ref().and_then(|c| c.merge.as_ref()).is_none()
+    }
+
+    fn compile(&self, options: RheoCompileOptions, config: &Self::Config) -> Result<()> {
+        compile_pdf_new(options, config.as_ref())
     }
 }
