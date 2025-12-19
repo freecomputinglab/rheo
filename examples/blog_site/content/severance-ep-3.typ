@@ -2,6 +2,9 @@
 // @rheo:formats html,pdf
 // @rheo:description Blog post about Severance episode 3 with images
 
+#import "index.typ": template
+#show: template
+
 #set document(title: [In Perpetuity - #emph[Severance] [s1/e3]])
 
 #image("img/severance-s1e3-shot1.png")
