@@ -444,12 +444,12 @@ mod tests {
         assert!(result.contains("<chapter1>"));
         assert!(result.contains("<chapter2>"));
 
-        // Check for generated headings with labels
+        // Check for metadata with labels (new format)
         assert!(
-            result.contains("= Chapter1 <chapter1>") || result.contains("= Chapter 1 <chapter1>")
+            result.contains("#metadata(\"Chapter1\") <chapter1>") || result.contains("#metadata(\"Chapter 1\") <chapter1>")
         );
         assert!(
-            result.contains("= Chapter2 <chapter2>") || result.contains("= Chapter 2 <chapter2>")
+            result.contains("#metadata(\"Chapter2\") <chapter2>") || result.contains("#metadata(\"Chapter 2\") <chapter2>")
         );
 
         // Check that content is preserved
@@ -470,8 +470,8 @@ mod tests {
         let spine = vec![path];
         let result = pdf::concatenate_typst_sources(&spine).unwrap();
 
-        // Heading with label should be injected (title derived from filename)
-        assert!(result.starts_with("= Test File <test-file>"));
+        // Metadata with label should be injected (title derived from filename)
+        assert!(result.starts_with("#metadata(\"Test File\") <test-file>"));
     }
 
     #[test]

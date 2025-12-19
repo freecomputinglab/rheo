@@ -36,27 +36,27 @@ typst-pdf = "0.14.2"
 typst-html = "0.14.2"
 typst-kit = "0.14.2"
 comemo = "0.5"
-codespan-reporting = "0.11"
+codespan-reporting = "0.13"
 ecow = "0.2"
 clap = { version = "4.5", features = ["derive"] }
 walkdir = "2.5"
-thiserror = "1.0"
-opener = "0.7"
+thiserror = "2.0"
+opener = "0.8"
 parking_lot = "0.12"
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
 atty = "0.2"
 pathdiff = "0.2"
-toml = "0.8"
+toml = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 globset = "0.4"
 glob = "0.3"
-notify = "6.1"
+notify = "8.2"
 tokio = { version = "1", features = ["rt", "sync", "time", "signal", "rt-multi-thread", "macros"] }
-axum = "0.7"
-tower = "0.4"
-tower-http = { version = "0.5", features = ["fs", "trace"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace"] }
 webbrowser = "1.0"
 mime_guess = "2.0"
 tokio-stream = { version = "0.1", features = ["sync"] }
