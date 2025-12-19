@@ -44,6 +44,7 @@ pub fn init(verbosity: Verbosity) -> Result<()> {
         .with_target(false) // Don't show target (module path) in normal output
         .with_level(true) // Show log level
         .with_ansi(is_tty) // Only use colors if outputting to a TTY
+        .without_time() // Don't show timestamps for cleaner output
         .compact(); // Use compact format similar to cargo
 
     // Initialize the subscriber
