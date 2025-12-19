@@ -1,7 +1,7 @@
 use crate::{Result, RheoError};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::info;
+use tracing::{debug, info};
 
 /// Output directory configuration for a project
 #[derive(Debug)]
@@ -95,13 +95,13 @@ impl OutputConfig {
                     ),
                 )
             })?;
-            info!(source = %project_css.display(), dest = %dest_path.display(), "copied project-specific style.css");
+            debug!(source = %project_css.display(), dest = %dest_path.display(), "copied project-specific style.css");
         } else {
             // Write bundled default CSS
             fs::write(&dest_path, DEFAULT_CSS).map_err(|e| {
                 RheoError::io(e, format!("writing default style.css to {:?}", dest_path))
             })?;
-            info!(dest = %dest_path.display(), "copied default style.css");
+            debug!(dest = %dest_path.display(), "copied default style.css");
         }
 
         Ok(())

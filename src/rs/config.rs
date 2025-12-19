@@ -196,7 +196,7 @@ impl RheoConfig {
             return Ok(Self::default());
         }
 
-        info!(path = %config_path.display(), "loading configuration");
+        debug!(path = %config_path.display(), "loading configuration");
         let contents = std::fs::read_to_string(&config_path)
             .map_err(|e| crate::RheoError::io(e, format!("reading {}", config_path.display())))?;
 
@@ -243,7 +243,7 @@ impl RheoConfig {
             ))
         })?;
 
-        info!(path = %config_path.display(), "loaded custom configuration");
+        debug!(path = %config_path.display(), "loaded custom configuration");
         Ok(config)
     }
 

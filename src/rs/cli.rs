@@ -4,7 +4,7 @@ use crate::formats::{epub, html, pdf};
 use crate::{OutputFormat, Result, open_all_files_in_folder};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// CLI format flags (what the user requested via command-line)
 #[derive(Debug, Clone, Copy)]
@@ -634,11 +634,11 @@ impl Cli {
                 let resolved_build_dir = if let Some(cli_path) = build_dir {
                     let cwd = std::env::current_dir()
                         .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
-                    info!(dir = %cli_path.display(), "build directory");
+                    debug!(dir = %cli_path.display(), "build directory");
                     Some(resolve_path(&cwd, &cli_path))
                 } else if let Some(config_path) = &project.config.build_dir {
                     let resolved = resolve_path(&project.root, Path::new(config_path));
-                    info!(dir = %resolved.display(), "build directory");
+                    debug!(dir = %resolved.display(), "build directory");
                     Some(resolved)
                 } else {
                     None
@@ -675,11 +675,11 @@ impl Cli {
                 let resolved_build_dir = if let Some(cli_path) = build_dir {
                     let cwd = std::env::current_dir()
                         .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
-                    info!(dir = %cli_path.display(), "build directory");
+                    debug!(dir = %cli_path.display(), "build directory");
                     Some(resolve_path(&cwd, &cli_path))
                 } else if let Some(config_path) = &project.config.build_dir {
                     let resolved = resolve_path(&project.root, Path::new(config_path));
-                    info!(dir = %resolved.display(), "build directory");
+                    debug!(dir = %resolved.display(), "build directory");
                     Some(resolved)
                 } else {
                     None
@@ -855,11 +855,11 @@ impl Cli {
                 let resolved_build_dir = if let Some(cli_path) = build_dir {
                     let cwd = std::env::current_dir()
                         .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
-                    info!(dir = %cli_path.display(), "build directory");
+                    debug!(dir = %cli_path.display(), "build directory");
                     Some(resolve_path(&cwd, &cli_path))
                 } else if let Some(config_path) = &project.config.build_dir {
                     let resolved = resolve_path(&project.root, Path::new(config_path));
-                    info!(dir = %resolved.display(), "build directory");
+                    debug!(dir = %resolved.display(), "build directory");
                     Some(resolved)
                 } else {
                     None

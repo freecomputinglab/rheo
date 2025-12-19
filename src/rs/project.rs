@@ -80,7 +80,7 @@ impl ProjectConfig {
 
         // Load config: custom path takes precedence
         let (config, loaded_config_path) = if let Some(custom_path) = config_path {
-            info!(config = %custom_path.display(), "loading custom config");
+            debug!(config = %custom_path.display(), "loading custom config");
             let config = RheoConfig::load_from_path(custom_path)?;
             (config, Some(custom_path.to_path_buf()))
         } else {
@@ -164,7 +164,7 @@ impl ProjectConfig {
 
         // Load config if --config provided, otherwise use default
         let (config, loaded_config_path) = if let Some(custom_path) = config_path {
-            info!(config = %custom_path.display(), "using custom config in single-file mode");
+            debug!(config = %custom_path.display(), "using custom config in single-file mode");
             let config = RheoConfig::load_from_path(custom_path)?;
             (config, Some(custom_path.to_path_buf()))
         } else {
