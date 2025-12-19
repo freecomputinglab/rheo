@@ -5,6 +5,8 @@
 //! - DOM manipulation utilities (html5ever)
 //! - HTML head injection (CSS/font links)
 
+use crate::constants::{HTML_EXT, XHTML_EXT};
+
 pub mod dom;
 pub mod html_head;
 pub mod links;
@@ -39,8 +41,8 @@ impl OutputFormat {
     /// Get the file extension for this format
     pub fn extension(&self) -> &'static str {
         match self {
-            OutputFormat::Html => ".html",
-            OutputFormat::Xhtml => ".xhtml",
+            OutputFormat::Html => HTML_EXT,
+            OutputFormat::Xhtml => XHTML_EXT,
         }
     }
 }

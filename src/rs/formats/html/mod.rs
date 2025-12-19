@@ -1,5 +1,6 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::HtmlOptions;
+use crate::constants::HTML_EXT;
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::postprocess;
 use crate::world::RheoWorld;
@@ -60,7 +61,7 @@ fn compile_html_impl_fresh(
     let html_string = compile_document_to_string(&doc)?;
 
     // 3. Transform .typ links to .html links
-    let html_string = postprocess::transform_links(&html_string, input, root, ".html")?;
+    let html_string = postprocess::transform_links(&html_string, input, root, HTML_EXT)?;
 
     // 4. Inject CSS and font links into <head>
     let stylesheets: Vec<&str> = html_options
@@ -119,7 +120,7 @@ fn compile_html_impl(
         typst_html::html(&document).map_err(|e| handle_export_errors(e, ExportErrorType::Html))?;
 
     // 3. Transform .typ links to .html links
-    let html_string = postprocess::transform_links(&html_string, input, root, ".html")?;
+    let html_string = postprocess::transform_links(&html_string, input, root, HTML_EXT)?;
 
     // 4. Inject CSS and font links into <head>
     let stylesheets: Vec<&str> = html_options

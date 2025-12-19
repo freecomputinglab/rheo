@@ -1,5 +1,6 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::PdfConfig;
+use crate::constants::TYP_EXT;
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::spine::generate_spine;
 use crate::world::RheoWorld;
@@ -190,7 +191,7 @@ pub fn transform_typ_links_to_labels(
         if let Some(filename) = spine_file.file_name() {
             let filename_str = filename.to_string_lossy();
             // Remove .typ extension
-            let stem = filename_str.strip_suffix(".typ").unwrap_or(&filename_str);
+            let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
             let label = sanitize_label_name(stem);
             label_map.insert(stem.to_string(), label);
         }
@@ -207,7 +208,7 @@ pub fn transform_typ_links_to_labels(
         let body = &caps[2];
 
         // Check if this is a .typ link
-        let is_typ_link = url.ends_with(".typ");
+        let is_typ_link = url.ends_with(TYP_EXT);
 
         // Check if it's an external URL or fragment-only link
         let is_external = url.starts_with("http://")
@@ -224,7 +225,7 @@ pub fn transform_typ_links_to_labels(
                 .unwrap_or(url);
 
             // Remove .typ extension for lookup
-            let stem = filename.strip_suffix(".typ").unwrap_or(filename);
+            let stem = filename.strip_suffix(TYP_EXT).unwrap_or(filename);
 
             // Look up in spine files map
             if let Some(label) = label_map.get(stem) {
@@ -317,7 +318,7 @@ pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
         // Derive label and title from filename (without extension)
         let (label, title) = if let Some(filename) = spine_file.file_name() {
             let filename_str = filename.to_string_lossy();
-            let stem = filename_str.strip_suffix(".typ").unwrap_or(&filename_str);
+            let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
             let label = sanitize_label_name(stem);
             let title = extract_document_title(&source, stem);
             (label, title)

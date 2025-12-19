@@ -1,3 +1,4 @@
+use crate::constants::TYP_EXT;
 use crate::world::RheoWorld;
 use regex::Regex;
 use std::path::PathBuf;
@@ -157,7 +158,7 @@ pub fn remove_relative_typ_links(source: &str) -> String {
                 let url = &caps[1];
                 let body = &caps[2];
 
-                let is_relative_typ = url.ends_with(".typ")
+                let is_relative_typ = url.ends_with(TYP_EXT)
                     && !url.starts_with("http://")
                     && !url.starts_with("https://")
                     && !url.starts_with("mailto:");

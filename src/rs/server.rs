@@ -1,3 +1,4 @@
+use crate::constants::HTML_EXT;
 use crate::Result;
 use axum::{
     Router,
@@ -112,7 +113,7 @@ async fn static_handler(State(state): State<ServerState>, uri: axum::http::Uri) 
     };
 
     // If it's an HTML file, inject the live reload script
-    if path.ends_with(".html") {
+    if path.ends_with(HTML_EXT) {
         match inject_live_reload_script(&content) {
             Ok(modified_content) => {
                 return Response::builder()

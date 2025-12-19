@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod compile;
 pub mod config;
+pub mod constants;
 pub mod error;
 pub mod formats;
 pub mod logging;
@@ -14,6 +15,7 @@ pub mod world;
 
 pub use cli::Cli;
 pub use config::RheoConfig;
+pub use constants::*;
 pub use error::RheoError;
 pub use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::fmt;

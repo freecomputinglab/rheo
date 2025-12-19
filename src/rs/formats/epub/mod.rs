@@ -6,6 +6,7 @@ use xhtml::HtmlInfo;
 
 use crate::compile::RheoCompileOptions;
 use crate::config::{EpubConfig, EpubOptions};
+use crate::constants::XHTML_EXT;
 use crate::{Result, RheoError};
 use anyhow::Result as AnyhowResult;
 use chrono::{DateTime, Utc};
@@ -355,7 +356,7 @@ impl EpubItem {
         let (heading_ids, outline) = Self::outline(&document, &href);
         // Export to HTML and transform links for XHTML
         let html_string = crate::formats::html::compile_document_to_string(&document)?;
-        let html_string = crate::postprocess::transform_links(&html_string, &path, root, ".xhtml")?;
+        let html_string = crate::postprocess::transform_links(&html_string, &path, root, XHTML_EXT)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
         Ok(EpubItem {

@@ -3,6 +3,7 @@
 //! This module provides shared functionality for transforming Typst file references
 //! into appropriate output format links (e.g., .typ → .html or .typ → .xhtml).
 
+use crate::constants::TYP_EXT;
 use crate::{Result, RheoError};
 use regex::Regex;
 use std::path::Path;
@@ -65,7 +66,7 @@ pub fn transform_links(
         }
 
         // Check if this is a .typ link
-        if href.ends_with(".typ") {
+        if href.ends_with(TYP_EXT) {
             // Resolve the path relative to the source file directory
             let linked_path = if href.starts_with('/') {
                 // Absolute path from root
@@ -106,7 +107,7 @@ pub fn transform_links(
             }
 
             // Transform the link from .typ to target extension
-            let new_href = href.replace(".typ", target_ext);
+            let new_href = href.replace(TYP_EXT, target_ext);
             result = result.replace(
                 &format!(r#"href="{}""#, href),
                 &format!(r#"href="{}""#, new_href),
