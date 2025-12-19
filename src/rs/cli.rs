@@ -623,7 +623,11 @@ impl Cli {
                 // Detect project configuration first to get config defaults
                 info!(path = %path.display(), "loading project");
                 let project = crate::project::ProjectConfig::from_path(&path, config.as_deref())?;
-                let file_word = if project.typ_files.len() == 1 { "file" } else { "files" };
+                let file_word = if project.typ_files.len() == 1 {
+                    "file"
+                } else {
+                    "files"
+                };
                 info!(name = %project.name, files = project.typ_files.len(), "found {} Typst {}", project.typ_files.len(), file_word);
 
                 // Determine which formats to compile using CLI flags or config defaults
@@ -664,7 +668,11 @@ impl Cli {
                 // Detect project configuration first to get config defaults
                 info!(path = %path.display(), "loading project");
                 let project = crate::project::ProjectConfig::from_path(&path, config.as_deref())?;
-                let file_word = if project.typ_files.len() == 1 { "file" } else { "files" };
+                let file_word = if project.typ_files.len() == 1 {
+                    "file"
+                } else {
+                    "files"
+                };
                 info!(name = %project.name, files = project.typ_files.len(), "found {} Typst {}", project.typ_files.len(), file_word);
 
                 // Determine which formats to compile using CLI flags or config defaults
@@ -780,7 +788,11 @@ impl Cli {
                                 Ok(new_project) => {
                                     *project_cell.borrow_mut() = new_project;
                                     let borrowed = project_cell.borrow();
-                                    let file_word = if borrowed.typ_files.len() == 1 { "file" } else { "files" };
+                                    let file_word = if borrowed.typ_files.len() == 1 {
+                                        "file"
+                                    } else {
+                                        "files"
+                                    };
                                     info!(name = %borrowed.name, files = borrowed.typ_files.len(), "reloaded ({} {})", borrowed.typ_files.len(), file_word);
 
                                     // Recreate World with new configuration

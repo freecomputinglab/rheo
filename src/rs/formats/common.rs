@@ -2,10 +2,10 @@ use crate::error::RheoError;
 use crate::world::RheoWorld;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term;
-use ecow::{eco_format, EcoVec};
+use ecow::{EcoVec, eco_format};
 use tracing::{error, warn};
-use typst::diag::{Severity, SourceDiagnostic, SourceResult, Warned};
 use typst::WorldExt;
+use typst::diag::{Severity, SourceDiagnostic, SourceResult, Warned};
 
 /// Print diagnostic messages to stderr using codespan-reporting.
 ///
@@ -45,11 +45,7 @@ pub fn print_diagnostics(
                 .map(|s| (eco_format!("hint: {}", s)).into())
                 .collect(),
         )
-        .with_labels(
-            label(world, diagnostic.span)
-                .into_iter()
-                .collect(),
-        );
+        .with_labels(label(world, diagnostic.span).into_iter().collect());
 
         term::emit(&mut stderr, &config, world, &diag)?;
 
@@ -88,10 +84,7 @@ fn label(world: &RheoWorld, span: typst::syntax::Span) -> Option<Label<typst::sy
 /// ```ignore
 /// handle_typst_warnings(Some(&world), &result.warnings);
 /// ```
-pub fn handle_typst_warnings(
-    world: Option<&RheoWorld>,
-    warnings: &[SourceDiagnostic],
-) {
+pub fn handle_typst_warnings(world: Option<&RheoWorld>, warnings: &[SourceDiagnostic]) {
     if warnings.is_empty() {
         return;
     }
@@ -117,7 +110,10 @@ pub fn handle_typst_warnings(
 /// # Arguments
 /// * `world` - Optional RheoWorld for rich diagnostic rendering
 /// * `errors` - Compilation errors
-pub fn handle_typst_errors(world: Option<&RheoWorld>, errors: EcoVec<SourceDiagnostic>) -> RheoError {
+pub fn handle_typst_errors(
+    world: Option<&RheoWorld>,
+    errors: EcoVec<SourceDiagnostic>,
+) -> RheoError {
     // Use rich diagnostics if world is available
     if let Some(world) = world {
         // Ignore errors from diagnostic printing (shouldn't happen)
@@ -164,7 +160,12 @@ where
 {
     // Filter warnings if filter function provided
     if let Some(filter_fn) = filter_warnings {
-        let filtered: Vec<_> = result.warnings.iter().filter(|w| filter_fn(w)).cloned().collect();
+        let filtered: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| filter_fn(w))
+            .cloned()
+            .collect();
         handle_typst_warnings(world, &filtered);
     } else {
         handle_typst_warnings(world, &result.warnings);

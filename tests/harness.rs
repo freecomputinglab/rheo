@@ -496,7 +496,7 @@ fn test_html_css_link_injection() {
 #[test]
 fn test_error_formatting_type_error() {
     let test_dir = PathBuf::from("tests/cases/error_formatting");
-    
+
     // Compile file with type error - expect failure
     let output = std::process::Command::new("cargo")
         .args([
@@ -509,31 +509,31 @@ fn test_error_formatting_type_error() {
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
-    
+
     // Compilation should fail
     assert!(
         !output.status.success(),
         "Expected compilation to fail for type error"
     );
-    
+
     let stderr = String::from_utf8_lossy(&output.stderr);
-    
+
     // Verify codespan-reporting format:
     // - Should contain "error:" prefix
     // - Should contain file location (line/column)
     // - Should contain error message
     // - Should contain source context (with line numbers and highlighting)
-    
+
     assert!(
         stderr.contains("error"),
         "Error output should contain 'error' marker"
     );
-    
+
     assert!(
         stderr.contains("type_error.typ"),
         "Error should reference the source file"
     );
-    
+
     // Check for codespan-reporting style markers:
     // - Line numbers (e.g., "10 │")
     // - Unicode box drawing characters (┌─, │)
@@ -541,7 +541,7 @@ fn test_error_formatting_type_error() {
         stderr.contains("│") || stderr.contains("|"),
         "Error should contain codespan-style line markers"
     );
-    
+
     // Verify compilation complete message is NOT shown (since it failed)
     assert!(
         !stderr.contains("compilation complete"),
@@ -553,7 +553,7 @@ fn test_error_formatting_type_error() {
 #[test]
 fn test_error_formatting_undefined_var() {
     let test_dir = PathBuf::from("tests/cases/error_formatting");
-    
+
     // Compile file with undefined variable - expect failure
     let output = std::process::Command::new("cargo")
         .args([
@@ -566,32 +566,32 @@ fn test_error_formatting_undefined_var() {
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
-    
+
     // Compilation should fail
     assert!(
         !output.status.success(),
         "Expected compilation to fail for undefined variable"
     );
-    
+
     let stderr = String::from_utf8_lossy(&output.stderr);
-    
+
     // Verify error formatting
     assert!(
         stderr.contains("error"),
         "Error output should contain 'error' marker"
     );
-    
+
     assert!(
         stderr.contains("undefined_var.typ"),
         "Error should reference the source file"
     );
-    
+
     // Verify it contains the undefined variable name
     assert!(
         stderr.contains("undefined_variable"),
         "Error should mention the undefined variable name"
     );
-    
+
     // Check for source context
     assert!(
         stderr.contains("│") || stderr.contains("|"),
@@ -604,45 +604,39 @@ fn test_error_formatting_undefined_var() {
 fn test_warning_formatting() {
     // Use blog_post which has a known warning (block in paragraph)
     let test_dir = PathBuf::from("examples/blog_post");
-    
+
     // Clean first
     let _ = std::process::Command::new("cargo")
         .args(["run", "--", "clean", test_dir.to_str().unwrap()])
         .output();
-    
+
     // Compile - should succeed with warnings
     let output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "--",
-            "compile",
-            test_dir.to_str().unwrap(),
-            "--pdf",
-        ])
+        .args(["run", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
-    
+
     // Should succeed despite warnings
     assert!(
         output.status.success(),
         "Compilation should succeed with warnings"
     );
-    
+
     let stderr = String::from_utf8_lossy(&output.stderr);
-    
+
     // Verify warning formatting
     assert!(
         stderr.contains("warning"),
         "Output should contain warning marker"
     );
-    
+
     // Check for codespan-reporting style formatting
     assert!(
         stderr.contains("│") || stderr.contains("|"),
         "Warning should use codespan-style formatting"
     );
-    
+
     // Clean up
     let _ = std::process::Command::new("cargo")
         .args(["run", "--", "clean", test_dir.to_str().unwrap()])
