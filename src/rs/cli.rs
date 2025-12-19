@@ -20,6 +20,19 @@ impl FormatFlags {
     }
 }
 
+/// Compilation mode for perform_compilation
+enum CompilationMode<'a> {
+    /// Fresh compilation (creates new World for each file)
+    Fresh {
+        root: PathBuf,
+        repo_root: PathBuf,
+    },
+    /// Incremental compilation (reuses existing World)
+    Incremental {
+        world: &'a mut crate::world::RheoWorld,
+    },
+}
+
 /// Determine which formats to compile based on CLI flags and config defaults
 fn determine_formats(
     flags: FormatFlags,
@@ -181,9 +194,11 @@ fn get_per_file_formats(
 
 /// Perform compilation for a project with specified formats
 ///
-/// This is the core compilation logic used by both `compile` and `watch` commands.
+/// This is the unified compilation logic that supports both fresh and incremental compilation
+/// based on the CompilationMode parameter.
 ///
 /// # Arguments
+/// * `mode` - Compilation mode (Fresh or Incremental)
 /// * `project` - Project configuration with source files and assets
 /// * `output_config` - Output directory configuration
 /// * `formats` - List of formats to compile to
@@ -191,162 +206,8 @@ fn get_per_file_formats(
 /// # Returns
 /// * `Ok(())` if at least one format fully succeeded
 /// * `Err` if all formats failed
-fn perform_compilation(
-    project: &crate::project::ProjectConfig,
-    output_config: &crate::output::OutputConfig,
-    formats: &[OutputFormat],
-) -> Result<()> {
-    // Check for .typ files
-    if project.typ_files.is_empty() {
-        return Err(crate::RheoError::project_config(
-            "no .typ files found in project",
-        ));
-    }
-
-    // Track success/failure per format for graceful degradation
-    let mut results = crate::CompilationResults::new();
-
-    // Use current working directory as root for Typst world
-    // This allows absolute imports like /src/typst/rheo.typ to work
-    let repo_root = std::env::current_dir()
-        .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
-
-    // Use content_dir as compilation root if configured, otherwise use project root
-    // This allows files in subdirectories to reference files in parent directories
-    let compilation_root = project
-        .config
-        .resolve_content_dir(&project.root)
-        .unwrap_or_else(|| project.root.clone());
-
-    // Determine which formats should be compiled per-file
-    let per_file_formats = get_per_file_formats(&project.config, formats);
-
-    // Copy HTML assets (style.css) if HTML compilation is requested
-    if per_file_formats.contains(&OutputFormat::Html) {
-        output_config.copy_html_assets(project.style_css.as_deref())?;
-    }
-
-    for typ_file in &project.typ_files {
-        let filename = get_output_filename(typ_file)?;
-
-        // Compile to PDF (per-file mode)
-        if per_file_formats.contains(&OutputFormat::Pdf) {
-            let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-            let options =
-                RheoCompileOptions::new(typ_file, &output_path, &compilation_root, &repo_root);
-            match pdf::compile_pdf_new(options, None) {
-                Ok(_) => results.record_success(OutputFormat::Pdf),
-                Err(e) => {
-                    error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
-                    results.record_failure(OutputFormat::Pdf);
-                }
-            }
-        }
-
-        // Compile to HTML
-        if per_file_formats.contains(&OutputFormat::Html) {
-            let output_path = output_config
-                .html_dir
-                .join(&filename)
-                .with_extension("html");
-            let options =
-                RheoCompileOptions::new(typ_file, &output_path, &compilation_root, &repo_root);
-            // Get HTML options from config
-            let html_options = HtmlOptions {
-                stylesheets: project.config.html.stylesheets.clone(),
-                fonts: project.config.html.fonts.clone(),
-            };
-            match html::compile_html_new(options, html_options) {
-                Ok(_) => results.record_success(OutputFormat::Html),
-                Err(e) => {
-                    error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
-                    results.record_failure(OutputFormat::Html);
-                }
-            }
-        }
-    }
-
-    // Generate merged PDF if configured
-    if formats.contains(&OutputFormat::Pdf) && project.config.pdf.merge.is_some() {
-        let pdf_filename = format!("{}.pdf", project.name);
-        let pdf_path = output_config.pdf_dir.join(&pdf_filename);
-
-        let options =
-            RheoCompileOptions::new(PathBuf::new(), &pdf_path, &compilation_root, &repo_root);
-        match pdf::compile_pdf_new(options, Some(&project.config.pdf)) {
-            Ok(_) => {
-                results.record_success(OutputFormat::Pdf);
-                info!(output = %pdf_path.display(), "PDF merge complete");
-            }
-            Err(e) => {
-                error!(error = %e, "PDF merge failed");
-                results.record_failure(OutputFormat::Pdf);
-            }
-        }
-    }
-
-    // Generate EPUB if requested
-    if formats.contains(&OutputFormat::Epub) {
-        let epub_filename = format!("{}.epub", project.name);
-        let epub_path = output_config.epub_dir.join(&epub_filename);
-
-        let options =
-            RheoCompileOptions::new(PathBuf::new(), &epub_path, &compilation_root, &repo_root);
-        let epub_options = EpubOptions::from(&project.config.epub);
-        match epub::compile_epub_new(options, epub_options) {
-            Ok(_) => {
-                results.record_success(OutputFormat::Epub);
-                info!(output = %epub_path.display(), "EPUB generation complete");
-            }
-            Err(e) => {
-                error!(error = %e, "EPUB generation failed");
-                results.record_failure(OutputFormat::Epub);
-            }
-        }
-    }
-
-    // Report results with per-format summary
-    results.log_summary(formats);
-
-    // Graceful degradation: succeed if ANY requested format fully succeeded
-    let any_format_succeeded = formats.iter().any(|fmt| {
-        let result = results.get(*fmt);
-        result.succeeded > 0 && result.failed == 0
-    });
-
-    if any_format_succeeded {
-        // At least one format succeeded completely
-        if results.has_failures() {
-            info!("compilation complete (some formats had errors)");
-        } else {
-            info!("compilation complete");
-        }
-        Ok(())
-    } else {
-        // All requested formats had failures or no compilations occurred
-        Err(crate::RheoError::project_config(
-            "all formats failed or no files were compiled".to_string()
-        ))
-    }
-}
-
-/// Perform compilation for a project with specified formats using an existing World (for watch mode).
-///
-/// This version reuses an existing RheoWorld instance, enabling incremental compilation
-/// through Typst's comemo caching system. The World is updated for each file via set_main()
-/// and reset() before compilation.
-///
-/// # Arguments
-/// * `world` - Mutable reference to RheoWorld for reuse across compilations
-/// * `project` - Project configuration with source files and assets
-/// * `output_config` - Output directory configuration
-/// * `formats` - List of formats to compile to
-///
-/// # Returns
-/// * `Ok(())` if at least one format fully succeeded
-/// * `Err` if all formats failed
-fn perform_compilation_incremental(
-    world: &mut crate::world::RheoWorld,
+fn perform_compilation<'a>(
+    mut mode: CompilationMode<'a>,
     project: &crate::project::ProjectConfig,
     output_config: &crate::output::OutputConfig,
     formats: &[OutputFormat],
@@ -369,23 +230,37 @@ fn perform_compilation_incremental(
         output_config.copy_html_assets(project.style_css.as_deref())?;
     }
 
+    // Per-file compilation
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
 
-        // Update world for this file and reset cache
-        world.set_main(typ_file)?;
-        world.reset();
+        // For incremental mode, update world for this file
+        if let CompilationMode::Incremental { world } = &mut mode {
+            world.set_main(typ_file)?;
+            world.reset();
+        }
 
         // Compile to PDF (per-file mode)
         if per_file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-            let options = RheoCompileOptions::incremental(
-                typ_file,
-                &output_path,
-                &project.root,
-                PathBuf::new(),
-                world,
-            );
+            let options = match &mode {
+                CompilationMode::Fresh { root, repo_root } => {
+                    RheoCompileOptions::new(typ_file, &output_path, root, repo_root)
+                }
+                CompilationMode::Incremental { .. } => {
+                    if let CompilationMode::Incremental { world } = &mut mode {
+                        RheoCompileOptions::incremental(
+                            typ_file,
+                            &output_path,
+                            &project.root,
+                            PathBuf::new(),
+                            *world,
+                        )
+                    } else {
+                        unreachable!()
+                    }
+                }
+            };
             match pdf::compile_pdf_new(options, None) {
                 Ok(_) => results.record_success(OutputFormat::Pdf),
                 Err(e) => {
@@ -401,13 +276,24 @@ fn perform_compilation_incremental(
                 .html_dir
                 .join(&filename)
                 .with_extension("html");
-            let options = RheoCompileOptions::incremental(
-                typ_file,
-                &output_path,
-                &project.root,
-                PathBuf::new(),
-                world,
-            );
+            let options = match &mode {
+                CompilationMode::Fresh { root, repo_root } => {
+                    RheoCompileOptions::new(typ_file, &output_path, root, repo_root)
+                }
+                CompilationMode::Incremental { .. } => {
+                    if let CompilationMode::Incremental { world } = &mut mode {
+                        RheoCompileOptions::incremental(
+                            typ_file,
+                            &output_path,
+                            &project.root,
+                            PathBuf::new(),
+                            *world,
+                        )
+                    } else {
+                        unreachable!()
+                    }
+                }
+            };
             // Get HTML options from config
             let html_options = HtmlOptions {
                 stylesheets: project.config.html.stylesheets.clone(),
@@ -428,19 +314,29 @@ fn perform_compilation_incremental(
         let pdf_filename = format!("{}.pdf", project.name);
         let pdf_path = output_config.pdf_dir.join(&pdf_filename);
 
-        // Get compilation root for PDF merge
         let compilation_root = project
             .config
             .resolve_content_dir(&project.root)
             .unwrap_or_else(|| project.root.clone());
 
-        let options = RheoCompileOptions::incremental(
-            PathBuf::new(),
-            &pdf_path,
-            &compilation_root,
-            PathBuf::new(),
-            world,
-        );
+        let options = match &mode {
+            CompilationMode::Fresh { root: _, repo_root } => {
+                RheoCompileOptions::new(PathBuf::new(), &pdf_path, &compilation_root, repo_root)
+            }
+            CompilationMode::Incremental { .. } => {
+                if let CompilationMode::Incremental { world } = &mut mode {
+                    RheoCompileOptions::incremental(
+                        PathBuf::new(),
+                        &pdf_path,
+                        &compilation_root,
+                        PathBuf::new(),
+                        *world,
+                    )
+                } else {
+                    unreachable!()
+                }
+            }
+        };
         match pdf::compile_pdf_new(options, Some(&project.config.pdf)) {
             Ok(_) => {
                 results.record_success(OutputFormat::Pdf);
@@ -463,14 +359,24 @@ fn perform_compilation_incremental(
             .resolve_content_dir(&project.root)
             .unwrap_or_else(|| project.root.clone());
 
-        let options = RheoCompileOptions::incremental(
-            PathBuf::new(),
-            &epub_path,
-            &compilation_root,
-            world.root().to_path_buf(),
-            world,
-        );
-
+        let options = match &mode {
+            CompilationMode::Fresh { root: _, repo_root } => {
+                RheoCompileOptions::new(PathBuf::new(), &epub_path, &compilation_root, repo_root)
+            }
+            CompilationMode::Incremental { .. } => {
+                if let CompilationMode::Incremental { world } = &mut mode {
+                    RheoCompileOptions::incremental(
+                        PathBuf::new(),
+                        &epub_path,
+                        &compilation_root,
+                        world.root().to_path_buf(),
+                        *world,
+                    )
+                } else {
+                    unreachable!()
+                }
+            }
+        };
         let epub_options = EpubOptions::from(&project.config.epub);
         match epub::compile_epub_new(options, epub_options) {
             Ok(_) => {
@@ -568,8 +474,20 @@ impl Cli {
                     crate::output::OutputConfig::new(&project.root, resolved_build_dir);
                 output_config.create_dirs()?;
 
+                // Prepare compilation mode (Fresh)
+                let repo_root = std::env::current_dir()
+                    .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
+                let compilation_root = project
+                    .config
+                    .resolve_content_dir(&project.root)
+                    .unwrap_or_else(|| project.root.clone());
+                let mode = CompilationMode::Fresh {
+                    root: compilation_root,
+                    repo_root,
+                };
+
                 // Perform compilation
-                perform_compilation(&project, &output_config, &formats)
+                perform_compilation(mode, &project, &output_config, &formats)
             }
             Commands::Watch {
                 path,
@@ -613,9 +531,19 @@ impl Cli {
                     crate::output::OutputConfig::new(&project.root, resolved_build_dir);
                 output_config.create_dirs()?;
 
-                // Perform initial compilation
+                // Perform initial compilation (Fresh mode)
                 info!("compiling project");
-                if let Err(e) = perform_compilation(&project, &output_config, &formats) {
+                let repo_root = std::env::current_dir()
+                    .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
+                let compilation_root = project
+                    .config
+                    .resolve_content_dir(&project.root)
+                    .unwrap_or_else(|| project.root.clone());
+                let mode = CompilationMode::Fresh {
+                    root: compilation_root,
+                    repo_root: repo_root.clone(),
+                };
+                if let Err(e) = perform_compilation(mode, &project, &output_config, &formats) {
                     warn!(error = %e, "initial compilation failed, continuing to watch");
                 }
 
@@ -688,8 +616,11 @@ impl Cli {
                     let result = match event {
                         crate::watch::WatchEvent::FilesChanged => {
                             info!("change detected, recompiling");
-                            perform_compilation_incremental(
-                                &mut world_cell.borrow_mut(),
+                            let mode = CompilationMode::Incremental {
+                                world: &mut world_cell.borrow_mut(),
+                            };
+                            perform_compilation(
+                                mode,
                                 &project_cell.borrow(),
                                 &output_config,
                                 &formats,
@@ -730,8 +661,11 @@ impl Cli {
                                     ) {
                                         Ok(new_world) => {
                                             *world_cell.borrow_mut() = new_world;
-                                            perform_compilation_incremental(
-                                                &mut world_cell.borrow_mut(),
+                                            let mode = CompilationMode::Incremental {
+                                                world: &mut world_cell.borrow_mut(),
+                                            };
+                                            perform_compilation(
+                                                mode,
                                                 &borrowed,
                                                 &output_config,
                                                 &formats,
