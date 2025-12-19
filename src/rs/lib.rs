@@ -41,6 +41,11 @@ impl OutputFormat {
     pub fn all_variants() -> Vec<Self> {
         vec![Self::Html, Self::Epub, Self::Pdf]
     }
+
+    /// Get the compiler instance for this output format
+    pub fn compiler(&self) -> formats::compiler::FormatCompilerInstance {
+        formats::compiler::FormatCompilerInstance::from_format(*self)
+    }
 }
 
 impl fmt::Display for OutputFormat {
