@@ -220,12 +220,7 @@ fn perform_compilation(
     }
 
     // Track success/failure per format for graceful degradation
-    let mut pdf_succeeded = 0;
-    let mut pdf_failed = 0;
-    let mut html_succeeded = 0;
-    let mut html_failed = 0;
-    let mut epub_succeeded = 0;
-    let mut epub_failed = 0;
+    let mut results = crate::CompilationResults::new();
 
     // Use current working directory as root for Typst world
     // This allows absolute imports like /src/typst/rheo.typ to work
@@ -256,10 +251,10 @@ fn perform_compilation(
             let options =
                 RheoCompileOptions::new(typ_file, &output_path, &compilation_root, &repo_root);
             match pdf::compile_pdf_new(options, None) {
-                Ok(_) => pdf_succeeded += 1,
+                Ok(_) => results.record_success(OutputFormat::Pdf),
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
-                    pdf_failed += 1;
+                    results.record_failure(OutputFormat::Pdf);
                 }
             }
         }
@@ -278,10 +273,10 @@ fn perform_compilation(
                 fonts: project.config.html.fonts.clone(),
             };
             match html::compile_html_new(options, html_options) {
-                Ok(_) => html_succeeded += 1,
+                Ok(_) => results.record_success(OutputFormat::Html),
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
-                    html_failed += 1;
+                    results.record_failure(OutputFormat::Html);
                 }
             }
         }
@@ -296,12 +291,12 @@ fn perform_compilation(
             RheoCompileOptions::new(PathBuf::new(), &pdf_path, &compilation_root, &repo_root);
         match pdf::compile_pdf_new(options, Some(&project.config.pdf)) {
             Ok(_) => {
-                pdf_succeeded = 1;
+                results.record_success(OutputFormat::Pdf);
                 info!(output = %pdf_path.display(), "PDF merge complete");
             }
             Err(e) => {
                 error!(error = %e, "PDF merge failed");
-                pdf_failed = 1;
+                results.record_failure(OutputFormat::Pdf);
             }
         }
     }
@@ -316,94 +311,38 @@ fn perform_compilation(
         let epub_options = EpubOptions::from(&project.config.epub);
         match epub::compile_epub_new(options, epub_options) {
             Ok(_) => {
-                epub_succeeded += 1;
+                results.record_success(OutputFormat::Epub);
                 info!(output = %epub_path.display(), "EPUB generation complete");
             }
             Err(e) => {
                 error!(error = %e, "EPUB generation failed");
-                epub_failed += 1;
+                results.record_failure(OutputFormat::Epub);
             }
         }
     }
 
     // Report results with per-format summary
-    let total_files = project.typ_files.len();
+    results.log_summary(formats);
 
-    // Log format-specific results
-    if formats.contains(&OutputFormat::Pdf) {
-        if pdf_failed > 0 {
-            warn!(
-                failed = pdf_failed,
-                succeeded = pdf_succeeded,
-                total = total_files,
-                "PDF compilation"
-            );
-        } else {
-            info!(
-                succeeded = pdf_succeeded,
-                total = total_files,
-                "PDF compilation complete"
-            );
-        }
-    }
+    // Graceful degradation: succeed if ANY requested format fully succeeded
+    let any_format_succeeded = formats.iter().any(|fmt| {
+        let result = results.get(*fmt);
+        result.succeeded > 0 && result.failed == 0
+    });
 
-    if formats.contains(&OutputFormat::Html) {
-        if html_failed > 0 {
-            warn!(
-                failed = html_failed,
-                succeeded = html_succeeded,
-                total = total_files,
-                "HTML compilation"
-            );
-        } else {
-            info!(
-                succeeded = html_succeeded,
-                total = total_files,
-                "HTML compilation complete"
-            );
-        }
-    }
-
-    if formats.contains(&OutputFormat::Epub) {
-        if epub_failed > 0 {
-            warn!(
-                failed = epub_failed,
-                succeeded = epub_succeeded,
-                total = total_files,
-                "EPUB compilation"
-            );
-        } else {
-            info!(
-                succeeded = epub_succeeded,
-                total = total_files,
-                "EPUB compilation complete"
-            );
-        }
-    }
-
-    // Graceful degradation: succeed if ANY format fully succeeded
-    let pdf_fully_succeeded =
-        formats.contains(&OutputFormat::Pdf) && pdf_failed == 0 && pdf_succeeded > 0;
-    let html_fully_succeeded =
-        formats.contains(&OutputFormat::Html) && html_failed == 0 && html_succeeded > 0;
-    let epub_fully_succeeded =
-        formats.contains(&OutputFormat::Epub) && epub_failed == 0 && epub_succeeded > 0;
-
-    if pdf_fully_succeeded || html_fully_succeeded || epub_fully_succeeded {
+    if any_format_succeeded {
         // At least one format succeeded completely
-        if pdf_failed > 0 || html_failed > 0 || epub_failed > 0 {
+        if results.has_failures() {
             info!("compilation complete (some formats had errors)");
         } else {
             info!("compilation complete");
         }
         Ok(())
     } else {
-        // All requested formats had failures
-        let total_failed = pdf_failed + html_failed + epub_failed;
-        Err(crate::RheoError::project_config(format!(
-            "all formats failed: {} file(s) could not be compiled",
-            total_failed
-        )))
+        // All requested formats had failures or no compilations occurred
+        Err(crate::RheoError::project_config(
+            "all formats failed or no files were compiled".to_string()
+        ))
     }
 }
 
@@ -436,12 +375,7 @@ fn perform_compilation_incremental(
     }
 
     // Track success/failure per format for graceful degradation
-    let mut pdf_succeeded = 0;
-    let mut pdf_failed = 0;
-    let mut html_succeeded = 0;
-    let mut html_failed = 0;
-    let mut epub_succeeded = 0;
-    let mut epub_failed = 0;
+    let mut results = crate::CompilationResults::new();
 
     // Determine which formats should be compiled per-file
     let per_file_formats = get_per_file_formats(&project.config, formats);
@@ -469,10 +403,10 @@ fn perform_compilation_incremental(
                 world,
             );
             match pdf::compile_pdf_new(options, None) {
-                Ok(_) => pdf_succeeded += 1,
+                Ok(_) => results.record_success(OutputFormat::Pdf),
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
-                    pdf_failed += 1;
+                    results.record_failure(OutputFormat::Pdf);
                 }
             }
         }
@@ -496,10 +430,10 @@ fn perform_compilation_incremental(
                 fonts: project.config.html.fonts.clone(),
             };
             match html::compile_html_new(options, html_options) {
-                Ok(_) => html_succeeded += 1,
+                Ok(_) => results.record_success(OutputFormat::Html),
                 Err(e) => {
                     error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
-                    html_failed += 1;
+                    results.record_failure(OutputFormat::Html);
                 }
             }
         }
@@ -525,12 +459,12 @@ fn perform_compilation_incremental(
         );
         match pdf::compile_pdf_new(options, Some(&project.config.pdf)) {
             Ok(_) => {
-                pdf_succeeded = 1;
+                results.record_success(OutputFormat::Pdf);
                 info!(output = %pdf_path.display(), "PDF merge complete");
             }
             Err(e) => {
                 error!(error = %e, "PDF merge failed");
-                pdf_failed = 1;
+                results.record_failure(OutputFormat::Pdf);
             }
         }
     }
@@ -556,93 +490,38 @@ fn perform_compilation_incremental(
         let epub_options = EpubOptions::from(&project.config.epub);
         match epub::compile_epub_new(options, epub_options) {
             Ok(_) => {
-                epub_succeeded += 1;
+                results.record_success(OutputFormat::Epub);
                 info!(output = %epub_path.display(), "EPUB generation complete");
             }
             Err(e) => {
                 error!(error = %e, "EPUB generation failed");
-                epub_failed += 1;
+                results.record_failure(OutputFormat::Epub);
             }
         }
     }
 
-    let total_files = project.typ_files.len();
+    // Report results with per-format summary
+    results.log_summary(formats);
 
-    // Log format-specific results
-    if formats.contains(&OutputFormat::Pdf) {
-        if pdf_failed > 0 {
-            warn!(
-                failed = pdf_failed,
-                succeeded = pdf_succeeded,
-                total = total_files,
-                "PDF compilation"
-            );
-        } else {
-            info!(
-                succeeded = pdf_succeeded,
-                total = total_files,
-                "PDF compilation complete"
-            );
-        }
-    }
+    // Graceful degradation: succeed if ANY requested format fully succeeded
+    let any_format_succeeded = formats.iter().any(|fmt| {
+        let result = results.get(*fmt);
+        result.succeeded > 0 && result.failed == 0
+    });
 
-    if formats.contains(&OutputFormat::Html) {
-        if html_failed > 0 {
-            warn!(
-                failed = html_failed,
-                succeeded = html_succeeded,
-                total = total_files,
-                "HTML compilation"
-            );
-        } else {
-            info!(
-                succeeded = html_succeeded,
-                total = total_files,
-                "HTML compilation complete"
-            );
-        }
-    }
-
-    if formats.contains(&OutputFormat::Epub) {
-        if epub_failed > 0 {
-            warn!(
-                failed = epub_failed,
-                succeeded = epub_succeeded,
-                total = total_files,
-                "EPUB compilation"
-            );
-        } else {
-            info!(
-                succeeded = epub_succeeded,
-                total = total_files,
-                "EPUB compilation complete"
-            );
-        }
-    }
-
-    // Graceful degradation: succeed if ANY format fully succeeded
-    let pdf_fully_succeeded =
-        formats.contains(&OutputFormat::Pdf) && pdf_failed == 0 && pdf_succeeded > 0;
-    let html_fully_succeeded =
-        formats.contains(&OutputFormat::Html) && html_failed == 0 && html_succeeded > 0;
-    let epub_fully_succeeded =
-        formats.contains(&OutputFormat::Epub) && epub_failed == 0 && epub_succeeded > 0;
-
-    if pdf_fully_succeeded || html_fully_succeeded || epub_fully_succeeded {
+    if any_format_succeeded {
         // At least one format succeeded completely
-        if pdf_failed > 0 || html_failed > 0 || epub_failed > 0 {
+        if results.has_failures() {
             info!("compilation complete (some formats had errors)");
         } else {
             info!("compilation complete");
         }
         Ok(())
     } else {
-        // All requested formats had failures
-        let total_failed = pdf_failed + html_failed + epub_failed;
-        Err(crate::RheoError::project_config(format!(
-            "all formats failed: {} file(s) could not be compiled",
-            total_failed
-        )))
+        // All requested formats had failures or no compilations occurred
+        Err(crate::RheoError::project_config(
+            "all formats failed or no files were compiled".to_string()
+        ))
     }
 }
 

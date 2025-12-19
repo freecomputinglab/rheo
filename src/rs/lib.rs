@@ -8,6 +8,7 @@ pub mod logging;
 pub mod output;
 pub mod postprocess;
 pub mod project;
+pub mod results;
 pub mod server;
 pub mod spine;
 pub mod watch;
@@ -17,6 +18,7 @@ pub use cli::Cli;
 pub use config::RheoConfig;
 pub use constants::*;
 pub use error::RheoError;
+pub use results::{CompilationResults, FormatResult};
 pub use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::fmt;
 use std::path::PathBuf;
@@ -26,7 +28,7 @@ use walkdir::WalkDir;
 /// Result type alias using RheoError
 pub type Result<T> = std::result::Result<T, RheoError>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum OutputFormat {
     Html,
     Epub,
