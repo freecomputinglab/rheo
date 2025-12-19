@@ -1,3 +1,2 @@
-[compile]
 # Test PDF transformation
 formats = ["pdf"]
