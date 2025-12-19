@@ -56,7 +56,7 @@ fn default_stylesheets() -> Vec<String> {
 }
 
 fn default_fonts() -> Vec<String> {
-    vec!["https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap".to_string()]
+    vec![]
 }
 
 /// EPUB compilation options.
@@ -382,8 +382,7 @@ mod tests {
     fn test_html_config_defaults() {
         let config = HtmlConfig::default();
         assert_eq!(config.stylesheets, vec!["style.css"]);
-        assert_eq!(config.fonts.len(), 1);
-        assert!(config.fonts[0].contains("fonts.googleapis.com"));
+        assert_eq!(config.fonts.len(), 0);
     }
 
     #[test]
@@ -395,8 +394,8 @@ mod tests {
 
         let config: RheoConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.html.stylesheets, vec!["custom.css", "theme.css"]);
-        // Fonts should use default
-        assert_eq!(config.html.fonts.len(), 1);
+        // Fonts should use default (empty)
+        assert_eq!(config.html.fonts.len(), 0);
     }
 
     #[test]
