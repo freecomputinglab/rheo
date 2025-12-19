@@ -267,6 +267,10 @@ impl RheoWorld {
         // Last resort: return empty Lines
         Lines::new(String::new())
     }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
 }
 
 impl World for RheoWorld {

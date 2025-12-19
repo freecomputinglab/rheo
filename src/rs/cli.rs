@@ -440,6 +440,8 @@ fn perform_compilation_incremental(
     let mut pdf_failed = 0;
     let mut html_succeeded = 0;
     let mut html_failed = 0;
+    let mut epub_succeeded = 0;
+    let mut epub_failed = 0;
 
     // Determine which formats should be compiled per-file
     let per_file_formats = get_per_file_formats(&project.config, formats);
@@ -533,6 +535,37 @@ fn perform_compilation_incremental(
         }
     }
 
+    // Generate EPUB if requested
+    if formats.contains(&OutputFormat::Epub) {
+        let epub_filename = format!("{}.epub", project.name);
+        let epub_path = output_config.epub_dir.join(&epub_filename);
+
+        let compilation_root = project
+            .config
+            .resolve_content_dir(&project.root)
+            .unwrap_or_else(|| project.root.clone());
+
+        let options = RheoCompileOptions::incremental(
+            PathBuf::new(),
+            &epub_path,
+            &compilation_root,
+            world.root().to_path_buf(),
+            world,
+        );
+
+        let epub_options = EpubOptions::from(&project.config.epub);
+        match epub::compile_epub_new(options, epub_options) {
+            Ok(_) => {
+                epub_succeeded += 1;
+                info!(output = %epub_path.display(), "EPUB generation complete");
+            }
+            Err(e) => {
+                error!(error = %e, "EPUB generation failed");
+                epub_failed += 1;
+            }
+        }
+    }
+
     let total_files = project.typ_files.len();
 
     // Log format-specific results
@@ -570,15 +603,34 @@ fn perform_compilation_incremental(
         }
     }
 
+    if formats.contains(&OutputFormat::Epub) {
+        if epub_failed > 0 {
+            warn!(
+                failed = epub_failed,
+                succeeded = epub_succeeded,
+                total = total_files,
+                "EPUB compilation"
+            );
+        } else {
+            info!(
+                succeeded = epub_succeeded,
+                total = total_files,
+                "EPUB compilation complete"
+            );
+        }
+    }
+
     // Graceful degradation: succeed if ANY format fully succeeded
     let pdf_fully_succeeded =
         formats.contains(&OutputFormat::Pdf) && pdf_failed == 0 && pdf_succeeded > 0;
     let html_fully_succeeded =
         formats.contains(&OutputFormat::Html) && html_failed == 0 && html_succeeded > 0;
+    let epub_fully_succeeded =
+        formats.contains(&OutputFormat::Epub) && epub_failed == 0 && epub_succeeded > 0;
 
-    if pdf_fully_succeeded || html_fully_succeeded {
+    if pdf_fully_succeeded || html_fully_succeeded || epub_fully_succeeded {
         // At least one format succeeded completely
-        if pdf_failed > 0 || html_failed > 0 {
+        if pdf_failed > 0 || html_failed > 0 || epub_failed > 0 {
             info!("compilation complete (some formats had errors)");
         } else {
             info!("compilation complete");
@@ -586,7 +638,7 @@ fn perform_compilation_incremental(
         Ok(())
     } else {
         // All requested formats had failures
-        let total_failed = pdf_failed + html_failed;
+        let total_failed = pdf_failed + html_failed + epub_failed;
         Err(crate::RheoError::project_config(format!(
             "all formats failed: {} file(s) could not be compiled",
             total_failed
