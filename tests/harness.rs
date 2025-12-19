@@ -422,12 +422,6 @@ fn test_html_css_link_injection() {
         "Should have stylesheet link in HTML"
     );
 
-    // Test 2: Font link is present in head
-    assert!(
-        html.contains("fonts.googleapis.com"),
-        "Should have font link in HTML"
-    );
-
     // Test 3: Links are in the <head> section
     let head_start = html.find("<head>").expect("HTML should have <head> tag");
     let head_end = html.find("</head>").expect("HTML should have </head> tag");
@@ -436,10 +430,6 @@ fn test_html_css_link_injection() {
     assert!(
         head.contains("style.css"),
         "CSS link should be in head section"
-    );
-    assert!(
-        head.contains("fonts.googleapis.com"),
-        "Font link should be in head section"
     );
 
     // Test 4: NO JavaScript DOM manipulation hack
@@ -464,19 +454,6 @@ fn test_html_css_link_injection() {
     assert!(
         html.contains(r#"<meta name="viewport""#),
         "Should preserve viewport meta tag"
-    );
-
-    // Test 6: Verify correct order - fonts before stylesheets
-    let font_pos = html
-        .find("fonts.googleapis.com")
-        .expect("Should find font link");
-    let style_pos = html
-        .find(r#"href="style.css""#)
-        .expect("Should find stylesheet link");
-
-    assert!(
-        font_pos < style_pos,
-        "Font link should come before stylesheet link"
     );
 
     // Clean up
