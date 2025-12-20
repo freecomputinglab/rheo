@@ -30,6 +30,20 @@ enum CompilationMode<'a> {
     },
 }
 
+/// Pre-compiled setup context for compilation commands
+struct CompilationContext {
+    /// Loaded project configuration
+    project: crate::project::ProjectConfig,
+    /// Formats to compile (resolved from CLI flags and config)
+    formats: Vec<OutputFormat>,
+    /// Output configuration with resolved build directory
+    output_config: crate::output::OutputConfig,
+    /// Repository root directory
+    repo_root: PathBuf,
+    /// Compilation root (content_dir or project root)
+    compilation_root: PathBuf,
+}
+
 /// Determine which formats to compile based on CLI flags and config defaults
 fn determine_formats(
     flags: FormatFlags,
@@ -158,6 +172,36 @@ fn resolve_path(base: &Path, path: &Path) -> PathBuf {
         path.to_path_buf()
     } else {
         base.join(path)
+    }
+}
+
+/// Resolve build directory with priority: CLI arg > config > default
+///
+/// # Arguments
+/// * `project` - Project configuration (contains config and root)
+/// * `cli_build_dir` - Optional CLI-provided build directory
+///
+/// # Returns
+/// * `Some(PathBuf)` if build_dir is explicitly set via CLI or config
+/// * `None` to use default (project_root/build)
+fn resolve_build_dir(
+    project: &crate::project::ProjectConfig,
+    cli_build_dir: Option<PathBuf>,
+) -> Result<Option<PathBuf>> {
+    if let Some(cli_path) = cli_build_dir {
+        // Priority 1: CLI argument (resolve relative to current directory)
+        let cwd = std::env::current_dir()
+            .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
+        debug!(dir = %cli_path.display(), "build directory");
+        Ok(Some(resolve_path(&cwd, &cli_path)))
+    } else if let Some(config_path) = &project.config.build_dir {
+        // Priority 2: Config file (resolve relative to project root)
+        let resolved = resolve_path(&project.root, Path::new(config_path));
+        debug!(dir = %resolved.display(), "build directory");
+        Ok(Some(resolved))
+    } else {
+        // Priority 3: Default (None signals OutputConfig::new to use default)
+        Ok(None)
     }
 }
 
@@ -428,6 +472,75 @@ impl Cli {
         }
     }
 
+    /// Load project and resolve all compilation settings
+    ///
+    /// This performs all the setup steps common to both compile and watch commands:
+    /// - Loads project configuration
+    /// - Resolves format flags
+    /// - Resolves build directory
+    /// - Creates output directories
+    /// - Resolves compilation and repo roots
+    ///
+    /// # Arguments
+    /// * `path` - Path to project directory or single .typ file
+    /// * `config_path` - Optional custom rheo.toml path
+    /// * `build_dir` - Optional custom build directory (overrides config)
+    /// * `format_flags` - CLI format flags (pdf, html, epub)
+    ///
+    /// # Returns
+    /// * `CompilationContext` with all resolved settings
+    fn setup_compilation_context(
+        path: &Path,
+        config_path: Option<&Path>,
+        build_dir: Option<PathBuf>,
+        format_flags: FormatFlags,
+    ) -> Result<CompilationContext> {
+        // 1. Load project (lines 443-450 / 500-507)
+        info!(path = %path.display(), "loading project");
+        let project = crate::project::ProjectConfig::from_path(path, config_path)?;
+        let file_word = if project.typ_files.len() == 1 {
+            "file"
+        } else {
+            "files"
+        };
+        info!(
+            name = %project.name,
+            files = project.typ_files.len(),
+            "found {} Typst {}",
+            project.typ_files.len(),
+            file_word
+        );
+
+        // 2. Determine formats (lines 453-454 / 510-511)
+        let formats = determine_formats(format_flags, &project.config.formats)?;
+
+        // 3. Resolve build directory (lines 457-468 / 514-525)
+        let resolved_build_dir = resolve_build_dir(&project, build_dir)?;
+
+        // 4. Create output config (lines 471-473 / 528-530)
+        let output_config = crate::output::OutputConfig::new(&project.root, resolved_build_dir);
+        output_config.create_dirs()?;
+
+        // 5. Resolve repo root (lines 476-477 / 534-535)
+        let repo_root = std::env::current_dir()
+            .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
+
+        // 6. Resolve compilation root (lines 478-481 / 536-539)
+        let compilation_root = project
+            .config
+            .resolve_content_dir(&project.root)
+            .unwrap_or_else(|| project.root.clone());
+
+        Ok(CompilationContext {
+            project,
+            formats,
+            output_config,
+            repo_root,
+            compilation_root,
+        })
+    }
+
+    /// Main entrypoint for the rheo CLI
     pub fn run(self) -> Result<()> {
         match self.command {
             Commands::Compile {
@@ -438,53 +551,19 @@ impl Cli {
                 html,
                 epub,
             } => {
-                // Detect project configuration first to get config defaults
-                info!(path = %path.display(), "loading project");
-                let project = crate::project::ProjectConfig::from_path(&path, config.as_deref())?;
-                let file_word = if project.typ_files.len() == 1 {
-                    "file"
-                } else {
-                    "files"
-                };
-                info!(name = %project.name, files = project.typ_files.len(), "found {} Typst {}", project.typ_files.len(), file_word);
-
-                // Determine which formats to compile using CLI flags or config defaults
+                // Setup compilation context
                 let flags = FormatFlags { pdf, html, epub };
-                let formats = determine_formats(flags, &project.config.formats)?;
+                let ctx =
+                    Self::setup_compilation_context(&path, config.as_deref(), build_dir, flags)?;
 
-                // Resolve build_dir with priority: CLI > config > default
-                let resolved_build_dir = if let Some(cli_path) = build_dir {
-                    let cwd = std::env::current_dir()
-                        .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
-                    debug!(dir = %cli_path.display(), "build directory");
-                    Some(resolve_path(&cwd, &cli_path))
-                } else if let Some(config_path) = &project.config.build_dir {
-                    let resolved = resolve_path(&project.root, Path::new(config_path));
-                    debug!(dir = %resolved.display(), "build directory");
-                    Some(resolved)
-                } else {
-                    None
-                };
-
-                // Create output directories
-                let output_config =
-                    crate::output::OutputConfig::new(&project.root, resolved_build_dir);
-                output_config.create_dirs()?;
-
-                // Prepare compilation mode (Fresh)
-                let repo_root = std::env::current_dir()
-                    .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
-                let compilation_root = project
-                    .config
-                    .resolve_content_dir(&project.root)
-                    .unwrap_or_else(|| project.root.clone());
+                // Create compilation mode (Fresh)
                 let mode = CompilationMode::Fresh {
-                    root: compilation_root,
-                    repo_root,
+                    root: ctx.compilation_root,
+                    repo_root: ctx.repo_root,
                 };
 
                 // Perform compilation
-                perform_compilation(mode, &project, &output_config, &formats)
+                perform_compilation(mode, &ctx.project, &ctx.output_config, &ctx.formats)
             }
             Commands::Watch {
                 path,
@@ -495,54 +574,31 @@ impl Cli {
                 epub,
                 open,
             } => {
-                // Detect project configuration first to get config defaults
-                info!(path = %path.display(), "loading project");
-                let project = crate::project::ProjectConfig::from_path(&path, config.as_deref())?;
-                let file_word = if project.typ_files.len() == 1 {
-                    "file"
-                } else {
-                    "files"
-                };
-                info!(name = %project.name, files = project.typ_files.len(), "found {} Typst {}", project.typ_files.len(), file_word);
-
-                // Determine which formats to compile using CLI flags or config defaults
+                // Setup compilation context
                 let flags = FormatFlags { pdf, html, epub };
-                let formats = determine_formats(flags, &project.config.formats)?;
-
-                // Resolve build_dir with priority: CLI > config > default
-                let resolved_build_dir = if let Some(cli_path) = build_dir {
-                    let cwd = std::env::current_dir()
-                        .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
-                    debug!(dir = %cli_path.display(), "build directory");
-                    Some(resolve_path(&cwd, &cli_path))
-                } else if let Some(config_path) = &project.config.build_dir {
-                    let resolved = resolve_path(&project.root, Path::new(config_path));
-                    debug!(dir = %resolved.display(), "build directory");
-                    Some(resolved)
-                } else {
-                    None
-                };
-
-                // Create output directories
-                let output_config =
-                    crate::output::OutputConfig::new(&project.root, resolved_build_dir);
-                output_config.create_dirs()?;
+                let ctx =
+                    Self::setup_compilation_context(&path, config.as_deref(), build_dir, flags)?;
 
                 // Perform initial compilation (Fresh mode)
                 info!("compiling project");
-                let repo_root = std::env::current_dir()
-                    .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
-                let compilation_root = project
-                    .config
-                    .resolve_content_dir(&project.root)
-                    .unwrap_or_else(|| project.root.clone());
                 let mode = CompilationMode::Fresh {
-                    root: compilation_root,
-                    repo_root: repo_root.clone(),
+                    root: ctx.compilation_root.clone(),
+                    repo_root: ctx.repo_root.clone(),
                 };
-                if let Err(e) = perform_compilation(mode, &project, &output_config, &formats) {
+                if let Err(e) =
+                    perform_compilation(mode, &ctx.project, &ctx.output_config, &ctx.formats)
+                {
                     warn!(error = %e, "initial compilation failed, continuing to watch");
                 }
+
+                // Destructure context for use in watch loop
+                let CompilationContext {
+                    project,
+                    formats,
+                    output_config,
+                    repo_root,
+                    compilation_root: _,
+                } = ctx;
 
                 // Start web server if --open and HTML is in formats
                 let server_info = if open && formats.contains(&OutputFormat::Html) {
@@ -581,8 +637,6 @@ impl Cli {
                 let project_cell = RefCell::new(project);
 
                 // Create RheoWorld for incremental compilation (reused across file changes)
-                let repo_root = std::env::current_dir()
-                    .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
                 let borrowed_project = project_cell.borrow();
                 let compilation_root = borrowed_project
                     .config
@@ -709,19 +763,8 @@ impl Cli {
                 info!(path = %path.display(), "loading project");
                 let project = crate::project::ProjectConfig::from_path(&path, config.as_deref())?;
 
-                // Resolve build_dir with priority: CLI > config > default
-                let resolved_build_dir = if let Some(cli_path) = build_dir {
-                    let cwd = std::env::current_dir()
-                        .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
-                    debug!(dir = %cli_path.display(), "build directory");
-                    Some(resolve_path(&cwd, &cli_path))
-                } else if let Some(config_path) = &project.config.build_dir {
-                    let resolved = resolve_path(&project.root, Path::new(config_path));
-                    debug!(dir = %resolved.display(), "build directory");
-                    Some(resolved)
-                } else {
-                    None
-                };
+                // Resolve build directory
+                let resolved_build_dir = resolve_build_dir(&project, build_dir)?;
 
                 let output_config =
                     crate::output::OutputConfig::new(&project.root, resolved_build_dir);
