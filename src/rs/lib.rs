@@ -44,8 +44,8 @@ impl OutputFormat {
     }
 
     /// Get the compiler instance for this output format
-    pub fn compiler(&self) -> formats::compiler::FormatCompilerInstance {
-        formats::compiler::FormatCompilerInstance::from_format(*self)
+    pub fn compiler(&self) -> formats::compiler::AnyFormatCompiler {
+        formats::compiler::AnyFormatCompiler::from_format(*self)
     }
 
     /// Check if this format supports per-file compilation with the given config

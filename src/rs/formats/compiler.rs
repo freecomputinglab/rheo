@@ -67,28 +67,28 @@ pub struct EpubCompiler;
 /// This allows code to work with any format compiler at runtime
 /// while maintaining type safety.
 #[derive(Debug, Clone, Copy)]
-pub enum FormatCompilerInstance {
+pub enum AnyFormatCompiler {
     Pdf(PdfCompiler),
     Html(HtmlCompiler),
     Epub(EpubCompiler),
 }
 
-impl FormatCompilerInstance {
+impl AnyFormatCompiler {
     /// Create a compiler instance for the given output format
     pub fn from_format(format: OutputFormat) -> Self {
         match format {
-            OutputFormat::Pdf => FormatCompilerInstance::Pdf(PdfCompiler),
-            OutputFormat::Html => FormatCompilerInstance::Html(HtmlCompiler),
-            OutputFormat::Epub => FormatCompilerInstance::Epub(EpubCompiler),
+            OutputFormat::Pdf => AnyFormatCompiler::Pdf(PdfCompiler),
+            OutputFormat::Html => AnyFormatCompiler::Html(HtmlCompiler),
+            OutputFormat::Epub => AnyFormatCompiler::Epub(EpubCompiler),
         }
     }
 
     /// Get the output format for this compiler instance
     pub fn format(&self) -> OutputFormat {
         match self {
-            FormatCompilerInstance::Pdf(_) => OutputFormat::Pdf,
-            FormatCompilerInstance::Html(_) => OutputFormat::Html,
-            FormatCompilerInstance::Epub(_) => OutputFormat::Epub,
+            AnyFormatCompiler::Pdf(_) => OutputFormat::Pdf,
+            AnyFormatCompiler::Html(_) => OutputFormat::Html,
+            AnyFormatCompiler::Epub(_) => OutputFormat::Epub,
         }
     }
 }
@@ -99,13 +99,13 @@ mod tests {
 
     #[test]
     fn test_format_compiler_instance_creation() {
-        let pdf_compiler = FormatCompilerInstance::from_format(OutputFormat::Pdf);
+        let pdf_compiler = AnyFormatCompiler::from_format(OutputFormat::Pdf);
         assert_eq!(pdf_compiler.format(), OutputFormat::Pdf);
 
-        let html_compiler = FormatCompilerInstance::from_format(OutputFormat::Html);
+        let html_compiler = AnyFormatCompiler::from_format(OutputFormat::Html);
         assert_eq!(html_compiler.format(), OutputFormat::Html);
 
-        let epub_compiler = FormatCompilerInstance::from_format(OutputFormat::Epub);
+        let epub_compiler = AnyFormatCompiler::from_format(OutputFormat::Epub);
         assert_eq!(epub_compiler.format(), OutputFormat::Epub);
     }
 }
