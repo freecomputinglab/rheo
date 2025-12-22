@@ -1,9 +1,11 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::HtmlOptions;
+use crate::constants::HTML_EXT;
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
+use crate::formats::compiler::FormatCompiler;
 use crate::postprocess;
 use crate::world::RheoWorld;
-use crate::{Result, RheoError};
+use crate::{OutputFormat, Result, RheoError};
 use std::path::Path;
 use tracing::{debug, info};
 use typst_html::HtmlDocument;
@@ -60,7 +62,7 @@ fn compile_html_impl_fresh(
     let html_string = compile_document_to_string(&doc)?;
 
     // 3. Transform .typ links to .html links
-    let html_string = postprocess::transform_links(&html_string, input, root, ".html")?;
+    let html_string = postprocess::transform_links(&html_string, input, root, HTML_EXT)?;
 
     // 4. Inject CSS and font links into <head>
     let stylesheets: Vec<&str> = html_options
@@ -119,7 +121,7 @@ fn compile_html_impl(
         typst_html::html(&document).map_err(|e| handle_export_errors(e, ExportErrorType::Html))?;
 
     // 3. Transform .typ links to .html links
-    let html_string = postprocess::transform_links(&html_string, input, root, ".html")?;
+    let html_string = postprocess::transform_links(&html_string, input, root, HTML_EXT)?;
 
     // 4. Inject CSS and font links into <head>
     let stylesheets: Vec<&str> = html_options
@@ -173,6 +175,30 @@ pub fn compile_html_new(options: RheoCompileOptions, html_options: HtmlOptions) 
             &options.repo_root,
             &html_options,
         ),
+    }
+}
+
+// ============================================================================
+// FormatCompiler trait implementation
+// ============================================================================
+
+/// HTML compiler implementation
+pub use crate::formats::compiler::HtmlCompiler;
+
+impl FormatCompiler for HtmlCompiler {
+    type Config = HtmlOptions;
+
+    fn format(&self) -> OutputFormat {
+        OutputFormat::Html
+    }
+
+    fn supports_per_file(&self, _config: &Self::Config) -> bool {
+        // HTML always supports per-file
+        true
+    }
+
+    fn compile(&self, options: RheoCompileOptions, config: &Self::Config) -> Result<()> {
+        compile_html_new(options, config.clone())
     }
 }
 

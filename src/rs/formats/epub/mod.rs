@@ -6,7 +6,9 @@ use xhtml::HtmlInfo;
 
 use crate::compile::RheoCompileOptions;
 use crate::config::{EpubConfig, EpubOptions};
-use crate::{Result, RheoError};
+use crate::constants::XHTML_EXT;
+use crate::formats::compiler::FormatCompiler;
+use crate::{OutputFormat, Result, RheoError};
 use anyhow::Result as AnyhowResult;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
@@ -51,7 +53,7 @@ const NAV_FOOTER: &str = r#"        </nav>
     </body>
 </html>"#;
 
-pub fn generate_nav_xhtml(items: &mut [EpubItem]) -> String {
+pub fn generate_nav_xhtml(items: &mut [EpubItem]) -> Result<String> {
     let mut buf = String::new();
     buf.push_str(NAV_HEADER);
 
@@ -73,7 +75,10 @@ pub fn generate_nav_xhtml(items: &mut [EpubItem]) -> String {
 
     let outline = if items.len() == 1 {
         // If we only have one item, then its nav is just its outline.
-        items[0].outline.take().unwrap()
+        items[0]
+            .outline
+            .take()
+            .ok_or_else(|| RheoError::invalid_data("EPUB item missing outline"))?
     } else {
         // If we have multiple items, generate a new level of outline which contains a link
         // to each item.
@@ -81,20 +86,23 @@ pub fn generate_nav_xhtml(items: &mut [EpubItem]) -> String {
             .iter_mut()
             .map(|item| {
                 let entry = eco_format!(r#"<a href="{}">{}</a>"#, item.href, item.title());
-                let children = item.outline.take().unwrap();
-                OutlineNode {
+                let children = item
+                    .outline
+                    .take()
+                    .ok_or_else(|| RheoError::invalid_data("EPUB item missing outline"))?;
+                Ok(OutlineNode {
                     entry,
                     level: NonZero::new(1).unwrap(),
                     children,
-                }
+                })
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?
     };
 
     stringify_outline(&mut buf, &outline, 12);
 
     buf.push_str(NAV_FOOTER);
-    buf
+    Ok(buf)
 }
 
 const XHTML_MEDIATYPE: &str = "application/xhtml+xml";
@@ -281,7 +289,7 @@ fn compile_epub_impl(
             .map(|path| EpubItem::create(path, root, repo_root))
             .collect::<AnyhowResult<Vec<_>>>()?;
 
-        let nav_xhtml = generate_nav_xhtml(&mut items);
+        let nav_xhtml = generate_nav_xhtml(&mut items)?;
         let package_string = generate_package(&items, config)?;
         zip_epub(epub_path, package_string, nav_xhtml, &items)
     };
@@ -317,6 +325,34 @@ pub fn compile_epub_new(options: RheoCompileOptions, epub_options: EpubOptions) 
     )
 }
 
+// ============================================================================
+// FormatCompiler trait implementation
+// ============================================================================
+
+/// EPUB compiler implementation
+pub use crate::formats::compiler::EpubCompiler;
+
+impl FormatCompiler for EpubCompiler {
+    type Config = EpubOptions;
+
+    fn format(&self) -> OutputFormat {
+        OutputFormat::Epub
+    }
+
+    fn supports_per_file(&self, _config: &Self::Config) -> bool {
+        // EPUB never supports per-file (always merged)
+        false
+    }
+
+    fn compile(&self, options: RheoCompileOptions, config: &Self::Config) -> Result<()> {
+        compile_epub_new(options, config.clone())
+    }
+}
+
+// ============================================================================
+// EPUB compilation implementation
+// ============================================================================
+
 pub struct EpubItem {
     href: IriRefBuf,
     document: HtmlDocument,
@@ -349,7 +385,8 @@ impl EpubItem {
         let (heading_ids, outline) = Self::outline(&document, &href);
         // Export to HTML and transform links for XHTML
         let html_string = crate::formats::html::compile_document_to_string(&document)?;
-        let html_string = crate::postprocess::transform_links(&html_string, &path, root, ".xhtml")?;
+        let html_string =
+            crate::postprocess::transform_links(&html_string, &path, root, XHTML_EXT)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
         Ok(EpubItem {

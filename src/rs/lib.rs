@@ -1,21 +1,28 @@
 pub mod cli;
 pub mod compile;
 pub mod config;
+pub mod constants;
 pub mod error;
 pub mod formats;
 pub mod logging;
 pub mod output;
+pub mod path_utils;
 pub mod postprocess;
 pub mod project;
+pub mod results;
 pub mod server;
 pub mod spine;
+pub mod validation;
 pub mod watch;
 pub mod world;
 
 pub use cli::Cli;
 pub use config::RheoConfig;
+pub use constants::*;
 pub use error::RheoError;
 pub use globset::{Glob, GlobSet, GlobSetBuilder};
+pub use path_utils::PathExt;
+pub use results::{CompilationResults, FormatResult};
 use std::fmt;
 use std::path::PathBuf;
 use tracing::{info, warn};
@@ -24,7 +31,7 @@ use walkdir::WalkDir;
 /// Result type alias using RheoError
 pub type Result<T> = std::result::Result<T, RheoError>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum OutputFormat {
     Html,
     Epub,
@@ -34,6 +41,32 @@ pub enum OutputFormat {
 impl OutputFormat {
     pub fn all_variants() -> Vec<Self> {
         vec![Self::Html, Self::Epub, Self::Pdf]
+    }
+
+    /// Get the compiler instance for this output format
+    pub fn compiler(&self) -> formats::compiler::FormatCompilerInstance {
+        formats::compiler::FormatCompilerInstance::from_format(*self)
+    }
+
+    /// Check if this format supports per-file compilation with the given config
+    ///
+    /// Returns true if this format should be compiled once per .typ file,
+    /// or false if it requires merged/batch compilation.
+    pub fn supports_per_file(&self, config: &RheoConfig) -> bool {
+        match self {
+            OutputFormat::Html => {
+                // HTML is always compiled per-file
+                true
+            }
+            OutputFormat::Pdf => {
+                // PDF is only per-file if merge config is absent
+                config.pdf.merge.is_none()
+            }
+            OutputFormat::Epub => {
+                // EPUB is never per-file (always merged)
+                false
+            }
+        }
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::validation::ValidateConfig;
 use crate::{OutputFormat, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -203,6 +204,11 @@ impl RheoConfig {
         let config: RheoConfig = toml::from_str(&contents)
             .map_err(|e| crate::RheoError::project_config(format!("invalid rheo.toml: {}", e)))?;
 
+        // Validate configuration
+        config.pdf.validate()?;
+        config.html.validate()?;
+        config.epub.validate()?;
+
         Ok(config)
     }
 
@@ -242,6 +248,11 @@ impl RheoConfig {
                 e
             ))
         })?;
+
+        // Stage 4: Validate configuration
+        config.pdf.validate()?;
+        config.html.validate()?;
+        config.epub.validate()?;
 
         debug!(path = %config_path.display(), "loaded custom configuration");
         Ok(config)

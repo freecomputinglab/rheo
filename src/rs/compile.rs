@@ -1,5 +1,5 @@
+use crate::constants::{TYP_EXT, TYPST_LINK_PATTERN};
 use crate::world::RheoWorld;
-use regex::Regex;
 use std::path::PathBuf;
 
 /// Common compilation options used across all output formats.
@@ -24,6 +24,11 @@ pub struct RheoCompileOptions<'a> {
 }
 
 impl<'a> RheoCompileOptions<'a> {
+    /// Create a builder for constructing compilation options.
+    pub fn builder() -> RheoCompileOptionsBuilder<'a> {
+        RheoCompileOptionsBuilder::default()
+    }
+
     /// Create compilation options for a fresh (non-incremental) compilation.
     ///
     /// # Arguments
@@ -98,6 +103,70 @@ impl<'a> RheoCompileOptions<'a> {
     }
 }
 
+/// Builder for RheoCompileOptions
+#[derive(Default)]
+pub struct RheoCompileOptionsBuilder<'a> {
+    input: Option<PathBuf>,
+    output: Option<PathBuf>,
+    root: Option<PathBuf>,
+    repo_root: Option<PathBuf>,
+    world: Option<&'a mut RheoWorld>,
+}
+
+impl<'a> RheoCompileOptionsBuilder<'a> {
+    /// Set the input .typ file to compile
+    pub fn input(mut self, path: impl Into<PathBuf>) -> Self {
+        self.input = Some(path.into());
+        self
+    }
+
+    /// Set the output file path
+    pub fn output(mut self, path: impl Into<PathBuf>) -> Self {
+        self.output = Some(path.into());
+        self
+    }
+
+    /// Set the root directory for resolving imports
+    pub fn root(mut self, path: impl Into<PathBuf>) -> Self {
+        self.root = Some(path.into());
+        self
+    }
+
+    /// Set the repository root for rheo.typ
+    pub fn repo_root(mut self, path: impl Into<PathBuf>) -> Self {
+        self.repo_root = Some(path.into());
+        self
+    }
+
+    /// Set an existing RheoWorld for incremental compilation
+    pub fn world(mut self, world: &'a mut RheoWorld) -> Self {
+        self.world = Some(world);
+        self
+    }
+
+    /// Build the RheoCompileOptions
+    ///
+    /// # Errors
+    /// Returns an error if any required field is missing
+    pub fn build(self) -> crate::Result<RheoCompileOptions<'a>> {
+        Ok(RheoCompileOptions {
+            input: self.input.ok_or_else(|| {
+                crate::RheoError::project_config("RheoCompileOptions: input is required")
+            })?,
+            output: self.output.ok_or_else(|| {
+                crate::RheoError::project_config("RheoCompileOptions: output is required")
+            })?,
+            root: self.root.ok_or_else(|| {
+                crate::RheoError::project_config("RheoCompileOptions: root is required")
+            })?,
+            repo_root: self.repo_root.ok_or_else(|| {
+                crate::RheoError::project_config("RheoCompileOptions: repo_root is required")
+            })?,
+            world: self.world,
+        })
+    }
+}
+
 /// Remove relative .typ links from Typst source code for PDF/EPUB compilation.
 ///
 /// For PDF and EPUB outputs, relative links to other .typ files don't make sense
@@ -130,13 +199,10 @@ pub fn remove_relative_typ_links(source: &str) -> String {
     let code_ranges = find_backtick_ranges(source);
 
     // Apply regex transformation only outside code blocks
-    let re =
-        Regex::new(r#"#link\("([^"]+)"\)(\[[^\]]+\]|,\s*[^)]+)"#).expect("invalid regex pattern");
-
     let mut result = String::new();
     let mut last_pos = 0;
 
-    for mat in re.find_iter(source) {
+    for mat in TYPST_LINK_PATTERN.find_iter(source) {
         let match_start = mat.start();
         let match_end = mat.end();
 
@@ -153,24 +219,28 @@ pub fn remove_relative_typ_links(source: &str) -> String {
             result.push_str(mat.as_str());
         } else {
             // Transform the link if it's outside code blocks
-            let caps = re.captures(mat.as_str()).unwrap();
-            let url = &caps[1];
-            let body = &caps[2];
+            if let Some(caps) = TYPST_LINK_PATTERN.captures(mat.as_str()) {
+                let url = &caps[1];
+                let body = &caps[2];
 
-            let is_relative_typ = url.ends_with(".typ")
-                && !url.starts_with("http://")
-                && !url.starts_with("https://")
-                && !url.starts_with("mailto:");
+                let is_relative_typ = url.ends_with(TYP_EXT)
+                    && !url.starts_with("http://")
+                    && !url.starts_with("https://")
+                    && !url.starts_with("mailto:");
 
-            if is_relative_typ {
-                // Remove the link, keep just the body
-                if body.starts_with('[') {
-                    result.push_str(body);
+                if is_relative_typ {
+                    // Remove the link, keep just the body
+                    if body.starts_with('[') {
+                        result.push_str(body);
+                    } else {
+                        result.push_str(body.trim_start_matches(',').trim());
+                    }
                 } else {
-                    result.push_str(body.trim_start_matches(',').trim());
+                    // Preserve external links
+                    result.push_str(mat.as_str());
                 }
             } else {
-                // Preserve external links
+                // Preserve original text if captures unexpectedly fail
                 result.push_str(mat.as_str());
             }
         }

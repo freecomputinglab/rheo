@@ -92,7 +92,8 @@ pub fn html_to_portable_xhtml(html_string: &str, heading_ids: &[EcoString]) -> (
                     }
 
                     let mut chars = name.local.chars();
-                    if chars.next().unwrap() == 'h'
+                    if let Some(first_char) = chars.next()
+                        && first_char == 'h'
                         && let Some(c) = chars.next()
                         && c.is_numeric()
                         && c != '1'

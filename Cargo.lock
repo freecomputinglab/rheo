@@ -2915,6 +2915,7 @@ dependencies = [
  "html5ever",
  "iref",
  "itertools",
+ "lazy_static",
  "lopdf",
  "markup5ever_rcdom",
  "mime_guess",

@@ -1,10 +1,11 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::PdfConfig;
+use crate::constants::{TYP_EXT, TYPST_LABEL_PATTERN, TYPST_LINK_PATTERN};
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
+use crate::formats::compiler::FormatCompiler;
 use crate::spine::generate_spine;
 use crate::world::RheoWorld;
-use crate::{Result, RheoError};
-use regex::Regex;
+use crate::{OutputFormat, Result, RheoError};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
@@ -117,8 +118,7 @@ pub fn filename_to_title(filename: &str) -> String {
 /// and italic markers (_) to extract plain text from formatted content.
 fn strip_typst_markup(text: &str) -> String {
     // Remove #emph[...], #strong[...], etc.
-    let re = Regex::new(r"#\w+\[([^\]]+)\]").expect("invalid regex");
-    let result = re.replace_all(text, "$1");
+    let result = TYPST_LABEL_PATTERN.replace_all(text, "$1");
 
     // Remove underscores (italic markers)
     let result = result.replace('_', "");
@@ -190,7 +190,7 @@ pub fn transform_typ_links_to_labels(
         if let Some(filename) = spine_file.file_name() {
             let filename_str = filename.to_string_lossy();
             // Remove .typ extension
-            let stem = filename_str.strip_suffix(".typ").unwrap_or(&filename_str);
+            let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
             let label = sanitize_label_name(stem);
             label_map.insert(stem.to_string(), label);
         }
@@ -198,16 +198,13 @@ pub fn transform_typ_links_to_labels(
 
     // Regex to match Typst link function calls
     // Captures: #link("url")[body] or #link("url", body)
-    let re =
-        Regex::new(r#"#link\("([^"]+)"\)(\[[^\]]+\]|,\s*[^)]+)"#).expect("invalid regex pattern");
-
     let mut errors = Vec::new();
-    let result = re.replace_all(source, |caps: &regex::Captures| {
+    let result = TYPST_LINK_PATTERN.replace_all(source, |caps: &regex::Captures| {
         let url = &caps[1];
         let body = &caps[2];
 
         // Check if this is a .typ link
-        let is_typ_link = url.ends_with(".typ");
+        let is_typ_link = url.ends_with(TYP_EXT);
 
         // Check if it's an external URL or fragment-only link
         let is_external = url.starts_with("http://")
@@ -224,7 +221,7 @@ pub fn transform_typ_links_to_labels(
                 .unwrap_or(url);
 
             // Remove .typ extension for lookup
-            let stem = filename.strip_suffix(".typ").unwrap_or(filename);
+            let stem = filename.strip_suffix(TYP_EXT).unwrap_or(filename);
 
             // Look up in spine files map
             if let Some(label) = label_map.get(stem) {
@@ -317,7 +314,7 @@ pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
         // Derive label and title from filename (without extension)
         let (label, title) = if let Some(filename) = spine_file.file_name() {
             let filename_str = filename.to_string_lossy();
-            let stem = filename_str.strip_suffix(".typ").unwrap_or(&filename_str);
+            let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
             let label = sanitize_label_name(stem);
             let title = extract_document_title(&source, stem);
             (label, title)
@@ -513,5 +510,29 @@ pub fn compile_pdf_new(options: RheoCompileOptions, pdf_config: Option<&PdfConfi
             &options.root,
             &options.repo_root,
         ),
+    }
+}
+
+// ============================================================================
+// FormatCompiler trait implementation
+// ============================================================================
+
+/// PDF compiler implementation
+pub use crate::formats::compiler::PdfCompiler;
+
+impl FormatCompiler for PdfCompiler {
+    type Config = Option<PdfConfig>;
+
+    fn format(&self) -> OutputFormat {
+        OutputFormat::Pdf
+    }
+
+    fn supports_per_file(&self, config: &Self::Config) -> bool {
+        // Only per-file if not merging
+        config.as_ref().and_then(|c| c.merge.as_ref()).is_none()
+    }
+
+    fn compile(&self, options: RheoCompileOptions, config: &Self::Config) -> Result<()> {
+        compile_pdf_new(options, config.as_ref())
     }
 }

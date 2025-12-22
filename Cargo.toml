@@ -61,6 +61,7 @@ webbrowser = "1.0"
 mime_guess = "2.0"
 tokio-stream = { version = "0.1", features = ["sync"] }
 regex = "1.10"
+lazy_static = "1.4"
 serde-xml-rs = "0.8.2"
 zip = { version = "6.0.0", default-features = false }
 html5ever = "0.36.1"

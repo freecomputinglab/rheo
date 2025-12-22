@@ -99,10 +99,15 @@ pub fn generate_spine(
                     .filter_map(|entry| entry.ok())
                     .filter(|path| path.is_file())
                     .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("typ"))
+                    .filter(|path| path.file_name().is_some()) // Ensure path has a filename
                     .collect();
 
                 // Sort lexicographically within each pattern
-                glob_files.sort_by_cached_key(|p| p.file_name().unwrap().to_os_string());
+                glob_files.sort_by_cached_key(|p| {
+                    p.file_name()
+                        .expect("file_name() checked in filter above")
+                        .to_os_string()
+                });
                 typst_files.extend(glob_files);
             }
 
