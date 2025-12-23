@@ -8,4 +8,4 @@ pub use parser::extract_links;
 pub use validator::validate_links;
 pub use transformer::compute_transformations;
 pub use serializer::apply_transformations;
-pub use types::{LinkInfo, OutputFormat};
+pub use types::{LinkInfo, LinkTransform, OutputFormat};
