@@ -40,31 +40,39 @@ pub fn compute_transformations(
 
         // Determine transformation based on format and link type
         let transform = if is_relative_typ_link(url) {
-            // Confirm file is in project
-            if !label_map.contains_key(stem) {
-                return Err(RheoError::project_config(format!(
-                    "Link target '{}' not found in spine. Make sure that the file exists in the project and is in the spine in rheo.tomllink.",
-                    filename
-                )));
-            }
-
             // Relative .typ link transformation according to format
             match format {
-                OutputFormat::Pdf if spine.is_none() => LinkTransform::Remove {
-                    body: link.body.clone(),
-                },
+                OutputFormat::Pdf if spine.is_none() => {
+                    // Single PDF: remove links
+                    LinkTransform::Remove {
+                        body: link.body.clone(),
+                    }
+                }
                 OutputFormat::Pdf => {
+                    // Merged PDF: convert to labels, check if file is in spine
+                    if !label_map.contains_key(stem) {
+                        return Err(RheoError::project_config(format!(
+                            "Link target '{}' not found in spine. Make sure that the file exists in the project and is in the spine in rheo.toml",
+                            filename
+                        )));
+                    }
                     let label = label_map.get(stem).unwrap();
                     LinkTransform::ReplaceUrlWithLabel {
                         new_label: format!("<{}>", label),
                     }
-                },
-                OutputFormat::Html => LinkTransform::ReplaceUrl {
-                    new_url: url.replace(TYP_EXT, HTML_EXT),
-                },
-                OutputFormat::Epub => LinkTransform::ReplaceUrl {
-                    new_url: url.replace(TYP_EXT, XHTML_EXT),
-                },
+                }
+                OutputFormat::Html => {
+                    // HTML: convert .typ to .html
+                    LinkTransform::ReplaceUrl {
+                        new_url: url.replace(TYP_EXT, HTML_EXT),
+                    }
+                }
+                OutputFormat::Epub => {
+                    // EPUB: convert .typ to .xhtml
+                    LinkTransform::ReplaceUrl {
+                        new_url: url.replace(TYP_EXT, XHTML_EXT),
+                    }
+                }
             }
         } else {
             // External URL, fragment, or non-.typ link - always preserve
@@ -118,8 +126,9 @@ mod tests {
     #[test]
     fn test_pdf_single_removes_typ_links() {
         let links = vec![make_link("./file.typ", "text", 0..10)];
+        // PDF without spine = single file mode (removes links)
         let transforms =
-            compute_transformations(&links, OutputFormat::PdfSingle, None, Path::new("test.typ"))
+            compute_transformations(&links, OutputFormat::Pdf, None, Path::new("test.typ"))
                 .unwrap();
 
         assert_eq!(transforms.len(), 1);
@@ -136,8 +145,9 @@ mod tests {
             make_link("http://example.com", "example2", 20..30),
             make_link("mailto:test@example.com", "email", 40..50),
         ];
+        // PDF without spine = single file mode
         let transforms =
-            compute_transformations(&links, OutputFormat::PdfSingle, None, Path::new("test.typ"))
+            compute_transformations(&links, OutputFormat::Pdf, None, Path::new("test.typ"))
                 .unwrap();
 
         assert_eq!(transforms.len(), 3);
@@ -150,9 +160,10 @@ mod tests {
     fn test_pdf_merged_converts_to_labels() {
         let links = vec![make_link("./chapter2.typ", "next", 0..10)];
         let spine = vec![PathBuf::from("chapter1.typ"), PathBuf::from("chapter2.typ")];
+        // PDF with spine = merged mode (converts to labels)
         let transforms = compute_transformations(
             &links,
-            OutputFormat::PdfMerged,
+            OutputFormat::Pdf,
             Some(&spine),
             Path::new("chapter1.typ"),
         )
@@ -169,9 +180,10 @@ mod tests {
     fn test_pdf_merged_errors_on_missing_spine_file() {
         let links = vec![make_link("./missing.typ", "missing", 0..10)];
         let spine = vec![PathBuf::from("chapter1.typ")];
+        // PDF with spine = merged mode
         let result = compute_transformations(
             &links,
-            OutputFormat::PdfMerged,
+            OutputFormat::Pdf,
             Some(&spine),
             Path::new("chapter1.typ"),
         );
@@ -186,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn test_html_keeps_original() {
+    fn test_html_transforms_typ_to_html() {
         let links = vec![
             make_link("./file.typ", "text", 0..10),
             make_link("https://example.com", "external", 20..30),
@@ -196,9 +208,13 @@ mod tests {
                 .unwrap();
 
         assert_eq!(transforms.len(), 2);
-        for (_range, transform) in transforms {
-            assert!(matches!(transform, LinkTransform::KeepOriginal));
+        // First link (.typ) should be transformed to .html
+        match &transforms[0].1 {
+            LinkTransform::ReplaceUrl { new_url } => assert_eq!(new_url, "./file.html"),
+            _ => panic!("Expected ReplaceUrl transform for .typ link"),
         }
+        // Second link (external) should be kept as-is
+        assert!(matches!(transforms[1].1, LinkTransform::KeepOriginal));
     }
 
     #[test]

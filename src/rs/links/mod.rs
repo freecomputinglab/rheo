@@ -5,4 +5,4 @@ pub mod transformer;
 pub mod types;
 pub mod validator;
 
-pub use spine::reticulate_typst_sources;
+pub use spine::{build_rheo_spine, reticulate_typst_sources};

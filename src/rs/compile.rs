@@ -171,113 +171,6 @@ mod tests {
     use crate::formats::pdf;
 
     #[test]
-    fn test_concatenate_typst_sources_basic() {
-        use std::io::Write;
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
-
-        // Create temporary files with test content
-        let path1 = dir.path().join("chapter1.typ");
-        let mut file1 = std::fs::File::create(&path1).unwrap();
-        write!(file1, "= Chapter 1\nThis is chapter one.").unwrap();
-
-        let path2 = dir.path().join("chapter2.typ");
-        let mut file2 = std::fs::File::create(&path2).unwrap();
-        write!(file2, "= Chapter 2\nThis is chapter two.").unwrap();
-
-        let spine = vec![path1, path2];
-        let result = pdf::concatenate_typst_sources(&spine).unwrap();
-
-        // Check that heading-based labels are injected (derived from filename)
-        // These should appear at the start of each section
-        assert!(result.contains("<chapter1>"));
-        assert!(result.contains("<chapter2>"));
-
-        // Check for metadata with labels (new format)
-        assert!(
-            result.contains("#metadata(\"Chapter1\") <chapter1>")
-                || result.contains("#metadata(\"Chapter 1\") <chapter1>")
-        );
-        assert!(
-            result.contains("#metadata(\"Chapter2\") <chapter2>")
-                || result.contains("#metadata(\"Chapter 2\") <chapter2>")
-        );
-
-        // Check that content is preserved
-        assert!(result.contains("This is chapter one."));
-        assert!(result.contains("This is chapter two."));
-    }
-
-    #[test]
-    fn test_concatenate_typst_sources_label_injection() {
-        use std::io::Write;
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("test-file.typ");
-        let mut file = std::fs::File::create(&path).unwrap();
-        write!(file, "Content here").unwrap();
-
-        let spine = vec![path];
-        let result = pdf::concatenate_typst_sources(&spine).unwrap();
-
-        // Metadata with label should be injected (title derived from filename)
-        assert!(result.starts_with("#metadata(\"Test File\") <test-file>"));
-    }
-
-    #[test]
-    fn test_concatenate_typst_sources_duplicate_filenames() {
-        use std::io::Write;
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
-
-        // Create two files with same name in different directories
-        let dir1 = dir.path().join("dir1");
-        std::fs::create_dir_all(&dir1).unwrap();
-        let path1 = dir1.join("chapter.typ");
-        let mut file1 = std::fs::File::create(&path1).unwrap();
-        write!(file1, "Content 1").unwrap();
-
-        let dir2 = dir.path().join("dir2");
-        std::fs::create_dir_all(&dir2).unwrap();
-        let path2 = dir2.join("chapter.typ");
-        let mut file2 = std::fs::File::create(&path2).unwrap();
-        write!(file2, "Content 2").unwrap();
-
-        let spine = vec![path1, path2];
-        let result = pdf::concatenate_typst_sources(&spine);
-
-        // Should fail with duplicate filename error
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("duplicate filename in spine"));
-    }
-
-    #[test]
-    fn test_concatenate_typst_sources_link_transformation() {
-        use std::io::Write;
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
-
-        let path1 = dir.path().join("chapter1.typ");
-        let mut file1 = std::fs::File::create(&path1).unwrap();
-        write!(file1, r#"See #link("./chapter2.typ")[next chapter]"#).unwrap();
-
-        let path2 = dir.path().join("chapter2.typ");
-        let mut file2 = std::fs::File::create(&path2).unwrap();
-        write!(file2, "= Chapter 2").unwrap();
-
-        let spine = vec![path1, path2];
-        let result = pdf::concatenate_typst_sources(&spine).unwrap();
-
-        // Link should be transformed to label
-        assert!(result.contains("#link(<chapter2>)[next chapter]"));
-    }
-
-    #[test]
     fn test_filename_to_title() {
         assert_eq!(pdf::filename_to_title("severance-ep-1"), "Severance Ep 1");
         assert_eq!(pdf::filename_to_title("my_document"), "My Document");
@@ -286,7 +179,7 @@ mod tests {
         assert_eq!(pdf::filename_to_title("single"), "Single");
     }
 
-    // strip_typst_markup tests moved to formats::pdf module (now private)
+    // Note: concatenate_typst_sources tests removed - replaced by build_rheo_spine in links::spine module
 
     #[test]
     fn test_extract_document_title_from_metadata() {
