@@ -19,7 +19,7 @@ use typst_pdf::PdfOptions;
 
 /// Implementation: Compile a single Typst document to PDF (fresh compilation)
 ///
-/// Uses the typst library with:
+/// Uses RheoSpine for AST-based link transformation (removes .typ links).
 /// - Root set to content_dir or project root (for local file imports across directories)
 /// - Shared resources available via repo_root in src/typst/ (rheo.typ)
 fn compile_pdf_single_impl_fresh(
@@ -28,9 +28,38 @@ fn compile_pdf_single_impl_fresh(
     root: &Path,
     repo_root: &Path,
 ) -> Result<()> {
-    // Create the compilation world
-    // For standalone PDF compilation, remove relative .typ links from source
-    let world = RheoWorld::new(root, input, repo_root, true)?;
+    // Derive title from filename
+    let title = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(filename_to_title)
+        .unwrap_or_else(|| "Untitled".to_string());
+
+    // Build RheoSpine with AST-transformed source (links already removed)
+    let spine = crate::links::spine::build_rheo_spine(
+        root,
+        None,  // No merge config for single-file
+        crate::OutputFormat::Pdf,
+        &title,
+    )?;
+
+    // Extract transformed source (links already removed via AST)
+    let transformed_source = &spine.source[0];
+
+    // Write to temporary file in root directory
+    let mut temp_file = tempfile::NamedTempFile::new_in(root)
+        .map_err(|e| RheoError::io(e, "creating temporary file for PDF compilation"))?;
+    temp_file
+        .write_all(transformed_source.as_bytes())
+        .map_err(|e| RheoError::io(e, "writing transformed source to temporary file"))?;
+    temp_file
+        .flush()
+        .map_err(|e| RheoError::io(e, "flushing temporary file"))?;
+
+    let temp_path = temp_file.path();
+
+    // Create RheoWorld (no remove_typ_links needed, already done)
+    let world = RheoWorld::new(root, temp_path, repo_root, false)?;
 
     // Compile the document
     info!(input = %input.display(), "compiling to PDF");
