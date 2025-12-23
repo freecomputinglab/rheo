@@ -32,17 +32,3 @@ pub enum LinkTransform {
     /// Keep original (no transformation)
     KeepOriginal,
 }
-
-/// A spine with relative linking tranformations
-#[derive(Debug, Clone)]
-pub struct RheoSpine {
-    /// The name of the file or website that the spine will generate.
-    pub title: String,
-
-    /// Whether or not the source has been merged into a single file.
-    /// This is only false in the case of HTML currently.
-    pub is_merged: bool,
-
-    /// Reticulated (relative link transformed) source files, always of length 1 if `is_merged`.
-    pub source: Vec<String>,
-}

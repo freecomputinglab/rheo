@@ -283,11 +283,15 @@ fn compile_epub_impl(
 ) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
         // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
-        let rheo_spine = crate::links::spine::build_rheo_spine(
+        let rheo_spine = RheoSpine::build(
             root,
             config.merge.as_ref(),
             crate::OutputFormat::Epub,
-            &config.merge.as_ref().map(|m| m.title.as_str()).unwrap_or("Untitled"),
+            &config
+                .merge
+                .as_ref()
+                .map(|m| m.title.as_str())
+                .unwrap_or("Untitled"),
         )?;
 
         // Get the spine file paths
@@ -344,6 +348,7 @@ pub fn compile_epub_new(options: RheoCompileOptions, epub_options: EpubOptions) 
 
 /// EPUB compiler implementation
 pub use crate::formats::compiler::EpubCompiler;
+use crate::links::spine::RheoSpine;
 
 impl FormatCompiler for EpubCompiler {
     type Config = EpubOptions;

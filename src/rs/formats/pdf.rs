@@ -3,7 +3,6 @@ use crate::config::PdfConfig;
 use crate::constants::TYPST_LABEL_PATTERN;
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::formats::compiler::FormatCompiler;
-use crate::links::spine::generate_spine;
 use crate::world::RheoWorld;
 use crate::{OutputFormat, Result, RheoError};
 use std::io::Write;
@@ -35,10 +34,18 @@ fn compile_pdf_single_impl_fresh(
         .map(filename_to_title)
         .unwrap_or_else(|| "Untitled".to_string());
 
+    // Create a single-file spine config pointing to just this input file
+    let input_relative = input.strip_prefix(root).unwrap_or(input);
+    let spine_pattern = input_relative.display().to_string();
+    let merge_config = crate::config::Merge {
+        title: title.clone(),
+        spine: vec![spine_pattern],
+    };
+
     // Build RheoSpine with AST-transformed source (links already removed)
-    let spine = crate::links::spine::build_rheo_spine(
+    let spine = RheoSpine::build(
         root,
-        None,  // No merge config for single-file
+        Some(&merge_config),  // Single-file merge config
         crate::OutputFormat::Pdf,
         &title,
     )?;
@@ -220,12 +227,7 @@ fn compile_pdf_merged_impl_fresh(
     })?;
 
     // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
-    let rheo_spine = crate::links::spine::build_rheo_spine(
-        root,
-        Some(merge),
-        crate::OutputFormat::Pdf,
-        &merge.title,
-    )?;
+    let rheo_spine = RheoSpine::build(root, Some(merge), crate::OutputFormat::Pdf, &merge.title)?;
 
     debug!(file_count = rheo_spine.source.len(), "built PDF spine");
 
@@ -289,12 +291,7 @@ fn compile_pdf_merged_impl(
     })?;
 
     // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
-    let rheo_spine = crate::links::spine::build_rheo_spine(
-        root,
-        Some(merge),
-        crate::OutputFormat::Pdf,
-        &merge.title,
-    )?;
+    let rheo_spine = RheoSpine::build(root, Some(merge), crate::OutputFormat::Pdf, &merge.title)?;
 
     debug!(file_count = rheo_spine.source.len(), "built PDF spine");
 
@@ -402,6 +399,7 @@ pub fn compile_pdf_new(options: RheoCompileOptions, pdf_config: Option<&PdfConfi
 
 /// PDF compiler implementation
 pub use crate::formats::compiler::PdfCompiler;
+use crate::links::spine::RheoSpine;
 
 impl FormatCompiler for PdfCompiler {
     type Config = Option<PdfConfig>;

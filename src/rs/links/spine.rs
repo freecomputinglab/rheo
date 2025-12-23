@@ -1,4 +1,3 @@
-use super::types::RheoSpine;
 use crate::config::Merge;
 use crate::formats::pdf::{extract_document_title, sanitize_label_name};
 use crate::{OutputFormat, Result, RheoError, TYP_EXT};
@@ -8,84 +7,99 @@ use std::path::{Path, PathBuf};
 use typst::syntax::{FileId, Source, VirtualPath};
 use walkdir::WalkDir;
 
-/// Build a RheoSpine with AST-based link transformation for all output formats.
-///
-/// This unified function handles link transformation for PDF, HTML, and EPUB:
-/// - PdfSingle: Removes .typ links, single source, no metadata heading
-/// - PdfMerged: Converts .typ links to labels, injects metadata headings, merged into single source
-/// - Html: Converts .typ links to .html, multiple sources (one per file), no metadata heading
-/// - Epub: Converts .typ links to .xhtml, multiple sources (one per file), no metadata heading
-///
-/// # Arguments
-/// * `root` - Project root directory
-/// * `merge_config` - Optional merge configuration (determines spine files)
-/// * `output_format` - Target output format (determines link transformation behavior)
-/// * `title` - Document title (used for merged outputs)
-///
-/// # Returns
-/// A RheoSpine containing transformed Typst sources ready for compilation.
-pub fn build_rheo_spine(
-    root: &Path,
-    merge_config: Option<&Merge>,
-    output_format: OutputFormat,
-    title: &str,
-) -> Result<RheoSpine> {
-    // Generate spine: ordered list of .typ files
-    let spine_files = generate_spine(root, merge_config, false)?;
+/// A spine with relative linking tranformations
+#[derive(Debug, Clone)]
+pub struct RheoSpine {
+    /// The name of the file or website that the spine will generate.
+    pub title: String,
 
-    // Check for duplicate filenames
-    check_duplicate_filenames(&spine_files)?;
+    /// Whether or not the source has been merged into a single file.
+    /// This is only false in the case of HTML currently.
+    pub is_merged: bool,
 
-    // Determine if we should merge sources based on format and config
-    let should_merge = match output_format {
-        OutputFormat::Pdf => merge_config.is_some(),
-        OutputFormat::Html | OutputFormat::Epub => false,
-    };
-
-    let mut sources = Vec::new();
-
-    for spine_file in &spine_files {
-        // Read source content
-        let source = fs::read_to_string(spine_file).map_err(|e| {
-            RheoError::project_config(format!(
-                "failed to read spine file '{}': {}",
-                spine_file.display(),
-                e
-            ))
-        })?;
-
-        // Transform links using AST-based transformation
-        let transformed_source =
-            transform_source(&source, spine_file, &spine_files, output_format)?;
-
-        // Add metadata heading only for merged PDF
-        let final_source = if should_merge && output_format == OutputFormat::Pdf {
-            let (label, doc_title) = extract_label_and_title(&source, spine_file)?;
-            format!(
-                "#metadata(\"{}\") <{}>\n{}\n\n",
-                doc_title, label, transformed_source
-            )
-        } else {
-            transformed_source
-        };
-
-        sources.push(final_source);
-    }
-
-    // Merge sources if needed
-    let final_sources = if should_merge {
-        vec![sources.join("\n\n")]
-    } else {
-        sources
-    };
-
-    Ok(RheoSpine {
-        title: title.to_string(),
-        is_merged: should_merge,
-        source: final_sources,
-    })
+    /// Reticulated (relative link transformed) source files, always of length 1 if `is_merged`.
+    pub source: Vec<String>,
 }
 
+impl RheoSpine {
+    /// Build a RheoSpine with AST-based link transformation for all output formats.
+    ///
+    /// This unified function handles link transformation for PDF, HTML, and EPUB:
+    /// - PdfSingle: Removes .typ links, single source, no metadata heading
+    /// - PdfMerged: Converts .typ links to labels, injects metadata headings, merged into single source
+    /// - Html: Converts .typ links to .html, multiple sources (one per file), no metadata heading
+    /// - Epub: Converts .typ links to .xhtml, multiple sources (one per file), no metadata heading
+    ///
+    /// # Arguments
+    /// * `root` - Project root directory
+    /// * `merge_config` - Optional merge configuration (determines spine files)
+    /// * `output_format` - Target output format (determines link transformation behavior)
+    /// * `title` - Document title (used for merged outputs)
+    ///
+    /// # Returns
+    /// A RheoSpine containing transformed Typst sources ready for compilation.
+    pub fn build(
+        root: &Path,
+        merge_config: Option<&Merge>,
+        output_format: OutputFormat,
+        title: &str,
+    ) -> Result<RheoSpine> {
+        // Generate spine: ordered list of .typ files
+        let spine_files = generate_spine(root, merge_config, false)?;
+
+        // Check for duplicate filenames
+        check_duplicate_filenames(&spine_files)?;
+
+        // Determine if we should merge sources based on format and config
+        let should_merge = match output_format {
+            OutputFormat::Pdf => merge_config.is_some(),
+            OutputFormat::Html | OutputFormat::Epub => false,
+        };
+
+        let mut sources = Vec::new();
+
+        for spine_file in &spine_files {
+            // Read source content
+            let source = fs::read_to_string(spine_file).map_err(|e| {
+                RheoError::project_config(format!(
+                    "failed to read spine file '{}': {}",
+                    spine_file.display(),
+                    e
+                ))
+            })?;
+
+            // Transform links using AST-based transformation
+            let transformed_source =
+                transform_source(&source, spine_file, &spine_files, output_format)?;
+
+            // Add metadata heading only for merged PDF
+            let final_source = if should_merge && output_format == OutputFormat::Pdf {
+                let (label, doc_title) = extract_label_and_title(&source, spine_file)?;
+                format!(
+                    "#metadata(\"{}\") <{}>\n{}\n\n",
+                    doc_title, label, transformed_source
+                )
+            } else {
+                transformed_source
+            };
+
+            sources.push(final_source);
+        }
+
+        // Merge sources if needed
+        let final_sources = if should_merge {
+            vec![sources.join("\n\n")]
+        } else {
+            sources
+        };
+
+        Ok(RheoSpine {
+            title: title.to_string(),
+            is_merged: should_merge,
+            source: final_sources,
+        })
+    }
+}
 /// Transform source using AST-based link transformation
 fn transform_source(
     source: &str,
@@ -109,9 +123,12 @@ fn transform_source(
     let code_ranges = crate::links::serializer::find_code_block_ranges(&source_obj);
 
     // Compute transformations based on format
-    let spine_for_transform = match output_format {
-        OutputFormat::Pdf => Some(spine_files),
-        OutputFormat::Html | OutputFormat::Epub => None,
+    // For PDF: pass spine only if multiple files (merged mode)
+    // For HTML/EPUB: never pass spine (each file is independent)
+    let spine_for_transform = match (output_format, spine_files.len()) {
+        (OutputFormat::Pdf, 1) => None,  // Single-file PDF: remove links
+        (OutputFormat::Pdf, _) => Some(spine_files),  // Merged PDF: convert to labels
+        _ => None,  // HTML and EPUB don't use spine for transformation
     };
 
     let transformations = crate::links::transformer::compute_transformations(
@@ -132,7 +149,10 @@ fn transform_source(
 /// Extract label and title from source and filename
 fn extract_label_and_title(source: &str, spine_file: &Path) -> Result<(String, String)> {
     let filename = spine_file.file_name().ok_or_else(|| {
-        RheoError::project_config(format!("invalid filename in spine: '{}'", spine_file.display()))
+        RheoError::project_config(format!(
+            "invalid filename in spine: '{}'",
+            spine_file.display()
+        ))
     })?;
 
     let filename_str = filename.to_string_lossy();
@@ -170,119 +190,6 @@ fn check_duplicate_filenames(spine_files: &[PathBuf]) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Concatenate multiple Typst source files into a single source for merged PDF compilation.
-///
-/// Each file in the spine is:
-/// 1. Read from disk
-/// 2. Title extracted from `#set document(title: [...])` or filename
-/// 3. Prefixed with a level-1 heading containing the title and a label derived from filename
-/// 4. Links to other .typ files transformed to label references
-/// 5. Concatenated together
-pub fn reticulate_typst_sources(spine_files: &[PathBuf], is_combined: bool) -> Result<RheoSpine> {
-    // Check for duplicate filenames
-    let mut seen_filenames: HashSet<String> = HashSet::new();
-    let mut duplicate_paths: Vec<(String, PathBuf, PathBuf)> = Vec::new();
-
-    for spine_file in spine_files {
-        if let Some(filename) = spine_file.file_name() {
-            let filename_str = filename.to_string_lossy().to_string();
-
-            // Check if we've seen this filename before
-            if !seen_filenames.insert(filename_str.clone()) {
-                // Find the first occurrence
-                if let Some(first_occurrence) = spine_files.iter().find(|f| {
-                    f.file_name()
-                        .map(|n| n.to_string_lossy() == filename.to_string_lossy())
-                        .unwrap_or(false)
-                }) {
-                    duplicate_paths.push((
-                        filename_str.clone(),
-                        first_occurrence.clone(),
-                        spine_file.clone(),
-                    ));
-                }
-            }
-        }
-    }
-
-    // Report first duplicate error if any
-    if let Some((filename, first_path, second_path)) = duplicate_paths.first() {
-        return Err(RheoError::project_config(format!(
-            "duplicate filename in spine: '{}' appears at both '{}' and '{}'",
-            filename,
-            first_path.display(),
-            second_path.display()
-        )));
-    }
-
-    // Initialize source
-    let mut spine_source: Vec<String> = vec![];
-
-    for spine_file in spine_files {
-        // Read source content
-        let source = fs::read_to_string(spine_file).map_err(|e| {
-            RheoError::project_config(format!(
-                "failed to read spine file '{}': {}",
-                spine_file.display(),
-                e
-            ))
-        })?;
-
-        // Derive label and title from filename (without extension)
-        let (label, title) = if let Some(filename) = spine_file.file_name() {
-            let filename_str = filename.to_string_lossy();
-            let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
-            let label = sanitize_label_name(stem);
-            let title = extract_document_title(&source, stem);
-            (label, title)
-        } else {
-            return Err(RheoError::project_config(format!(
-                "invalid filename in spine: '{}'",
-                spine_file.display()
-            )));
-        };
-
-        // Create temporary spine
-        let temp_spine_file = if let Some(ext) = spine_file.extension() {
-            // Create new extension: ".combined." + original extension
-            let new_ext = format!("combined.{}", ext.to_string_lossy());
-            spine_file.with_extension(new_ext)
-        } else {
-            // Handle case where there's no extension
-            spine_file.with_extension("combined")
-        };
-
-        // Transform .typ links using AST-based transformation
-        let file_id = FileId::new(None, VirtualPath::new(temp_spine_file));
-        let source_obj = Source::new(file_id, source.clone());
-        let links = crate::links::parser::extract_links(&source_obj);
-        let code_ranges = crate::links::serializer::find_code_block_ranges(&source_obj);
-        let transformations = crate::links::transformer::compute_transformations(
-            &links,
-            crate::OutputFormat::Pdf,
-            Some(spine_files),
-            spine_file,
-        )?;
-        let transformed_source = crate::links::serializer::apply_transformations(
-            &source,
-            &transformations,
-            &code_ranges,
-        );
-
-        // Inject heading with label attached to metadata: #metadata(title) <label>
-        spine_source.push(format!(
-            "#metadata(\"{}\") <{}>{}\n\n",
-            title, label, transformed_source
-        ));
-    }
-
-    Ok(RheoSpine {
-        title: "Untitled".to_string(), // TODO: derive from config or directory
-        is_merged: is_combined,
-        source: spine_source,
-    })
 }
 
 fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {

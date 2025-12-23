@@ -16,7 +16,6 @@ pub fn compile_html_to_document(
     repo_root: &Path,
 ) -> Result<HtmlDocument> {
     // Create the compilation world
-    // For HTML compilation, keep .typ links so we can transform them to .html
     let world = RheoWorld::new(root, input, repo_root, false)?;
 
     // Compile the document to HtmlDocument
@@ -62,10 +61,18 @@ fn compile_html_impl_fresh(
         .map(crate::formats::pdf::filename_to_title)
         .unwrap_or_else(|| "Untitled".to_string());
 
+    // Create a single-file spine config pointing to just this input file
+    let input_relative = input.strip_prefix(root).unwrap_or(input);
+    let spine_pattern = input_relative.display().to_string();
+    let merge_config = crate::config::Merge {
+        title: title.clone(),
+        spine: vec![spine_pattern],
+    };
+
     // Build RheoSpine with AST-transformed source (.typ links → .html)
-    let spine = crate::links::spine::build_rheo_spine(
+    let spine = RheoSpine::build(
         root,
-        None,  // No merge config for single HTML file
+        Some(&merge_config),  // Single-file merge config
         crate::OutputFormat::Html,
         &title,
     )?;
@@ -123,7 +130,7 @@ fn compile_html_impl_fresh(
 /// * `repo_root` - Repository root path (for rheo.typ imports)
 /// * `html_options` - HTML-specific options (stylesheets, fonts)
 fn compile_html_impl(
-    world: &RheoWorld,
+    _world: &RheoWorld,
     input: &Path,
     output: &Path,
     root: &Path,
@@ -137,10 +144,18 @@ fn compile_html_impl(
         .map(crate::formats::pdf::filename_to_title)
         .unwrap_or_else(|| "Untitled".to_string());
 
+    // Create a single-file spine config pointing to just this input file
+    let input_relative = input.strip_prefix(root).unwrap_or(input);
+    let spine_pattern = input_relative.display().to_string();
+    let merge_config = crate::config::Merge {
+        title: title.clone(),
+        spine: vec![spine_pattern],
+    };
+
     // Build RheoSpine with AST-transformed source (.typ links → .html)
-    let spine = crate::links::spine::build_rheo_spine(
+    let spine = RheoSpine::build(
         root,
-        None,  // No merge config for single HTML file
+        Some(&merge_config),  // Single-file merge config
         crate::OutputFormat::Html,
         &title,
     )?;
@@ -243,6 +258,7 @@ pub fn compile_html_new(options: RheoCompileOptions, html_options: HtmlOptions) 
 
 /// HTML compiler implementation
 pub use crate::formats::compiler::HtmlCompiler;
+use crate::links::spine::RheoSpine;
 
 impl FormatCompiler for HtmlCompiler {
     type Config = HtmlOptions;

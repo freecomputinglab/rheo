@@ -179,8 +179,6 @@ mod tests {
         assert_eq!(pdf::filename_to_title("single"), "Single");
     }
 
-    // Note: concatenate_typst_sources tests removed - replaced by build_rheo_spine in links::spine module
-
     #[test]
     fn test_extract_document_title_from_metadata() {
         let source = r#"#set document(title: [My Great Title])

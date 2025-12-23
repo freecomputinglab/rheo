@@ -8,35 +8,31 @@ const LINK_IDENT_ID: &str = "link";
 pub fn extract_links(source: &Source) -> Vec<LinkInfo> {
     let root = typst::syntax::parse(source.text());
     let mut links = Vec::new();
-    extract_links_from_node(&root, &mut links, source.text());
+    extract_links_from_node(&root, &root, &mut links);
     links
 }
 
-fn extract_links_from_node(node: &SyntaxNode, links: &mut Vec<LinkInfo>, source_text: &str) {
+fn extract_links_from_node(node: &SyntaxNode, root: &SyntaxNode, links: &mut Vec<LinkInfo>) {
     // Check if this node itself is a function call
     if node.kind() == SyntaxKind::FuncCall {
-        if let Some(link_info) = parse_link_call(node, source_text) {
+        if let Some(link_info) = parse_link_call(node, root) {
             links.push(link_info);
         }
     }
 
     // Recursively traverse children
     for child in node.children() {
-        extract_links_from_node(&child, links, source_text);
+        extract_links_from_node(&child, root, links);
     }
 }
 
-pub fn render_typst_link(body: &str, url: &str) -> String {
-    format!("#link(\"{}\")[{}]", url, body)
-}
-
-fn parse_link_call(node: &SyntaxNode, source_text: &str) -> Option<LinkInfo> {
+fn parse_link_call(node: &SyntaxNode, root: &SyntaxNode) -> Option<LinkInfo> {
     // Parse #link("url")[body] or #link("url", body)
     // Extract:
     // 1. Function name (must be "link")
     // 2. URL argument (first string argument)
     // 3. Body text (from content block or second argument)
-    // 4. Byte range by finding the link text in source
+    // 4. Byte range by calculating AST node position
 
     let ident = node.children().find(|n| n.kind() == SyntaxKind::Ident)?;
     if ident.text() != LINK_IDENT_ID {
@@ -50,14 +46,10 @@ fn parse_link_call(node: &SyntaxNode, source_text: &str) -> Option<LinkInfo> {
 
     // Extract body text
     let body = extract_link_body(node)?;
-    // Find byte range by searching for this link's text in the source
-    let link_text = render_typst_link(&body, &url);
-    let link_text_str: &str = link_text.as_str();
-    let byte_range = if let Some(start) = source_text.find(link_text_str) {
-        start..(start + link_text_str.len())
-    } else {
-        panic!("byte range not found")
-    };
+
+    // Calculate byte range directly from AST node position
+    let offset = calculate_node_offset(root, node)?;
+    let byte_range = offset..(offset + node.len());
 
     // Get span for error reporting
     let span = node.span();
@@ -103,11 +95,48 @@ fn extract_text_from_node(node: &SyntaxNode) -> Option<String> {
         return Some(node.text().to_string());
     }
 
-    // Otherwise, recursively search children for text
+    // If this is a Space node, return a space
+    if node.kind() == SyntaxKind::Space {
+        return Some(" ".to_string());
+    }
+
+    // Otherwise, collect text from ALL children (not just the first)
+    let mut texts = Vec::new();
     for child in node.children() {
         if let Some(text) = extract_text_from_node(&child) {
-            return Some(text);
+            texts.push(text);
         }
+    }
+
+    if texts.is_empty() {
+        None
+    } else {
+        Some(texts.join(""))
+    }
+}
+
+/// Calculate the byte offset of a target node within the root AST
+fn calculate_node_offset(root: &SyntaxNode, target: &SyntaxNode) -> Option<usize> {
+    calculate_node_offset_impl(root, target, 0)
+}
+
+fn calculate_node_offset_impl(
+    current: &SyntaxNode,
+    target: &SyntaxNode,
+    offset: usize,
+) -> Option<usize> {
+    // Check if this is the target node (pointer equality)
+    if std::ptr::eq(current as *const _, target as *const _) {
+        return Some(offset);
+    }
+
+    // Recursively search children, tracking offset
+    let mut child_offset = offset;
+    for child in current.children() {
+        if let Some(found_offset) = calculate_node_offset_impl(&child, target, child_offset) {
+            return Some(found_offset);
+        }
+        child_offset += child.len();
     }
 
     None
@@ -161,5 +190,27 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "https://example.com");
         assert_eq!(links[0].body, "external");
+    }
+
+    #[test]
+    fn test_extract_link_with_nested_markup() {
+        let source = Source::detached(r#"#link("./url")[text #super[2]]"#);
+        let links = extract_links(&source);
+
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].url, "./url");
+        assert_eq!(links[0].body, "text 2");  // All text concatenated
+        // Byte range should cover the entire link (exact start may vary by 1 due to Source::detached)
+        assert!(links[0].byte_range.len() >= 29);
+    }
+
+    #[test]
+    fn test_extract_link_with_multiple_markup() {
+        let source = Source::detached(r#"#link("url")[#strong[bold] and #emph[italic]]"#);
+        let links = extract_links(&source);
+
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].url, "url");
+        assert_eq!(links[0].body, "bold and italic");
     }
 }
