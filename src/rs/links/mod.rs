@@ -5,4 +5,4 @@ pub mod transformer;
 pub mod types;
 pub mod validator;
 
-pub use spine::linkify_typst_sources;
+pub use spine::reticulate_typst_sources;

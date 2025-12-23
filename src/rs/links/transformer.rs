@@ -1,8 +1,8 @@
-use super::types::{LinkInfo, LinkTransform, OutputFormat};
+use super::types::{LinkInfo, LinkTransform};
 use crate::constants::TYP_EXT;
-use crate::links::parser::render_typst_link;
+use crate::formats::pdf::sanitize_label_name;
 use crate::links::validator::is_relative_typ_link;
-use crate::{HTML_EXT, Result, RheoError, XHTML_EXT};
+use crate::{HTML_EXT, OutputFormat, Result, RheoError, XHTML_EXT};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -26,8 +26,8 @@ pub fn compute_transformations(
 ) -> Result<Vec<(Range<usize>, LinkTransform)>> {
     let mut transformations = Vec::new();
 
-    // For PdfMerged, build a map of filename stems to labels
-    let label_map = if format == OutputFormat::PdfMerged {
+    // For Pdf (merged mode), build a map of filename stems to labels
+    let label_map = if format == OutputFormat::Pdf && spine.is_some() {
         build_label_map(spine.unwrap_or(&[]))
     } else {
         HashMap::new()
@@ -50,11 +50,14 @@ pub fn compute_transformations(
 
             // Relative .typ link transformation according to format
             match format {
-                OutputFormat::PdfSingle => LinkTransform::Remove {
+                OutputFormat::Pdf if spine.is_none() => LinkTransform::Remove {
                     body: link.body.clone(),
                 },
-                OutputFormat::PdfMerged => LinkTransform::ReplaceUrlWithLabel {
-                    new_label: format!("<{}>", label),
+                OutputFormat::Pdf => {
+                    let label = label_map.get(stem).unwrap();
+                    LinkTransform::ReplaceUrlWithLabel {
+                        new_label: format!("<{}>", label),
+                    }
                 },
                 OutputFormat::Html => LinkTransform::ReplaceUrl {
                     new_url: url.replace(TYP_EXT, HTML_EXT),
@@ -96,21 +99,6 @@ fn extract_filename(path: &str) -> &str {
         .file_name()
         .and_then(|f| f.to_str())
         .unwrap_or(path)
-}
-
-/// Sanitize a filename to create a valid Typst label name.
-///
-/// Replaces non-alphanumeric characters (except hyphens and underscores) with underscores.
-pub fn sanitize_label_name(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]

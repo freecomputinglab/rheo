@@ -313,7 +313,7 @@ impl World for RheoWorld {
                 let code_ranges = crate::links::serializer::find_code_block_ranges(&source_obj);
                 let transformations = crate::links::transformer::compute_transformations(
                     &links,
-                    crate::links::types::OutputFormat::PdfSingle,
+                    crate::OutputFormat::Pdf,
                     None,
                     &id.vpath().as_rootless_path(),
                 ).map_err(|e| FileError::Other(Some(e.to_string().into())))?;

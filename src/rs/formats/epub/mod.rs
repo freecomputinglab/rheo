@@ -6,7 +6,6 @@ use xhtml::HtmlInfo;
 
 use crate::compile::RheoCompileOptions;
 use crate::config::{EpubConfig, EpubOptions};
-use crate::constants::XHTML_EXT;
 use crate::formats::compiler::FormatCompiler;
 use crate::{OutputFormat, Result, RheoError};
 use anyhow::Result as AnyhowResult;
@@ -282,7 +281,7 @@ fn compile_epub_impl(
     repo_root: &Path,
 ) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
-        let spine = crate::spine::generate_spine(root, config.merge.as_ref(), false)?;
+        let spine = crate::links::spine::generate_spine(root, config.merge.as_ref(), false)?;
 
         let mut items = spine
             .into_iter()
@@ -383,10 +382,8 @@ impl EpubItem {
         let bare_file = path.strip_prefix(parent).unwrap();
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
         let (heading_ids, outline) = Self::outline(&document, &href);
-        // Export to HTML and transform links for XHTML
+        // Export to HTML (links already transformed by RheoWorld)
         let html_string = crate::formats::html::compile_document_to_string(&document)?;
-        let html_string =
-            crate::postprocess::transform_links(&html_string, &path, root, XHTML_EXT)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
         Ok(EpubItem {

@@ -51,7 +51,7 @@ fn parse_link_call(node: &SyntaxNode, source_text: &str) -> Option<LinkInfo> {
     // Extract body text
     let body = extract_link_body(node)?;
     // Find byte range by searching for this link's text in the source
-    let link_text = render_typst_link(body, url);
+    let link_text = render_typst_link(&body, &url);
     let link_text_str: &str = link_text.as_str();
     let byte_range = if let Some(start) = source_text.find(link_text_str) {
         start..(start + link_text_str.len())

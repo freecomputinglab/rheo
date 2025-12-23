@@ -1,11 +1,11 @@
-use super::parser::extract_links;
-use super::serializer::apply_transformations;
-use super::transformer::compute_transformations;
-use super::types::{LinkInfo, LinkTransform, OutputFormat, RheoSpine};
-use super::validator::validate_links;
+use super::types::RheoSpine;
 use crate::config::Merge;
+use crate::formats::pdf::{sanitize_label_name, extract_document_title};
 use crate::{Result, RheoError, TYP_EXT};
+use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
+use typst::syntax::{FileId, Source, VirtualPath};
 use walkdir::WalkDir;
 
 /// Concatenate multiple Typst source files into a single source for merged PDF compilation.
@@ -16,7 +16,7 @@ use walkdir::WalkDir;
 /// 3. Prefixed with a level-1 heading containing the title and a label derived from filename
 /// 4. Links to other .typ files transformed to label references
 /// 5. Concatenated together
-pub fn reticulate_typst_sources(spine_files: &[PathBuf], is_combined: bool) -> RheoSpine {
+pub fn reticulate_typst_sources(spine_files: &[PathBuf], is_combined: bool) -> Result<RheoSpine> {
     // Check for duplicate filenames
     let mut seen_filenames: HashSet<String> = HashSet::new();
     let mut duplicate_paths: Vec<(String, PathBuf, PathBuf)> = Vec::new();
@@ -97,7 +97,7 @@ pub fn reticulate_typst_sources(spine_files: &[PathBuf], is_combined: bool) -> R
         let code_ranges = crate::links::serializer::find_code_block_ranges(&source_obj);
         let transformations = crate::links::transformer::compute_transformations(
             &links,
-            crate::links::types::OutputFormat::PdfMerged,
+            crate::OutputFormat::Pdf,
             Some(spine_files),
             spine_file,
         )?;
@@ -108,13 +108,17 @@ pub fn reticulate_typst_sources(spine_files: &[PathBuf], is_combined: bool) -> R
         );
 
         // Inject heading with label attached to metadata: #metadata(title) <label>
-        concatenated.push_str(&format!(
+        spine_source.push(format!(
             "#metadata(\"{}\") <{}>{}\n\n",
             title, label, transformed_source
         ));
     }
 
-    Ok(concatenated)
+    Ok(RheoSpine {
+        title: "Untitled".to_string(), // TODO: derive from config or directory
+        is_merged: is_combined,
+        source: spine_source,
+    })
 }
 
 fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {

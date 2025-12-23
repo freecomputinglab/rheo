@@ -1,19 +1,16 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::PdfConfig;
-use crate::constants::{TYP_EXT, TYPST_LABEL_PATTERN};
+use crate::constants::TYPST_LABEL_PATTERN;
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::formats::compiler::FormatCompiler;
-use crate::spine::generate_spine;
+use crate::links::spine::generate_spine;
 use crate::world::RheoWorld;
 use crate::{OutputFormat, Result, RheoError};
-use std::collections::HashSet;
-use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tempfile::NamedTempFile;
 use tracing::{debug, info};
 use typst::layout::PagedDocument;
-use typst::syntax::{FileId, Source, VirtualPath};
 use typst_pdf::PdfOptions;
 
 // ============================================================================
@@ -194,7 +191,8 @@ fn compile_pdf_merged_impl_fresh(
     debug!(file_count = spine.len(), "generated PDF spine");
 
     // Concatenate sources with labels and transformed links
-    let concatenated_source = concatenate_typst_sources(&spine)?;
+    let rheo_spine = crate::links::spine::reticulate_typst_sources(&spine, true)?;
+    let concatenated_source = rheo_spine.source.join("\n\n");
     debug!(
         source_length = concatenated_source.len(),
         "concatenated sources"
@@ -253,7 +251,8 @@ fn compile_pdf_merged_impl(
     debug!(file_count = spine.len(), "generated PDF spine");
 
     // Concatenate sources with labels and transformed links
-    let concatenated_source = concatenate_typst_sources(&spine)?;
+    let rheo_spine = crate::links::spine::reticulate_typst_sources(&spine, true)?;
+    let concatenated_source = rheo_spine.source.join("\n\n");
     debug!(
         source_length = concatenated_source.len(),
         "concatenated sources"
