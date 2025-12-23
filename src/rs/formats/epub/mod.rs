@@ -272,7 +272,8 @@ pub fn zip_epub(
 
 /// Implementation: Compile multiple Typst files to EPUB format.
 ///
-/// Generates a spine from the EPUB configuration, compiles each file to HTML,
+/// Generates a spine from the EPUB configuration using RheoSpine for AST-based
+/// link transformation (.typ → .xhtml), compiles each file to HTML,
 /// generates navigation, and packages everything into a .epub (zip) file.
 fn compile_epub_impl(
     config: &EpubConfig,
@@ -281,11 +282,24 @@ fn compile_epub_impl(
     repo_root: &Path,
 ) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
+        // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
+        let rheo_spine = crate::links::spine::build_rheo_spine(
+            root,
+            config.merge.as_ref(),
+            crate::OutputFormat::Epub,
+            &config.merge.as_ref().map(|m| m.title.as_str()).unwrap_or("Untitled"),
+        )?;
+
+        // Get the spine file paths
         let spine = crate::links::spine::generate_spine(root, config.merge.as_ref(), false)?;
 
+        // Create EpubItems from transformed sources
         let mut items = spine
-            .into_iter()
-            .map(|path| EpubItem::create(path, root, repo_root))
+            .iter()
+            .zip(rheo_spine.source.iter())
+            .map(|(path, transformed_source)| {
+                EpubItem::create_from_source(path.clone(), transformed_source, root, repo_root)
+            })
             .collect::<AnyhowResult<Vec<_>>>()?;
 
         let nav_xhtml = generate_nav_xhtml(&mut items)?;
@@ -383,6 +397,45 @@ impl EpubItem {
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
         let (heading_ids, outline) = Self::outline(&document, &href);
         // Export to HTML (links already transformed by RheoWorld)
+        let html_string = crate::formats::html::compile_document_to_string(&document)?;
+        let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
+
+        Ok(EpubItem {
+            href,
+            document,
+            xhtml,
+            info,
+            outline: Some(outline),
+        })
+    }
+
+    /// Create EpubItem from RheoSpine-transformed source (links already .typ → .xhtml)
+    pub fn create_from_source(
+        path: PathBuf,
+        transformed_source: &str,
+        root: &Path,
+        repo_root: &Path,
+    ) -> AnyhowResult<Self> {
+        use std::io::Write;
+
+        info!(file = %path.display(), "compiling spine file with transformed source");
+
+        // Write transformed source to temporary file
+        let mut temp_file = tempfile::NamedTempFile::new_in(root)?;
+        temp_file.write_all(transformed_source.as_bytes())?;
+        temp_file.flush()?;
+
+        let temp_path = temp_file.path();
+
+        // Compile to HTML document
+        let document = crate::formats::html::compile_html_to_document(temp_path, root, repo_root)?;
+
+        let parent = path.parent().unwrap();
+        let bare_file = path.strip_prefix(parent).unwrap();
+        let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
+        let (heading_ids, outline) = Self::outline(&document, &href);
+
+        // Export to HTML (links already .typ → .xhtml from RheoSpine)
         let html_string = crate::formats::html::compile_document_to_string(&document)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
