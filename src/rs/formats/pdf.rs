@@ -1,18 +1,19 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::PdfConfig;
-use crate::constants::{TYP_EXT, TYPST_LABEL_PATTERN, TYPST_LINK_PATTERN};
+use crate::constants::{TYP_EXT, TYPST_LABEL_PATTERN};
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::formats::compiler::FormatCompiler;
 use crate::spine::generate_spine;
 use crate::world::RheoWorld;
 use crate::{OutputFormat, Result, RheoError};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 use tracing::{debug, info};
 use typst::layout::PagedDocument;
+use typst::syntax::{FileId, Source, VirtualPath};
 use typst_pdf::PdfOptions;
 
 // ============================================================================
@@ -172,170 +173,6 @@ pub fn extract_document_title(source: &str, filename: &str) -> String {
 
     // Fallback: use filename, convert to title case
     filename_to_title(filename)
-}
-
-/// Transform relative .typ links to label references for merged PDF compilation.
-///
-/// For merged PDF outputs, links to other .typ files should reference the label
-/// at the start of each document section. This function transforms relative .typ
-/// links to label references using the document's filename.
-pub fn transform_typ_links_to_labels(
-    source: &str,
-    spine_files: &[PathBuf],
-    _current_file: &Path,
-) -> Result<String> {
-    // Build map: filename (without extension) -> sanitized label name
-    let mut label_map: HashMap<String, String> = HashMap::new();
-    for spine_file in spine_files {
-        if let Some(filename) = spine_file.file_name() {
-            let filename_str = filename.to_string_lossy();
-            // Remove .typ extension
-            let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
-            let label = sanitize_label_name(stem);
-            label_map.insert(stem.to_string(), label);
-        }
-    }
-
-    // Regex to match Typst link function calls
-    // Captures: #link("url")[body] or #link("url", body)
-    let mut errors = Vec::new();
-    let result = TYPST_LINK_PATTERN.replace_all(source, |caps: &regex::Captures| {
-        let url = &caps[1];
-        let body = &caps[2];
-
-        // Check if this is a .typ link
-        let is_typ_link = url.ends_with(TYP_EXT);
-
-        // Check if it's an external URL or fragment-only link
-        let is_external = url.starts_with("http://")
-            || url.starts_with("https://")
-            || url.starts_with("mailto:");
-        let is_fragment = url.starts_with('#');
-
-        if is_typ_link && !is_external {
-            // Extract the filename from the path
-            let path = Path::new(url);
-            let filename = path
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or(url);
-
-            // Remove .typ extension for lookup
-            let stem = filename.strip_suffix(TYP_EXT).unwrap_or(filename);
-
-            // Look up in spine files map
-            if let Some(label) = label_map.get(stem) {
-                // Transform to label reference: #link(<label>)[...]
-                format!("#link(<{}>){}", label, body)
-            } else {
-                // File not in spine - collect error
-                errors.push(format!(
-                    "Link target '{}' not found in spine. Add it to the spine in rheo.toml or remove the link.",
-                    filename
-                ));
-                // Keep original link unchanged in output
-                format!("#link(\"{}\"){}", url, body)
-            }
-        } else if is_fragment {
-            // Preserve fragment-only links unchanged
-            format!("#link(\"{}\"){}", url, body)
-        } else {
-            // Preserve external URLs unchanged
-            format!("#link(\"{}\"){}", url, body)
-        }
-    });
-
-    // If we collected any errors, return the first one
-    if let Some(error_msg) = errors.first() {
-        return Err(RheoError::project_config(error_msg));
-    }
-
-    Ok(result.to_string())
-}
-
-/// Concatenate multiple Typst source files into a single source for merged PDF compilation.
-///
-/// Each file in the spine is:
-/// 1. Read from disk
-/// 2. Title extracted from `#set document(title: [...])` or filename
-/// 3. Prefixed with a level-1 heading containing the title and a label derived from filename
-/// 4. Links to other .typ files transformed to label references
-/// 5. Concatenated together
-pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
-    // Check for duplicate filenames
-    let mut seen_filenames: HashSet<String> = HashSet::new();
-    let mut duplicate_paths: Vec<(String, PathBuf, PathBuf)> = Vec::new();
-
-    for spine_file in spine_files {
-        if let Some(filename) = spine_file.file_name() {
-            let filename_str = filename.to_string_lossy().to_string();
-
-            // Check if we've seen this filename before
-            if !seen_filenames.insert(filename_str.clone()) {
-                // Find the first occurrence
-                if let Some(first_occurrence) = spine_files.iter().find(|f| {
-                    f.file_name()
-                        .map(|n| n.to_string_lossy() == filename.to_string_lossy())
-                        .unwrap_or(false)
-                }) {
-                    duplicate_paths.push((
-                        filename_str.clone(),
-                        first_occurrence.clone(),
-                        spine_file.clone(),
-                    ));
-                }
-            }
-        }
-    }
-
-    // Report first duplicate error if any
-    if let Some((filename, first_path, second_path)) = duplicate_paths.first() {
-        return Err(RheoError::project_config(format!(
-            "duplicate filename in spine: '{}' appears at both '{}' and '{}'",
-            filename,
-            first_path.display(),
-            second_path.display()
-        )));
-    }
-
-    // Concatenate all sources
-    let mut concatenated = String::new();
-
-    for spine_file in spine_files {
-        // Read source content
-        let source = fs::read_to_string(spine_file).map_err(|e| {
-            RheoError::project_config(format!(
-                "failed to read spine file '{}': {}",
-                spine_file.display(),
-                e
-            ))
-        })?;
-
-        // Derive label and title from filename (without extension)
-        let (label, title) = if let Some(filename) = spine_file.file_name() {
-            let filename_str = filename.to_string_lossy();
-            let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
-            let label = sanitize_label_name(stem);
-            let title = extract_document_title(&source, stem);
-            (label, title)
-        } else {
-            return Err(RheoError::project_config(format!(
-                "invalid filename in spine: '{}'",
-                spine_file.display()
-            )));
-        };
-
-        // Transform .typ links to labels
-        let transformed_source = transform_typ_links_to_labels(&source, spine_files, spine_file)?;
-
-        // Inject heading with label attached to metadata: #metadata(title) <label>
-        concatenated.push_str(&format!(
-            "#metadata(\"{}\") <{}>{}\n\n",
-            title, label, transformed_source
-        ));
-    }
-
-    Ok(concatenated)
 }
 
 // ============================================================================

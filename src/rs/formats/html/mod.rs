@@ -55,14 +55,11 @@ fn compile_html_impl_fresh(
     repo_root: &Path,
     html_options: &HtmlOptions,
 ) -> Result<()> {
-    // 1. Compile to HtmlDocument
-    let doc = compile_html_to_document(input, root, repo_root)?;
+    let input_with_transformed_links = todo!();
 
-    // 2. Export to raw HTML string
+    let doc = compile_html_to_document(input_with_transformed_links, root, repo_root)?;
+
     let html_string = compile_document_to_string(&doc)?;
-
-    // 3. Transform .typ links to .html links
-    let html_string = postprocess::transform_links(&html_string, input, root, HTML_EXT)?;
 
     // 4. Inject CSS and font links into <head>
     let stylesheets: Vec<&str> = html_options

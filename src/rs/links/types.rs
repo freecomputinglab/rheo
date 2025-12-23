@@ -1,3 +1,4 @@
+use crate::OutputFormat;
 use std::ops::Range;
 use typst::syntax::Span;
 
@@ -42,6 +43,23 @@ pub enum LinkTransform {
     /// Replace URL with new value
     ReplaceUrl { new_url: String },
 
+    /// Replace URL with label
+    ReplaceUrlWithLabel { new_label: String },
+
     /// Keep original (no transformation)
     KeepOriginal,
+}
+
+/// A spine with relative linking tranformations
+#[derive(Debug, Clone)]
+pub struct RheoSpine {
+    /// The name of the file or website that the spine will generate.
+    title: String,
+
+    /// Whether or not the source has been merged into a single file.
+    /// This is only false in the case of HTML currently.
+    is_merged: bool,
+
+    /// Reticulated (relative link transformed) source files, always of length 1 if `is_merged`.
+    source: Vec<String>,
 }

@@ -307,7 +307,21 @@ impl World for RheoWorld {
 
             // Remove relative .typ links if requested (for PDF/EPUB)
             if self.remove_typ_links {
-                text = crate::compile::remove_relative_typ_links(&text);
+                // Use AST-based transformation
+                let source_obj = Source::detached(&text);
+                let links = crate::links::parser::extract_links(&source_obj);
+                let code_ranges = crate::links::serializer::find_code_block_ranges(&source_obj);
+                let transformations = crate::links::transformer::compute_transformations(
+                    &links,
+                    crate::links::types::OutputFormat::PdfSingle,
+                    None,
+                    &id.vpath().as_rootless_path(),
+                ).map_err(|e| FileError::Other(Some(e.to_string().into())))?;
+                text = crate::links::serializer::apply_transformations(
+                    &text,
+                    &transformations,
+                    &code_ranges,
+                );
             }
         }
 

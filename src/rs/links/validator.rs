@@ -1,6 +1,6 @@
+use crate::links::types::LinkInfo;
 use std::path::{Path, PathBuf};
 use typst::diag::{EcoString, Severity, SourceDiagnostic};
-use crate::links::types::LinkInfo;
 
 /// Validate links and return diagnostic warnings for broken ones
 pub fn validate_links(
@@ -8,12 +8,13 @@ pub fn validate_links(
     project_root: &Path,
     source_file: &Path,
 ) -> Vec<SourceDiagnostic> {
-    links.iter()
+    links
+        .iter()
         .filter_map(|link| validate_single_link(link, project_root, source_file))
         .collect()
 }
 
-fn validate_single_link(
+pub fn validate_single_link(
     link: &LinkInfo,
     project_root: &Path,
     source_file: &Path,
@@ -48,10 +49,7 @@ fn validate_single_link(
     if let Ok(canonical_target) = target.canonicalize() {
         if let Ok(canonical_root) = project_root.canonicalize() {
             if !canonical_target.starts_with(&canonical_root) {
-                let msg = format!(
-                    "Link target is outside project root: {}",
-                    link.url
-                );
+                let msg = format!("Link target is outside project root: {}", link.url);
                 return Some(SourceDiagnostic {
                     span: link.span,
                     message: EcoString::from(msg),
@@ -66,7 +64,7 @@ fn validate_single_link(
     None
 }
 
-fn is_relative_typ_link(url: &str) -> bool {
+pub fn is_relative_typ_link(url: &str) -> bool {
     // Check if URL is:
     // 1. Ends with .typ
     // 2. Not an external URL (http://, https://, mailto:, etc.)

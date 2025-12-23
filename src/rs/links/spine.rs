@@ -1,7 +1,143 @@
+use super::parser::extract_links;
+use super::serializer::apply_transformations;
+use super::transformer::compute_transformations;
+use super::types::{LinkInfo, LinkTransform, OutputFormat, RheoSpine};
+use super::validator::validate_links;
 use crate::config::Merge;
-use crate::{Result, RheoError};
+use crate::{Result, RheoError, TYP_EXT};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+/// Concatenate multiple Typst source files into a single source for merged PDF compilation.
+///
+/// Each file in the spine is:
+/// 1. Read from disk
+/// 2. Title extracted from `#set document(title: [...])` or filename
+/// 3. Prefixed with a level-1 heading containing the title and a label derived from filename
+/// 4. Links to other .typ files transformed to label references
+/// 5. Concatenated together
+pub fn reticulate_typst_sources(spine_files: &[PathBuf], is_combined: bool) -> RheoSpine {
+    // Check for duplicate filenames
+    let mut seen_filenames: HashSet<String> = HashSet::new();
+    let mut duplicate_paths: Vec<(String, PathBuf, PathBuf)> = Vec::new();
+
+    for spine_file in spine_files {
+        if let Some(filename) = spine_file.file_name() {
+            let filename_str = filename.to_string_lossy().to_string();
+
+            // Check if we've seen this filename before
+            if !seen_filenames.insert(filename_str.clone()) {
+                // Find the first occurrence
+                if let Some(first_occurrence) = spine_files.iter().find(|f| {
+                    f.file_name()
+                        .map(|n| n.to_string_lossy() == filename.to_string_lossy())
+                        .unwrap_or(false)
+                }) {
+                    duplicate_paths.push((
+                        filename_str.clone(),
+                        first_occurrence.clone(),
+                        spine_file.clone(),
+                    ));
+                }
+            }
+        }
+    }
+
+    // Report first duplicate error if any
+    if let Some((filename, first_path, second_path)) = duplicate_paths.first() {
+        return Err(RheoError::project_config(format!(
+            "duplicate filename in spine: '{}' appears at both '{}' and '{}'",
+            filename,
+            first_path.display(),
+            second_path.display()
+        )));
+    }
+
+    // Initialize source
+    let mut spine_source: Vec<String> = vec![];
+
+    for spine_file in spine_files {
+        // Read source content
+        let source = fs::read_to_string(spine_file).map_err(|e| {
+            RheoError::project_config(format!(
+                "failed to read spine file '{}': {}",
+                spine_file.display(),
+                e
+            ))
+        })?;
+
+        // Derive label and title from filename (without extension)
+        let (label, title) = if let Some(filename) = spine_file.file_name() {
+            let filename_str = filename.to_string_lossy();
+            let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
+            let label = sanitize_label_name(stem);
+            let title = extract_document_title(&source, stem);
+            (label, title)
+        } else {
+            return Err(RheoError::project_config(format!(
+                "invalid filename in spine: '{}'",
+                spine_file.display()
+            )));
+        };
+
+        // Create temporary spine
+        let temp_spine_file = if let Some(ext) = spine_file.extension() {
+            // Create new extension: ".combined." + original extension
+            let new_ext = format!("combined.{}", ext.to_string_lossy());
+            spine_file.with_extension(new_ext)
+        } else {
+            // Handle case where there's no extension
+            spine_file.with_extension("combined")
+        };
+
+        // Transform .typ links using AST-based transformation
+        let file_id = FileId::new(None, VirtualPath::new(temp_spine_file));
+        let source_obj = Source::new(file_id, source.clone());
+        let links = crate::links::parser::extract_links(&source_obj);
+        let code_ranges = crate::links::serializer::find_code_block_ranges(&source_obj);
+        let transformations = crate::links::transformer::compute_transformations(
+            &links,
+            crate::links::types::OutputFormat::PdfMerged,
+            Some(spine_files),
+            spine_file,
+        )?;
+        let transformed_source = crate::links::serializer::apply_transformations(
+            &source,
+            &transformations,
+            &code_ranges,
+        );
+
+        // Inject heading with label attached to metadata: #metadata(title) <label>
+        concatenated.push_str(&format!(
+            "#metadata(\"{}\") <{}>{}\n\n",
+            title, label, transformed_source
+        ));
+    }
+
+    Ok(concatenated)
+}
+
+fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
+    let typst_files: Vec<PathBuf> = WalkDir::new(root)
+        .into_iter()
+        .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
+        .filter(|entry| {
+            entry
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext == &TYP_EXT[1..])
+                .unwrap_or(false)
+        })
+        .collect();
+
+    match typst_files.len() {
+        0 => Err(RheoError::project_config("need at least one .typ file")),
+        1 => Ok(typst_files),
+        _ => Err(RheoError::project_config(
+            "multiple .typ files found, specify spine in merge config",
+        )),
+    }
+}
 
 /// Generates a spine (ordered list of .typ files) based on configuration.
 ///
@@ -9,10 +145,6 @@ use walkdir::WalkDir;
 /// * `root` - Project root directory
 /// * `merge_config` - Optional merge configuration with spine patterns
 /// * `require_merge` - If true, merge_config must be provided (PDF mode)
-///
-/// # Behavior
-/// - **PDF mode** (`require_merge=true`): merge_config is mandatory
-/// - **EPUB mode** (`require_merge=false`): merge_config is optional with fallback to auto-discovery
 ///
 /// # Errors
 /// Returns error if:
@@ -33,61 +165,16 @@ pub fn generate_spine(
     }
 
     match merge_config {
-        None => {
-            // EPUB fallback: auto-discover .typ files
-            let mut typst_files: Vec<PathBuf> = WalkDir::new(root)
-                .into_iter()
-                .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
-                .filter(|entry| {
-                    entry
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        .map(|ext| ext == "typ")
-                        .unwrap_or(false)
-                })
-                .collect();
+        // Single-file mode
+        None => collect_one_typst_file(root),
 
-            // Sort lexicographically for consistent ordering
-            typst_files.sort();
+        // Empty spine pattern: auto-discover single file only
+        // This is used for single-file mode with default EPUB merge config
+        Some(merge) if merge.spine.is_empty() => collect_one_typst_file(root),
 
-            match typst_files.len() {
-                0 => Err(RheoError::project_config("need at least one .typ file")),
-                1 => Ok(typst_files),
-                _ => Err(RheoError::project_config(
-                    "multiple .typ files found, specify spine in merge config",
-                )),
-            }
-        }
-
-        Some(merge) if merge.spine.is_empty() => {
-            // Empty spine pattern: auto-discover single file only
-            // This is used for single-file mode with default EPUB merge config
-            let mut typst_files: Vec<PathBuf> = WalkDir::new(root)
-                .into_iter()
-                .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
-                .filter(|entry| {
-                    entry
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        .map(|ext| ext == "typ")
-                        .unwrap_or(false)
-                })
-                .collect();
-
-            // Sort lexicographically for consistent ordering
-            typst_files.sort();
-
-            match typst_files.len() {
-                0 => Err(RheoError::project_config("need at least one .typ file")),
-                1 => Ok(typst_files),
-                _ => Err(RheoError::project_config(
-                    "multiple .typ files found with empty spine pattern",
-                )),
-            }
-        }
-
+        // Spine is specified
+        // Process glob patterns from merge config
         Some(merge) => {
-            // Process glob patterns from merge config
             let mut typst_files = Vec::new();
             for pattern in &merge.spine {
                 let glob_pattern = root.join(pattern).display().to_string();
