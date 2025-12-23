@@ -215,13 +215,22 @@ fn compile_pdf_merged_impl_fresh(
     root: &Path,
     repo_root: &Path,
 ) -> Result<()> {
-    // Generate spine: ordered list of .typ files
-    let spine = generate_spine(root, config.merge.as_ref(), false)?;
-    debug!(file_count = spine.len(), "generated PDF spine");
+    let merge = config.merge.as_ref().ok_or_else(|| {
+        RheoError::project_config("PDF merge configuration required for merged compilation")
+    })?;
 
-    // Concatenate sources with labels and transformed links
-    let rheo_spine = crate::links::spine::reticulate_typst_sources(&spine, true)?;
-    let concatenated_source = rheo_spine.source.join("\n\n");
+    // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
+    let rheo_spine = crate::links::spine::build_rheo_spine(
+        root,
+        Some(merge),
+        crate::OutputFormat::Pdf,
+        &merge.title,
+    )?;
+
+    debug!(file_count = rheo_spine.source.len(), "built PDF spine");
+
+    // Extract concatenated source (already merged into single source)
+    let concatenated_source = &rheo_spine.source[0];
     debug!(
         source_length = concatenated_source.len(),
         "concatenated sources"
@@ -275,13 +284,22 @@ fn compile_pdf_merged_impl(
     output_path: &Path,
     root: &Path,
 ) -> Result<()> {
-    // Generate spine: ordered list of .typ files
-    let spine = generate_spine(root, config.merge.as_ref(), false)?;
-    debug!(file_count = spine.len(), "generated PDF spine");
+    let merge = config.merge.as_ref().ok_or_else(|| {
+        RheoError::project_config("PDF merge configuration required for merged compilation")
+    })?;
 
-    // Concatenate sources with labels and transformed links
-    let rheo_spine = crate::links::spine::reticulate_typst_sources(&spine, true)?;
-    let concatenated_source = rheo_spine.source.join("\n\n");
+    // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
+    let rheo_spine = crate::links::spine::build_rheo_spine(
+        root,
+        Some(merge),
+        crate::OutputFormat::Pdf,
+        &merge.title,
+    )?;
+
+    debug!(file_count = rheo_spine.source.len(), "built PDF spine");
+
+    // Extract concatenated source (already merged into single source)
+    let concatenated_source = &rheo_spine.source[0];
     debug!(
         source_length = concatenated_source.len(),
         "concatenated sources"
