@@ -22,6 +22,7 @@ use std::path::PathBuf;
 #[test_case("tests/cases/link_transformation")]
 #[test_case("tests/cases/links_with_fragments")]
 #[test_case("tests/cases/pdf_individual")]
+#[test_case("tests/cases/relative_path_links")]
 fn run_test_case(name: &str) {
     let test_case = TestCase::new(name);
     let update_mode = env::var("UPDATE_REFERENCES").is_ok();
