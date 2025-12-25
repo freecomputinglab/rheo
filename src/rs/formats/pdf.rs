@@ -1,15 +1,12 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::PdfConfig;
-use crate::constants::{TYP_EXT, TYPST_LABEL_PATTERN, TYPST_LINK_PATTERN};
+use crate::constants::TYPST_LABEL_PATTERN;
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
-use crate::formats::compiler::FormatCompiler;
-use crate::spine::generate_spine;
+use crate::links::spine::RheoSpine;
 use crate::world::RheoWorld;
 use crate::{OutputFormat, Result, RheoError};
-use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tempfile::NamedTempFile;
 use tracing::{debug, info};
 use typst::layout::PagedDocument;
@@ -21,18 +18,13 @@ use typst_pdf::PdfOptions;
 
 /// Implementation: Compile a single Typst document to PDF (fresh compilation)
 ///
-/// Uses the typst library with:
-/// - Root set to content_dir or project root (for local file imports across directories)
-/// - Shared resources available via repo_root in src/typst/ (rheo.typ)
-fn compile_pdf_single_impl_fresh(
-    input: &Path,
-    output: &Path,
-    root: &Path,
-    repo_root: &Path,
-) -> Result<()> {
-    // Create the compilation world
-    // For standalone PDF compilation, remove relative .typ links from source
-    let world = RheoWorld::new(root, input, repo_root, true)?;
+/// Uses format-aware RheoWorld for automatic link transformation (removes .typ links).
+/// Transformations happen on-demand during Typst compilation (including imports).
+///
+/// Pipeline: Compile (with transformations) → Export → Write
+fn compile_pdf_single_impl_fresh(input: &Path, output: &Path, root: &Path) -> Result<()> {
+    // Create format-aware world (handles link removal on import)
+    let world = RheoWorld::new(root, input, Some(OutputFormat::Pdf))?;
 
     // Compile the document
     info!(input = %input.display(), "compiling to PDF");
@@ -93,23 +85,99 @@ pub fn sanitize_label_name(name: &str) -> String {
         .collect()
 }
 
-/// Convert filename to readable title.
+/// Document title extractor that parses Typst source for title metadata.
 ///
-/// Transforms a filename stem into a human-readable title by replacing
-/// separators with spaces and capitalizing words.
-pub fn filename_to_title(filename: &str) -> String {
-    filename
-        .replace(['-', '_'], " ")
-        .split_whitespace()
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+/// Provides methods for extracting document titles from Typst source code or
+/// generating readable titles from filenames.
+pub struct DocumentTitle {
+    source: String,
+    fallback_filename: String,
+}
+
+impl DocumentTitle {
+    /// Create a DocumentTitle from source code and a fallback filename.
+    ///
+    /// # Arguments
+    /// * `source` - Typst source code to extract title from
+    /// * `fallback` - Filename to use if no title is found in source
+    pub fn from_source(source: impl Into<String>, fallback: impl Into<String>) -> Self {
+        Self {
+            source: source.into(),
+            fallback_filename: fallback.into(),
+        }
+    }
+
+    /// Extract the document title.
+    ///
+    /// Searches for `#set document(title: [...])` in the source and extracts the content.
+    /// Falls back to the filename converted to title case if no title is found.
+    pub fn extract(&self) -> String {
+        // Find the start of the title parameter
+        if let Some(title_start) = self.source.find("#set document(") {
+            let after_doc = &self.source[title_start..];
+            if let Some(title_pos) = after_doc.find("title:") {
+                let after_title = &after_doc[title_pos + 6..]; // Skip "title:"
+
+                // Find the opening bracket for the title
+                if let Some(bracket_start) = after_title.find('[') {
+                    let title_content = &after_title[bracket_start + 1..];
+
+                    // Count brackets to find the matching closing bracket
+                    let mut depth = 1;
+                    let mut end_pos = 0;
+
+                    for (i, ch) in title_content.chars().enumerate() {
+                        if ch == '[' {
+                            depth += 1;
+                        } else if ch == ']' {
+                            depth -= 1;
+                            if depth == 0 {
+                                end_pos = i;
+                                break;
+                            }
+                        }
+                    }
+
+                    if end_pos > 0 {
+                        let title = &title_content[..end_pos];
+                        // Strip Typst markup for plain text
+                        let cleaned = strip_typst_markup(title);
+                        if !cleaned.trim().is_empty() {
+                            return cleaned;
+                        }
+                    }
+                }
             }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+        }
+
+        // Fallback: use filename, convert to title case
+        Self::to_readable_name(&self.fallback_filename)
+    }
+
+    /// Convert a filename to a readable title.
+    ///
+    /// Transforms a filename stem into a human-readable title by replacing
+    /// separators with spaces and capitalizing words.
+    ///
+    /// # Arguments
+    /// * `filename` - The filename to convert
+    ///
+    /// # Returns
+    /// A title-cased version of the filename
+    pub fn to_readable_name(filename: &str) -> String {
+        filename
+            .replace(['-', '_'], " ")
+            .split_whitespace()
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 /// Strip basic Typst markup to get plain text.
@@ -126,218 +194,6 @@ fn strip_typst_markup(text: &str) -> String {
     result.trim().to_string()
 }
 
-/// Extract title from Typst document source.
-///
-/// Searches for `#set document(title: [...])` and extracts the content.
-/// Falls back to filename if no title is found. The extracted title is
-/// cleaned of basic Typst markup.
-pub fn extract_document_title(source: &str, filename: &str) -> String {
-    // Find the start of the title parameter
-    if let Some(title_start) = source.find("#set document(") {
-        let after_doc = &source[title_start..];
-        if let Some(title_pos) = after_doc.find("title:") {
-            let after_title = &after_doc[title_pos + 6..]; // Skip "title:"
-
-            // Find the opening bracket for the title
-            if let Some(bracket_start) = after_title.find('[') {
-                let title_content = &after_title[bracket_start + 1..];
-
-                // Count brackets to find the matching closing bracket
-                let mut depth = 1;
-                let mut end_pos = 0;
-
-                for (i, ch) in title_content.chars().enumerate() {
-                    if ch == '[' {
-                        depth += 1;
-                    } else if ch == ']' {
-                        depth -= 1;
-                        if depth == 0 {
-                            end_pos = i;
-                            break;
-                        }
-                    }
-                }
-
-                if end_pos > 0 {
-                    let title = &title_content[..end_pos];
-                    // Strip Typst markup for plain text
-                    let cleaned = strip_typst_markup(title);
-                    if !cleaned.trim().is_empty() {
-                        return cleaned;
-                    }
-                }
-            }
-        }
-    }
-
-    // Fallback: use filename, convert to title case
-    filename_to_title(filename)
-}
-
-/// Transform relative .typ links to label references for merged PDF compilation.
-///
-/// For merged PDF outputs, links to other .typ files should reference the label
-/// at the start of each document section. This function transforms relative .typ
-/// links to label references using the document's filename.
-pub fn transform_typ_links_to_labels(
-    source: &str,
-    spine_files: &[PathBuf],
-    _current_file: &Path,
-) -> Result<String> {
-    // Build map: filename (without extension) -> sanitized label name
-    let mut label_map: HashMap<String, String> = HashMap::new();
-    for spine_file in spine_files {
-        if let Some(filename) = spine_file.file_name() {
-            let filename_str = filename.to_string_lossy();
-            // Remove .typ extension
-            let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
-            let label = sanitize_label_name(stem);
-            label_map.insert(stem.to_string(), label);
-        }
-    }
-
-    // Regex to match Typst link function calls
-    // Captures: #link("url")[body] or #link("url", body)
-    let mut errors = Vec::new();
-    let result = TYPST_LINK_PATTERN.replace_all(source, |caps: &regex::Captures| {
-        let url = &caps[1];
-        let body = &caps[2];
-
-        // Check if this is a .typ link
-        let is_typ_link = url.ends_with(TYP_EXT);
-
-        // Check if it's an external URL or fragment-only link
-        let is_external = url.starts_with("http://")
-            || url.starts_with("https://")
-            || url.starts_with("mailto:");
-        let is_fragment = url.starts_with('#');
-
-        if is_typ_link && !is_external {
-            // Extract the filename from the path
-            let path = Path::new(url);
-            let filename = path
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or(url);
-
-            // Remove .typ extension for lookup
-            let stem = filename.strip_suffix(TYP_EXT).unwrap_or(filename);
-
-            // Look up in spine files map
-            if let Some(label) = label_map.get(stem) {
-                // Transform to label reference: #link(<label>)[...]
-                format!("#link(<{}>){}", label, body)
-            } else {
-                // File not in spine - collect error
-                errors.push(format!(
-                    "Link target '{}' not found in spine. Add it to the spine in rheo.toml or remove the link.",
-                    filename
-                ));
-                // Keep original link unchanged in output
-                format!("#link(\"{}\"){}", url, body)
-            }
-        } else if is_fragment {
-            // Preserve fragment-only links unchanged
-            format!("#link(\"{}\"){}", url, body)
-        } else {
-            // Preserve external URLs unchanged
-            format!("#link(\"{}\"){}", url, body)
-        }
-    });
-
-    // If we collected any errors, return the first one
-    if let Some(error_msg) = errors.first() {
-        return Err(RheoError::project_config(error_msg));
-    }
-
-    Ok(result.to_string())
-}
-
-/// Concatenate multiple Typst source files into a single source for merged PDF compilation.
-///
-/// Each file in the spine is:
-/// 1. Read from disk
-/// 2. Title extracted from `#set document(title: [...])` or filename
-/// 3. Prefixed with a level-1 heading containing the title and a label derived from filename
-/// 4. Links to other .typ files transformed to label references
-/// 5. Concatenated together
-pub fn concatenate_typst_sources(spine_files: &[PathBuf]) -> Result<String> {
-    // Check for duplicate filenames
-    let mut seen_filenames: HashSet<String> = HashSet::new();
-    let mut duplicate_paths: Vec<(String, PathBuf, PathBuf)> = Vec::new();
-
-    for spine_file in spine_files {
-        if let Some(filename) = spine_file.file_name() {
-            let filename_str = filename.to_string_lossy().to_string();
-
-            // Check if we've seen this filename before
-            if !seen_filenames.insert(filename_str.clone()) {
-                // Find the first occurrence
-                if let Some(first_occurrence) = spine_files.iter().find(|f| {
-                    f.file_name()
-                        .map(|n| n.to_string_lossy() == filename.to_string_lossy())
-                        .unwrap_or(false)
-                }) {
-                    duplicate_paths.push((
-                        filename_str.clone(),
-                        first_occurrence.clone(),
-                        spine_file.clone(),
-                    ));
-                }
-            }
-        }
-    }
-
-    // Report first duplicate error if any
-    if let Some((filename, first_path, second_path)) = duplicate_paths.first() {
-        return Err(RheoError::project_config(format!(
-            "duplicate filename in spine: '{}' appears at both '{}' and '{}'",
-            filename,
-            first_path.display(),
-            second_path.display()
-        )));
-    }
-
-    // Concatenate all sources
-    let mut concatenated = String::new();
-
-    for spine_file in spine_files {
-        // Read source content
-        let source = fs::read_to_string(spine_file).map_err(|e| {
-            RheoError::project_config(format!(
-                "failed to read spine file '{}': {}",
-                spine_file.display(),
-                e
-            ))
-        })?;
-
-        // Derive label and title from filename (without extension)
-        let (label, title) = if let Some(filename) = spine_file.file_name() {
-            let filename_str = filename.to_string_lossy();
-            let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
-            let label = sanitize_label_name(stem);
-            let title = extract_document_title(&source, stem);
-            (label, title)
-        } else {
-            return Err(RheoError::project_config(format!(
-                "invalid filename in spine: '{}'",
-                spine_file.display()
-            )));
-        };
-
-        // Transform .typ links to labels
-        let transformed_source = transform_typ_links_to_labels(&source, spine_files, spine_file)?;
-
-        // Inject heading with label attached to metadata: #metadata(title) <label>
-        concatenated.push_str(&format!(
-            "#metadata(\"{}\") <{}>{}\n\n",
-            title, label, transformed_source
-        ));
-    }
-
-    Ok(concatenated)
-}
-
 // ============================================================================
 // Merged PDF compilation (implementation functions)
 // ============================================================================
@@ -350,14 +206,18 @@ fn compile_pdf_merged_impl_fresh(
     config: &PdfConfig,
     output_path: &Path,
     root: &Path,
-    repo_root: &Path,
 ) -> Result<()> {
-    // Generate spine: ordered list of .typ files
-    let spine = generate_spine(root, config.merge.as_ref(), false)?;
-    debug!(file_count = spine.len(), "generated PDF spine");
+    let merge = config.merge.as_ref().ok_or_else(|| {
+        RheoError::project_config("PDF merge configuration required for merged compilation")
+    })?;
 
-    // Concatenate sources with labels and transformed links
-    let concatenated_source = concatenate_typst_sources(&spine)?;
+    // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
+    let rheo_spine = RheoSpine::build(root, Some(merge), crate::OutputFormat::Pdf, &merge.title)?;
+
+    debug!(file_count = rheo_spine.source.len(), "built PDF spine");
+
+    // Extract concatenated source (already merged into single source)
+    let concatenated_source = &rheo_spine.source[0];
     debug!(
         source_length = concatenated_source.len(),
         "concatenated sources"
@@ -378,8 +238,8 @@ fn compile_pdf_merged_impl_fresh(
     debug!(temp_path = %temp_path.display(), "created temporary file");
 
     // Create RheoWorld with temp file as main
-    // remove_typ_links=false because links already transformed to labels
-    let world = RheoWorld::new(root, temp_path, repo_root, false)?;
+    // output_format=None because links already transformed to labels by RheoSpine
+    let world = RheoWorld::new(root, temp_path, None)?;
 
     // Compile to PagedDocument
     info!(output = %output_path.display(), "compiling merged PDF");
@@ -411,12 +271,17 @@ fn compile_pdf_merged_impl(
     output_path: &Path,
     root: &Path,
 ) -> Result<()> {
-    // Generate spine: ordered list of .typ files
-    let spine = generate_spine(root, config.merge.as_ref(), false)?;
-    debug!(file_count = spine.len(), "generated PDF spine");
+    let merge = config.merge.as_ref().ok_or_else(|| {
+        RheoError::project_config("PDF merge configuration required for merged compilation")
+    })?;
 
-    // Concatenate sources with labels and transformed links
-    let concatenated_source = concatenate_typst_sources(&spine)?;
+    // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
+    let rheo_spine = RheoSpine::build(root, Some(merge), crate::OutputFormat::Pdf, &merge.title)?;
+
+    debug!(file_count = rheo_spine.source.len(), "built PDF spine");
+
+    // Extract concatenated source (already merged into single source)
+    let concatenated_source = &rheo_spine.source[0];
     debug!(
         source_length = concatenated_source.len(),
         "concatenated sources"
@@ -494,45 +359,13 @@ pub fn compile_pdf_new(options: RheoCompileOptions, pdf_config: Option<&PdfConfi
             let config = pdf_config.ok_or_else(|| {
                 RheoError::project_config("PDF config required for merged compilation")
             })?;
-            compile_pdf_merged_impl_fresh(
-                config,
-                &options.output,
-                &options.root,
-                &options.repo_root,
-            )
+            compile_pdf_merged_impl_fresh(config, &options.output, &options.root)
         }
         // Single file, incremental
         (false, Some(world)) => compile_pdf_single_impl(world, &options.output),
         // Single file, fresh
-        (false, None) => compile_pdf_single_impl_fresh(
-            &options.input,
-            &options.output,
-            &options.root,
-            &options.repo_root,
-        ),
-    }
-}
-
-// ============================================================================
-// FormatCompiler trait implementation
-// ============================================================================
-
-/// PDF compiler implementation
-pub use crate::formats::compiler::PdfCompiler;
-
-impl FormatCompiler for PdfCompiler {
-    type Config = Option<PdfConfig>;
-
-    fn format(&self) -> OutputFormat {
-        OutputFormat::Pdf
-    }
-
-    fn supports_per_file(&self, config: &Self::Config) -> bool {
-        // Only per-file if not merging
-        config.as_ref().and_then(|c| c.merge.as_ref()).is_none()
-    }
-
-    fn compile(&self, options: RheoCompileOptions, config: &Self::Config) -> Result<()> {
-        compile_pdf_new(options, config.as_ref())
+        (false, None) => {
+            compile_pdf_single_impl_fresh(&options.input, &options.output, &options.root)
+        }
     }
 }

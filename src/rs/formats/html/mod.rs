@@ -1,8 +1,6 @@
 use crate::compile::RheoCompileOptions;
 use crate::config::HtmlOptions;
-use crate::constants::HTML_EXT;
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
-use crate::formats::compiler::FormatCompiler;
 use crate::postprocess;
 use crate::world::RheoWorld;
 use crate::{OutputFormat, Result, RheoError};
@@ -10,14 +8,9 @@ use std::path::Path;
 use tracing::{debug, info};
 use typst_html::HtmlDocument;
 
-pub fn compile_html_to_document(
-    input: &Path,
-    root: &Path,
-    repo_root: &Path,
-) -> Result<HtmlDocument> {
-    // Create the compilation world
-    // For HTML compilation, keep .typ links so we can transform them to .html
-    let world = RheoWorld::new(root, input, repo_root, false)?;
+pub fn compile_html_to_document(input: &Path, root: &Path) -> Result<HtmlDocument> {
+    // Create the compilation world with HTML format for link transformations
+    let world = RheoWorld::new(root, input, Some(OutputFormat::Html))?;
 
     // Compile the document to HtmlDocument
     info!(input = %input.display(), "compiling to HTML");
@@ -43,28 +36,21 @@ pub fn compile_document_to_string(document: &HtmlDocument) -> Result<String> {
 
 /// Implementation: Compile a Typst document to HTML (fresh compilation)
 ///
-/// Uses the typst library with:
-/// - Root set to content_dir or project root (for local file imports across directories)
-/// - Shared resources available via repo_root in src/typst/ (rheo.typ)
+/// Uses format-aware RheoWorld for automatic link transformation (.typ → .html).
+/// Transformations happen on-demand during Typst compilation (including imports).
 ///
-/// Pipeline: Compile → Export → Transform Links → Inject Head → Write
+/// Pipeline: Compile (with transformations) → Export → Inject Head → Write
 fn compile_html_impl_fresh(
     input: &Path,
     output: &Path,
     root: &Path,
-    repo_root: &Path,
     html_options: &HtmlOptions,
 ) -> Result<()> {
-    // 1. Compile to HtmlDocument
-    let doc = compile_html_to_document(input, root, repo_root)?;
-
-    // 2. Export to raw HTML string
+    // Compile to HTML document (transformations happen in RheoWorld)
+    let doc = compile_html_to_document(input, root)?;
     let html_string = compile_document_to_string(&doc)?;
 
-    // 3. Transform .typ links to .html links
-    let html_string = postprocess::transform_links(&html_string, input, root, HTML_EXT)?;
-
-    // 4. Inject CSS and font links into <head>
+    // Inject CSS and font links into <head>
     let stylesheets: Vec<&str> = html_options
         .stylesheets
         .iter()
@@ -73,7 +59,7 @@ fn compile_html_impl_fresh(
     let fonts: Vec<&str> = html_options.fonts.iter().map(|s| s.as_str()).collect();
     let html_string = postprocess::inject_head_links(&html_string, &stylesheets, &fonts)?;
 
-    // 5. Write to file
+    // Write to file
     debug!(size = html_string.len(), "writing HTML file");
     std::fs::write(output, &html_string)
         .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
@@ -84,27 +70,27 @@ fn compile_html_impl_fresh(
 
 /// Implementation: Compile a Typst document to HTML (incremental compilation)
 ///
-/// This function reuses an existing RheoWorld instance, enabling incremental
-/// compilation through Typst's comemo caching system. The World should have
-/// its main file set via `set_main()` and `reset()` called before compilation.
+/// Uses format-aware RheoWorld for automatic link transformation (.typ → .html).
+/// Reuses existing RheoWorld instance for compilation (enabling incremental compilation
+/// through Typst's comemo caching system).
 ///
-/// Pipeline: Compile → Export → Transform Links → Inject Head → Write
+/// Pipeline: Update World → Compile (with transformations) → Export → Inject Head → Write
 ///
 /// # Arguments
-/// * `world` - Existing RheoWorld instance with main file already set
-/// * `input` - Path to the source .typ file (for link transformation)
+/// * `world` - Existing RheoWorld instance (will be updated with new main file)
+/// * `input` - Path to the source .typ file
 /// * `output` - Path where the HTML should be written
-/// * `root` - Project root path (for link validation)
+/// * `root` - Project root path (unused, for API consistency)
+/// * `repo_root` - Repository root path (unused, for API consistency)
 /// * `html_options` - HTML-specific options (stylesheets, fonts)
 fn compile_html_impl(
     world: &RheoWorld,
     input: &Path,
     output: &Path,
-    root: &Path,
     html_options: &HtmlOptions,
 ) -> Result<()> {
-    // 1. Compile the document to HtmlDocument
-    info!("compiling to HTML");
+    // Compile to HTML document (transformations happen in RheoWorld)
+    info!(input = %input.display(), "compiling to HTML");
     let result = typst::compile::<HtmlDocument>(world);
 
     // Filter out HTML development warning
@@ -115,15 +101,12 @@ fn compile_html_impl(
 
     let document = unwrap_compilation_result(Some(world), result, Some(html_filter))?;
 
-    // 2. Export to HTML string
+    // Export to HTML string
     debug!(output = %output.display(), "exporting to HTML");
     let html_string =
         typst_html::html(&document).map_err(|e| handle_export_errors(e, ExportErrorType::Html))?;
 
-    // 3. Transform .typ links to .html links
-    let html_string = postprocess::transform_links(&html_string, input, root, HTML_EXT)?;
-
-    // 4. Inject CSS and font links into <head>
+    // Inject CSS and font links into <head>
     let stylesheets: Vec<&str> = html_options
         .stylesheets
         .iter()
@@ -132,7 +115,7 @@ fn compile_html_impl(
     let fonts: Vec<&str> = html_options.fonts.iter().map(|s| s.as_str()).collect();
     let html_string = postprocess::inject_head_links(&html_string, &stylesheets, &fonts)?;
 
-    // 5. Write to file
+    // Write to file
     debug!(size = html_string.len(), "writing HTML file");
     std::fs::write(output, &html_string)
         .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
@@ -160,45 +143,14 @@ fn compile_html_impl(
 pub fn compile_html_new(options: RheoCompileOptions, html_options: HtmlOptions) -> Result<()> {
     match options.world {
         // Incremental compilation (reuse existing world)
-        Some(world) => compile_html_impl(
-            world,
-            &options.input,
-            &options.output,
-            &options.root,
-            &html_options,
-        ),
+        Some(world) => compile_html_impl(world, &options.input, &options.output, &html_options),
         // Fresh compilation (create new world)
         None => compile_html_impl_fresh(
             &options.input,
             &options.output,
             &options.root,
-            &options.repo_root,
             &html_options,
         ),
-    }
-}
-
-// ============================================================================
-// FormatCompiler trait implementation
-// ============================================================================
-
-/// HTML compiler implementation
-pub use crate::formats::compiler::HtmlCompiler;
-
-impl FormatCompiler for HtmlCompiler {
-    type Config = HtmlOptions;
-
-    fn format(&self) -> OutputFormat {
-        OutputFormat::Html
-    }
-
-    fn supports_per_file(&self, _config: &Self::Config) -> bool {
-        // HTML always supports per-file
-        true
-    }
-
-    fn compile(&self, options: RheoCompileOptions, config: &Self::Config) -> Result<()> {
-        compile_html_new(options, config.clone())
     }
 }
 

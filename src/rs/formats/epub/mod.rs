@@ -1,14 +1,13 @@
 pub mod package;
 mod xhtml;
 
-use package::{Identifier, Item, ItemRef, Manifest, Meta, Metadata, Package, Spine};
+use package::{Item, ItemRef, Package};
 use xhtml::HtmlInfo;
 
 use crate::compile::RheoCompileOptions;
 use crate::config::{EpubConfig, EpubOptions};
-use crate::constants::XHTML_EXT;
-use crate::formats::compiler::FormatCompiler;
-use crate::{OutputFormat, Result, RheoError};
+use crate::links::spine::RheoSpine;
+use crate::{Result, RheoError};
 use anyhow::Result as AnyhowResult;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
@@ -126,54 +125,42 @@ pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> AnyhowResult
     const INTERNAL_UNIQUE_ID: &str = "uid";
 
     // If the user did not provide a unique ID, we generate a UUID for them.
-    let identifier = {
-        let content = match &config.identifier {
-            Some(id) => id.into(),
-            None => eco_format!("urn:uuid:{}", Uuid::new_v4()),
-        };
-        Identifier {
-            id: INTERNAL_UNIQUE_ID.into(),
-            content,
-        }
+    let identifier_content = match &config.identifier {
+        Some(id) => id.into(),
+        None => eco_format!("urn:uuid:{}", Uuid::new_v4()),
     };
 
-    // Concatenate all authors into a comma-separated string.
-    let creator = (!info.author.is_empty()).then(|| info.author.join(", ").into());
+    // Start building the package
+    let mut builder = Package::builder(title)
+        .unique_identifier(INTERNAL_UNIQUE_ID)
+        .lang(language.clone())
+        .identifier(INTERNAL_UNIQUE_ID, identifier_content)
+        .language(language);
 
-    let date = config.date.as_ref().map(date_format);
+    // Concatenate all authors into a comma-separated string
+    if !info.author.is_empty() {
+        builder = builder.creator(info.author.join(", "));
+    }
 
-    let meta = vec![
-        // Record a timestamp for when this document is generated.
-        Meta {
-            property: "dcterms:modified".into(),
-            content: date_format(&chrono::Utc::now()),
-        },
-        // Indicate that this document is a portable EPUB.
-        Meta {
-            property: "ppub:valid".into(),
-            content: ".".into(),
-        },
-    ];
+    // Set date if provided
+    if let Some(ref date) = config.date {
+        builder = builder.date(date_format(date));
+    }
 
-    let metadata = Metadata {
-        identifier,
-        title,
-        language: language.clone(),
-        creator,
-        date,
-        meta,
-    };
+    // Add metadata elements
+    builder = builder
+        .add_meta("dcterms:modified", date_format(&chrono::Utc::now()))
+        .add_meta("ppub:valid", ".");
 
-    let mut manifest_items = Vec::new();
-    let mut spine_itemrefs = Vec::new();
-
-    manifest_items.push(Item {
+    // Add navigation item to manifest
+    builder = builder.add_item(Item {
         id: "nav".into(),
         href: IriRefBuf::new("nav.xhtml".into()).unwrap(),
         media_type: XHTML_MEDIATYPE.into(),
         properties: Some("nav".into()), // required by spec
     });
 
+    // Add all content items to manifest and spine
     for item in items {
         let mut prop_list = eco_vec![];
         if item.info.scripted {
@@ -186,35 +173,23 @@ pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> AnyhowResult
 
         let id = item.id();
 
-        manifest_items.push(Item {
-            id: id.clone(),
-            href: item.href.clone(),
-            media_type: XHTML_MEDIATYPE.into(),
-            properties,
-        });
-
-        spine_itemrefs.push(ItemRef {
-            id: Some(eco_format!("{id}ref")),
-            idref: id,
-        });
+        builder = builder
+            .add_item(Item {
+                id: id.clone(),
+                href: item.href.clone(),
+                media_type: XHTML_MEDIATYPE.into(),
+                properties,
+            })
+            .add_spine_ref(ItemRef {
+                id: Some(eco_format!("{id}ref")),
+                idref: id,
+            });
     }
 
-    let manifest = Manifest {
-        items: manifest_items,
-    };
-    let spine = Spine {
-        itemref: spine_itemrefs,
-    };
-
-    let package = Package {
-        version: "3.0".into(),
-        unique_identifier: INTERNAL_UNIQUE_ID.into(),
-        lang: language,
-        prefix: "ppub: http://example.com/ppub".into(), // to support portable EPUB properties
-        metadata,
-        manifest,
-        spine,
-    };
+    // Build and validate the package
+    let package = builder
+        .build()
+        .map_err(|e| anyhow::anyhow!("Package validation failed: {}", e))?;
 
     Ok(package.to_xml()?)
 }
@@ -273,20 +248,33 @@ pub fn zip_epub(
 
 /// Implementation: Compile multiple Typst files to EPUB format.
 ///
-/// Generates a spine from the EPUB configuration, compiles each file to HTML,
+/// Generates a spine from the EPUB configuration using RheoSpine for AST-based
+/// link transformation (.typ → .xhtml), compiles each file to HTML,
 /// generates navigation, and packages everything into a .epub (zip) file.
-fn compile_epub_impl(
-    config: &EpubConfig,
-    epub_path: &Path,
-    root: &Path,
-    repo_root: &Path,
-) -> Result<()> {
+fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
-        let spine = crate::spine::generate_spine(root, config.merge.as_ref(), false)?;
+        // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
+        let rheo_spine = RheoSpine::build(
+            root,
+            config.merge.as_ref(),
+            crate::OutputFormat::Epub,
+            config
+                .merge
+                .as_ref()
+                .map(|m| m.title.as_str())
+                .unwrap_or("Untitled"),
+        )?;
 
+        // Get the spine file paths
+        let spine = crate::links::spine::generate_spine(root, config.merge.as_ref(), false)?;
+
+        // Create EpubItems from transformed sources
         let mut items = spine
-            .into_iter()
-            .map(|path| EpubItem::create(path, root, repo_root))
+            .iter()
+            .zip(rheo_spine.source.iter())
+            .map(|(path, transformed_source)| {
+                EpubItem::create_from_source(path.clone(), transformed_source, root)
+            })
             .collect::<AnyhowResult<Vec<_>>>()?;
 
         let nav_xhtml = generate_nav_xhtml(&mut items)?;
@@ -317,36 +305,7 @@ fn compile_epub_impl(
 pub fn compile_epub_new(options: RheoCompileOptions, epub_options: EpubOptions) -> Result<()> {
     // Note: EPUB doesn't support incremental compilation yet, so we ignore options.world
     // and always do fresh compilation
-    compile_epub_impl(
-        &epub_options.config,
-        &options.output,
-        &options.root,
-        &options.repo_root,
-    )
-}
-
-// ============================================================================
-// FormatCompiler trait implementation
-// ============================================================================
-
-/// EPUB compiler implementation
-pub use crate::formats::compiler::EpubCompiler;
-
-impl FormatCompiler for EpubCompiler {
-    type Config = EpubOptions;
-
-    fn format(&self) -> OutputFormat {
-        OutputFormat::Epub
-    }
-
-    fn supports_per_file(&self, _config: &Self::Config) -> bool {
-        // EPUB never supports per-file (always merged)
-        false
-    }
-
-    fn compile(&self, options: RheoCompileOptions, config: &Self::Config) -> Result<()> {
-        compile_epub_new(options, config.clone())
-    }
+    compile_epub_impl(&epub_options.config, &options.output, &options.root)
 }
 
 // ============================================================================
@@ -376,17 +335,53 @@ fn text_to_id(s: &str) -> EcoString {
 }
 
 impl EpubItem {
-    pub fn create(path: PathBuf, root: &Path, repo_root: &Path) -> AnyhowResult<Self> {
+    pub fn create(path: PathBuf, root: &Path) -> AnyhowResult<Self> {
         info!(file = %path.display(), "compiling spine file");
-        let document = crate::formats::html::compile_html_to_document(&path, root, repo_root)?;
+        let document = crate::formats::html::compile_html_to_document(&path, root)?;
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
         let (heading_ids, outline) = Self::outline(&document, &href);
-        // Export to HTML and transform links for XHTML
+        // Export to HTML (links already transformed by RheoWorld)
         let html_string = crate::formats::html::compile_document_to_string(&document)?;
-        let html_string =
-            crate::postprocess::transform_links(&html_string, &path, root, XHTML_EXT)?;
+        let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
+
+        Ok(EpubItem {
+            href,
+            document,
+            xhtml,
+            info,
+            outline: Some(outline),
+        })
+    }
+
+    /// Create EpubItem from RheoSpine-transformed source (links already .typ → .xhtml)
+    pub fn create_from_source(
+        path: PathBuf,
+        transformed_source: &str,
+        root: &Path,
+    ) -> AnyhowResult<Self> {
+        use std::io::Write;
+
+        info!(file = %path.display(), "compiling spine file with transformed source");
+
+        // Write transformed source to temporary file
+        let mut temp_file = tempfile::NamedTempFile::new_in(root)?;
+        temp_file.write_all(transformed_source.as_bytes())?;
+        temp_file.flush()?;
+
+        let temp_path = temp_file.path();
+
+        // Compile to HTML document
+        let document = crate::formats::html::compile_html_to_document(temp_path, root)?;
+
+        let parent = path.parent().unwrap();
+        let bare_file = path.strip_prefix(parent).unwrap();
+        let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
+        let (heading_ids, outline) = Self::outline(&document, &href);
+
+        // Export to HTML (links already .typ → .xhtml from RheoSpine)
+        let html_string = crate::formats::html::compile_document_to_string(&document)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
         Ok(EpubItem {

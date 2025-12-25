@@ -9,11 +9,9 @@ use crate::constants::{HTML_EXT, XHTML_EXT};
 
 pub mod dom;
 pub mod html_head;
-pub mod links;
 
 // Re-export commonly used functions
 pub use html_head::inject_head_links;
-pub use links::transform_links;
 
 use std::path::PathBuf;
 

@@ -7,6 +7,8 @@
 
 #set document(title: [In Perpetuity - #emph[Severance] [s1/e3]])
 
+#title()
+
 #image("img/severance-s1e3-shot1.png")
 
 = We need to talk about Ms. Cobel

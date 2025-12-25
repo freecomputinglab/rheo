@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::{Result, RheoError};
+use crate::{OutputFormat, Result, RheoError};
 use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
 use parking_lot::Mutex;
@@ -22,10 +22,6 @@ pub struct RheoWorld {
     /// The root directory for resolving imports (document directory).
     root: PathBuf,
 
-    /// The repository root directory (for future use).
-    #[allow(dead_code)]
-    repo_root: PathBuf,
-
     /// The main file to compile.
     main: FileId,
 
@@ -44,8 +40,8 @@ pub struct RheoWorld {
     /// Package storage for downloading and caching packages.
     package_storage: PackageStorage,
 
-    /// Whether to remove relative .typ links from the main file (for PDF/EPUB).
-    remove_typ_links: bool,
+    /// Output format for link transformations (None = no transformation).
+    output_format: Option<OutputFormat>,
 }
 
 /// Holds the processed data for a file ID.
@@ -62,14 +58,8 @@ impl RheoWorld {
     /// # Arguments
     /// * `root` - The root directory for resolving imports (document directory)
     /// * `main_file` - The main .typ file to compile
-    /// * `repo_root` - The repository root directory (for rheo.typ imports)
-    /// * `remove_typ_links` - Whether to remove relative .typ links (for PDF/EPUB)
-    pub fn new(
-        root: &Path,
-        main_file: &Path,
-        repo_root: &Path,
-        remove_typ_links: bool,
-    ) -> Result<Self> {
+    /// * `output_format` - Output format for link transformations (None = no transformation)
+    pub fn new(root: &Path, main_file: &Path, output_format: Option<OutputFormat>) -> Result<Self> {
         // Resolve paths
         let root = root.canonicalize().map_err(|e| {
             RheoError::path(
@@ -81,12 +71,6 @@ impl RheoWorld {
             RheoError::path(
                 main_file,
                 format!("failed to canonicalize main file: {}", e),
-            )
-        })?;
-        let repo_root = repo_root.canonicalize().map_err(|e| {
-            RheoError::path(
-                repo_root,
-                format!("failed to canonicalize repo root: {}", e),
             )
         })?;
 
@@ -116,14 +100,13 @@ impl RheoWorld {
 
         Ok(Self {
             root,
-            repo_root,
             main,
             library: LazyHash::new(library),
             book: font_search.book.into(),
             fonts: font_search.fonts,
             slots: Mutex::new(HashMap::new()),
             package_storage,
-            remove_typ_links,
+            output_format,
         })
     }
 
@@ -162,28 +145,27 @@ impl RheoWorld {
         Ok(())
     }
 
-    /// Calculate relative path from root to repo_root for rheo.typ import.
-    #[allow(dead_code)]
-    fn rheo_import_path(&self) -> Result<String> {
-        let rheo_typ = self.repo_root.join("src/typ/rheo.typ");
+    /// Transform links in source text based on output format.
+    ///
+    /// Applies AST-based link transformations:
+    /// - HTML: .typ → .html
+    /// - EPUB: .typ → .xhtml
+    /// - PDF: Removes .typ links (or converts to labels if spine is provided)
+    ///
+    /// # Arguments
+    /// * `text` - Source text to transform
+    /// * `id` - File ID (for error reporting and path context)
+    /// * `format` - Output format to transform for
+    ///
+    /// # Returns
+    /// * `FileResult<String>` - Transformed source text
+    fn transform_links(&self, text: &str, id: FileId, format: &OutputFormat) -> FileResult<String> {
+        use crate::links::transformer::LinkTransformer;
 
-        // Calculate relative path from root to rheo.typ
-        let rel_path = pathdiff::diff_paths(&rheo_typ, &self.root).ok_or_else(|| {
-            RheoError::path(&rheo_typ, "failed to calculate relative path to rheo.typ")
-        })?;
-
-        // Convert to Typst import format (forward slashes, must start with ./)
-        let mut path_str = rel_path
-            .to_str()
-            .ok_or_else(|| RheoError::path(&rel_path, "path contains invalid UTF-8"))?
-            .replace('\\', "/");
-
-        // Ensure path starts with ./ for relative imports
-        if !path_str.starts_with("./") && !path_str.starts_with("../") {
-            path_str = format!("./{}", path_str);
-        }
-
-        Ok(path_str)
+        let transformer = LinkTransformer::new(*format);
+        transformer
+            .transform_source(text, id.vpath().as_rootless_path(), &self.root)
+            .map_err(|e| FileError::Other(Some(e.to_string().into())))
     }
 
     /// Get the absolute path for a file ID.
@@ -304,11 +286,11 @@ impl World for RheoWorld {
             let rheo_content = include_str!("../typ/rheo.typ");
             let template_inject = format!("{}\n#show: rheo_template\n\n", rheo_content);
             text = format!("{}{}", template_inject, text);
+        }
 
-            // Remove relative .typ links if requested (for PDF/EPUB)
-            if self.remove_typ_links {
-                text = crate::compile::remove_relative_typ_links(&text);
-            }
+        // Apply link transformations for ALL .typ files if output format is set
+        if let Some(format) = &self.output_format {
+            text = self.transform_links(&text, id, format)?;
         }
 
         let source = Source::new(id, text);
@@ -421,24 +403,6 @@ impl<'a> Files<'a> for RheoWorld {
                 given,
                 max: source.len_lines(),
             })
-    }
-}
-
-/// Silent progress tracker for package downloads (kept for future use).
-#[allow(dead_code)]
-struct SilentProgress;
-
-impl typst_kit::download::Progress for SilentProgress {
-    fn print_start(&mut self) {
-        // Silent - no output
-    }
-
-    fn print_progress(&mut self, _state: &typst_kit::download::DownloadState) {
-        // Silent - no output
-    }
-
-    fn print_finish(&mut self, _state: &typst_kit::download::DownloadState) {
-        // Silent - no output
     }
 }
 

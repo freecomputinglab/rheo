@@ -1,3 +1,7 @@
+// @rheo:test
+// @rheo:expect error
+// @rheo:error-patterns "error", "type_error.typ", "│"
+// @rheo:formats pdf
 // Test file with type error
 // This should trigger a Typst compilation error
 

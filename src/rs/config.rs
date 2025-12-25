@@ -5,33 +5,6 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::debug;
 
-/// PDF compilation options.
-///
-/// Controls PDF-specific behavior like merged vs single-file output.
-#[derive(Debug, Clone)]
-pub struct PdfOptions {
-    /// Whether this is a merged PDF compilation
-    pub merged: bool,
-}
-
-impl PdfOptions {
-    /// Create options for single-file PDF compilation.
-    pub fn single() -> Self {
-        Self { merged: false }
-    }
-
-    /// Create options for merged PDF compilation.
-    pub fn merged() -> Self {
-        Self { merged: true }
-    }
-}
-
-impl Default for PdfOptions {
-    fn default() -> Self {
-        Self::single()
-    }
-}
-
 /// HTML compilation options.
 ///
 /// Controls HTML-specific behavior like stylesheet and font injection.

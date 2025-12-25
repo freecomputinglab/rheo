@@ -1,5 +1,5 @@
 use crate::config::Merge;
-use crate::formats::pdf::filename_to_title;
+use crate::formats::pdf::DocumentTitle;
 use crate::{Result, RheoConfig, RheoError};
 use std::path::{Path, PathBuf};
 use tracing::debug;
@@ -212,7 +212,7 @@ fn apply_smart_defaults(
     mode: ProjectMode,
 ) -> RheoConfig {
     // Generate human-readable title from project/file name
-    let title = filename_to_title(project_name);
+    let title = DocumentTitle::to_readable_name(project_name);
 
     // Apply EPUB defaults if merge not configured
     if config.epub.merge.is_none() {

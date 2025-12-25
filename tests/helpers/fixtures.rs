@@ -20,6 +20,7 @@ pub enum TestCase {
         name: String,
         file_path: PathBuf,
         formats: Vec<OutputFormat>,
+        metadata: Option<super::markers::TestMetadata>,
     },
 }
 
@@ -35,11 +36,12 @@ impl TestCase {
                 .replace(':', "_colon")
                 .replace('-', "_minus");
 
-            // Read test markers to determine formats
-            let formats = read_test_metadata(file_path)
-                .map(|metadata| {
-                    metadata
-                        .formats
+            // Read test markers to determine formats and metadata
+            let metadata = read_test_metadata(file_path);
+            let formats = metadata
+                .as_ref()
+                .map(|m| {
+                    m.formats
                         .iter()
                         .filter_map(|f| match f.as_str() {
                             "html" => Some(OutputFormat::Html),
@@ -55,18 +57,20 @@ impl TestCase {
                 name,
                 file_path: file_path.into(),
                 formats,
+                metadata,
             };
         }
 
         // Otherwise, auto-detect based on filesystem metadata
         let path = Path::new(raw_path);
-        let metadata = fs::metadata(path).unwrap();
+        let fs_metadata = fs::metadata(path).unwrap();
         let name = path.file_stem().unwrap().to_str().unwrap().to_string();
-        if metadata.is_file() {
-            let formats = read_test_metadata(path)
-                .map(|metadata| {
-                    metadata
-                        .formats
+        if fs_metadata.is_file() {
+            let test_metadata = read_test_metadata(path);
+            let formats = test_metadata
+                .as_ref()
+                .map(|m| {
+                    m.formats
                         .iter()
                         .filter_map(|f| match f.as_str() {
                             "html" => Some(OutputFormat::Html),
@@ -82,8 +86,9 @@ impl TestCase {
                 name,
                 file_path: path.into(),
                 formats,
+                metadata: test_metadata,
             }
-        } else if metadata.is_dir() {
+        } else if fs_metadata.is_dir() {
             Self::Directory {
                 name,
                 project_path: path.into(),
@@ -139,6 +144,14 @@ impl TestCase {
     /// Check if this test case is a single file test
     pub fn is_single_file(&self) -> bool {
         matches!(self, TestCase::SingleFile { .. })
+    }
+
+    /// Get test metadata for SingleFile tests, None for Directory tests
+    pub fn metadata(&self) -> Option<&super::markers::TestMetadata> {
+        match self {
+            TestCase::SingleFile { metadata, .. } => metadata.as_ref(),
+            TestCase::Directory { .. } => None,
+        }
     }
 }
 

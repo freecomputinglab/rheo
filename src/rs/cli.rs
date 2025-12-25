@@ -1,3 +1,4 @@
+use crate::CompilationResults;
 use crate::compile::RheoCompileOptions;
 use crate::config::{EpubOptions, HtmlOptions};
 use crate::formats::{epub, html, pdf};
@@ -23,7 +24,7 @@ impl FormatFlags {
 /// Compilation mode for perform_compilation
 enum CompilationMode<'a> {
     /// Fresh compilation (creates new World for each file)
-    Fresh { root: PathBuf, repo_root: PathBuf },
+    Fresh { root: PathBuf },
     /// Incremental compilation (reuses existing World)
     Incremental {
         world: &'a mut crate::world::RheoWorld,
@@ -38,8 +39,6 @@ struct CompilationContext {
     formats: Vec<OutputFormat>,
     /// Output configuration with resolved build directory
     output_config: crate::output::OutputConfig,
-    /// Repository root directory
-    repo_root: PathBuf,
     /// Compilation root (content_dir or project root)
     compilation_root: PathBuf,
 }
@@ -261,7 +260,7 @@ fn perform_compilation<'a>(
     }
 
     // Track success/failure per format for graceful degradation
-    let mut results = crate::CompilationResults::new();
+    let mut results = CompilationResults::new();
 
     // Determine which formats should be compiled per-file
     let per_file_formats = get_per_file_formats(&project.config, formats);
@@ -285,8 +284,8 @@ fn perform_compilation<'a>(
         if per_file_formats.contains(&OutputFormat::Pdf) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
             let options = match &mode {
-                CompilationMode::Fresh { root, repo_root } => {
-                    RheoCompileOptions::new(typ_file, &output_path, root, repo_root)
+                CompilationMode::Fresh { root } => {
+                    RheoCompileOptions::new(typ_file, &output_path, root)
                 }
                 CompilationMode::Incremental { .. } => {
                     if let CompilationMode::Incremental { world } = &mut mode {
@@ -294,7 +293,6 @@ fn perform_compilation<'a>(
                             typ_file,
                             &output_path,
                             &project.root,
-                            PathBuf::new(),
                             world,
                         )
                     } else {
@@ -318,8 +316,8 @@ fn perform_compilation<'a>(
                 .join(&filename)
                 .with_extension("html");
             let options = match &mode {
-                CompilationMode::Fresh { root, repo_root } => {
-                    RheoCompileOptions::new(typ_file, &output_path, root, repo_root)
+                CompilationMode::Fresh { root } => {
+                    RheoCompileOptions::new(typ_file, &output_path, root)
                 }
                 CompilationMode::Incremental { .. } => {
                     if let CompilationMode::Incremental { world } = &mut mode {
@@ -327,7 +325,6 @@ fn perform_compilation<'a>(
                             typ_file,
                             &output_path,
                             &project.root,
-                            PathBuf::new(),
                             world,
                         )
                     } else {
@@ -361,8 +358,8 @@ fn perform_compilation<'a>(
             .unwrap_or_else(|| project.root.clone());
 
         let options = match &mode {
-            CompilationMode::Fresh { root: _, repo_root } => {
-                RheoCompileOptions::new(PathBuf::new(), &pdf_path, &compilation_root, repo_root)
+            CompilationMode::Fresh { root: _ } => {
+                RheoCompileOptions::new(PathBuf::new(), &pdf_path, &compilation_root)
             }
             CompilationMode::Incremental { .. } => {
                 if let CompilationMode::Incremental { world } = &mut mode {
@@ -370,7 +367,6 @@ fn perform_compilation<'a>(
                         PathBuf::new(),
                         &pdf_path,
                         &compilation_root,
-                        PathBuf::new(),
                         world,
                     )
                 } else {
@@ -401,8 +397,8 @@ fn perform_compilation<'a>(
             .unwrap_or_else(|| project.root.clone());
 
         let options = match &mode {
-            CompilationMode::Fresh { root: _, repo_root } => {
-                RheoCompileOptions::new(PathBuf::new(), &epub_path, &compilation_root, repo_root)
+            CompilationMode::Fresh { root: _ } => {
+                RheoCompileOptions::new(PathBuf::new(), &epub_path, &compilation_root)
             }
             CompilationMode::Incremental { .. } => {
                 if let CompilationMode::Incremental { world } = &mut mode {
@@ -410,7 +406,6 @@ fn perform_compilation<'a>(
                         PathBuf::new(),
                         &epub_path,
                         &compilation_root,
-                        world.root().to_path_buf(),
                         world,
                     )
                 } else {
@@ -521,11 +516,7 @@ impl Cli {
         let output_config = crate::output::OutputConfig::new(&project.root, resolved_build_dir);
         output_config.create_dirs()?;
 
-        // 5. Resolve repo root (lines 476-477 / 534-535)
-        let repo_root = std::env::current_dir()
-            .map_err(|e| crate::RheoError::io(e, "getting current directory"))?;
-
-        // 6. Resolve compilation root (lines 478-481 / 536-539)
+        // 5. Resolve compilation root (lines 478-481 / 536-539)
         let compilation_root = project
             .config
             .resolve_content_dir(&project.root)
@@ -535,7 +526,6 @@ impl Cli {
             project,
             formats,
             output_config,
-            repo_root,
             compilation_root,
         })
     }
@@ -559,7 +549,6 @@ impl Cli {
                 // Create compilation mode (Fresh)
                 let mode = CompilationMode::Fresh {
                     root: ctx.compilation_root,
-                    repo_root: ctx.repo_root,
                 };
 
                 // Perform compilation
@@ -583,7 +572,6 @@ impl Cli {
                 info!("compiling project");
                 let mode = CompilationMode::Fresh {
                     root: ctx.compilation_root.clone(),
-                    repo_root: ctx.repo_root.clone(),
                 };
                 if let Err(e) =
                     perform_compilation(mode, &ctx.project, &ctx.output_config, &ctx.formats)
@@ -596,7 +584,6 @@ impl Cli {
                     project,
                     formats,
                     output_config,
-                    repo_root,
                     compilation_root: _,
                 } = ctx;
 
@@ -651,13 +638,13 @@ impl Cli {
 
                 // For watch mode: if compiling HTML, keep .typ links for transformation
                 // If compiling only PDF/EPUB, remove .typ links at source level
-                let remove_typ_links = !formats.contains(&OutputFormat::Html);
-                let world = crate::world::RheoWorld::new(
-                    &compilation_root,
-                    initial_main,
-                    &repo_root,
-                    remove_typ_links,
-                )?;
+                let output_format = if formats.contains(&OutputFormat::Html) {
+                    Some(OutputFormat::Html)
+                } else {
+                    None
+                };
+                let world =
+                    crate::world::RheoWorld::new(&compilation_root, initial_main, output_format)?;
                 drop(borrowed_project); // Release borrow before moving into RefCell
 
                 let world_cell = RefCell::new(world);
@@ -702,13 +689,16 @@ impl Cli {
                                             crate::RheoError::project_config("no .typ files found")
                                         })?;
 
-                                    // Use same remove_typ_links setting as initial World creation
-                                    let remove_typ_links = !formats.contains(&OutputFormat::Html);
+                                    // Use same output_format setting as initial World creation
+                                    let output_format = if formats.contains(&OutputFormat::Html) {
+                                        Some(OutputFormat::Html)
+                                    } else {
+                                        None
+                                    };
                                     match crate::world::RheoWorld::new(
                                         &new_compilation_root,
                                         new_initial_main,
-                                        &repo_root,
-                                        remove_typ_links,
+                                        output_format,
                                     ) {
                                         Ok(new_world) => {
                                             *world_cell.borrow_mut() = new_world;

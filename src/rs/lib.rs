@@ -4,6 +4,7 @@ pub mod config;
 pub mod constants;
 pub mod error;
 pub mod formats;
+pub mod links;
 pub mod logging;
 pub mod output;
 pub mod path_utils;
@@ -11,7 +12,6 @@ pub mod postprocess;
 pub mod project;
 pub mod results;
 pub mod server;
-pub mod spine;
 pub mod validation;
 pub mod watch;
 pub mod world;
@@ -41,11 +41,6 @@ pub enum OutputFormat {
 impl OutputFormat {
     pub fn all_variants() -> Vec<Self> {
         vec![Self::Html, Self::Epub, Self::Pdf]
-    }
-
-    /// Get the compiler instance for this output format
-    pub fn compiler(&self) -> formats::compiler::FormatCompilerInstance {
-        formats::compiler::FormatCompilerInstance::from_format(*self)
     }
 
     /// Check if this format supports per-file compilation with the given config

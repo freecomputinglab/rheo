@@ -1,0 +1,12 @@
+{
+  "filetype": "epub",
+  "file_size": 4112,
+  "title": "Epub Inferred Spine",
+  "language": "en",
+  "spine_files": [
+    "a.xhtml",
+    "b.xhtml",
+    "c.xhtml"
+  ],
+  "has_nav": true
+}
