@@ -22,6 +22,7 @@ use std::path::PathBuf;
 #[test_case("tests/cases/epub_inferred_spine")]
 #[test_case("tests/cases/link_transformation")]
 #[test_case("tests/cases/links_with_fragments")]
+#[test_case("tests/cases/multiple_links_inline.typ")]
 #[test_case("tests/cases/pdf_individual")]
 #[test_case("tests/cases/relative_path_links")]
 fn run_test_case(name: &str) {
