@@ -18,6 +18,10 @@ pub struct TestMetadata {
     pub formats: Vec<String>,
     /// Human-readable description of the test
     pub description: Option<String>,
+    /// Expected compilation outcome ("error" or "success", None defaults to success)
+    pub expect: Option<String>,
+    /// Required error patterns to check in stderr (for error cases)
+    pub error_patterns: Vec<String>,
 }
 
 impl Default for TestMetadata {
@@ -25,6 +29,8 @@ impl Default for TestMetadata {
         Self {
             formats: vec!["html".to_string(), "pdf".to_string()],
             description: None,
+            expect: None,
+            error_patterns: vec![],
         }
     }
 }
@@ -73,6 +79,29 @@ pub fn parse_test_metadata(source: &str) -> Option<TestMetadata> {
         // Parse @rheo:description
         if let Some(desc) = comment.strip_prefix("@rheo:description") {
             metadata.description = Some(desc.trim().to_string());
+            continue;
+        }
+
+        // Parse @rheo:expect
+        if let Some(expect_str) = comment.strip_prefix("@rheo:expect") {
+            let expect_value = expect_str.trim().to_string();
+            if !expect_value.is_empty() {
+                metadata.expect = Some(expect_value);
+            }
+            continue;
+        }
+
+        // Parse @rheo:error-patterns
+        if let Some(patterns_str) = comment.strip_prefix("@rheo:error-patterns") {
+            // Patterns are comma-separated quoted strings
+            // Example: @rheo:error-patterns "error", "cannot add", "│"
+            let patterns_str = patterns_str.trim();
+            metadata.error_patterns = patterns_str
+                .split(',')
+                .map(|p| p.trim())
+                .filter(|p| !p.is_empty())
+                .map(|p| p.trim_matches('"').to_string()) // Remove quotes
+                .collect();
             continue;
         }
     }
@@ -189,6 +218,39 @@ mod tests {
         assert_eq!(
             metadata.description,
             Some("Job application cover letter with custom formatting".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_test_metadata_with_expect_error() {
+        let source = "// @rheo:test\n// @rheo:expect error\n= Content";
+        let metadata = parse_test_metadata(source).unwrap();
+        assert_eq!(metadata.expect, Some("error".to_string()));
+    }
+
+    #[test]
+    fn test_parse_test_metadata_with_error_patterns() {
+        let source = r#"// @rheo:test
+// @rheo:expect error
+// @rheo:error-patterns "error", "cannot add", "│"
+= Content"#;
+        let metadata = parse_test_metadata(source).unwrap();
+        assert_eq!(metadata.expect, Some("error".to_string()));
+        assert_eq!(
+            metadata.error_patterns,
+            vec!["error", "cannot add", "│"]
+        );
+    }
+
+    #[test]
+    fn test_parse_test_metadata_error_patterns_with_spaces() {
+        let source = r#"// @rheo:test
+// @rheo:error-patterns "pattern one", "pattern two"
+= Content"#;
+        let metadata = parse_test_metadata(source).unwrap();
+        assert_eq!(
+            metadata.error_patterns,
+            vec!["pattern one", "pattern two"]
         );
     }
 }

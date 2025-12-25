@@ -141,6 +141,40 @@ Content here...
 - `// @rheo:test` (required) - Marks file as test case
 - `// @rheo:formats <list>` (optional) - Comma-separated formats (html, pdf, epub). Default: html,pdf
 - `// @rheo:description <text>` (optional) - Human-readable test description
+- `// @rheo:expect error` (optional) - Indicates test expects compilation to fail
+- `// @rheo:error-patterns "pattern1", "pattern2", ...` (optional) - Required substrings in error output
+
+#### Error Case Testing
+
+Tests can validate that compilation fails with expected error messages:
+
+**Example error test:**
+```typst
+// @rheo:test
+// @rheo:expect error
+// @rheo:error-patterns "error", "cannot add integer and string", "│"
+// @rheo:formats pdf
+
+= Type Error Test
+#let x = 5 + "hello"  // This will fail
+```
+
+**How it works:**
+- Compilation must fail (non-zero exit code)
+- All patterns in `@rheo:error-patterns` must appear in stderr
+- Reference comparison is skipped for error cases
+- Useful for testing error formatting and diagnostic quality
+
+**Pattern format:**
+- Comma-separated list of double-quoted strings
+- Patterns are case-sensitive substrings
+- Common patterns to check:
+  - `"error"` - Confirms error-level diagnostic
+  - Filename (e.g., `"type_error.typ"`) - Confirms error location
+  - Error message text - Confirms diagnostic content
+  - `"│"` - Confirms codespan-reporting format with source context
+
+**Note:** Tests expecting success don't need `@rheo:expect` - that's the default behavior. Only use `@rheo:expect error` for tests that should fail compilation.
 
 **Declaring single-file tests** in `tests/harness.rs`:
 ```rust

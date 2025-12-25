@@ -1,3 +1,4 @@
+use crate::CompilationResults;
 use crate::compile::RheoCompileOptions;
 use crate::config::{EpubOptions, HtmlOptions};
 use crate::formats::{epub, html, pdf};
@@ -261,7 +262,7 @@ fn perform_compilation<'a>(
     }
 
     // Track success/failure per format for graceful degradation
-    let mut results = crate::CompilationResults::new();
+    let mut results = CompilationResults::new();
 
     // Determine which formats should be compiled per-file
     let per_file_formats = get_per_file_formats(&project.config, formats);
@@ -649,23 +650,14 @@ impl Cli {
                     .first()
                     .ok_or_else(|| crate::RheoError::project_config("no .typ files found"))?;
 
-                // For watch mode: determine output format for link transformations
-                // If compiling HTML, transform to .html (takes precedence)
-                // Otherwise, use PDF transformations (remove links)
-                let output_format = if formats.contains(&OutputFormat::Html) {
-                    Some(OutputFormat::Html)
-                } else if formats.contains(&OutputFormat::Pdf) {
-                    Some(OutputFormat::Pdf)
-                } else if formats.contains(&OutputFormat::Epub) {
-                    Some(OutputFormat::Epub)
-                } else {
-                    None
-                };
+                // For watch mode: if compiling HTML, keep .typ links for transformation
+                // If compiling only PDF/EPUB, remove .typ links at source level
+                let remove_typ_links = !formats.contains(&OutputFormat::Html);
                 let world = crate::world::RheoWorld::new(
                     &compilation_root,
                     initial_main,
                     &repo_root,
-                    output_format,
+                    remove_typ_links,
                 )?;
                 drop(borrowed_project); // Release borrow before moving into RefCell
 
@@ -711,21 +703,13 @@ impl Cli {
                                             crate::RheoError::project_config("no .typ files found")
                                         })?;
 
-                                    // Use same output_format setting as initial World creation
-                                    let output_format = if formats.contains(&OutputFormat::Html) {
-                                        Some(OutputFormat::Html)
-                                    } else if formats.contains(&OutputFormat::Pdf) {
-                                        Some(OutputFormat::Pdf)
-                                    } else if formats.contains(&OutputFormat::Epub) {
-                                        Some(OutputFormat::Epub)
-                                    } else {
-                                        None
-                                    };
+                                    // Use same remove_typ_links setting as initial World creation
+                                    let remove_typ_links = !formats.contains(&OutputFormat::Html);
                                     match crate::world::RheoWorld::new(
                                         &new_compilation_root,
                                         new_initial_main,
                                         &repo_root,
-                                        output_format,
+                                        remove_typ_links,
                                     ) {
                                         Ok(new_world) => {
                                             *world_cell.borrow_mut() = new_world;

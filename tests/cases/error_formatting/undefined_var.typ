@@ -1,3 +1,7 @@
+// @rheo:test
+// @rheo:expect error
+// @rheo:error-patterns "error", "undefined_var.typ", "undefined_variable", "│"
+// @rheo:formats pdf
 // Test file with undefined variable error
 
 = Undefined Variable Test

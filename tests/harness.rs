@@ -26,6 +26,8 @@ use std::path::PathBuf;
 #[test_case("tests/cases/multiple_links_inline.typ")]
 #[test_case("tests/cases/pdf_individual")]
 #[test_case("tests/cases/relative_path_links")]
+#[test_case("tests/cases/error_formatting/type_error.typ")]
+#[test_case("tests/cases/error_formatting/undefined_var.typ")]
 fn run_test_case(name: &str) {
     let test_case = TestCase::new(name);
     let update_mode = env::var("UPDATE_REFERENCES").is_ok();
@@ -128,6 +130,44 @@ fn run_test_case(name: &str) {
         .output()
         .expect("Failed to run rheo compile");
 
+    // Check if test expects compilation error
+    let expects_error = test_case
+        .metadata()
+        .and_then(|m| m.expect.as_ref())
+        .map(|e| e == "error")
+        .unwrap_or(false);
+
+    if expects_error {
+        // Test expects compilation to fail
+        assert!(
+            !output.status.success(),
+            "Expected compilation to fail for {}, but it succeeded",
+            test_name
+        );
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // Check all required error patterns
+        if let Some(metadata) = test_case.metadata() {
+            for pattern in &metadata.error_patterns {
+                assert!(
+                    stderr.contains(pattern),
+                    "Expected error output to contain pattern '{}', but it was not found.\nFull stderr:\n{}",
+                    pattern,
+                    stderr
+                );
+            }
+        }
+
+        // For error cases, skip reference comparison and return early
+        // Clean test store before returning
+        if test_store.exists() {
+            std::fs::remove_dir_all(&test_store).ok();
+        }
+        return;
+    }
+
+    // For success cases, continue with existing logic
     if !output.status.success() {
         panic!(
             "Compilation failed for {}: {}",
@@ -477,112 +517,6 @@ fn test_html_css_link_injection() {
             String::from_utf8_lossy(&clean_output.stderr)
         );
     }
-}
-/// Test error formatting with codespan-reporting
-#[test]
-fn test_error_formatting_type_error() {
-    let test_dir = PathBuf::from("tests/cases/error_formatting");
-
-    // Compile file with type error - expect failure
-    let output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "--",
-            "compile",
-            test_dir.join("type_error.typ").to_str().unwrap(),
-            "--pdf",
-        ])
-        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
-        .output()
-        .expect("Failed to run rheo compile");
-
-    // Compilation should fail
-    assert!(
-        !output.status.success(),
-        "Expected compilation to fail for type error"
-    );
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // Verify codespan-reporting format:
-    // - Should contain "error:" prefix
-    // - Should contain file location (line/column)
-    // - Should contain error message
-    // - Should contain source context (with line numbers and highlighting)
-
-    assert!(
-        stderr.contains("error"),
-        "Error output should contain 'error' marker"
-    );
-
-    assert!(
-        stderr.contains("type_error.typ"),
-        "Error should reference the source file"
-    );
-
-    // Check for codespan-reporting style markers:
-    // - Line numbers (e.g., "10 │")
-    // - Unicode box drawing characters (┌─, │)
-    assert!(
-        stderr.contains("│") || stderr.contains("|"),
-        "Error should contain codespan-style line markers"
-    );
-
-    // Verify compilation complete message is NOT shown (since it failed)
-    assert!(
-        !stderr.contains("compilation complete"),
-        "Failed compilation should not show success message"
-    );
-}
-
-/// Test error formatting for undefined variable
-#[test]
-fn test_error_formatting_undefined_var() {
-    let test_dir = PathBuf::from("tests/cases/error_formatting");
-
-    // Compile file with undefined variable - expect failure
-    let output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "--",
-            "compile",
-            test_dir.join("undefined_var.typ").to_str().unwrap(),
-            "--pdf",
-        ])
-        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
-        .output()
-        .expect("Failed to run rheo compile");
-
-    // Compilation should fail
-    assert!(
-        !output.status.success(),
-        "Expected compilation to fail for undefined variable"
-    );
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // Verify error formatting
-    assert!(
-        stderr.contains("error"),
-        "Error output should contain 'error' marker"
-    );
-
-    assert!(
-        stderr.contains("undefined_var.typ"),
-        "Error should reference the source file"
-    );
-
-    // Verify it contains the undefined variable name
-    assert!(
-        stderr.contains("undefined_variable"),
-        "Error should mention the undefined variable name"
-    );
-
-    // Check for source context
-    assert!(
-        stderr.contains("│") || stderr.contains("|"),
-        "Error should show source context with line markers"
-    );
 }
 
 /// Test warning formatting with codespan-reporting
