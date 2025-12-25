@@ -315,8 +315,9 @@ impl World for RheoWorld {
                     &links,
                     crate::OutputFormat::Pdf,
                     None,
-                    &id.vpath().as_rootless_path(),
-                ).map_err(|e| FileError::Other(Some(e.to_string().into())))?;
+                    id.vpath().as_rootless_path(),
+                )
+                .map_err(|e| FileError::Other(Some(e.to_string().into())))?;
                 text = crate::links::serializer::apply_transformations(
                     &text,
                     &transformations,

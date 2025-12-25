@@ -89,7 +89,7 @@ fn collect_raw_ranges(node: &SyntaxNode, ranges: &mut Vec<Range<usize>>, offset:
     let mut child_offset = offset;
     for child in node.children() {
         let child_len = child.text().len();
-        collect_raw_ranges(&child, ranges, child_offset);
+        collect_raw_ranges(child, ranges, child_offset);
         child_offset += child_len;
     }
 }

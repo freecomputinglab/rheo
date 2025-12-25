@@ -287,7 +287,7 @@ fn compile_epub_impl(
             root,
             config.merge.as_ref(),
             crate::OutputFormat::Epub,
-            &config
+            config
                 .merge
                 .as_ref()
                 .map(|m| m.title.as_str())

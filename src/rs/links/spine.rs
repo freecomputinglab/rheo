@@ -126,9 +126,9 @@ fn transform_source(
     // For PDF: pass spine only if multiple files (merged mode)
     // For HTML/EPUB: never pass spine (each file is independent)
     let spine_for_transform = match (output_format, spine_files.len()) {
-        (OutputFormat::Pdf, 1) => None,  // Single-file PDF: remove links
-        (OutputFormat::Pdf, _) => Some(spine_files),  // Merged PDF: convert to labels
-        _ => None,  // HTML and EPUB don't use spine for transformation
+        (OutputFormat::Pdf, 1) => None, // Single-file PDF: remove links
+        (OutputFormat::Pdf, _) => Some(spine_files), // Merged PDF: convert to labels
+        _ => None,                      // HTML and EPUB don't use spine for transformation
     };
 
     let transformations = crate::links::transformer::compute_transformations(

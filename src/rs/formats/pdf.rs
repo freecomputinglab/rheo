@@ -45,7 +45,7 @@ fn compile_pdf_single_impl_fresh(
     // Build RheoSpine with AST-transformed source (links already removed)
     let spine = RheoSpine::build(
         root,
-        Some(&merge_config),  // Single-file merge config
+        Some(&merge_config), // Single-file merge config
         crate::OutputFormat::Pdf,
         &title,
     )?;

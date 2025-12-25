@@ -14,15 +14,15 @@ pub fn extract_links(source: &Source) -> Vec<LinkInfo> {
 
 fn extract_links_from_node(node: &SyntaxNode, root: &SyntaxNode, links: &mut Vec<LinkInfo>) {
     // Check if this node itself is a function call
-    if node.kind() == SyntaxKind::FuncCall {
-        if let Some(link_info) = parse_link_call(node, root) {
-            links.push(link_info);
-        }
+    if node.kind() == SyntaxKind::FuncCall
+        && let Some(link_info) = parse_link_call(node, root)
+    {
+        links.push(link_info);
     }
 
     // Recursively traverse children
     for child in node.children() {
-        extract_links_from_node(&child, root, links);
+        extract_links_from_node(child, root, links);
     }
 }
 
@@ -42,7 +42,7 @@ fn parse_link_call(node: &SyntaxNode, root: &SyntaxNode) -> Option<LinkInfo> {
     let args = node.children().find(|n| n.kind() == SyntaxKind::Args)?;
 
     // Extract URL (first string argument)
-    let url = extract_first_string_arg(&args)?;
+    let url = extract_first_string_arg(args)?;
 
     // Extract body text
     let body = extract_link_body(node)?;
@@ -86,7 +86,7 @@ fn extract_link_body(func_call: &SyntaxNode) -> Option<String> {
 
     // Extract text from inside the ContentBlock
     // The structure is: ContentBlock -> Markup -> Text
-    extract_text_from_node(&content_block)
+    extract_text_from_node(content_block)
 }
 
 fn extract_text_from_node(node: &SyntaxNode) -> Option<String> {
@@ -103,7 +103,7 @@ fn extract_text_from_node(node: &SyntaxNode) -> Option<String> {
     // Otherwise, collect text from ALL children (not just the first)
     let mut texts = Vec::new();
     for child in node.children() {
-        if let Some(text) = extract_text_from_node(&child) {
+        if let Some(text) = extract_text_from_node(child) {
             texts.push(text);
         }
     }
@@ -133,7 +133,7 @@ fn calculate_node_offset_impl(
     // Recursively search children, tracking offset
     let mut child_offset = offset;
     for child in current.children() {
-        if let Some(found_offset) = calculate_node_offset_impl(&child, target, child_offset) {
+        if let Some(found_offset) = calculate_node_offset_impl(child, target, child_offset) {
             return Some(found_offset);
         }
         child_offset += child.len();
@@ -199,7 +199,7 @@ mod tests {
 
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "./url");
-        assert_eq!(links[0].body, "text 2");  // All text concatenated
+        assert_eq!(links[0].body, "text 2"); // All text concatenated
         // Byte range should cover the entire link (exact start may vary by 1 due to Source::detached)
         assert!(links[0].byte_range.len() >= 29);
     }

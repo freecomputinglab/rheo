@@ -46,19 +46,18 @@ pub fn validate_single_link(
     }
 
     // Optionally check if target is within project root
-    if let Ok(canonical_target) = target.canonicalize() {
-        if let Ok(canonical_root) = project_root.canonicalize() {
-            if !canonical_target.starts_with(&canonical_root) {
-                let msg = format!("Link target is outside project root: {}", link.url);
-                return Some(SourceDiagnostic {
-                    span: link.span,
-                    message: EcoString::from(msg),
-                    severity: Severity::Warning,
-                    hints: Default::default(),
-                    trace: Default::default(),
-                });
-            }
-        }
+    if let Ok(canonical_target) = target.canonicalize()
+        && let Ok(canonical_root) = project_root.canonicalize()
+        && !canonical_target.starts_with(&canonical_root)
+    {
+        let msg = format!("Link target is outside project root: {}", link.url);
+        return Some(SourceDiagnostic {
+            span: link.span,
+            message: EcoString::from(msg),
+            severity: Severity::Warning,
+            hints: Default::default(),
+            trace: Default::default(),
+        });
     }
 
     None

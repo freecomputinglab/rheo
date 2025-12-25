@@ -72,7 +72,7 @@ fn compile_html_impl_fresh(
     // Build RheoSpine with AST-transformed source (.typ links → .html)
     let spine = RheoSpine::build(
         root,
-        Some(&merge_config),  // Single-file merge config
+        Some(&merge_config), // Single-file merge config
         crate::OutputFormat::Html,
         &title,
     )?;
@@ -155,7 +155,7 @@ fn compile_html_impl(
     // Build RheoSpine with AST-transformed source (.typ links → .html)
     let spine = RheoSpine::build(
         root,
-        Some(&merge_config),  // Single-file merge config
+        Some(&merge_config), // Single-file merge config
         crate::OutputFormat::Html,
         &title,
     )?;
