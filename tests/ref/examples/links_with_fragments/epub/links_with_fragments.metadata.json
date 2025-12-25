@@ -1,0 +1,11 @@
+{
+  "filetype": "epub",
+  "file_size": 4412,
+  "title": "Links with Fragments Test",
+  "language": "en",
+  "spine_files": [
+    "page1.xhtml",
+    "page2.xhtml"
+  ],
+  "has_nav": true
+}

@@ -19,6 +19,8 @@ use std::path::PathBuf;
 #[test_case("examples/blog_post/portable_epubs.typ")]
 #[test_case("tests/cases/code_blocks_with_links")]
 #[test_case("tests/cases/epub_inferred_spine")]
+#[test_case("tests/cases/link_transformation")]
+#[test_case("tests/cases/links_with_fragments")]
 #[test_case("tests/cases/pdf_individual")]
 fn run_test_case(name: &str) {
     let test_case = TestCase::new(name);

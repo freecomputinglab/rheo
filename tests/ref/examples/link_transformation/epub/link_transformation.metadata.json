@@ -1,0 +1,11 @@
+{
+  "filetype": "epub",
+  "file_size": 4042,
+  "title": "Link Transformation Test",
+  "language": "en",
+  "spine_files": [
+    "doc1.xhtml",
+    "doc2.xhtml"
+  ],
+  "has_nav": true
+}
