@@ -2,65 +2,81 @@ use crate::links::types::LinkInfo;
 use std::path::{Path, PathBuf};
 use typst::diag::{EcoString, Severity, SourceDiagnostic};
 
-/// Validate links and return diagnostic warnings for broken ones
-pub fn validate_links(
-    links: &[LinkInfo],
-    project_root: &Path,
-    source_file: &Path,
-) -> Vec<SourceDiagnostic> {
-    links
-        .iter()
-        .filter_map(|link| validate_single_link(link, project_root, source_file))
-        .collect()
+/// Link validator that checks for broken links in Typst source.
+///
+/// Validates that relative `.typ` links point to existing files within the project.
+pub struct LinkValidator {
+    project_root: PathBuf,
 }
 
-pub fn validate_single_link(
-    link: &LinkInfo,
-    project_root: &Path,
-    source_file: &Path,
-) -> Option<SourceDiagnostic> {
-    // Only validate relative .typ links
-    if !is_relative_typ_link(&link.url) {
-        return None;
+impl LinkValidator {
+    /// Create a new LinkValidator for the given project root.
+    pub fn new(project_root: impl Into<PathBuf>) -> Self {
+        Self {
+            project_root: project_root.into(),
+        }
     }
 
-    // Resolve relative path
-    let target = resolve_relative_path(source_file, &link.url);
-
-    // Check if file exists
-    if !target.exists() {
-        let msg = format!(
-            "Link target does not exist: {} (resolved to: {})",
-            link.url,
-            target.display()
-        );
-
-        // Create warning diagnostic with span
-        return Some(SourceDiagnostic {
-            span: link.span,
-            message: EcoString::from(msg),
-            severity: Severity::Warning,
-            hints: Default::default(),
-            trace: Default::default(),
-        });
+    /// Validate links and return diagnostic warnings for broken ones.
+    ///
+    /// # Arguments
+    /// * `links` - Links to validate
+    /// * `source_file` - The file containing the links (for resolving relative paths)
+    ///
+    /// # Returns
+    /// Vector of diagnostics for broken links
+    pub fn validate_links(&self, links: &[LinkInfo], source_file: &Path) -> Vec<SourceDiagnostic> {
+        links
+            .iter()
+            .filter_map(|link| self.validate_single(link, source_file))
+            .collect()
     }
 
-    // Optionally check if target is within project root
-    if let Ok(canonical_target) = target.canonicalize()
-        && let Ok(canonical_root) = project_root.canonicalize()
-        && !canonical_target.starts_with(&canonical_root)
-    {
-        let msg = format!("Link target is outside project root: {}", link.url);
-        return Some(SourceDiagnostic {
-            span: link.span,
-            message: EcoString::from(msg),
-            severity: Severity::Warning,
-            hints: Default::default(),
-            trace: Default::default(),
-        });
-    }
+    /// Validate a single link.
+    fn validate_single(&self, link: &LinkInfo, source_file: &Path) -> Option<SourceDiagnostic> {
+        // Only validate relative .typ links
+        if !is_relative_typ_link(&link.url) {
+            return None;
+        }
 
-    None
+        // Resolve relative path
+        let target = resolve_relative_path(source_file, &link.url);
+
+        // Check if file exists
+        if !target.exists() {
+            let msg = format!(
+                "Link target does not exist: {} (resolved to: {})",
+                link.url,
+                target.display()
+            );
+
+            // Create warning diagnostic with span
+            return Some(SourceDiagnostic {
+                span: link.span,
+                message: EcoString::from(msg),
+                severity: Severity::Warning,
+                hints: Default::default(),
+                trace: Default::default(),
+            });
+        }
+
+        // Optionally check if target is within project root
+        if let Ok(canonical_target) = target.canonicalize()
+            && let Ok(canonical_root) = self.project_root.canonicalize()
+            && !canonical_target.starts_with(&canonical_root)
+        {
+            let msg = format!("Link target is outside project root: {}", link.url);
+            return Some(SourceDiagnostic {
+                span: link.span,
+                message: EcoString::from(msg),
+                severity: Severity::Warning,
+                hints: Default::default(),
+                trace: Default::default(),
+            });
+        }
+
+        None
+    }
 }
 
 pub fn is_relative_typ_link(url: &str) -> bool {
@@ -136,11 +152,8 @@ mod tests {
             create_test_link("./file.md"),
         ];
 
-        let diagnostics = validate_links(
-            &links,
-            Path::new("/project"),
-            Path::new("/project/src/file.typ"),
-        );
+        let validator = LinkValidator::new("/project");
+        let diagnostics = validator.validate_links(&links, Path::new("/project/src/file.typ"));
 
         assert_eq!(diagnostics.len(), 0, "External URLs should be skipped");
     }
