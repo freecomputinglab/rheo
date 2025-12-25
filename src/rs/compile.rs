@@ -23,11 +23,6 @@ pub struct RheoCompileOptions<'a> {
 }
 
 impl<'a> RheoCompileOptions<'a> {
-    /// Create a builder for constructing compilation options.
-    pub fn builder() -> RheoCompileOptionsBuilder<'a> {
-        RheoCompileOptionsBuilder::default()
-    }
-
     /// Create compilation options for a fresh (non-incremental) compilation.
     ///
     /// # Arguments
@@ -99,70 +94,6 @@ impl<'a> RheoCompileOptions<'a> {
             repo_root: repo_root.into(),
             world: None,
         }
-    }
-}
-
-/// Builder for RheoCompileOptions
-#[derive(Default)]
-pub struct RheoCompileOptionsBuilder<'a> {
-    input: Option<PathBuf>,
-    output: Option<PathBuf>,
-    root: Option<PathBuf>,
-    repo_root: Option<PathBuf>,
-    world: Option<&'a mut RheoWorld>,
-}
-
-impl<'a> RheoCompileOptionsBuilder<'a> {
-    /// Set the input .typ file to compile
-    pub fn input(mut self, path: impl Into<PathBuf>) -> Self {
-        self.input = Some(path.into());
-        self
-    }
-
-    /// Set the output file path
-    pub fn output(mut self, path: impl Into<PathBuf>) -> Self {
-        self.output = Some(path.into());
-        self
-    }
-
-    /// Set the root directory for resolving imports
-    pub fn root(mut self, path: impl Into<PathBuf>) -> Self {
-        self.root = Some(path.into());
-        self
-    }
-
-    /// Set the repository root for rheo.typ
-    pub fn repo_root(mut self, path: impl Into<PathBuf>) -> Self {
-        self.repo_root = Some(path.into());
-        self
-    }
-
-    /// Set an existing RheoWorld for incremental compilation
-    pub fn world(mut self, world: &'a mut RheoWorld) -> Self {
-        self.world = Some(world);
-        self
-    }
-
-    /// Build the RheoCompileOptions
-    ///
-    /// # Errors
-    /// Returns an error if any required field is missing
-    pub fn build(self) -> crate::Result<RheoCompileOptions<'a>> {
-        Ok(RheoCompileOptions {
-            input: self.input.ok_or_else(|| {
-                crate::RheoError::project_config("RheoCompileOptions: input is required")
-            })?,
-            output: self.output.ok_or_else(|| {
-                crate::RheoError::project_config("RheoCompileOptions: output is required")
-            })?,
-            root: self.root.ok_or_else(|| {
-                crate::RheoError::project_config("RheoCompileOptions: root is required")
-            })?,
-            repo_root: self.repo_root.ok_or_else(|| {
-                crate::RheoError::project_config("RheoCompileOptions: repo_root is required")
-            })?,
-            world: self.world,
-        })
     }
 }
 
