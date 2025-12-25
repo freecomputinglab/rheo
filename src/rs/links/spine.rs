@@ -1,10 +1,9 @@
 use crate::config::Merge;
-use crate::formats::pdf::{extract_document_title, sanitize_label_name};
+use crate::formats::pdf::{DocumentTitle, sanitize_label_name};
 use crate::{OutputFormat, Result, RheoError, TYP_EXT};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use typst::syntax::{FileId, Source, VirtualPath};
 use walkdir::WalkDir;
 
 /// A spine with relative linking tranformations
@@ -70,7 +69,7 @@ impl RheoSpine {
 
             // Transform links using AST-based transformation
             let transformed_source =
-                transform_source(&source, spine_file, &spine_files, output_format)?;
+                transform_source(&source, spine_file, &spine_files, output_format, root)?;
 
             // Add metadata heading only for merged PDF
             let final_source = if should_merge && output_format == OutputFormat::Pdf {
@@ -106,44 +105,22 @@ fn transform_source(
     spine_file: &Path,
     spine_files: &[PathBuf],
     output_format: OutputFormat,
+    project_root: &Path,
 ) -> Result<String> {
-    // Create a temporary file ID for AST parsing
-    let temp_spine_file = if let Some(ext) = spine_file.extension() {
-        let new_ext = format!("combined.{}", ext.to_string_lossy());
-        spine_file.with_extension(new_ext)
-    } else {
-        spine_file.with_extension("combined")
+    // Create transformer based on format and mode
+    use crate::links::transformer::LinkTransformer;
+
+    let transformer = match (output_format, spine_files.len()) {
+        (OutputFormat::Pdf, 1) => LinkTransformer::new(output_format), // Single-file PDF
+        (OutputFormat::Pdf, _) => {
+            // Merged PDF: pass spine for label references
+            LinkTransformer::new(output_format).with_spine(spine_files.to_vec())
+        }
+        _ => LinkTransformer::new(output_format), // HTML and EPUB
     };
 
-    let file_id = FileId::new(None, VirtualPath::new(temp_spine_file));
-    let source_obj = Source::new(file_id, source.to_string());
-
-    // Extract links and code blocks
-    let links = crate::links::parser::extract_links(&source_obj);
-    let code_ranges = crate::links::serializer::find_code_block_ranges(&source_obj);
-
-    // Compute transformations based on format
-    // For PDF: pass spine only if multiple files (merged mode)
-    // For HTML/EPUB: never pass spine (each file is independent)
-    let spine_for_transform = match (output_format, spine_files.len()) {
-        (OutputFormat::Pdf, 1) => None, // Single-file PDF: remove links
-        (OutputFormat::Pdf, _) => Some(spine_files), // Merged PDF: convert to labels
-        _ => None,                      // HTML and EPUB don't use spine for transformation
-    };
-
-    let transformations = crate::links::transformer::compute_transformations(
-        &links,
-        output_format,
-        spine_for_transform,
-        spine_file,
-    )?;
-
-    // Apply transformations
-    Ok(crate::links::serializer::apply_transformations(
-        source,
-        &transformations,
-        &code_ranges,
-    ))
+    // Transform source
+    transformer.transform_source(source, spine_file, project_root)
 }
 
 /// Extract label and title from source and filename
@@ -158,7 +135,7 @@ fn extract_label_and_title(source: &str, spine_file: &Path) -> Result<(String, S
     let filename_str = filename.to_string_lossy();
     let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
     let label = sanitize_label_name(stem);
-    let title = extract_document_title(source, stem);
+    let title = DocumentTitle::from_source(source, stem).extract();
 
     Ok((label, title))
 }

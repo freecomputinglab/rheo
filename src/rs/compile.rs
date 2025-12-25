@@ -69,11 +69,23 @@ mod tests {
 
     #[test]
     fn test_filename_to_title() {
-        assert_eq!(pdf::filename_to_title("severance-ep-1"), "Severance Ep 1");
-        assert_eq!(pdf::filename_to_title("my_document"), "My Document");
-        assert_eq!(pdf::filename_to_title("chapter-01"), "Chapter 01");
-        assert_eq!(pdf::filename_to_title("hello_world"), "Hello World");
-        assert_eq!(pdf::filename_to_title("single"), "Single");
+        assert_eq!(
+            pdf::DocumentTitle::to_readable_name("severance-ep-1"),
+            "Severance Ep 1"
+        );
+        assert_eq!(
+            pdf::DocumentTitle::to_readable_name("my_document"),
+            "My Document"
+        );
+        assert_eq!(
+            pdf::DocumentTitle::to_readable_name("chapter-01"),
+            "Chapter 01"
+        );
+        assert_eq!(
+            pdf::DocumentTitle::to_readable_name("hello_world"),
+            "Hello World"
+        );
+        assert_eq!(pdf::DocumentTitle::to_readable_name("single"), "Single");
     }
 
     #[test]
@@ -83,7 +95,7 @@ mod tests {
 = Chapter 1
 Content here."#;
 
-        let title = pdf::extract_document_title(source, "fallback");
+        let title = pdf::DocumentTitle::from_source(source, "fallback").extract();
         assert_eq!(title, "My Great Title");
     }
 
@@ -92,7 +104,7 @@ Content here."#;
         let source = r#"= Chapter 1
 Content here."#;
 
-        let title = pdf::extract_document_title(source, "my-chapter");
+        let title = pdf::DocumentTitle::from_source(source, "my-chapter").extract();
         assert_eq!(title, "My Chapter");
     }
 
@@ -100,7 +112,7 @@ Content here."#;
     fn test_extract_document_title_with_markup() {
         let source = r#"#set document(title: [Good news about hell - #emph[Severance]])"#;
 
-        let title = pdf::extract_document_title(source, "fallback");
+        let title = pdf::DocumentTitle::from_source(source, "fallback").extract();
         // Should strip #emph and underscores
         // Note: complex nested bracket handling is limited by regex
         assert!(title.contains("Good news"));
@@ -113,7 +125,7 @@ Content here."#;
 
 Content"#;
 
-        let title = pdf::extract_document_title(source, "default-name");
+        let title = pdf::DocumentTitle::from_source(source, "default-name").extract();
         // Empty title should fall back to filename
         assert_eq!(title, "Default Name");
     }
@@ -122,7 +134,7 @@ Content"#;
     fn test_extract_document_title_complex() {
         let source = r#"#set document(title: [Half Loop - _Severance_ [s1/e2]], author: [Test])"#;
 
-        let title = pdf::extract_document_title(source, "fallback");
+        let title = pdf::DocumentTitle::from_source(source, "fallback").extract();
         // Should extract title and strip markup
         assert!(title.contains("Half Loop"));
         assert!(title.contains("Severance"));

@@ -144,23 +144,6 @@ impl LinkTransformer {
     }
 }
 
-/// Legacy function for backward compatibility.
-///
-/// New code should use `LinkTransformer` instead.
-#[deprecated(note = "Use LinkTransformer::new(format).compute_transformations() instead")]
-pub fn compute_transformations(
-    links: &[LinkInfo],
-    format: OutputFormat,
-    spine: Option<&[PathBuf]>,
-    current_file: &Path,
-) -> Result<Vec<(Range<usize>, LinkTransform)>> {
-    let transformer = match spine {
-        Some(spine_files) => LinkTransformer::new(format).with_spine(spine_files.to_vec()),
-        None => LinkTransformer::new(format),
-    };
-    transformer.compute_transformations(links, current_file)
-}
-
 /// Build a map of filename stems to sanitized labels for merged PDF compilation
 fn build_label_map(spine_files: &[PathBuf]) -> HashMap<String, String> {
     let mut map = HashMap::new();

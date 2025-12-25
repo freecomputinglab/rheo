@@ -180,20 +180,6 @@ impl DocumentTitle {
     }
 }
 
-/// Legacy function for backward compatibility.
-///
-/// New code should use `DocumentTitle::from_source(source, filename).extract()` instead.
-pub fn extract_document_title(source: &str, filename: &str) -> String {
-    DocumentTitle::from_source(source, filename).extract()
-}
-
-/// Legacy function for backward compatibility.
-///
-/// New code should use `DocumentTitle::to_readable_name(filename)` instead.
-pub fn filename_to_title(filename: &str) -> String {
-    DocumentTitle::to_readable_name(filename)
-}
-
 /// Strip basic Typst markup to get plain text.
 ///
 /// Removes common Typst markup patterns like #emph[...], #strong[...],

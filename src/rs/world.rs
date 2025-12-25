@@ -160,25 +160,12 @@ impl RheoWorld {
     /// # Returns
     /// * `FileResult<String>` - Transformed source text
     fn transform_links(&self, text: &str, id: FileId, format: &OutputFormat) -> FileResult<String> {
-        use crate::links::{parser, serializer, transformer};
+        use crate::links::transformer::LinkTransformer;
 
-        let source_obj = typst::syntax::Source::detached(text);
-        let links = parser::extract_links(&source_obj);
-        let code_ranges = serializer::find_code_block_ranges(&source_obj);
-
-        let transformations = transformer::compute_transformations(
-            &links,
-            *format,
-            None, // No spine for per-file transformations
-            id.vpath().as_rootless_path(),
-        )
-        .map_err(|e| FileError::Other(Some(e.to_string().into())))?;
-
-        Ok(serializer::apply_transformations(
-            text,
-            &transformations,
-            &code_ranges,
-        ))
+        let transformer = LinkTransformer::new(*format);
+        transformer
+            .transform_source(text, id.vpath().as_rootless_path(), &self.root)
+            .map_err(|e| FileError::Other(Some(e.to_string().into())))
     }
 
     /// Get the absolute path for a file ID.
