@@ -1,7 +1,7 @@
 pub mod package;
 mod xhtml;
 
-use package::{Identifier, Item, ItemRef, Manifest, Meta, Metadata, Package, Spine};
+use package::{Item, ItemRef, Package};
 use xhtml::HtmlInfo;
 
 use crate::compile::RheoCompileOptions;
@@ -125,54 +125,42 @@ pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> AnyhowResult
     const INTERNAL_UNIQUE_ID: &str = "uid";
 
     // If the user did not provide a unique ID, we generate a UUID for them.
-    let identifier = {
-        let content = match &config.identifier {
-            Some(id) => id.into(),
-            None => eco_format!("urn:uuid:{}", Uuid::new_v4()),
-        };
-        Identifier {
-            id: INTERNAL_UNIQUE_ID.into(),
-            content,
-        }
+    let identifier_content = match &config.identifier {
+        Some(id) => id.into(),
+        None => eco_format!("urn:uuid:{}", Uuid::new_v4()),
     };
 
-    // Concatenate all authors into a comma-separated string.
-    let creator = (!info.author.is_empty()).then(|| info.author.join(", ").into());
+    // Start building the package
+    let mut builder = Package::builder(title)
+        .unique_identifier(INTERNAL_UNIQUE_ID)
+        .lang(language.clone())
+        .identifier(INTERNAL_UNIQUE_ID, identifier_content)
+        .language(language);
 
-    let date = config.date.as_ref().map(date_format);
+    // Concatenate all authors into a comma-separated string
+    if !info.author.is_empty() {
+        builder = builder.creator(info.author.join(", "));
+    }
 
-    let meta = vec![
-        // Record a timestamp for when this document is generated.
-        Meta {
-            property: "dcterms:modified".into(),
-            content: date_format(&chrono::Utc::now()),
-        },
-        // Indicate that this document is a portable EPUB.
-        Meta {
-            property: "ppub:valid".into(),
-            content: ".".into(),
-        },
-    ];
+    // Set date if provided
+    if let Some(ref date) = config.date {
+        builder = builder.date(date_format(date));
+    }
 
-    let metadata = Metadata {
-        identifier,
-        title,
-        language: language.clone(),
-        creator,
-        date,
-        meta,
-    };
+    // Add metadata elements
+    builder = builder
+        .add_meta("dcterms:modified", date_format(&chrono::Utc::now()))
+        .add_meta("ppub:valid", ".");
 
-    let mut manifest_items = Vec::new();
-    let mut spine_itemrefs = Vec::new();
-
-    manifest_items.push(Item {
+    // Add navigation item to manifest
+    builder = builder.add_item(Item {
         id: "nav".into(),
         href: IriRefBuf::new("nav.xhtml".into()).unwrap(),
         media_type: XHTML_MEDIATYPE.into(),
         properties: Some("nav".into()), // required by spec
     });
 
+    // Add all content items to manifest and spine
     for item in items {
         let mut prop_list = eco_vec![];
         if item.info.scripted {
@@ -185,35 +173,23 @@ pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> AnyhowResult
 
         let id = item.id();
 
-        manifest_items.push(Item {
-            id: id.clone(),
-            href: item.href.clone(),
-            media_type: XHTML_MEDIATYPE.into(),
-            properties,
-        });
-
-        spine_itemrefs.push(ItemRef {
-            id: Some(eco_format!("{id}ref")),
-            idref: id,
-        });
+        builder = builder
+            .add_item(Item {
+                id: id.clone(),
+                href: item.href.clone(),
+                media_type: XHTML_MEDIATYPE.into(),
+                properties,
+            })
+            .add_spine_ref(ItemRef {
+                id: Some(eco_format!("{id}ref")),
+                idref: id,
+            });
     }
 
-    let manifest = Manifest {
-        items: manifest_items,
-    };
-    let spine = Spine {
-        itemref: spine_itemrefs,
-    };
-
-    let package = Package {
-        version: "3.0".into(),
-        unique_identifier: INTERNAL_UNIQUE_ID.into(),
-        lang: language,
-        prefix: "ppub: http://example.com/ppub".into(), // to support portable EPUB properties
-        metadata,
-        manifest,
-        spine,
-    };
+    // Build and validate the package
+    let package = builder
+        .build()
+        .map_err(|e| anyhow::anyhow!("Package validation failed: {}", e))?;
 
     Ok(package.to_xml()?)
 }
