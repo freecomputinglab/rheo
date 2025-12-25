@@ -162,30 +162,6 @@ impl RheoWorld {
         Ok(())
     }
 
-    /// Calculate relative path from root to repo_root for rheo.typ import.
-    #[allow(dead_code)]
-    fn rheo_import_path(&self) -> Result<String> {
-        let rheo_typ = self.repo_root.join("src/typ/rheo.typ");
-
-        // Calculate relative path from root to rheo.typ
-        let rel_path = pathdiff::diff_paths(&rheo_typ, &self.root).ok_or_else(|| {
-            RheoError::path(&rheo_typ, "failed to calculate relative path to rheo.typ")
-        })?;
-
-        // Convert to Typst import format (forward slashes, must start with ./)
-        let mut path_str = rel_path
-            .to_str()
-            .ok_or_else(|| RheoError::path(&rel_path, "path contains invalid UTF-8"))?
-            .replace('\\', "/");
-
-        // Ensure path starts with ./ for relative imports
-        if !path_str.starts_with("./") && !path_str.starts_with("../") {
-            path_str = format!("./{}", path_str);
-        }
-
-        Ok(path_str)
-    }
-
     /// Transform links in source text based on output format.
     ///
     /// Applies AST-based link transformations:
@@ -457,24 +433,6 @@ impl<'a> Files<'a> for RheoWorld {
                 given,
                 max: source.len_lines(),
             })
-    }
-}
-
-/// Silent progress tracker for package downloads (kept for future use).
-#[allow(dead_code)]
-struct SilentProgress;
-
-impl typst_kit::download::Progress for SilentProgress {
-    fn print_start(&mut self) {
-        // Silent - no output
-    }
-
-    fn print_progress(&mut self, _state: &typst_kit::download::DownloadState) {
-        // Silent - no output
-    }
-
-    fn print_finish(&mut self, _state: &typst_kit::download::DownloadState) {
-        // Silent - no output
     }
 }
 

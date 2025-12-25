@@ -70,31 +70,6 @@ impl<'a> RheoCompileOptions<'a> {
             world: Some(world),
         }
     }
-
-    /// Create compilation options for merged PDF compilation.
-    ///
-    /// Note: For merged compilation, the input file is typically a temporary
-    /// file containing concatenated sources.
-    ///
-    /// # Arguments
-    /// * `temp_input` - Temporary file with concatenated sources
-    /// * `output` - The output PDF path
-    /// * `root` - Project root directory
-    /// * `repo_root` - Repository root for rheo.typ
-    pub fn merged(
-        temp_input: impl Into<PathBuf>,
-        output: impl Into<PathBuf>,
-        root: impl Into<PathBuf>,
-        repo_root: impl Into<PathBuf>,
-    ) -> Self {
-        Self {
-            input: temp_input.into(),
-            output: output.into(),
-            root: root.into(),
-            repo_root: repo_root.into(),
-            world: None,
-        }
-    }
 }
 
 #[cfg(test)]
