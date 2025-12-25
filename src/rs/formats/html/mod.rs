@@ -8,10 +8,7 @@ use std::path::Path;
 use tracing::{debug, info};
 use typst_html::HtmlDocument;
 
-pub fn compile_html_to_document(
-    input: &Path,
-    root: &Path,
-) -> Result<HtmlDocument> {
+pub fn compile_html_to_document(input: &Path, root: &Path) -> Result<HtmlDocument> {
     // Create the compilation world with HTML format for link transformations
     let world = RheoWorld::new(root, input, Some(OutputFormat::Html))?;
 
@@ -146,12 +143,7 @@ fn compile_html_impl(
 pub fn compile_html_new(options: RheoCompileOptions, html_options: HtmlOptions) -> Result<()> {
     match options.world {
         // Incremental compilation (reuse existing world)
-        Some(world) => compile_html_impl(
-            world,
-            &options.input,
-            &options.output,
-            &html_options,
-        ),
+        Some(world) => compile_html_impl(world, &options.input, &options.output, &html_options),
         // Fresh compilation (create new world)
         None => compile_html_impl_fresh(
             &options.input,

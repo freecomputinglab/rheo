@@ -22,11 +22,7 @@ use typst_pdf::PdfOptions;
 /// Transformations happen on-demand during Typst compilation (including imports).
 ///
 /// Pipeline: Compile (with transformations) → Export → Write
-fn compile_pdf_single_impl_fresh(
-    input: &Path,
-    output: &Path,
-    root: &Path,
-) -> Result<()> {
+fn compile_pdf_single_impl_fresh(input: &Path, output: &Path, root: &Path) -> Result<()> {
     // Create format-aware world (handles link removal on import)
     let world = RheoWorld::new(root, input, Some(OutputFormat::Pdf))?;
 
@@ -335,19 +331,13 @@ pub fn compile_pdf_new(options: RheoCompileOptions, pdf_config: Option<&PdfConfi
             let config = pdf_config.ok_or_else(|| {
                 RheoError::project_config("PDF config required for merged compilation")
             })?;
-            compile_pdf_merged_impl_fresh(
-                config,
-                &options.output,
-                &options.root,
-            )
+            compile_pdf_merged_impl_fresh(config, &options.output, &options.root)
         }
         // Single file, incremental
         (false, Some(world)) => compile_pdf_single_impl(world, &options.output),
         // Single file, fresh
-        (false, None) => compile_pdf_single_impl_fresh(
-            &options.input,
-            &options.output,
-            &options.root,
-        ),
+        (false, None) => {
+            compile_pdf_single_impl_fresh(&options.input, &options.output, &options.root)
+        }
     }
 }

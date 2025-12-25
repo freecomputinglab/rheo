@@ -59,11 +59,7 @@ impl RheoWorld {
     /// * `root` - The root directory for resolving imports (document directory)
     /// * `main_file` - The main .typ file to compile
     /// * `output_format` - Output format for link transformations (None = no transformation)
-    pub fn new(
-        root: &Path,
-        main_file: &Path,
-        output_format: Option<OutputFormat>,
-    ) -> Result<Self> {
+    pub fn new(root: &Path, main_file: &Path, output_format: Option<OutputFormat>) -> Result<Self> {
         // Resolve paths
         let root = root.canonicalize().map_err(|e| {
             RheoError::path(

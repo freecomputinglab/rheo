@@ -643,11 +643,8 @@ impl Cli {
                 } else {
                     None
                 };
-                let world = crate::world::RheoWorld::new(
-                    &compilation_root,
-                    initial_main,
-                    output_format,
-                )?;
+                let world =
+                    crate::world::RheoWorld::new(&compilation_root, initial_main, output_format)?;
                 drop(borrowed_project); // Release borrow before moving into RefCell
 
                 let world_cell = RefCell::new(world);

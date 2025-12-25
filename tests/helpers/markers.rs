@@ -236,10 +236,7 @@ mod tests {
 = Content"#;
         let metadata = parse_test_metadata(source).unwrap();
         assert_eq!(metadata.expect, Some("error".to_string()));
-        assert_eq!(
-            metadata.error_patterns,
-            vec!["error", "cannot add", "│"]
-        );
+        assert_eq!(metadata.error_patterns, vec!["error", "cannot add", "│"]);
     }
 
     #[test]
@@ -248,9 +245,6 @@ mod tests {
 // @rheo:error-patterns "pattern one", "pattern two"
 = Content"#;
         let metadata = parse_test_metadata(source).unwrap();
-        assert_eq!(
-            metadata.error_patterns,
-            vec!["pattern one", "pattern two"]
-        );
+        assert_eq!(metadata.error_patterns, vec!["pattern one", "pattern two"]);
     }
 }

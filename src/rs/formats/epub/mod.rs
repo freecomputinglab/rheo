@@ -275,11 +275,7 @@ pub fn zip_epub(
 /// Generates a spine from the EPUB configuration using RheoSpine for AST-based
 /// link transformation (.typ → .xhtml), compiles each file to HTML,
 /// generates navigation, and packages everything into a .epub (zip) file.
-fn compile_epub_impl(
-    config: &EpubConfig,
-    epub_path: &Path,
-    root: &Path,
-) -> Result<()> {
+fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
         // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
         let rheo_spine = RheoSpine::build(
@@ -333,11 +329,7 @@ fn compile_epub_impl(
 pub fn compile_epub_new(options: RheoCompileOptions, epub_options: EpubOptions) -> Result<()> {
     // Note: EPUB doesn't support incremental compilation yet, so we ignore options.world
     // and always do fresh compilation
-    compile_epub_impl(
-        &epub_options.config,
-        &options.output,
-        &options.root,
-    )
+    compile_epub_impl(&epub_options.config, &options.output, &options.root)
 }
 
 // ============================================================================
