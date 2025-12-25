@@ -85,23 +85,113 @@ pub fn sanitize_label_name(name: &str) -> String {
         .collect()
 }
 
-/// Convert filename to readable title.
+/// Document title extractor that parses Typst source for title metadata.
 ///
-/// Transforms a filename stem into a human-readable title by replacing
-/// separators with spaces and capitalizing words.
-pub fn filename_to_title(filename: &str) -> String {
-    filename
-        .replace(['-', '_'], " ")
-        .split_whitespace()
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+/// Provides methods for extracting document titles from Typst source code or
+/// generating readable titles from filenames.
+pub struct DocumentTitle {
+    source: String,
+    fallback_filename: String,
+}
+
+impl DocumentTitle {
+    /// Create a DocumentTitle from source code and a fallback filename.
+    ///
+    /// # Arguments
+    /// * `source` - Typst source code to extract title from
+    /// * `fallback` - Filename to use if no title is found in source
+    pub fn from_source(source: impl Into<String>, fallback: impl Into<String>) -> Self {
+        Self {
+            source: source.into(),
+            fallback_filename: fallback.into(),
+        }
+    }
+
+    /// Extract the document title.
+    ///
+    /// Searches for `#set document(title: [...])` in the source and extracts the content.
+    /// Falls back to the filename converted to title case if no title is found.
+    pub fn extract(&self) -> String {
+        // Find the start of the title parameter
+        if let Some(title_start) = self.source.find("#set document(") {
+            let after_doc = &self.source[title_start..];
+            if let Some(title_pos) = after_doc.find("title:") {
+                let after_title = &after_doc[title_pos + 6..]; // Skip "title:"
+
+                // Find the opening bracket for the title
+                if let Some(bracket_start) = after_title.find('[') {
+                    let title_content = &after_title[bracket_start + 1..];
+
+                    // Count brackets to find the matching closing bracket
+                    let mut depth = 1;
+                    let mut end_pos = 0;
+
+                    for (i, ch) in title_content.chars().enumerate() {
+                        if ch == '[' {
+                            depth += 1;
+                        } else if ch == ']' {
+                            depth -= 1;
+                            if depth == 0 {
+                                end_pos = i;
+                                break;
+                            }
+                        }
+                    }
+
+                    if end_pos > 0 {
+                        let title = &title_content[..end_pos];
+                        // Strip Typst markup for plain text
+                        let cleaned = strip_typst_markup(title);
+                        if !cleaned.trim().is_empty() {
+                            return cleaned;
+                        }
+                    }
+                }
             }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+        }
+
+        // Fallback: use filename, convert to title case
+        Self::to_readable_name(&self.fallback_filename)
+    }
+
+    /// Convert a filename to a readable title.
+    ///
+    /// Transforms a filename stem into a human-readable title by replacing
+    /// separators with spaces and capitalizing words.
+    ///
+    /// # Arguments
+    /// * `filename` - The filename to convert
+    ///
+    /// # Returns
+    /// A title-cased version of the filename
+    pub fn to_readable_name(filename: &str) -> String {
+        filename
+            .replace(['-', '_'], " ")
+            .split_whitespace()
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// Legacy function for backward compatibility.
+///
+/// New code should use `DocumentTitle::from_source(source, filename).extract()` instead.
+pub fn extract_document_title(source: &str, filename: &str) -> String {
+    DocumentTitle::from_source(source, filename).extract()
+}
+
+/// Legacy function for backward compatibility.
+///
+/// New code should use `DocumentTitle::to_readable_name(filename)` instead.
+pub fn filename_to_title(filename: &str) -> String {
+    DocumentTitle::to_readable_name(filename)
 }
 
 /// Strip basic Typst markup to get plain text.
@@ -116,54 +206,6 @@ fn strip_typst_markup(text: &str) -> String {
     let result = result.replace('_', "");
 
     result.trim().to_string()
-}
-
-/// Extract title from Typst document source.
-///
-/// Searches for `#set document(title: [...])` and extracts the content.
-/// Falls back to filename if no title is found. The extracted title is
-/// cleaned of basic Typst markup.
-pub fn extract_document_title(source: &str, filename: &str) -> String {
-    // Find the start of the title parameter
-    if let Some(title_start) = source.find("#set document(") {
-        let after_doc = &source[title_start..];
-        if let Some(title_pos) = after_doc.find("title:") {
-            let after_title = &after_doc[title_pos + 6..]; // Skip "title:"
-
-            // Find the opening bracket for the title
-            if let Some(bracket_start) = after_title.find('[') {
-                let title_content = &after_title[bracket_start + 1..];
-
-                // Count brackets to find the matching closing bracket
-                let mut depth = 1;
-                let mut end_pos = 0;
-
-                for (i, ch) in title_content.chars().enumerate() {
-                    if ch == '[' {
-                        depth += 1;
-                    } else if ch == ']' {
-                        depth -= 1;
-                        if depth == 0 {
-                            end_pos = i;
-                            break;
-                        }
-                    }
-                }
-
-                if end_pos > 0 {
-                    let title = &title_content[..end_pos];
-                    // Strip Typst markup for plain text
-                    let cleaned = strip_typst_markup(title);
-                    if !cleaned.trim().is_empty() {
-                        return cleaned;
-                    }
-                }
-            }
-        }
-    }
-
-    // Fallback: use filename, convert to title case
-    filename_to_title(filename)
 }
 
 // ============================================================================
