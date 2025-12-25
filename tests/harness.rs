@@ -18,6 +18,7 @@ use std::path::PathBuf;
 #[test_case("examples/blog_site/content/severance-ep-1.typ")]
 #[test_case("examples/blog_post/portable_epubs.typ")]
 #[test_case("tests/cases/code_blocks_with_links")]
+#[test_case("tests/cases/cross_directory_links")]
 #[test_case("tests/cases/epub_inferred_spine")]
 #[test_case("tests/cases/link_transformation")]
 #[test_case("tests/cases/links_with_fragments")]
