@@ -35,6 +35,7 @@ use std::path::PathBuf;
 #[test_case("tests/cases/error_formatting/invalid_method.typ")]
 #[test_case("tests/cases/error_formatting/invalid_field.typ")]
 #[test_case("tests/cases/error_formatting/multiple_errors.typ")]
+#[test_case("tests/cases/error_formatting/array_index_error.typ")]
 fn run_test_case(name: &str) {
     let test_case = TestCase::new(name);
     let update_mode = env::var("UPDATE_REFERENCES").is_ok();
