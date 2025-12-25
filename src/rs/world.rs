@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::{Result, RheoError};
+use crate::{OutputFormat, Result, RheoError};
 use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
 use parking_lot::Mutex;
@@ -44,8 +44,8 @@ pub struct RheoWorld {
     /// Package storage for downloading and caching packages.
     package_storage: PackageStorage,
 
-    /// Whether to remove relative .typ links from the main file (for PDF/EPUB).
-    remove_typ_links: bool,
+    /// Output format for link transformations (None = no transformation).
+    output_format: Option<OutputFormat>,
 }
 
 /// Holds the processed data for a file ID.
@@ -63,12 +63,12 @@ impl RheoWorld {
     /// * `root` - The root directory for resolving imports (document directory)
     /// * `main_file` - The main .typ file to compile
     /// * `repo_root` - The repository root directory (for rheo.typ imports)
-    /// * `remove_typ_links` - Whether to remove relative .typ links (for PDF/EPUB)
+    /// * `output_format` - Output format for link transformations (None = no transformation)
     pub fn new(
         root: &Path,
         main_file: &Path,
         repo_root: &Path,
-        remove_typ_links: bool,
+        output_format: Option<OutputFormat>,
     ) -> Result<Self> {
         // Resolve paths
         let root = root.canonicalize().map_err(|e| {
@@ -123,7 +123,7 @@ impl RheoWorld {
             fonts: font_search.fonts,
             slots: Mutex::new(HashMap::new()),
             package_storage,
-            remove_typ_links,
+            output_format,
         })
     }
 
@@ -184,6 +184,42 @@ impl RheoWorld {
         }
 
         Ok(path_str)
+    }
+
+    /// Transform links in source text based on output format.
+    ///
+    /// Applies AST-based link transformations:
+    /// - HTML: .typ → .html
+    /// - EPUB: .typ → .xhtml
+    /// - PDF: Removes .typ links (or converts to labels if spine is provided)
+    ///
+    /// # Arguments
+    /// * `text` - Source text to transform
+    /// * `id` - File ID (for error reporting and path context)
+    /// * `format` - Output format to transform for
+    ///
+    /// # Returns
+    /// * `FileResult<String>` - Transformed source text
+    fn transform_links(&self, text: &str, id: FileId, format: &OutputFormat) -> FileResult<String> {
+        use crate::links::{parser, serializer, transformer};
+
+        let source_obj = typst::syntax::Source::detached(text);
+        let links = parser::extract_links(&source_obj);
+        let code_ranges = serializer::find_code_block_ranges(&source_obj);
+
+        let transformations = transformer::compute_transformations(
+            &links,
+            *format,
+            None, // No spine for per-file transformations
+            id.vpath().as_rootless_path(),
+        )
+        .map_err(|e| FileError::Other(Some(e.to_string().into())))?;
+
+        Ok(serializer::apply_transformations(
+            text,
+            &transformations,
+            &code_ranges,
+        ))
     }
 
     /// Get the absolute path for a file ID.
@@ -304,26 +340,11 @@ impl World for RheoWorld {
             let rheo_content = include_str!("../typ/rheo.typ");
             let template_inject = format!("{}\n#show: rheo_template\n\n", rheo_content);
             text = format!("{}{}", template_inject, text);
+        }
 
-            // Remove relative .typ links if requested (for PDF/EPUB)
-            if self.remove_typ_links {
-                // Use AST-based transformation
-                let source_obj = Source::detached(&text);
-                let links = crate::links::parser::extract_links(&source_obj);
-                let code_ranges = crate::links::serializer::find_code_block_ranges(&source_obj);
-                let transformations = crate::links::transformer::compute_transformations(
-                    &links,
-                    crate::OutputFormat::Pdf,
-                    None,
-                    id.vpath().as_rootless_path(),
-                )
-                .map_err(|e| FileError::Other(Some(e.to_string().into())))?;
-                text = crate::links::serializer::apply_transformations(
-                    &text,
-                    &transformations,
-                    &code_ranges,
-                );
-            }
+        // Apply link transformations for ALL .typ files if output format is set
+        if let Some(format) = &self.output_format {
+            text = self.transform_links(&text, id, format)?;
         }
 
         let source = Source::new(id, text);
