@@ -20,6 +20,7 @@ use std::path::PathBuf;
 #[test_case("tests/cases/code_blocks_with_links")]
 #[test_case("tests/cases/cross_directory_links")]
 #[test_case("tests/cases/epub_inferred_spine")]
+#[test_case("tests/cases/link_path_edge_cases")]
 #[test_case("tests/cases/link_transformation")]
 #[test_case("tests/cases/links_with_fragments")]
 #[test_case("tests/cases/multiple_links_inline.typ")]
