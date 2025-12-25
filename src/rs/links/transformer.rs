@@ -7,82 +7,158 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-/// Compute format-specific transformations for links
+/// Link transformer that converts Typst links to format-specific targets.
 ///
-/// Returns a vector of (byte_range, transformation) tuples where:
-/// - byte_range: Location of the link in the source
-/// - transformation: What to do with the link
+/// Encapsulates the logic for transforming links based on output format and
+/// project configuration (e.g., merged vs. single-file PDFs).
+pub struct LinkTransformer {
+    output_format: OutputFormat,
+    spine: Option<Vec<PathBuf>>,
+}
+
+impl LinkTransformer {
+    /// Create a new LinkTransformer for the specified output format.
+    pub fn new(format: OutputFormat) -> Self {
+        Self {
+            output_format: format,
+            spine: None,
+        }
+    }
+
+    /// Set the spine for merged PDF compilation.
+    ///
+    /// The spine defines the ordered list of files in a merged PDF, which is used
+    /// to validate link targets and generate label references.
+    pub fn with_spine(mut self, spine: Vec<PathBuf>) -> Self {
+        self.spine = Some(spine);
+        self
+    }
+
+    /// Transform source code by processing all links.
+    ///
+    /// This is the main entry point that combines link extraction, transformation
+    /// computation, and application.
+    ///
+    /// # Arguments
+    /// * `source` - The source code to transform
+    /// * `current_file` - The file being transformed (for error messages)
+    /// * `project_root` - The project root (currently unused but kept for API consistency)
+    ///
+    /// # Returns
+    /// Transformed source code with links converted according to the output format
+    pub fn transform_source(
+        &self,
+        source: &str,
+        current_file: &Path,
+        _project_root: &Path,
+    ) -> Result<String> {
+        use crate::links::{parser, serializer};
+
+        // Extract links from source
+        let source_obj = typst::syntax::Source::detached(source);
+        let links = parser::extract_links(&source_obj);
+
+        // Compute transformations
+        let transformations = self.compute_transformations(&links, current_file)?;
+
+        // Find code block ranges to protect from transformation
+        let code_ranges = serializer::find_code_block_ranges(&source_obj);
+
+        // Apply transformations
+        Ok(serializer::apply_transformations(
+            source,
+            &transformations,
+            &code_ranges,
+        ))
+    }
+
+    /// Compute format-specific transformations for links.
+    ///
+    /// Returns a vector of (byte_range, transformation) tuples where:
+    /// - byte_range: Location of the link in the source
+    /// - transformation: What to do with the link
+    fn compute_transformations(
+        &self,
+        links: &[LinkInfo],
+        _current_file: &Path,
+    ) -> Result<Vec<(Range<usize>, LinkTransform)>> {
+        let mut transformations = Vec::new();
+
+        // For Pdf (merged mode), build a map of filename stems to labels
+        let label_map = if self.output_format == OutputFormat::Pdf && self.spine.is_some() {
+            build_label_map(self.spine.as_ref().unwrap())
+        } else {
+            HashMap::new()
+        };
+
+        for link in links {
+            let url = &link.url;
+            let filename = extract_filename(url);
+            let stem = filename.strip_suffix(TYP_EXT).unwrap_or(filename);
+
+            // Determine transformation based on format and link type
+            let transform = if is_relative_typ_link(url) {
+                // Relative .typ link transformation according to format
+                match self.output_format {
+                    OutputFormat::Pdf if self.spine.is_none() => {
+                        // Single PDF: remove links
+                        LinkTransform::Remove {
+                            body: link.body.clone(),
+                        }
+                    }
+                    OutputFormat::Pdf => {
+                        // Merged PDF: convert to labels, check if file is in spine
+                        if !label_map.contains_key(stem) {
+                            return Err(RheoError::project_config(format!(
+                                "Link target '{}' not found in spine. Make sure that the file exists in the project and is in the spine in rheo.toml",
+                                filename
+                            )));
+                        }
+                        let label = label_map.get(stem).unwrap();
+                        LinkTransform::ReplaceUrlWithLabel {
+                            new_label: format!("<{}>", label),
+                        }
+                    }
+                    OutputFormat::Html => {
+                        // HTML: convert .typ to .html
+                        LinkTransform::ReplaceUrl {
+                            new_url: url.replace(TYP_EXT, HTML_EXT),
+                        }
+                    }
+                    OutputFormat::Epub => {
+                        // EPUB: convert .typ to .xhtml
+                        LinkTransform::ReplaceUrl {
+                            new_url: url.replace(TYP_EXT, XHTML_EXT),
+                        }
+                    }
+                }
+            } else {
+                // External URL, fragment, or non-.typ link - always preserve
+                LinkTransform::KeepOriginal
+            };
+
+            transformations.push((link.byte_range.clone(), transform));
+        }
+
+        Ok(transformations)
+    }
+}
+
+/// Legacy function for backward compatibility.
 ///
-/// # Arguments
-/// * `links` - Links extracted from the source via AST parsing
-/// * `format` - Target output format determining transformation behavior
-/// * `spine` - For PdfMerged only: list of files in the spine
-/// * `current_file` - Current file being transformed (for error messages)
+/// New code should use `LinkTransformer` instead.
+#[deprecated(note = "Use LinkTransformer::new(format).compute_transformations() instead")]
 pub fn compute_transformations(
     links: &[LinkInfo],
     format: OutputFormat,
     spine: Option<&[PathBuf]>,
-    _current_file: &Path,
+    current_file: &Path,
 ) -> Result<Vec<(Range<usize>, LinkTransform)>> {
-    let mut transformations = Vec::new();
-
-    // For Pdf (merged mode), build a map of filename stems to labels
-    let label_map = if format == OutputFormat::Pdf && spine.is_some() {
-        build_label_map(spine.unwrap_or(&[]))
-    } else {
-        HashMap::new()
+    let transformer = match spine {
+        Some(spine_files) => LinkTransformer::new(format).with_spine(spine_files.to_vec()),
+        None => LinkTransformer::new(format),
     };
-
-    for link in links {
-        let url = &link.url;
-        let filename = extract_filename(url);
-        let stem = filename.strip_suffix(TYP_EXT).unwrap_or(filename);
-
-        // Determine transformation based on format and link type
-        let transform = if is_relative_typ_link(url) {
-            // Relative .typ link transformation according to format
-            match format {
-                OutputFormat::Pdf if spine.is_none() => {
-                    // Single PDF: remove links
-                    LinkTransform::Remove {
-                        body: link.body.clone(),
-                    }
-                }
-                OutputFormat::Pdf => {
-                    // Merged PDF: convert to labels, check if file is in spine
-                    if !label_map.contains_key(stem) {
-                        return Err(RheoError::project_config(format!(
-                            "Link target '{}' not found in spine. Make sure that the file exists in the project and is in the spine in rheo.toml",
-                            filename
-                        )));
-                    }
-                    let label = label_map.get(stem).unwrap();
-                    LinkTransform::ReplaceUrlWithLabel {
-                        new_label: format!("<{}>", label),
-                    }
-                }
-                OutputFormat::Html => {
-                    // HTML: convert .typ to .html
-                    LinkTransform::ReplaceUrl {
-                        new_url: url.replace(TYP_EXT, HTML_EXT),
-                    }
-                }
-                OutputFormat::Epub => {
-                    // EPUB: convert .typ to .xhtml
-                    LinkTransform::ReplaceUrl {
-                        new_url: url.replace(TYP_EXT, XHTML_EXT),
-                    }
-                }
-            }
-        } else {
-            // External URL, fragment, or non-.typ link - always preserve
-            LinkTransform::KeepOriginal
-        };
-
-        transformations.push((link.byte_range.clone(), transform));
-    }
-
-    Ok(transformations)
+    transformer.compute_transformations(links, current_file)
 }
 
 /// Build a map of filename stems to sanitized labels for merged PDF compilation
@@ -127,9 +203,10 @@ mod tests {
     fn test_pdf_single_removes_typ_links() {
         let links = vec![make_link("./file.typ", "text", 0..10)];
         // PDF without spine = single file mode (removes links)
-        let transforms =
-            compute_transformations(&links, OutputFormat::Pdf, None, Path::new("test.typ"))
-                .unwrap();
+        let transformer = LinkTransformer::new(OutputFormat::Pdf);
+        let transforms = transformer
+            .compute_transformations(&links, Path::new("test.typ"))
+            .unwrap();
 
         assert_eq!(transforms.len(), 1);
         match &transforms[0].1 {
@@ -146,9 +223,10 @@ mod tests {
             make_link("mailto:test@example.com", "email", 40..50),
         ];
         // PDF without spine = single file mode
-        let transforms =
-            compute_transformations(&links, OutputFormat::Pdf, None, Path::new("test.typ"))
-                .unwrap();
+        let transformer = LinkTransformer::new(OutputFormat::Pdf);
+        let transforms = transformer
+            .compute_transformations(&links, Path::new("test.typ"))
+            .unwrap();
 
         assert_eq!(transforms.len(), 3);
         for (_range, transform) in transforms {
@@ -161,17 +239,16 @@ mod tests {
         let links = vec![make_link("./chapter2.typ", "next", 0..10)];
         let spine = vec![PathBuf::from("chapter1.typ"), PathBuf::from("chapter2.typ")];
         // PDF with spine = merged mode (converts to labels)
-        let transforms = compute_transformations(
-            &links,
-            OutputFormat::Pdf,
-            Some(&spine),
-            Path::new("chapter1.typ"),
-        )
-        .unwrap();
+        let transformer = LinkTransformer::new(OutputFormat::Pdf).with_spine(spine);
+        let transforms = transformer
+            .compute_transformations(&links, Path::new("chapter1.typ"))
+            .unwrap();
 
         assert_eq!(transforms.len(), 1);
         match &transforms[0].1 {
-            LinkTransform::ReplaceUrlWithLabel { new_label } => assert_eq!(new_label, "<chapter2>"),
+            LinkTransform::ReplaceUrlWithLabel { new_label } => {
+                assert_eq!(new_label, "<chapter2>")
+            }
             _ => panic!("Expected ReplaceUrlWithLabel transform"),
         }
     }
@@ -181,12 +258,8 @@ mod tests {
         let links = vec![make_link("./missing.typ", "missing", 0..10)];
         let spine = vec![PathBuf::from("chapter1.typ")];
         // PDF with spine = merged mode
-        let result = compute_transformations(
-            &links,
-            OutputFormat::Pdf,
-            Some(&spine),
-            Path::new("chapter1.typ"),
-        );
+        let transformer = LinkTransformer::new(OutputFormat::Pdf).with_spine(spine);
+        let result = transformer.compute_transformations(&links, Path::new("chapter1.typ"));
 
         assert!(result.is_err());
         assert!(
@@ -203,9 +276,10 @@ mod tests {
             make_link("./file.typ", "text", 0..10),
             make_link("https://example.com", "external", 20..30),
         ];
-        let transforms =
-            compute_transformations(&links, OutputFormat::Html, None, Path::new("test.typ"))
-                .unwrap();
+        let transformer = LinkTransformer::new(OutputFormat::Html);
+        let transforms = transformer
+            .compute_transformations(&links, Path::new("test.typ"))
+            .unwrap();
 
         assert_eq!(transforms.len(), 2);
         // First link (.typ) should be transformed to .html
