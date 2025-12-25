@@ -43,11 +43,6 @@ impl OutputFormat {
         vec![Self::Html, Self::Epub, Self::Pdf]
     }
 
-    /// Get the compiler instance for this output format
-    pub fn compiler(&self) -> formats::compiler::AnyFormatCompiler {
-        formats::compiler::AnyFormatCompiler::from_format(*self)
-    }
-
     /// Check if this format supports per-file compilation with the given config
     ///
     /// Returns true if this format should be compiled once per .typ file,
