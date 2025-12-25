@@ -27,15 +27,15 @@ use super::dom;
 /// - HTML serialization fails
 pub fn inject_head_links(html: &str, stylesheets: &[&str], fonts: &[&str]) -> Result<String> {
     // Parse the HTML document
-    let dom = dom::parse_html(html)?;
+    let dom = dom::HtmlDom::parse(html)?;
 
     // Find the <head> element
-    let head = dom::find_element_by_tag(&dom.document, "head").ok_or_else(|| {
-        RheoError::HtmlGeneration {
+    let head = dom
+        .find_element("head")
+        .ok_or_else(|| RheoError::HtmlGeneration {
             count: 1,
             errors: "HTML document does not contain a <head> element".to_string(),
-        }
-    })?;
+        })?;
 
     // Create link elements for stylesheets and fonts
     // We prepend in reverse order so they end up in the correct order:
@@ -43,18 +43,18 @@ pub fn inject_head_links(html: &str, stylesheets: &[&str], fonts: &[&str]) -> Re
 
     // First prepend stylesheets (in reverse order)
     for stylesheet in stylesheets.iter().rev() {
-        let link = dom::create_link_element("stylesheet", stylesheet);
-        dom::prepend_child(&head, link);
+        let link = dom::Element::create_link("stylesheet", stylesheet);
+        head.prepend_child(link);
     }
 
     // Then prepend fonts (in reverse order)
     for font in fonts.iter().rev() {
-        let link = dom::create_link_element("stylesheet", font);
-        dom::prepend_child(&head, link);
+        let link = dom::Element::create_link("stylesheet", font);
+        head.prepend_child(link);
     }
 
     // Serialize the modified DOM back to HTML
-    dom::serialize_html(&dom)
+    dom.serialize()
 }
 
 #[cfg(test)]

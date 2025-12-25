@@ -8,46 +8,128 @@ use html5ever::{ParseOpts, tendril::TendrilSink};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use std::fmt::Write as _;
 
-/// Parse HTML string into a DOM tree using html5ever.
+/// Wrapper around html5ever's RcDom for type-safe DOM manipulation.
 ///
-/// # Arguments
-/// * `html` - The HTML content to parse
-///
-/// # Returns
-/// Parsed DOM tree as RcDom
-pub fn parse_html(html: &str) -> Result<RcDom> {
-    let dom = html5ever::parse_document(RcDom::default(), ParseOpts::default())
-        .from_utf8()
-        .read_from(&mut html.as_bytes())
-        .map_err(|e| RheoError::HtmlGeneration {
-            count: 1,
-            errors: format!("failed to parse HTML: {}", e),
-        })?;
-    Ok(dom)
+/// Provides methods for parsing HTML, finding elements, and serializing back to HTML.
+pub struct HtmlDom {
+    dom: RcDom,
 }
 
-/// Serialize a DOM tree back to an HTML string.
+impl HtmlDom {
+    /// Parse HTML string into a DOM tree.
+    ///
+    /// # Arguments
+    /// * `html` - The HTML content to parse
+    ///
+    /// # Returns
+    /// Parsed DOM wrapped in HtmlDom
+    pub fn parse(html: &str) -> Result<Self> {
+        let dom = html5ever::parse_document(RcDom::default(), ParseOpts::default())
+            .from_utf8()
+            .read_from(&mut html.as_bytes())
+            .map_err(|e| RheoError::HtmlGeneration {
+                count: 1,
+                errors: format!("failed to parse HTML: {}", e),
+            })?;
+        Ok(Self { dom })
+    }
+
+    /// Serialize the DOM tree back to an HTML string.
+    ///
+    /// # Returns
+    /// Serialized HTML string
+    pub fn serialize(&self) -> Result<String> {
+        let mut output = String::new();
+        serialize_node(&self.dom.document, &mut output)?;
+        Ok(output)
+    }
+
+    /// Find an element by tag name (depth-first search).
+    ///
+    /// # Arguments
+    /// * `tag_name` - The tag name to search for (e.g., "head", "body")
+    ///
+    /// # Returns
+    /// Element wrapper, or None if not found
+    pub fn find_element(&self, tag_name: &str) -> Option<Element> {
+        find_element_by_tag(&self.dom.document, tag_name).map(|handle| Element { handle })
+    }
+
+    /// Get the document root handle.
+    ///
+    /// # Returns
+    /// Reference to the document root handle
+    pub fn document_root(&self) -> &Handle {
+        &self.dom.document
+    }
+}
+
+/// Wrapper around html5ever's Handle for type-safe element manipulation.
 ///
-/// # Arguments
-/// * `dom` - The parsed DOM tree
-///
-/// # Returns
-/// Serialized HTML string
-pub fn serialize_html(dom: &RcDom) -> Result<String> {
-    let mut output = String::new();
-    serialize_node(&dom.document, &mut output)?;
-    Ok(output)
+/// Represents an HTML element node in the DOM tree.
+pub struct Element {
+    handle: Handle,
+}
+
+impl Element {
+    /// Create a link element with the specified rel and href attributes.
+    ///
+    /// # Arguments
+    /// * `rel` - The rel attribute value (e.g., "stylesheet")
+    /// * `href` - The href attribute value (e.g., "style.css")
+    ///
+    /// # Returns
+    /// New Element containing a link node
+    pub fn create_link(rel: &str, href: &str) -> Self {
+        use html5ever::tendril::StrTendril;
+        use html5ever::{Attribute, LocalName, QualName, ns};
+        use markup5ever_rcdom::Node;
+        use std::cell::RefCell;
+
+        let attrs = vec![
+            Attribute {
+                name: QualName::new(None, ns!(), LocalName::from("rel")),
+                value: StrTendril::from(rel),
+            },
+            Attribute {
+                name: QualName::new(None, ns!(), LocalName::from("href")),
+                value: StrTendril::from(href),
+            },
+        ];
+
+        let handle = Node::new(NodeData::Element {
+            name: QualName::new(None, ns!(html), LocalName::from("link")),
+            attrs: RefCell::new(attrs),
+            template_contents: RefCell::new(None),
+            mathml_annotation_xml_integration_point: false,
+        });
+
+        Self { handle }
+    }
+
+    /// Prepend a child element to this element.
+    ///
+    /// # Arguments
+    /// * `child` - The child element to prepend
+    pub fn prepend_child(&self, child: Element) {
+        let mut children = self.handle.children.borrow_mut();
+        children.insert(0, child.handle);
+    }
+
+    /// Get the tag name of this element.
+    ///
+    /// # Returns
+    /// Tag name as a string slice, or empty string if not an element
+    pub fn tag_name(&self) -> &str {
+        match &self.handle.data {
+            NodeData::Element { name, .. } => name.local.as_ref(),
+            _ => "",
+        }
+    }
 }
 
 /// Find an element by tag name in the DOM tree (depth-first search).
-///
-/// # Arguments
-/// * `handle` - The node to start searching from
-/// * `tag_name` - The tag name to search for (e.g., "head", "body")
-///
-/// # Returns
-/// Handle to the first matching element, or None if not found
-pub fn find_element_by_tag(handle: &Handle, tag_name: &str) -> Option<Handle> {
+fn find_element_by_tag(handle: &Handle, tag_name: &str) -> Option<Handle> {
     match &handle.data {
         NodeData::Element { name, .. } if name.local.as_ref() == tag_name => {
             return Some(handle.clone());
@@ -63,49 +145,6 @@ pub fn find_element_by_tag(handle: &Handle, tag_name: &str) -> Option<Handle> {
     }
 
     None
-}
-
-/// Create a link element node with the specified rel and href attributes.
-///
-/// # Arguments
-/// * `rel` - The rel attribute value (e.g., "stylesheet")
-/// * `href` - The href attribute value (e.g., "style.css")
-///
-/// # Returns
-/// Handle to the newly created link element
-pub fn create_link_element(rel: &str, href: &str) -> Handle {
-    use html5ever::tendril::StrTendril;
-    use html5ever::{Attribute, LocalName, QualName, ns};
-    use markup5ever_rcdom::Node;
-    use std::cell::RefCell;
-
-    let attrs = vec![
-        Attribute {
-            name: QualName::new(None, ns!(), LocalName::from("rel")),
-            value: StrTendril::from(rel),
-        },
-        Attribute {
-            name: QualName::new(None, ns!(), LocalName::from("href")),
-            value: StrTendril::from(href),
-        },
-    ];
-
-    Node::new(NodeData::Element {
-        name: QualName::new(None, ns!(html), LocalName::from("link")),
-        attrs: RefCell::new(attrs),
-        template_contents: RefCell::new(None),
-        mathml_annotation_xml_integration_point: false,
-    })
-}
-
-/// Prepend a child node to a parent node.
-///
-/// # Arguments
-/// * `parent` - The parent node
-/// * `child` - The child node to prepend
-pub fn prepend_child(parent: &Handle, child: Handle) {
-    let mut children = parent.children.borrow_mut();
-    children.insert(0, child);
 }
 
 /// Serialize a single node and its children to HTML.
@@ -206,30 +245,34 @@ mod tests {
     #[test]
     fn test_parse_html() {
         let html = "<html><head><title>Test</title></head><body></body></html>";
-        let dom = parse_html(html).unwrap();
-        assert!(!dom.document.children.borrow().is_empty());
+        let dom = HtmlDom::parse(html).unwrap();
+        assert!(!dom.document_root().children.borrow().is_empty());
     }
 
     #[test]
-    fn test_find_element_by_tag() {
+    fn test_find_element() {
         let html = "<html><head><title>Test</title></head><body></body></html>";
-        let dom = parse_html(html).unwrap();
-        let head = find_element_by_tag(&dom.document, "head");
+        let dom = HtmlDom::parse(html).unwrap();
+        let head = dom.find_element("head");
         assert!(head.is_some());
+        assert_eq!(head.unwrap().tag_name(), "head");
     }
 
     #[test]
-    fn test_find_element_by_tag_not_found() {
+    fn test_find_element_not_found() {
         let html = "<html><body></body></html>";
-        let dom = parse_html(html).unwrap();
-        let script = find_element_by_tag(&dom.document, "script");
+        let dom = HtmlDom::parse(html).unwrap();
+        let script = dom.find_element("script");
         assert!(script.is_none());
     }
 
     #[test]
     fn test_create_link_element() {
-        let link = create_link_element("stylesheet", "style.css");
-        match &link.data {
+        let link = Element::create_link("stylesheet", "style.css");
+        assert_eq!(link.tag_name(), "link");
+
+        // Verify attributes by checking the handle's node data
+        match &link.handle.data {
             NodeData::Element { name, attrs, .. } => {
                 assert_eq!(name.local.as_ref(), "link");
                 let attrs = attrs.borrow();
@@ -246,8 +289,8 @@ mod tests {
     #[test]
     fn test_serialize_html() {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head></html>";
-        let dom = parse_html(html).unwrap();
-        let serialized = serialize_html(&dom).unwrap();
+        let dom = HtmlDom::parse(html).unwrap();
+        let serialized = dom.serialize().unwrap();
         assert!(serialized.contains("<!DOCTYPE html>"));
         assert!(serialized.contains("<title>Test</title>"));
     }
@@ -255,13 +298,13 @@ mod tests {
     #[test]
     fn test_prepend_child() {
         let html = "<html><head><title>Test</title></head></html>";
-        let dom = parse_html(html).unwrap();
-        let head = find_element_by_tag(&dom.document, "head").unwrap();
+        let dom = HtmlDom::parse(html).unwrap();
+        let head = dom.find_element("head").unwrap();
 
-        let link = create_link_element("stylesheet", "style.css");
-        prepend_child(&head, link);
+        let link = Element::create_link("stylesheet", "style.css");
+        head.prepend_child(link);
 
-        let serialized = serialize_html(&dom).unwrap();
+        let serialized = dom.serialize().unwrap();
         assert!(serialized.contains("<link rel=\"stylesheet\" href=\"style.css\">"));
     }
 }
