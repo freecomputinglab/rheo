@@ -279,7 +279,6 @@ fn compile_epub_impl(
     config: &EpubConfig,
     epub_path: &Path,
     root: &Path,
-    repo_root: &Path,
 ) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
         // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
@@ -302,7 +301,7 @@ fn compile_epub_impl(
             .iter()
             .zip(rheo_spine.source.iter())
             .map(|(path, transformed_source)| {
-                EpubItem::create_from_source(path.clone(), transformed_source, root, repo_root)
+                EpubItem::create_from_source(path.clone(), transformed_source, root)
             })
             .collect::<AnyhowResult<Vec<_>>>()?;
 
@@ -338,7 +337,6 @@ pub fn compile_epub_new(options: RheoCompileOptions, epub_options: EpubOptions) 
         &epub_options.config,
         &options.output,
         &options.root,
-        &options.repo_root,
     )
 }
 
@@ -394,9 +392,9 @@ fn text_to_id(s: &str) -> EcoString {
 }
 
 impl EpubItem {
-    pub fn create(path: PathBuf, root: &Path, repo_root: &Path) -> AnyhowResult<Self> {
+    pub fn create(path: PathBuf, root: &Path) -> AnyhowResult<Self> {
         info!(file = %path.display(), "compiling spine file");
-        let document = crate::formats::html::compile_html_to_document(&path, root, repo_root)?;
+        let document = crate::formats::html::compile_html_to_document(&path, root)?;
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
@@ -419,7 +417,6 @@ impl EpubItem {
         path: PathBuf,
         transformed_source: &str,
         root: &Path,
-        repo_root: &Path,
     ) -> AnyhowResult<Self> {
         use std::io::Write;
 
@@ -433,7 +430,7 @@ impl EpubItem {
         let temp_path = temp_file.path();
 
         // Compile to HTML document
-        let document = crate::formats::html::compile_html_to_document(temp_path, root, repo_root)?;
+        let document = crate::formats::html::compile_html_to_document(temp_path, root)?;
 
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();

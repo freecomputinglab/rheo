@@ -7,7 +7,6 @@ use std::path::PathBuf;
 /// - Input file (the .typ file to compile)
 /// - Output file (where to write the result)
 /// - Root directory (for resolving imports)
-/// - Repository root (for rheo.typ template)
 /// - Optional RheoWorld (for incremental compilation)
 pub struct RheoCompileOptions<'a> {
     /// The input .typ file to compile
@@ -16,8 +15,6 @@ pub struct RheoCompileOptions<'a> {
     pub output: PathBuf,
     /// Root directory for resolving imports
     pub root: PathBuf,
-    /// Repository root for rheo.typ
-    pub repo_root: PathBuf,
     /// Optional existing RheoWorld for incremental compilation
     pub world: Option<&'a mut RheoWorld>,
 }
@@ -29,18 +26,15 @@ impl<'a> RheoCompileOptions<'a> {
     /// * `input` - The input .typ file to compile
     /// * `output` - The output file path
     /// * `root` - Root directory for resolving imports
-    /// * `repo_root` - Repository root for rheo.typ
     pub fn new(
         input: impl Into<PathBuf>,
         output: impl Into<PathBuf>,
         root: impl Into<PathBuf>,
-        repo_root: impl Into<PathBuf>,
     ) -> Self {
         Self {
             input: input.into(),
             output: output.into(),
             root: root.into(),
-            repo_root: repo_root.into(),
             world: None,
         }
     }
@@ -53,20 +47,17 @@ impl<'a> RheoCompileOptions<'a> {
     /// * `input` - The input .typ file to compile
     /// * `output` - The output file path
     /// * `root` - Root directory for resolving imports
-    /// * `repo_root` - Repository root for rheo.typ
     /// * `world` - Mutable reference to existing RheoWorld
     pub fn incremental(
         input: impl Into<PathBuf>,
         output: impl Into<PathBuf>,
         root: impl Into<PathBuf>,
-        repo_root: impl Into<PathBuf>,
         world: &'a mut RheoWorld,
     ) -> Self {
         Self {
             input: input.into(),
             output: output.into(),
             root: root.into(),
-            repo_root: repo_root.into(),
             world: Some(world),
         }
     }

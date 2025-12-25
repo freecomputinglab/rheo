@@ -22,10 +22,6 @@ pub struct RheoWorld {
     /// The root directory for resolving imports (document directory).
     root: PathBuf,
 
-    /// The repository root directory (for future use).
-    #[allow(dead_code)]
-    repo_root: PathBuf,
-
     /// The main file to compile.
     main: FileId,
 
@@ -62,12 +58,10 @@ impl RheoWorld {
     /// # Arguments
     /// * `root` - The root directory for resolving imports (document directory)
     /// * `main_file` - The main .typ file to compile
-    /// * `repo_root` - The repository root directory (for rheo.typ imports)
     /// * `output_format` - Output format for link transformations (None = no transformation)
     pub fn new(
         root: &Path,
         main_file: &Path,
-        repo_root: &Path,
         output_format: Option<OutputFormat>,
     ) -> Result<Self> {
         // Resolve paths
@@ -81,12 +75,6 @@ impl RheoWorld {
             RheoError::path(
                 main_file,
                 format!("failed to canonicalize main file: {}", e),
-            )
-        })?;
-        let repo_root = repo_root.canonicalize().map_err(|e| {
-            RheoError::path(
-                repo_root,
-                format!("failed to canonicalize repo root: {}", e),
             )
         })?;
 
@@ -116,7 +104,6 @@ impl RheoWorld {
 
         Ok(Self {
             root,
-            repo_root,
             main,
             library: LazyHash::new(library),
             book: font_search.book.into(),

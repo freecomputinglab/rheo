@@ -26,10 +26,9 @@ fn compile_pdf_single_impl_fresh(
     input: &Path,
     output: &Path,
     root: &Path,
-    repo_root: &Path,
 ) -> Result<()> {
     // Create format-aware world (handles link removal on import)
-    let world = RheoWorld::new(root, input, repo_root, Some(OutputFormat::Pdf))?;
+    let world = RheoWorld::new(root, input, Some(OutputFormat::Pdf))?;
 
     // Compile the document
     info!(input = %input.display(), "compiling to PDF");
@@ -183,7 +182,6 @@ fn compile_pdf_merged_impl_fresh(
     config: &PdfConfig,
     output_path: &Path,
     root: &Path,
-    repo_root: &Path,
 ) -> Result<()> {
     let merge = config.merge.as_ref().ok_or_else(|| {
         RheoError::project_config("PDF merge configuration required for merged compilation")
@@ -217,7 +215,7 @@ fn compile_pdf_merged_impl_fresh(
 
     // Create RheoWorld with temp file as main
     // output_format=None because links already transformed to labels by RheoSpine
-    let world = RheoWorld::new(root, temp_path, repo_root, None)?;
+    let world = RheoWorld::new(root, temp_path, None)?;
 
     // Compile to PagedDocument
     info!(output = %output_path.display(), "compiling merged PDF");
@@ -341,7 +339,6 @@ pub fn compile_pdf_new(options: RheoCompileOptions, pdf_config: Option<&PdfConfi
                 config,
                 &options.output,
                 &options.root,
-                &options.repo_root,
             )
         }
         // Single file, incremental
@@ -351,7 +348,6 @@ pub fn compile_pdf_new(options: RheoCompileOptions, pdf_config: Option<&PdfConfi
             &options.input,
             &options.output,
             &options.root,
-            &options.repo_root,
         ),
     }
 }

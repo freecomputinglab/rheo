@@ -12,10 +12,9 @@ use typst_html::HtmlDocument;
 pub fn compile_html_to_document(
     input: &Path,
     root: &Path,
-    repo_root: &Path,
 ) -> Result<HtmlDocument> {
     // Create the compilation world with HTML format for link transformations
-    let world = RheoWorld::new(root, input, repo_root, Some(OutputFormat::Html))?;
+    let world = RheoWorld::new(root, input, Some(OutputFormat::Html))?;
 
     // Compile the document to HtmlDocument
     info!(input = %input.display(), "compiling to HTML");
@@ -49,11 +48,10 @@ fn compile_html_impl_fresh(
     input: &Path,
     output: &Path,
     root: &Path,
-    repo_root: &Path,
     html_options: &HtmlOptions,
 ) -> Result<()> {
     // Compile to HTML document (transformations happen in RheoWorld)
-    let doc = compile_html_to_document(input, root, repo_root)?;
+    let doc = compile_html_to_document(input, root)?;
     let html_string = compile_document_to_string(&doc)?;
 
     // Inject CSS and font links into <head>
@@ -93,8 +91,6 @@ fn compile_html_impl(
     world: &RheoWorld,
     input: &Path,
     output: &Path,
-    _root: &Path,
-    _repo_root: &Path,
     html_options: &HtmlOptions,
 ) -> Result<()> {
     // Compile to HTML document (transformations happen in RheoWorld)
@@ -155,8 +151,6 @@ pub fn compile_html_new(options: RheoCompileOptions, html_options: HtmlOptions) 
             world,
             &options.input,
             &options.output,
-            &options.root,
-            &options.repo_root,
             &html_options,
         ),
         // Fresh compilation (create new world)
@@ -164,7 +158,6 @@ pub fn compile_html_new(options: RheoCompileOptions, html_options: HtmlOptions) 
             &options.input,
             &options.output,
             &options.root,
-            &options.repo_root,
             &html_options,
         ),
     }
