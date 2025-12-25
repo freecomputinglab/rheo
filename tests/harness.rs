@@ -29,6 +29,7 @@ use std::path::PathBuf;
 #[test_case("tests/cases/error_formatting/type_error.typ")]
 #[test_case("tests/cases/error_formatting/undefined_var.typ")]
 #[test_case("tests/cases/error_formatting/syntax_error.typ")]
+#[test_case("tests/cases/error_formatting/function_arg_error.typ")]
 fn run_test_case(name: &str) {
     let test_case = TestCase::new(name);
     let update_mode = env::var("UPDATE_REFERENCES").is_ok();
