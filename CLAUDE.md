@@ -225,6 +225,49 @@ echo "\n// Test change" >> examples/blog_site/content/index.typ
 - `src/rs/cli.rs` - Watch loop with World creation and reuse (lines 631-692)
 - `Cargo.toml` - `comemo = "0.5"` dependency for cache management
 
+### Development Server and Live Reload
+
+**Overview:**
+Rheo includes a built-in development server with automatic browser refresh for HTML output. The server is activated with the `--open` flag in watch mode, providing a seamless development experience.
+
+**How It Works:**
+1. **Server Activation**: Use `--open` flag with watch command to start the server
+2. **HTTP Server**: Runs on `http://localhost:3000` (port hardcoded, not configurable)
+3. **SSE Endpoint**: Server-Sent Events endpoint at `/events` for browser communication
+4. **Live Reload Script**: HTML files automatically include a script that connects to the SSE endpoint
+5. **File Change Detection**: When Typst files change and recompile, server broadcasts reload events
+6. **Browser Auto-Refresh**: Connected browsers receive the reload event and refresh automatically
+
+**Architecture:**
+- `src/rs/server.rs` - Development server implementation using axum
+- Port 3000 is hardcoded (see `cli.rs` line 598)
+- SSE-based communication for zero-configuration live reload
+- Serves static HTML files from the build/html directory
+- Broadcast channel pattern for one-to-many client notifications
+
+**Usage:**
+```bash
+# Start watch mode with development server
+cargo run -- watch examples/blog_site --open
+
+# Server starts at http://localhost:3000
+# Browser opens automatically showing index.html
+# Edit any .typ file - browser refreshes automatically
+```
+
+**Key Features:**
+- Zero-configuration setup
+- Automatic browser opening
+- Instant refresh on file changes
+- Works with incremental compilation for fast iteration
+- Supports multiple connected browsers simultaneously
+
+**Implementation Details:**
+- Server state includes broadcast channel and HTML directory path
+- Static file handler serves .html files from build directory
+- SSE handler streams reload events to connected clients
+- Server runs in background task, doesn't block watch loop
+
 ### Error Formatting and Logging
 
 **Overview:**

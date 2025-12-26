@@ -14,6 +14,8 @@ Compile all =.typ= files in a directory to PDF, HTML, and EPUB:
 rheo watch examples/blog_site --open
 #+end_src
 
+The =--open= flag starts a development server at =http://localhost:3000= with automatic browser refresh. When you edit any Typst file, the browser automatically reloads to show your changes. This provides a seamless development experience for HTML output.
+
 Compile to specific formats:
 
 #+begin_src bash
@@ -24,7 +26,7 @@ rheo compile examples/blog_site --pdf
 rheo compile examples/blog_site --html
 #+end_src
 
-Output is organized in each project's =build= directory: =build/pdf/= and =build/html/=.
+Output is organized in each project's =build= directory: =build/pdf/=, =build/html/=, and =build/epub/=.
 
 *** Clean Build Artifacts
 
