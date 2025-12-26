@@ -71,6 +71,26 @@ cargo run -- compile <file.typ> --epub       # EPUB only
 cargo run -- compile examples/blog_site                      # Directory mode
 cargo run -- compile examples/blog_site/content/index.typ    # Single file mode
 cargo run -- compile examples/blog_post --epub               # EPUB with defaults
+
+# Using custom config location
+cargo run -- compile examples/blog_site --config /path/to/custom.toml
+
+# Using custom build directory
+cargo run -- compile examples/blog_site --build-dir /tmp/build
+```
+
+**Additional CLI flags:**
+```bash
+# --config: Load rheo.toml from custom location (overrides default ./rheo.toml)
+cargo run -- compile <project-path> --config /path/to/config.toml
+cargo run -- watch <project-path> --config /path/to/config.toml
+
+# --build-dir: Override build directory (takes precedence over rheo.toml setting)
+cargo run -- compile <project-path> --build-dir /tmp/rheo-build
+cargo run -- watch <project-path> --build-dir ./custom-output
+
+# Both flags work with compile, watch, and clean commands
+cargo run -- clean <project-path> --build-dir /tmp/rheo-build
 ```
 
 **Clean build artifacts:**

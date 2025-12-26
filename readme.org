@@ -26,6 +26,16 @@ rheo compile examples/blog_site --pdf
 rheo compile examples/blog_site --html
 #+end_src
 
+Use additional flags for customization:
+
+#+begin_src bash
+# Custom config file location
+rheo compile examples/blog_site --config /path/to/custom.toml
+
+# Custom build directory
+rheo compile examples/blog_site --build-dir /tmp/build
+#+end_src
+
 Output is organized in each project's =build= directory: =build/pdf/=, =build/html/=, and =build/epub/=.
 
 *** Clean Build Artifacts
