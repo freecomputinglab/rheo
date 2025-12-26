@@ -1,3 +1,4 @@
 [pdf.spine]
+merge = true
 vertebrae = ["intro.typ", "chapter*.typ", "conclusion.typ"]
 title = "Test Merged Document"

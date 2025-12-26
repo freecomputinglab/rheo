@@ -1,4 +1,5 @@
 [pdf.spine]
+merge = true
 title = "Link Transformation Test"
 vertebrae = ["doc1.typ", "doc2.typ"]
 

@@ -219,7 +219,7 @@ fn compile_pdf_merged_impl_fresh(
     })?;
 
     // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
-    let rheo_spine = RheoSpine::build(root, Some(merge), crate::OutputFormat::Pdf, &merge.title)?;
+    let rheo_spine = RheoSpine::build(root, Some(merge), crate::OutputFormat::Pdf)?;
 
     debug!(file_count = rheo_spine.source.len(), "built PDF spine");
 
@@ -283,7 +283,7 @@ fn compile_pdf_merged_impl(
     })?;
 
     // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
-    let rheo_spine = RheoSpine::build(root, Some(merge), crate::OutputFormat::Pdf, &merge.title)?;
+    let rheo_spine = RheoSpine::build(root, Some(merge), crate::OutputFormat::Pdf)?;
 
     debug!(file_count = rheo_spine.source.len(), "built PDF spine");
 

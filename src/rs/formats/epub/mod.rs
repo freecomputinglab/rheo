@@ -258,11 +258,6 @@ fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Resu
             root,
             config.spine.as_ref(),
             crate::OutputFormat::Epub,
-            config
-                .spine
-                .as_ref()
-                .map(|m| m.title.as_str())
-                .unwrap_or("Untitled"),
         )?;
 
         // Get the spine file paths

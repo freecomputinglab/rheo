@@ -8,6 +8,7 @@ content_dir = "content"
 # formats = ["html", "pdf"]
 
 [pdf.spine]
+merge = true
 vertebrae = ["severance-*.typ"]
 title = "Screening the Subject | Severance"
 

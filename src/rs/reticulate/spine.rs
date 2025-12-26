@@ -33,7 +33,6 @@ impl RheoSpine {
     /// * `root` - Project root directory
     /// * `spine_config` - Optional spine configuration (determines spine files)
     /// * `output_format` - Target output format (determines link transformation behavior)
-    /// * `title` - Document title (used for merged outputs)
     ///
     /// # Returns
     /// A RheoSpine containing transformed Typst sources ready for compilation.
@@ -41,7 +40,6 @@ impl RheoSpine {
         root: &Path,
         spine_config: Option<&Spine>,
         output_format: OutputFormat,
-        title: &str,
     ) -> Result<RheoSpine> {
         // Generate spine: ordered list of .typ files
         let spine_files = generate_spine(root, spine_config, false)?;
@@ -51,7 +49,9 @@ impl RheoSpine {
 
         // Determine if we should merge sources based on format and config
         let should_merge = match output_format {
-            OutputFormat::Pdf => spine_config.is_some(),
+            OutputFormat::Pdf => spine_config
+                .and_then(|s| s.merge)
+                .unwrap_or(false),
             OutputFormat::Html | OutputFormat::Epub => false,
         };
 
@@ -92,8 +92,13 @@ impl RheoSpine {
             sources
         };
 
+        // Extract title from spine config, or use "Untitled" as fallback
+        let title = spine_config
+            .map(|s| s.title.clone())
+            .unwrap_or_else(|| "Untitled".to_string());
+
         Ok(RheoSpine {
-            title: title.to_string(),
+            title,
             is_merged: should_merge,
             source: final_sources,
         })
@@ -196,23 +201,23 @@ fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
 /// # Arguments
 /// * `root` - Project root directory
 /// * `spine_config` - Optional spine configuration with vertebrae patterns
-/// * `require_merge` - If true, spine_config must be provided (PDF mode)
+/// * `require_spine` - If true, spine_config must be provided (PDF mode)
 ///
 /// # Errors
 /// Returns error if:
-/// - `require_merge=true` and `spine_config=None`
+/// - `require_spine=true` and `spine_config=None`
 /// - No .typ files found (fallback mode)
 /// - Multiple .typ files found without spine config (fallback mode)
 /// - Spine vertebrae matched no .typ files
 pub fn generate_spine(
     root: &Path,
     spine_config: Option<&Spine>,
-    require_merge: bool,
+    require_spine: bool,
 ) -> Result<Vec<PathBuf>> {
     // PDF mode: spine config is required
-    if require_merge && spine_config.is_none() {
+    if require_spine && spine_config.is_none() {
         return Err(RheoError::project_config(
-            "merge configuration required but not provided",
+            "spine configuration required but not provided",
         ));
     }
 
@@ -288,7 +293,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("merge configuration required")
+                .contains("spine configuration required")
         );
     }
 
