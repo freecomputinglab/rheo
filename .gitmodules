@@ -1,6 +1,6 @@
 [submodule "examples/rheo_docs"]
 	path = examples/rheo_docs
-	url = git@github.com:freecomputinglab/rheo.ohrg.org
+	url = https://github.com/freecomputinglab/rheo.ohrg.org
 
 [submodule "examples/fcl_site"]
 	path = examples/fcl_site
