@@ -1,0 +1,3 @@
+[html.spine]
+title = "My Website"
+vertebrae = ["index.typ", "about.typ"]

@@ -422,4 +422,112 @@ mod tests {
             vec!["https://fonts.com/font1.css", "https://fonts.com/font2.css"]
         );
     }
+
+    #[test]
+    fn test_pdf_spine_with_merge_true() {
+        let toml = r#"
+        [pdf.spine]
+        title = "My Book"
+        vertebrae = ["cover.typ", "chapters/*.typ"]
+        merge = true
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.pdf.spine.as_ref().unwrap();
+        assert_eq!(spine.title, "My Book");
+        assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
+        assert_eq!(spine.merge, Some(true));
+    }
+
+    #[test]
+    fn test_pdf_spine_with_merge_false() {
+        let toml = r#"
+        [pdf.spine]
+        title = "My Book"
+        vertebrae = ["cover.typ", "chapters/*.typ"]
+        merge = false
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.pdf.spine.as_ref().unwrap();
+        assert_eq!(spine.title, "My Book");
+        assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
+        assert_eq!(spine.merge, Some(false));
+    }
+
+    #[test]
+    fn test_pdf_spine_merge_omitted() {
+        let toml = r#"
+        [pdf.spine]
+        title = "My Book"
+        vertebrae = ["cover.typ"]
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.pdf.spine.as_ref().unwrap();
+        assert_eq!(spine.title, "My Book");
+        assert_eq!(spine.vertebrae, vec!["cover.typ"]);
+        assert_eq!(spine.merge, None);
+    }
+
+    #[test]
+    fn test_epub_spine() {
+        let toml = r#"
+        [epub.spine]
+        title = "My EPUB"
+        vertebrae = ["intro.typ", "chapter*.typ", "outro.typ"]
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.epub.spine.as_ref().unwrap();
+        assert_eq!(spine.title, "My EPUB");
+        assert_eq!(spine.vertebrae, vec!["intro.typ", "chapter*.typ", "outro.typ"]);
+        assert_eq!(spine.merge, None);
+    }
+
+    #[test]
+    fn test_html_spine() {
+        let toml = r#"
+        [html.spine]
+        title = "My Website"
+        vertebrae = ["index.typ", "about.typ"]
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.html.spine.as_ref().unwrap();
+        assert_eq!(spine.title, "My Website");
+        assert_eq!(spine.vertebrae, vec!["index.typ", "about.typ"]);
+        assert_eq!(spine.merge, None);
+    }
+
+    #[test]
+    fn test_spine_empty_vertebrae() {
+        let toml = r#"
+        [epub.spine]
+        title = "Single File Book"
+        vertebrae = []
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.epub.spine.as_ref().unwrap();
+        assert_eq!(spine.title, "Single File Book");
+        assert!(spine.vertebrae.is_empty());
+    }
+
+    #[test]
+    fn test_spine_complex_glob_patterns() {
+        let toml = r#"
+        [pdf.spine]
+        title = "Complex Book"
+        vertebrae = ["frontmatter/**/*.typ", "chapters/**/ch*.typ", "appendix.typ"]
+        merge = true
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.pdf.spine.as_ref().unwrap();
+        assert_eq!(spine.vertebrae.len(), 3);
+        assert_eq!(spine.vertebrae[0], "frontmatter/**/*.typ");
+        assert_eq!(spine.vertebrae[1], "chapters/**/ch*.typ");
+        assert_eq!(spine.vertebrae[2], "appendix.typ");
+    }
 }
