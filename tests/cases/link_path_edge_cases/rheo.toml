@@ -2,4 +2,4 @@ formats = ["html", "pdf"]
 
 [pdf.merge]
 title = "Path Edge Cases Test"
-spine = ["main.typ", "file-name.typ", "file_name.typ", "version-1.0.typ", "chapter-01.typ"]
+vertebrae = ["main.typ", "file-name.typ", "file_name.typ", "version-1.0.typ", "chapter-01.typ"]

@@ -1,7 +1,7 @@
 [pdf.merge]
 title = "Link Transformation Test"
-spine = ["doc1.typ", "doc2.typ"]
+vertebrae = ["doc1.typ", "doc2.typ"]
 
 [epub.merge]
 title = "Link Transformation Test"
-spine = ["doc1.typ", "doc2.typ"]
+vertebrae = ["doc1.typ", "doc2.typ"]

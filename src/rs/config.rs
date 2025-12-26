@@ -100,7 +100,7 @@ impl Default for RheoConfig {
 
 /// Configuration for merging outputs
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Merge {
+pub struct Spine {
     /// Title for merged document
     pub title: String,
 
@@ -108,7 +108,7 @@ pub struct Merge {
     /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
     /// Output of patterns are sorted lexicographically
     /// Example: ["cover.typ", "chapters/**"]"
-    pub spine: Vec<String>,
+    pub vertebrae: Vec<String>,
 }
 
 /// HTML output configuration
@@ -136,7 +136,7 @@ impl Default for HtmlConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PdfConfig {
     /// Configuration for a merged PDF with multiple chapters.
-    pub merge: Option<Merge>,
+    pub merge: Option<Spine>,
 }
 
 /// EPUB output configuration
@@ -156,7 +156,7 @@ pub struct EpubConfig {
     pub date: Option<DateTime<Utc>>,
 
     /// Configuration for a merged EPUB with multiple chapters.
-    pub merge: Option<Merge>,
+    pub merge: Option<Spine>,
 }
 
 impl RheoConfig {

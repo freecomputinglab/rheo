@@ -1,4 +1,4 @@
-use crate::config::{EpubConfig, HtmlConfig, Merge, PdfConfig};
+use crate::config::{EpubConfig, HtmlConfig, Spine, PdfConfig};
 use crate::{Result, RheoError};
 
 /// Trait for validating configuration structs after deserialization.
@@ -40,13 +40,13 @@ impl ValidateConfig for EpubConfig {
     }
 }
 
-impl ValidateConfig for Merge {
+impl ValidateConfig for Spine {
     fn validate(&self) -> Result<()> {
-        // Empty spine is allowed - it has special behavior for single-file mode
+        // Empty vertebrae is allowed - it has special behavior for single-file mode
         // See spine.rs lines 62-87
 
         // Validate that all glob patterns are syntactically valid
-        for pattern in &self.spine {
+        for pattern in &self.vertebrae {
             glob::Pattern::new(pattern).map_err(|e| {
                 RheoError::project_config(format!("invalid glob pattern '{}': {}", pattern, e))
             })?;
@@ -62,27 +62,27 @@ mod tests {
 
     #[test]
     fn test_merge_validate_empty_spine() {
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec![],
+            vertebrae: vec![],
         };
         assert!(merge.validate().is_ok());
     }
 
     #[test]
     fn test_merge_validate_valid_patterns() {
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec!["*.typ".to_string(), "chapters/**/*.typ".to_string()],
+            vertebrae: vec!["*.typ".to_string(), "chapters/**/*.typ".to_string()],
         };
         assert!(merge.validate().is_ok());
     }
 
     #[test]
     fn test_merge_validate_invalid_pattern() {
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec!["[invalid".to_string()], // Unclosed bracket is invalid glob
+            vertebrae: vec!["[invalid".to_string()], // Unclosed bracket is invalid glob
         };
         let result = merge.validate();
         assert!(result.is_err());
@@ -92,9 +92,9 @@ mod tests {
 
     #[test]
     fn test_pdf_config_validate_with_valid_merge() {
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec!["*.typ".to_string()],
+            vertebrae: vec!["*.typ".to_string()],
         };
         let config = PdfConfig { merge: Some(merge) };
         assert!(config.validate().is_ok());
@@ -102,9 +102,9 @@ mod tests {
 
     #[test]
     fn test_pdf_config_validate_with_invalid_merge() {
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec!["[invalid".to_string()],
+            vertebrae: vec!["[invalid".to_string()],
         };
         let config = PdfConfig { merge: Some(merge) };
         let result = config.validate();
@@ -119,9 +119,9 @@ mod tests {
 
     #[test]
     fn test_epub_config_validate() {
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec!["*.typ".to_string()],
+            vertebrae: vec!["*.typ".to_string()],
         };
         let config = EpubConfig {
             identifier: None,

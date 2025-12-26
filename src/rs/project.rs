@@ -1,4 +1,4 @@
-use crate::config::Merge;
+use crate::config::Spine;
 use crate::formats::pdf::DocumentTitle;
 use crate::{Result, RheoConfig, RheoError};
 use std::path::{Path, PathBuf};
@@ -216,11 +216,11 @@ fn apply_smart_defaults(
 
     // Apply EPUB defaults if merge not configured
     if config.epub.merge.is_none() {
-        let spine = match mode {
+        let vertebrae = match mode {
             ProjectMode::SingleFile => vec![], // Empty: will auto-discover single file
             ProjectMode::Directory => vec!["**/*.typ".to_string()], // All files
         };
-        config.epub.merge = Some(Merge { title, spine });
+        config.epub.merge = Some(Spine { title, vertebrae });
     }
 
     config
@@ -344,7 +344,7 @@ mod tests {
         assert!(project.config.epub.merge.is_some());
         let merge = project.config.epub.merge.as_ref().unwrap();
         assert_eq!(merge.title, "My Document");
-        assert!(merge.spine.is_empty());
+        assert!(merge.vertebrae.is_empty());
     }
 
     #[test]
@@ -358,7 +358,7 @@ mod tests {
         // Should have default merge config for EPUB
         assert!(project.config.epub.merge.is_some());
         let merge = project.config.epub.merge.as_ref().unwrap();
-        assert_eq!(merge.spine, vec!["**/*.typ"]);
+        assert_eq!(merge.vertebrae, vec!["**/*.typ"]);
         // Title should be based on temp directory name (will vary)
         assert!(!merge.title.is_empty());
     }
@@ -372,7 +372,7 @@ mod tests {
             r#"
 [epub.merge]
 title = "Custom Title"
-spine = ["custom.typ"]
+vertebrae = ["custom.typ"]
 "#,
         )
         .unwrap();
@@ -383,7 +383,7 @@ spine = ["custom.typ"]
         // Should preserve explicit config
         let merge = project.config.epub.merge.as_ref().unwrap();
         assert_eq!(merge.title, "Custom Title");
-        assert_eq!(merge.spine, vec!["custom.typ"]);
+        assert_eq!(merge.vertebrae, vec!["custom.typ"]);
     }
 
     #[test]

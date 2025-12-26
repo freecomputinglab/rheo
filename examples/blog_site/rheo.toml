@@ -8,9 +8,9 @@ content_dir = "content"
 # formats = ["html", "pdf"]
 
 [pdf.merge]
-spine = ["severance-*.typ"]
+vertebrae = ["severance-*.typ"]
 title = "Screening the Subject | Severance"
 
 [epub.merge]
-spine = ["severance-*.typ"]
+vertebrae = ["severance-*.typ"]
 title = "Screening the Subject | Severance"
