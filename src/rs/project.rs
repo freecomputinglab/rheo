@@ -214,13 +214,13 @@ fn apply_smart_defaults(
     // Generate human-readable title from project/file name
     let title = DocumentTitle::to_readable_name(project_name);
 
-    // Apply EPUB defaults if merge not configured
-    if config.epub.merge.is_none() {
+    // Apply EPUB defaults if spine not configured
+    if config.epub.spine.is_none() {
         let vertebrae = match mode {
             ProjectMode::SingleFile => vec![], // Empty: will auto-discover single file
             ProjectMode::Directory => vec!["**/*.typ".to_string()], // All files
         };
-        config.epub.merge = Some(Spine {
+        config.epub.spine = Some(Spine {
             title,
             vertebrae,
             merge: None,
@@ -344,9 +344,9 @@ mod tests {
 
         let project = ProjectConfig::from_path(&file, None).unwrap();
 
-        // Should have default merge config for EPUB
-        assert!(project.config.epub.merge.is_some());
-        let merge = project.config.epub.merge.as_ref().unwrap();
+        // Should have default spine config for EPUB
+        assert!(project.config.epub.spine.is_some());
+        let merge = project.config.epub.spine.as_ref().unwrap();
         assert_eq!(merge.title, "My Document");
         assert!(merge.vertebrae.is_empty());
     }
@@ -359,9 +359,9 @@ mod tests {
 
         let project = ProjectConfig::from_path(temp.path(), None).unwrap();
 
-        // Should have default merge config for EPUB
-        assert!(project.config.epub.merge.is_some());
-        let merge = project.config.epub.merge.as_ref().unwrap();
+        // Should have default spine config for EPUB
+        assert!(project.config.epub.spine.is_some());
+        let merge = project.config.epub.spine.as_ref().unwrap();
         assert_eq!(merge.vertebrae, vec!["**/*.typ"]);
         // Title should be based on temp directory name (will vary)
         assert!(!merge.title.is_empty());
@@ -374,7 +374,7 @@ mod tests {
         fs::write(
             &config_path,
             r#"
-[epub.merge]
+[epub.spine]
 title = "Custom Title"
 vertebrae = ["custom.typ"]
 "#,
@@ -385,7 +385,7 @@ vertebrae = ["custom.typ"]
         let project = ProjectConfig::from_path(temp.path(), None).unwrap();
 
         // Should preserve explicit config
-        let merge = project.config.epub.merge.as_ref().unwrap();
+        let merge = project.config.epub.spine.as_ref().unwrap();
         assert_eq!(merge.title, "Custom Title");
         assert_eq!(merge.vertebrae, vec!["custom.typ"]);
     }
@@ -398,7 +398,7 @@ vertebrae = ["custom.typ"]
 
         let project = ProjectConfig::from_path(temp.path(), None).unwrap();
 
-        // PDF should not get default merge config (backwards compatibility)
-        assert!(project.config.pdf.merge.is_none());
+        // PDF should not get default spine config (backwards compatibility)
+        assert!(project.config.pdf.spine.is_none());
     }
 }

@@ -127,6 +127,11 @@ pub struct HtmlConfig {
     /// Font URLs to inject
     #[serde(default = "default_fonts")]
     pub fonts: Vec<String>,
+
+    /// Configuration for an HTML spine (sitemap/navbar).
+    /// HTML never merges vertebrae.
+    #[serde(default)]
+    pub spine: Option<Spine>,
 }
 
 impl Default for HtmlConfig {
@@ -134,6 +139,7 @@ impl Default for HtmlConfig {
         Self {
             stylesheets: default_stylesheets(),
             fonts: default_fonts(),
+            spine: None,
         }
     }
 }
@@ -141,8 +147,8 @@ impl Default for HtmlConfig {
 /// PDF output configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PdfConfig {
-    /// Configuration for a merged PDF with multiple chapters.
-    pub merge: Option<Spine>,
+    /// Configuration for a PDF spine with multiple chapters.
+    pub spine: Option<Spine>,
 }
 
 /// EPUB output configuration
@@ -161,8 +167,8 @@ pub struct EpubConfig {
     /// See: EPUB 3.3, The `dc:date` element <https://www.w3.org/TR/epub-33/#sec-opf-dcdate>
     pub date: Option<DateTime<Utc>>,
 
-    /// Configuration for a merged EPUB with multiple chapters.
-    pub merge: Option<Spine>,
+    /// Configuration for an EPUB spine with multiple chapters.
+    pub spine: Option<Spine>,
 }
 
 impl RheoConfig {

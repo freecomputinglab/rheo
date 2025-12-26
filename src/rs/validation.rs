@@ -16,8 +16,8 @@ pub trait ValidateConfig {
 
 impl ValidateConfig for PdfConfig {
     fn validate(&self) -> Result<()> {
-        if let Some(merge) = &self.merge {
-            merge.validate()?;
+        if let Some(spine) = &self.spine {
+            spine.validate()?;
         }
         Ok(())
     }
@@ -25,7 +25,9 @@ impl ValidateConfig for PdfConfig {
 
 impl ValidateConfig for HtmlConfig {
     fn validate(&self) -> Result<()> {
-        // No validation needed for HTML config currently
+        if let Some(spine) = &self.spine {
+            spine.validate()?;
+        }
         // Stylesheet and font paths are validated at usage time
         Ok(())
     }
@@ -33,8 +35,8 @@ impl ValidateConfig for HtmlConfig {
 
 impl ValidateConfig for EpubConfig {
     fn validate(&self) -> Result<()> {
-        if let Some(merge) = &self.merge {
-            merge.validate()?;
+        if let Some(spine) = &self.spine {
+            spine.validate()?;
         }
         Ok(())
     }
@@ -100,7 +102,7 @@ mod tests {
             vertebrae: vec!["*.typ".to_string()],
             merge: None,
         };
-        let config = PdfConfig { merge: Some(merge) };
+        let config = PdfConfig { spine: Some(merge) };
         assert!(config.validate().is_ok());
     }
 
@@ -111,14 +113,14 @@ mod tests {
             vertebrae: vec!["[invalid".to_string()],
             merge: None,
         };
-        let config = PdfConfig { merge: Some(merge) };
+        let config = PdfConfig { spine: Some(merge) };
         let result = config.validate();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_pdf_config_validate_no_merge() {
-        let config = PdfConfig { merge: None };
+        let config = PdfConfig { spine: None };
         assert!(config.validate().is_ok());
     }
 
@@ -132,7 +134,7 @@ mod tests {
         let config = EpubConfig {
             identifier: None,
             date: None,
-            merge: Some(merge),
+            spine: Some(merge),
         };
         assert!(config.validate().is_ok());
     }
@@ -142,6 +144,7 @@ mod tests {
         let config = HtmlConfig {
             stylesheets: vec!["style.css".to_string()],
             fonts: vec![],
+            spine: None,
         };
         assert!(config.validate().is_ok());
     }

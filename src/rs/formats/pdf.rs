@@ -214,7 +214,7 @@ fn compile_pdf_merged_impl_fresh(
     output_path: &Path,
     root: &Path,
 ) -> Result<()> {
-    let merge = config.merge.as_ref().ok_or_else(|| {
+    let merge = config.spine.as_ref().ok_or_else(|| {
         RheoError::project_config("PDF merge configuration required for merged compilation")
     })?;
 
@@ -278,7 +278,7 @@ fn compile_pdf_merged_impl(
     output_path: &Path,
     root: &Path,
 ) -> Result<()> {
-    let merge = config.merge.as_ref().ok_or_else(|| {
+    let merge = config.spine.as_ref().ok_or_else(|| {
         RheoError::project_config("PDF merge configuration required for merged compilation")
     })?;
 
@@ -351,7 +351,7 @@ fn compile_pdf_merged_impl(
 /// * `Result<()>` - Success or compilation error
 pub fn compile_pdf_new(options: RheoCompileOptions, pdf_config: Option<&PdfConfig>) -> Result<()> {
     // Check if this is merged PDF compilation
-    let is_merged = pdf_config.and_then(|c| c.merge.as_ref()).is_some();
+    let is_merged = pdf_config.and_then(|c| c.spine.as_ref()).is_some();
 
     match (is_merged, options.world) {
         // Merged PDF, incremental
