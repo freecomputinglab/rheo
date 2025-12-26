@@ -254,11 +254,7 @@ pub fn zip_epub(
 fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
         // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
-        let rheo_spine = RheoSpine::build(
-            root,
-            config.spine.as_ref(),
-            crate::OutputFormat::Epub,
-        )?;
+        let rheo_spine = RheoSpine::build(root, config.spine.as_ref(), crate::OutputFormat::Epub)?;
 
         // Get the spine file paths
         let spine = crate::reticulate::spine::generate_spine(root, config.spine.as_ref(), false)?;

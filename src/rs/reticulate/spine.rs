@@ -49,9 +49,7 @@ impl RheoSpine {
 
         // Determine if we should merge sources based on format and config
         let should_merge = match output_format {
-            OutputFormat::Pdf => spine_config
-                .and_then(|s| s.merge)
-                .unwrap_or(false),
+            OutputFormat::Pdf => spine_config.and_then(|s| s.merge).unwrap_or(false),
             OutputFormat::Html | OutputFormat::Epub => false,
         };
 

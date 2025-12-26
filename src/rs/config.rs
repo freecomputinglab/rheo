@@ -481,7 +481,10 @@ mod tests {
         let config: RheoConfig = toml::from_str(toml).unwrap();
         let spine = config.epub.spine.as_ref().unwrap();
         assert_eq!(spine.title, "My EPUB");
-        assert_eq!(spine.vertebrae, vec!["intro.typ", "chapter*.typ", "outro.typ"]);
+        assert_eq!(
+            spine.vertebrae,
+            vec!["intro.typ", "chapter*.typ", "outro.typ"]
+        );
         assert_eq!(spine.merge, None);
     }
 
