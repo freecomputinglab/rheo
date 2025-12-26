@@ -38,7 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `assets.rs` - Asset copying utilities
   - `logging.rs` - Logging configuration
   - `error.rs` - Error types
-- `src/typst/` - Typst template files
+- `src/typ/` - Typst template files
   - `rheo.typ` - Core template and utilities
 
 Each project creates its own `build/` directory (gitignored) containing:
