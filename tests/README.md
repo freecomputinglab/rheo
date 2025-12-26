@@ -48,7 +48,7 @@ cargo test -- --nocapture
 
 This project includes external example repositories as git submodules:
 
-- `examples/rheo.ohrg.org` - Rheo documentation/manual
+- `examples/rheo_docs` - Rheo documentation/manual
 
 ### Setup
 
@@ -68,10 +68,10 @@ To update submodules to the latest upstream version:
 git submodule update --remote
 
 # Or update specific submodule
-cd examples/rheo.ohrg.org
+cd examples/rheo_docs
 git pull origin main
 cd ../..
-git add examples/rheo.ohrg.org
+git add examples/rheo_docs
 ```
 
 **Note**: While rheo uses Jujutsu (jj) for version control, git submodule commands must be used for submodule management. After using git commands for submodules, return to the normal jj workflow for committing changes.
