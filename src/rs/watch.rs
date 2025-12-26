@@ -28,12 +28,13 @@ pub enum WatchEvent {
 ///
 /// # Arguments
 /// * `project` - Project configuration with source files
+/// * `build_dir` - Canonicalized build directory path to exclude from watching
 /// * `callback` - Function called when files change, receives WatchEvent
 ///
 /// # Returns
 /// * `Ok(())` when watching stops gracefully (e.g., Ctrl+C)
 /// * `Err` if watcher setup fails
-pub fn watch_project<F>(project: &ProjectConfig, mut callback: F) -> Result<()>
+pub fn watch_project<F>(project: &ProjectConfig, build_dir: &Path, mut callback: F) -> Result<()>
 where
     F: FnMut(WatchEvent) -> Result<()>,
 {
@@ -86,11 +87,18 @@ where
             Ok(result) => {
                 match result {
                     Ok(event) => {
+                        // Ignore Access events (file opens/reads) - only care about modifications
+                        // The Typst compiler opens source files during compilation, which would
+                        // trigger infinite recompilation loops if we treated Access as a change
+                        if matches!(event.kind, notify::EventKind::Access(_)) {
+                            continue;
+                        }
+
                         // Filter events to only relevant files (.typ files, rheo.toml, assets)
                         let paths: Vec<PathBuf> = event
                             .paths
                             .into_iter()
-                            .filter(|p| is_relevant_path(p, project))
+                            .filter(|p| is_relevant_path(p, project, build_dir))
                             .collect();
 
                         if !paths.is_empty() {
@@ -152,7 +160,20 @@ where
 }
 
 /// Check if a path is relevant for triggering recompilation
-fn is_relevant_path(path: &Path, project: &ProjectConfig) -> bool {
+fn is_relevant_path(path: &Path, project: &ProjectConfig, build_dir: &Path) -> bool {
+    // CRITICAL: Exclude all paths under the build directory to prevent infinite loops
+    // Try canonicalized comparison first (handles symlinks and relative paths)
+    if let Ok(canonical_path) = path.canonicalize() {
+        if canonical_path.starts_with(build_dir) {
+            return false;
+        }
+    }
+    // Fallback: If canonicalize fails (file doesn't exist yet), check prefix match
+    // This handles cases where notify fires events for paths being created
+    else if path.starts_with(build_dir) {
+        return false;
+    }
+
     match project.mode {
         ProjectMode::SingleFile => {
             // Only the exact file is relevant (and assets in parent directory)
