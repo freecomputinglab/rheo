@@ -65,6 +65,7 @@ mod tests {
         let merge = Spine {
             title: "Test".to_string(),
             vertebrae: vec![],
+            merge: None,
         };
         assert!(merge.validate().is_ok());
     }
@@ -74,6 +75,7 @@ mod tests {
         let merge = Spine {
             title: "Test".to_string(),
             vertebrae: vec!["*.typ".to_string(), "chapters/**/*.typ".to_string()],
+            merge: None,
         };
         assert!(merge.validate().is_ok());
     }
@@ -83,6 +85,7 @@ mod tests {
         let merge = Spine {
             title: "Test".to_string(),
             vertebrae: vec!["[invalid".to_string()], // Unclosed bracket is invalid glob
+            merge: None,
         };
         let result = merge.validate();
         assert!(result.is_err());
@@ -95,6 +98,7 @@ mod tests {
         let merge = Spine {
             title: "Test".to_string(),
             vertebrae: vec!["*.typ".to_string()],
+            merge: None,
         };
         let config = PdfConfig { merge: Some(merge) };
         assert!(config.validate().is_ok());
@@ -105,6 +109,7 @@ mod tests {
         let merge = Spine {
             title: "Test".to_string(),
             vertebrae: vec!["[invalid".to_string()],
+            merge: None,
         };
         let config = PdfConfig { merge: Some(merge) };
         let result = config.validate();
@@ -122,6 +127,7 @@ mod tests {
         let merge = Spine {
             title: "Test".to_string(),
             vertebrae: vec!["*.typ".to_string()],
+            merge: None,
         };
         let config = EpubConfig {
             identifier: None,

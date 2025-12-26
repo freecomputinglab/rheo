@@ -334,6 +334,7 @@ mod tests {
         let merge = Spine {
             title: "Test".to_string(),
             vertebrae: vec!["*.typ".to_string()],
+            merge: None,
         };
         let result = generate_spine(temp.path(), Some(&merge), false);
         assert!(result.is_ok());
@@ -356,6 +357,7 @@ mod tests {
                 "chapters/*.typ".to_string(),
                 "appendix.typ".to_string(),
             ],
+            merge: None,
         };
         let result = generate_spine(temp.path(), Some(&merge), true);
         assert!(result.is_ok());
@@ -389,6 +391,7 @@ mod tests {
         let merge = Spine {
             title: "Test".to_string(),
             vertebrae: vec!["*.typ".to_string()],
+            merge: None,
         };
         let result = generate_spine(temp.path(), Some(&merge), false);
         assert!(result.is_err());
@@ -406,6 +409,7 @@ mod tests {
         let merge = Spine {
             title: "Test".to_string(),
             vertebrae: vec![], // Empty vertebrae
+            merge: None,
         };
 
         let result = generate_spine(temp.path(), Some(&merge), false);
@@ -421,6 +425,7 @@ mod tests {
         let merge = Spine {
             title: "Test".to_string(),
             vertebrae: vec![], // Empty vertebrae with multiple files
+            merge: None,
         };
 
         let result = generate_spine(temp.path(), Some(&merge), false);

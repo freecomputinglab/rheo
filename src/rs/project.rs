@@ -220,7 +220,11 @@ fn apply_smart_defaults(
             ProjectMode::SingleFile => vec![], // Empty: will auto-discover single file
             ProjectMode::Directory => vec!["**/*.typ".to_string()], // All files
         };
-        config.epub.merge = Some(Spine { title, vertebrae });
+        config.epub.merge = Some(Spine {
+            title,
+            vertebrae,
+            merge: None,
+        });
     }
 
     config

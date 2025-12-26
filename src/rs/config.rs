@@ -109,6 +109,12 @@ pub struct Spine {
     /// Output of patterns are sorted lexicographically
     /// Example: ["cover.typ", "chapters/**"]"
     pub vertebrae: Vec<String>,
+
+    /// Whether to merge vertebrae into a single output file.
+    /// Only meaningful for PDF (HTML always false, EPUB always true).
+    /// If not specified for PDF, defaults to false (per-file compilation).
+    #[serde(default)]
+    pub merge: Option<bool>,
 }
 
 /// HTML output configuration
