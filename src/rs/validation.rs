@@ -1,5 +1,6 @@
-use crate::config::{EpubConfig, HtmlConfig, Spine, PdfConfig};
+use crate::config::{EpubConfig, HtmlConfig, PdfConfig, Spine};
 use crate::{Result, RheoError};
+use tracing::warn;
 
 /// Trait for validating configuration structs after deserialization.
 ///
@@ -27,6 +28,10 @@ impl ValidateConfig for HtmlConfig {
     fn validate(&self) -> Result<()> {
         if let Some(spine) = &self.spine {
             spine.validate()?;
+            // Warn if merge field is set - it's ignored for HTML
+            if spine.merge.is_some() {
+                warn!("html.spine.merge field is ignored (HTML always produces per-file output)");
+            }
         }
         // Stylesheet and font paths are validated at usage time
         Ok(())
@@ -37,6 +42,10 @@ impl ValidateConfig for EpubConfig {
     fn validate(&self) -> Result<()> {
         if let Some(spine) = &self.spine {
             spine.validate()?;
+            // Warn if merge field is set - it's ignored for EPUB
+            if spine.merge.is_some() {
+                warn!("epub.spine.merge field is ignored (EPUB always merges into single .epub)");
+            }
         }
         Ok(())
     }
@@ -146,6 +155,38 @@ mod tests {
             fonts: vec![],
             spine: None,
         };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_html_config_warns_on_merge_field() {
+        let spine = Spine {
+            title: "Test".to_string(),
+            vertebrae: vec!["*.typ".to_string()],
+            merge: Some(true),
+        };
+        let config = HtmlConfig {
+            stylesheets: vec![],
+            fonts: vec![],
+            spine: Some(spine),
+        };
+        // Should validate successfully but log warning
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_epub_config_warns_on_merge_field() {
+        let spine = Spine {
+            title: "Test".to_string(),
+            vertebrae: vec!["*.typ".to_string()],
+            merge: Some(false),
+        };
+        let config = EpubConfig {
+            identifier: None,
+            date: None,
+            spine: Some(spine),
+        };
+        // Should validate successfully but log warning
         assert!(config.validate().is_ok());
     }
 }
