@@ -134,9 +134,9 @@ impl DocumentTitle {
 
                     for (i, ch) in title_content.chars().enumerate() {
                         if ch == '[' {
-                            depth += 1;  // Found nested opening bracket
+                            depth += 1; // Found nested opening bracket
                         } else if ch == ']' {
-                            depth -= 1;  // Found closing bracket
+                            depth -= 1; // Found closing bracket
                             if depth == 0 {
                                 // This is the matching closing bracket
                                 end_pos = i;

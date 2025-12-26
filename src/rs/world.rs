@@ -247,11 +247,9 @@ impl RheoWorld {
         // (e.g., binary files or files that failed source parsing)
         if let Some(slot) = self.slots.lock().get(&id)
             && let Some(bytes) = &slot.file
-        {
-            if let Ok(lines) = Lines::try_from(bytes) {
+            && let Ok(lines) = Lines::try_from(bytes) {
                 return lines;
             }
-        }
 
         // Fallback 4: Return empty Lines to prevent panic
         // Occurs when file doesn't exist or all loading attempts failed

@@ -74,8 +74,8 @@ where
     // or when a single edit triggers multiple filesystem events
     let debounce_duration = Duration::from_secs(1);
     let mut last_event_time = std::time::Instant::now();
-    let mut pending_changes = false;  // True if any .typ files changed
-    let mut config_changed = false;   // True if rheo.toml changed (requires full reload)
+    let mut pending_changes = false; // True if any .typ files changed
+    let mut config_changed = false; // True if rheo.toml changed (requires full reload)
 
     info!("watching for changes (press Ctrl+C to stop)");
 

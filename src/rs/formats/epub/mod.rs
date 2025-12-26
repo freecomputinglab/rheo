@@ -417,7 +417,7 @@ impl EpubItem {
                 // valid IRI fragments. However, Typst labels could theoretically contain characters
                 // that require percent-encoding. If this panics, we need to add proper encoding.
                 anchored_href.set_fragment(Some(
-                    Fragment::new(&id).expect("heading ID should be a valid IRI fragment")
+                    Fragment::new(&id).expect("heading ID should be a valid IRI fragment"),
                 ));
                 let link = eco_format!(r#"<a href="{anchored_href}">{entry}</a>"#);
                 ((link, level, true), id)
