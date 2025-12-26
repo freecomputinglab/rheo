@@ -274,7 +274,9 @@ fn perform_compilation<'a>(
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
 
-        // For incremental mode, update world for this file
+        // For incremental mode, prepare the World for compiling this specific file
+        // 1. set_main() tells the World which file we're compiling (updates main file ID)
+        // 2. reset() clears file caches while preserving fonts/packages (enables incremental compilation)
         if let CompilationMode::Incremental { world } = &mut mode {
             world.set_main(typ_file)?;
             world.reset();
