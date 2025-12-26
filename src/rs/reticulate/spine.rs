@@ -108,7 +108,7 @@ fn transform_source(
     project_root: &Path,
 ) -> Result<String> {
     // Create transformer based on format and mode
-    use crate::links::transformer::LinkTransformer;
+    use crate::reticulate::transformer::LinkTransformer;
 
     let transformer = match (output_format, spine_files.len()) {
         (OutputFormat::Pdf, 1) => LinkTransformer::new(output_format), // Single-file PDF

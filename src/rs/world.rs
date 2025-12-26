@@ -160,7 +160,7 @@ impl RheoWorld {
     /// # Returns
     /// * `FileResult<String>` - Transformed source text
     fn transform_links(&self, text: &str, id: FileId, format: &OutputFormat) -> FileResult<String> {
-        use crate::links::transformer::LinkTransformer;
+        use crate::reticulate::transformer::LinkTransformer;
 
         let transformer = LinkTransformer::new(*format);
         transformer

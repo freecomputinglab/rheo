@@ -1,4 +1,4 @@
-use crate::links::types::LinkInfo;
+use crate::reticulate::types::LinkInfo;
 use typst::syntax::{Source, SyntaxKind, SyntaxNode};
 
 /// The identifier in the Typst AST for links.

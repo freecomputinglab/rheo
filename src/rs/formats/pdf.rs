@@ -2,7 +2,7 @@ use crate::compile::RheoCompileOptions;
 use crate::config::PdfConfig;
 use crate::constants::TYPST_LABEL_PATTERN;
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
-use crate::links::spine::RheoSpine;
+use crate::reticulate::spine::RheoSpine;
 use crate::world::RheoWorld;
 use crate::{OutputFormat, Result, RheoError};
 use std::io::Write;

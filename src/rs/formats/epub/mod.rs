@@ -6,7 +6,7 @@ use xhtml::HtmlInfo;
 
 use crate::compile::RheoCompileOptions;
 use crate::config::{EpubConfig, EpubOptions};
-use crate::links::spine::RheoSpine;
+use crate::reticulate::spine::RheoSpine;
 use crate::{Result, RheoError};
 use anyhow::Result as AnyhowResult;
 use chrono::{DateTime, Utc};
@@ -266,7 +266,7 @@ fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Resu
         )?;
 
         // Get the spine file paths
-        let spine = crate::links::spine::generate_spine(root, config.merge.as_ref(), false)?;
+        let spine = crate::reticulate::spine::generate_spine(root, config.merge.as_ref(), false)?;
 
         // Create EpubItems from transformed sources
         let mut items = spine
