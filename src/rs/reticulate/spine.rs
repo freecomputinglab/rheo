@@ -191,7 +191,7 @@ fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
         0 => Err(RheoError::project_config("need at least one .typ file")),
         1 => Ok(typst_files),
         _ => Err(RheoError::project_config(
-            "multiple .typ files found, specify spine in merge config",
+            "multiple .typ files found, specify spine configuration",
         )),
     }
 }

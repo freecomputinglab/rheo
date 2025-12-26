@@ -207,7 +207,7 @@ fn strip_typst_markup(text: &str) -> String {
 
 /// Implementation: Compile multiple Typst files into a single merged PDF (fresh compilation)
 ///
-/// Generates a spine from the PDF merge configuration, concatenates all sources
+/// Generates a spine from the PDF spine configuration, concatenates all sources
 /// with labels and transformed links, then compiles to a single PDF document.
 fn compile_pdf_merged_impl_fresh(
     config: &PdfConfig,
@@ -215,7 +215,7 @@ fn compile_pdf_merged_impl_fresh(
     root: &Path,
 ) -> Result<()> {
     let merge = config.spine.as_ref().ok_or_else(|| {
-        RheoError::project_config("PDF merge configuration required for merged compilation")
+        RheoError::project_config("PDF spine configuration required for merged compilation")
     })?;
 
     // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
@@ -279,7 +279,7 @@ fn compile_pdf_merged_impl(
     root: &Path,
 ) -> Result<()> {
     let merge = config.spine.as_ref().ok_or_else(|| {
-        RheoError::project_config("PDF merge configuration required for merged compilation")
+        RheoError::project_config("PDF spine configuration required for merged compilation")
     })?;
 
     // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
@@ -345,7 +345,7 @@ fn compile_pdf_merged_impl(
 ///
 /// # Arguments
 /// * `options` - Compilation options (input, output, root, repo_root, world)
-/// * `pdf_config` - Optional PDF merge configuration (None for single-file)
+/// * `pdf_config` - Optional PDF spine configuration (None for single-file)
 ///
 /// # Returns
 /// * `Result<()>` - Success or compilation error

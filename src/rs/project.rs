@@ -203,7 +203,7 @@ impl ProjectConfig {
 
 /// Apply smart defaults when no rheo.toml exists.
 ///
-/// This generates sensible merge configurations for EPUB based on the project
+/// This generates sensible spine configurations for EPUB based on the project
 /// mode and name. PDF is not modified to maintain backwards compatibility
 /// (users expect per-file PDFs by default).
 fn apply_smart_defaults(
