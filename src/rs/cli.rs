@@ -490,7 +490,7 @@ impl Cli {
         build_dir: Option<PathBuf>,
         format_flags: FormatFlags,
     ) -> Result<CompilationContext> {
-        // 1. Load project (lines 443-450 / 500-507)
+        // 1. Load project
         info!(path = %path.display(), "loading project");
         let project = crate::project::ProjectConfig::from_path(path, config_path)?;
         let file_word = if project.typ_files.len() == 1 {
@@ -506,17 +506,17 @@ impl Cli {
             file_word
         );
 
-        // 2. Determine formats (lines 453-454 / 510-511)
+        // 2. Determine formats from CLI flags and config
         let formats = determine_formats(format_flags, &project.config.formats)?;
 
-        // 3. Resolve build directory (lines 457-468 / 514-525)
+        // 3. Resolve build directory from CLI arg or config
         let resolved_build_dir = resolve_build_dir(&project, build_dir)?;
 
-        // 4. Create output config (lines 471-473 / 528-530)
+        // 4. Create output config and directories
         let output_config = crate::output::OutputConfig::new(&project.root, resolved_build_dir);
         output_config.create_dirs()?;
 
-        // 5. Resolve compilation root (lines 478-481 / 536-539)
+        // 5. Resolve compilation root from content_dir or project root
         let compilation_root = project
             .config
             .resolve_content_dir(&project.root)
