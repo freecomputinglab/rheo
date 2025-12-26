@@ -223,30 +223,38 @@ impl RheoWorld {
     /// This is used by the codespan-reporting integration to provide source
     /// context when displaying diagnostics. Returns the lines from either the
     /// cached source or loaded file bytes.
+    ///
+    /// Fallback strategy:
+    /// 1. Check source cache (fastest, already parsed)
+    /// 2. Load via World trait (handles file I/O and parsing)
+    /// 3. Try bytes cache and convert (for non-text files like images)
+    /// 4. Return empty Lines (prevents panic when file unavailable)
     pub fn lookup(&self, id: FileId) -> Lines<String> {
-        // Try to get from source cache first
+        // Fallback 1: Check source cache (already parsed, fastest path)
         if let Some(slot) = self.slots.lock().get(&id)
             && let Some(source) = &slot.source
         {
             return source.lines().clone();
         }
 
-        // Try to load the source using World trait
+        // Fallback 2: Load source using World trait (handles file I/O and UTF-8 decoding)
         if let Ok(source) = World::source(self, id) {
             return source.lines().clone();
         }
 
-        // If source loading failed, try to get as bytes and convert
+        // Fallback 3: Try bytes cache and convert to Lines
+        // This handles cases where we have raw bytes but not parsed source
+        // (e.g., binary files or files that failed source parsing)
         if let Some(slot) = self.slots.lock().get(&id)
             && let Some(bytes) = &slot.file
         {
-            // Attempt to convert bytes to Lines
             if let Ok(lines) = Lines::try_from(bytes) {
                 return lines;
             }
         }
 
-        // Last resort: return empty Lines
+        // Fallback 4: Return empty Lines to prevent panic
+        // Occurs when file doesn't exist or all loading attempts failed
         Lines::new(String::new())
     }
 
