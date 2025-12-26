@@ -164,6 +164,92 @@ formats = ["html", "pdf"]
 - If no CLI flags are specified, uses `compile.formats` from config
 - If `compile.formats` is empty or not specified, defaults to `["html", "epub", "pdf"]`
 
+### Complete Configuration Reference
+
+**Full rheo.toml schema with all available options:**
+
+```toml
+# Project-level configuration
+content_dir = "content"  # Directory containing .typ files (relative to project root)
+                         # If not specified, searches entire project root
+                         # Example: "content", "src", "chapters"
+
+build_dir = "build"      # Build output directory (relative to project root unless absolute)
+                         # Defaults to "build/" if not specified
+                         # Examples: "output", "../shared-build", "/tmp/rheo-build"
+
+formats = ["html", "pdf", "epub"]  # Default formats to compile when no CLI flags specified
+                                    # Defaults to all three formats if not specified
+                                    # Valid values: "html", "pdf", "epub"
+
+# HTML-specific configuration
+[html]
+stylesheets = ["style.css"]  # CSS files to inject into HTML output
+                             # Paths are relative to build/html directory
+                             # Default: ["style.css"]
+
+fonts = []                   # External font URLs to inject into HTML
+                             # Example: ["https://fonts.googleapis.com/css2?family=Inter"]
+                             # Default: []
+
+# PDF-specific configuration
+[pdf]
+# Optional: Configure PDF merge mode for multi-chapter books
+[pdf.merge]
+title = "My Book"           # Title for the merged PDF document
+spine = ["cover.typ", "chapters/**/*.typ"]  # Glob patterns for files to include
+                                            # Patterns evaluated relative to content_dir
+                                            # Results sorted lexicographically
+                                            # Example patterns:
+                                            #   - "cover.typ" (single file)
+                                            #   - "chapters/**" (all files in chapters/)
+                                            #   - "**/*.typ" (all .typ files recursively)
+
+# EPUB-specific configuration
+[epub]
+identifier = "urn:uuid:12345678-1234-1234-1234-123456789012"  # Unique global identifier
+                                                               # Optional, auto-generated if not specified
+                                                               # Format: URN, URL, or ISBN
+
+date = 2025-01-15T00:00:00Z  # Publication date (ISO 8601 format)
+                              # Optional, separate from modification timestamp
+                              # Default: current date if not specified
+
+# Optional: Configure EPUB merge mode for multi-chapter books
+[epub.merge]
+title = "My Book"           # Title for the merged EPUB document
+spine = ["cover.typ", "chapters/**/*.typ"]  # Glob patterns for files to include
+                                            # Same format as pdf.merge.spine
+```
+
+**Configuration Field Details:**
+
+**Top-level fields:**
+- `content_dir` (string, optional): Directory containing .typ source files. If omitted, searches entire project root.
+- `build_dir` (string, optional): Output directory for compiled files. Defaults to `./build`.
+- `formats` (array of strings, optional): Default output formats. Defaults to `["html", "epub", "pdf"]`.
+
+**[html] section:**
+- `stylesheets` (array of strings): CSS files to inject. Paths relative to `build/html/`. Default: `["style.css"]`.
+- `fonts` (array of strings): External font URLs to inject into HTML `<head>`. Default: empty.
+
+**[pdf] section:**
+- `merge` (object, optional): Configuration for merging multiple .typ files into a single PDF.
+  - `title` (string, required if merge used): Title for the merged PDF.
+  - `spine` (array of strings, required if merge used): Glob patterns for files to include, sorted lexicographically.
+
+**[epub] section:**
+- `identifier` (string, optional): Unique identifier for the EPUB (URN, URL, or ISBN). Auto-generated if omitted.
+- `date` (datetime, optional): Publication date in ISO 8601 format. Defaults to current date.
+- `merge` (object, optional): Configuration for merging multiple .typ files into a single EPUB.
+  - `title` (string, required if merge used): Title for the merged EPUB.
+  - `spine` (array of strings, required if merge used): Glob patterns for files to include, sorted lexicographically.
+
+**Precedence rules:**
+1. CLI flags (`--pdf`, `--html`, `--epub`, `--config`, `--build-dir`) take highest precedence
+2. rheo.toml settings apply if no CLI flags specified
+3. Built-in defaults apply if field not specified in rheo.toml
+
 ### Default Behavior Without rheo.toml
 
 When no `rheo.toml` exists, rheo automatically infers sensible defaults for EPUB compilation:
