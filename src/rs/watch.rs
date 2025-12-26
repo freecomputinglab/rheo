@@ -69,21 +69,24 @@ where
         }
     }
 
-    // Debounce logic: collect events for 1 second before triggering
+    // Debounce logic: collect events for 1 second before triggering recompilation
+    // This prevents excessive recompilation when editors save multiple files rapidly
+    // or when a single edit triggers multiple filesystem events
     let debounce_duration = Duration::from_secs(1);
     let mut last_event_time = std::time::Instant::now();
-    let mut pending_changes = false;
-    let mut config_changed = false;
+    let mut pending_changes = false;  // True if any .typ files changed
+    let mut config_changed = false;   // True if rheo.toml changed (requires full reload)
 
     info!("watching for changes (press Ctrl+C to stop)");
 
     loop {
-        // Check for events with a short timeout
+        // Poll for filesystem events with 100ms timeout
+        // Short timeout allows us to check debounce timer regularly
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(result) => {
                 match result {
                     Ok(event) => {
-                        // Filter events to only relevant files
+                        // Filter events to only relevant files (.typ files, rheo.toml, assets)
                         let paths: Vec<PathBuf> = event
                             .paths
                             .into_iter()
@@ -92,9 +95,11 @@ where
 
                         if !paths.is_empty() {
                             debug!(?paths, "detected file changes");
+                            // Reset debounce timer - we'll wait for more events
                             last_event_time = std::time::Instant::now();
 
-                            // Check if rheo.toml changed
+                            // Distinguish config changes from regular file changes
+                            // Config changes require reloading project configuration
                             if paths.iter().any(|p| {
                                 p.file_name()
                                     .and_then(|n| n.to_str())
@@ -113,11 +118,12 @@ where
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                // Check if debounce period has elapsed
+                // No new events received in last 100ms
+                // Check if we have pending changes and debounce period has elapsed
                 if pending_changes || config_changed {
                     let elapsed = last_event_time.elapsed();
                     if elapsed >= debounce_duration {
-                        // Trigger callback
+                        // Debounce period elapsed - trigger recompilation
                         let event = if config_changed {
                             WatchEvent::ConfigChanged
                         } else {
@@ -128,12 +134,14 @@ where
                             warn!(error = %e, "compilation failed, continuing to watch");
                         }
 
+                        // Reset flags for next batch of changes
                         pending_changes = false;
                         config_changed = false;
                     }
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                // Watcher channel closed - exit cleanly
                 info!("file watcher stopped");
                 break;
             }

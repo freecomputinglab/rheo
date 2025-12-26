@@ -119,19 +119,26 @@ impl DocumentTitle {
                 let after_title = &after_doc[title_pos + 6..]; // Skip "title:"
 
                 // Find the opening bracket for the title
+                // PDF metadata uses bracket-delimited format: /Title [(title text)]
                 if let Some(bracket_start) = after_title.find('[') {
                     let title_content = &after_title[bracket_start + 1..];
 
                     // Count brackets to find the matching closing bracket
+                    // Handles nested brackets like: [(Chapter [1])]
+                    // Algorithm:
+                    // 1. Start with depth=1 (for the opening bracket we just found)
+                    // 2. Scan forward, incrementing depth for '[', decrementing for ']'
+                    // 3. When depth reaches 0, we've found the matching closing bracket
                     let mut depth = 1;
                     let mut end_pos = 0;
 
                     for (i, ch) in title_content.chars().enumerate() {
                         if ch == '[' {
-                            depth += 1;
+                            depth += 1;  // Found nested opening bracket
                         } else if ch == ']' {
-                            depth -= 1;
+                            depth -= 1;  // Found closing bracket
                             if depth == 0 {
+                                // This is the matching closing bracket
                                 end_pos = i;
                                 break;
                             }
