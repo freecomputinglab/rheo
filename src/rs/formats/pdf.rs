@@ -350,8 +350,11 @@ fn compile_pdf_merged_impl(
 /// # Returns
 /// * `Result<()>` - Success or compilation error
 pub fn compile_pdf_new(options: RheoCompileOptions, pdf_config: Option<&PdfConfig>) -> Result<()> {
-    // Check if this is merged PDF compilation
-    let is_merged = pdf_config.and_then(|c| c.spine.as_ref()).is_some();
+    // Check if this is merged PDF compilation (spine with merge = true)
+    let is_merged = pdf_config
+        .and_then(|c| c.spine.as_ref())
+        .and_then(|s| s.merge)
+        .unwrap_or(false);
 
     match (is_merged, options.world) {
         // Merged PDF, incremental

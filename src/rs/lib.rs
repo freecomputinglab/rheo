@@ -54,8 +54,13 @@ impl OutputFormat {
                 true
             }
             OutputFormat::Pdf => {
-                // PDF is only per-file if spine config is absent
-                config.pdf.spine.is_none()
+                // PDF is per-file unless merge is explicitly true
+                !config
+                    .pdf
+                    .spine
+                    .as_ref()
+                    .and_then(|s| s.merge)
+                    .unwrap_or(false)
             }
             OutputFormat::Epub => {
                 // EPUB is never per-file (always merged)
