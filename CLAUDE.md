@@ -142,7 +142,7 @@ formats = ["html", "pdf"]
 **Configuration Precedence:**
 - CLI flags (`--pdf`, `--html`, `--epub`) override config file formats
 - If no CLI flags are specified, uses `compile.formats` from config
-- If `compile.formats` is empty or not specified, defaults to `["pdf", "html"]`
+- If `compile.formats` is empty or not specified, defaults to `["html", "epub", "pdf"]`
 
 ### Default Behavior Without rheo.toml
 
