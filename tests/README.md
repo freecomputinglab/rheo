@@ -44,6 +44,38 @@ cargo test --test integration_test
 cargo test -- --nocapture
 ```
 
+## Git Submodules
+
+This project includes external example repositories as git submodules:
+
+- `examples/rheo.ohrg.org` - Rheo documentation/manual
+
+### Setup
+
+After cloning the repository, initialize submodules before running tests:
+
+```bash
+# Initialize submodules
+git submodule update --init --recursive
+```
+
+### Updating Submodules
+
+To update submodules to the latest upstream version:
+
+```bash
+# Update all submodules to latest
+git submodule update --remote
+
+# Or update specific submodule
+cd examples/rheo.ohrg.org
+git pull origin main
+cd ../..
+git add examples/rheo.ohrg.org
+```
+
+**Note**: While rheo uses Jujutsu (jj) for version control, git submodule commands must be used for submodule management. After using git commands for submodules, return to the normal jj workflow for committing changes.
+
 ## Font Consistency
 
 To ensure tests produce identical output across different environments (local machines and CI), tests automatically use only Typst's embedded fonts. This prevents font-related rendering differences that cause page count and layout variations.
