@@ -38,7 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `assets.rs` - Asset copying utilities
   - `logging.rs` - Logging configuration
   - `error.rs` - Error types
-- `src/typst/` - Typst template files
+- `src/typ/` - Typst template files
   - `rheo.typ` - Core template and utilities
 
 Each project creates its own `build/` directory (gitignored) containing:
@@ -71,6 +71,26 @@ cargo run -- compile <file.typ> --epub       # EPUB only
 cargo run -- compile examples/blog_site                      # Directory mode
 cargo run -- compile examples/blog_site/content/index.typ    # Single file mode
 cargo run -- compile examples/blog_post --epub               # EPUB with defaults
+
+# Using custom config location
+cargo run -- compile examples/blog_site --config /path/to/custom.toml
+
+# Using custom build directory
+cargo run -- compile examples/blog_site --build-dir /tmp/build
+```
+
+**Additional CLI flags:**
+```bash
+# --config: Load rheo.toml from custom location (overrides default ./rheo.toml)
+cargo run -- compile <project-path> --config /path/to/config.toml
+cargo run -- watch <project-path> --config /path/to/config.toml
+
+# --build-dir: Override build directory (takes precedence over rheo.toml setting)
+cargo run -- compile <project-path> --build-dir /tmp/rheo-build
+cargo run -- watch <project-path> --build-dir ./custom-output
+
+# Both flags work with compile, watch, and clean commands
+cargo run -- clean <project-path> --build-dir /tmp/rheo-build
 ```
 
 **Clean build artifacts:**
@@ -142,7 +162,93 @@ formats = ["html", "pdf"]
 **Configuration Precedence:**
 - CLI flags (`--pdf`, `--html`, `--epub`) override config file formats
 - If no CLI flags are specified, uses `compile.formats` from config
-- If `compile.formats` is empty or not specified, defaults to `["pdf", "html"]`
+- If `compile.formats` is empty or not specified, defaults to `["html", "epub", "pdf"]`
+
+### Complete Configuration Reference
+
+**Full rheo.toml schema with all available options:**
+
+```toml
+# Project-level configuration
+content_dir = "content"  # Directory containing .typ files (relative to project root)
+                         # If not specified, searches entire project root
+                         # Example: "content", "src", "chapters"
+
+build_dir = "build"      # Build output directory (relative to project root unless absolute)
+                         # Defaults to "build/" if not specified
+                         # Examples: "output", "../shared-build", "/tmp/rheo-build"
+
+formats = ["html", "pdf", "epub"]  # Default formats to compile when no CLI flags specified
+                                    # Defaults to all three formats if not specified
+                                    # Valid values: "html", "pdf", "epub"
+
+# HTML-specific configuration
+[html]
+stylesheets = ["style.css"]  # CSS files to inject into HTML output
+                             # Paths are relative to build/html directory
+                             # Default: ["style.css"]
+
+fonts = []                   # External font URLs to inject into HTML
+                             # Example: ["https://fonts.googleapis.com/css2?family=Inter"]
+                             # Default: []
+
+# PDF-specific configuration
+[pdf]
+# Optional: Configure PDF merge mode for multi-chapter books
+[pdf.merge]
+title = "My Book"           # Title for the merged PDF document
+spine = ["cover.typ", "chapters/**/*.typ"]  # Glob patterns for files to include
+                                            # Patterns evaluated relative to content_dir
+                                            # Results sorted lexicographically
+                                            # Example patterns:
+                                            #   - "cover.typ" (single file)
+                                            #   - "chapters/**" (all files in chapters/)
+                                            #   - "**/*.typ" (all .typ files recursively)
+
+# EPUB-specific configuration
+[epub]
+identifier = "urn:uuid:12345678-1234-1234-1234-123456789012"  # Unique global identifier
+                                                               # Optional, auto-generated if not specified
+                                                               # Format: URN, URL, or ISBN
+
+date = 2025-01-15T00:00:00Z  # Publication date (ISO 8601 format)
+                              # Optional, separate from modification timestamp
+                              # Default: current date if not specified
+
+# Optional: Configure EPUB merge mode for multi-chapter books
+[epub.merge]
+title = "My Book"           # Title for the merged EPUB document
+spine = ["cover.typ", "chapters/**/*.typ"]  # Glob patterns for files to include
+                                            # Same format as pdf.merge.spine
+```
+
+**Configuration Field Details:**
+
+**Top-level fields:**
+- `content_dir` (string, optional): Directory containing .typ source files. If omitted, searches entire project root.
+- `build_dir` (string, optional): Output directory for compiled files. Defaults to `./build`.
+- `formats` (array of strings, optional): Default output formats. Defaults to `["html", "epub", "pdf"]`.
+
+**[html] section:**
+- `stylesheets` (array of strings): CSS files to inject. Paths relative to `build/html/`. Default: `["style.css"]`.
+- `fonts` (array of strings): External font URLs to inject into HTML `<head>`. Default: empty.
+
+**[pdf] section:**
+- `merge` (object, optional): Configuration for merging multiple .typ files into a single PDF.
+  - `title` (string, required if merge used): Title for the merged PDF.
+  - `spine` (array of strings, required if merge used): Glob patterns for files to include, sorted lexicographically.
+
+**[epub] section:**
+- `identifier` (string, optional): Unique identifier for the EPUB (URN, URL, or ISBN). Auto-generated if omitted.
+- `date` (datetime, optional): Publication date in ISO 8601 format. Defaults to current date.
+- `merge` (object, optional): Configuration for merging multiple .typ files into a single EPUB.
+  - `title` (string, required if merge used): Title for the merged EPUB.
+  - `spine` (array of strings, required if merge used): Glob patterns for files to include, sorted lexicographically.
+
+**Precedence rules:**
+1. CLI flags (`--pdf`, `--html`, `--epub`, `--config`, `--build-dir`) take highest precedence
+2. rheo.toml settings apply if no CLI flags specified
+3. Built-in defaults apply if field not specified in rheo.toml
 
 ### Default Behavior Without rheo.toml
 
@@ -224,6 +330,49 @@ echo "\n// Test change" >> examples/blog_site/content/index.typ
 - `src/rs/compile.rs` - `compile_*_incremental()` functions
 - `src/rs/cli.rs` - Watch loop with World creation and reuse (lines 631-692)
 - `Cargo.toml` - `comemo = "0.5"` dependency for cache management
+
+### Development Server and Live Reload
+
+**Overview:**
+Rheo includes a built-in development server with automatic browser refresh for HTML output. The server is activated with the `--open` flag in watch mode, providing a seamless development experience.
+
+**How It Works:**
+1. **Server Activation**: Use `--open` flag with watch command to start the server
+2. **HTTP Server**: Runs on `http://localhost:3000` (port hardcoded, not configurable)
+3. **SSE Endpoint**: Server-Sent Events endpoint at `/events` for browser communication
+4. **Live Reload Script**: HTML files automatically include a script that connects to the SSE endpoint
+5. **File Change Detection**: When Typst files change and recompile, server broadcasts reload events
+6. **Browser Auto-Refresh**: Connected browsers receive the reload event and refresh automatically
+
+**Architecture:**
+- `src/rs/server.rs` - Development server implementation using axum
+- Port 3000 is hardcoded (see `cli.rs` line 598)
+- SSE-based communication for zero-configuration live reload
+- Serves static HTML files from the build/html directory
+- Broadcast channel pattern for one-to-many client notifications
+
+**Usage:**
+```bash
+# Start watch mode with development server
+cargo run -- watch examples/blog_site --open
+
+# Server starts at http://localhost:3000
+# Browser opens automatically showing index.html
+# Edit any .typ file - browser refreshes automatically
+```
+
+**Key Features:**
+- Zero-configuration setup
+- Automatic browser opening
+- Instant refresh on file changes
+- Works with incremental compilation for fast iteration
+- Supports multiple connected browsers simultaneously
+
+**Implementation Details:**
+- Server state includes broadcast channel and HTML directory path
+- Static file handler serves .html files from build directory
+- SSE handler streams reload events to connected clients
+- Server runs in background task, doesn't block watch loop
 
 ### Error Formatting and Logging
 

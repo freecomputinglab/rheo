@@ -1,7 +1,7 @@
 use super::types::{LinkInfo, LinkTransform};
 use crate::constants::TYP_EXT;
 use crate::formats::pdf::sanitize_label_name;
-use crate::links::validator::is_relative_typ_link;
+use crate::reticulate::validator::is_relative_typ_link;
 use crate::{HTML_EXT, OutputFormat, Result, RheoError, XHTML_EXT};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -52,7 +52,7 @@ impl LinkTransformer {
         current_file: &Path,
         _project_root: &Path,
     ) -> Result<String> {
-        use crate::links::{parser, serializer};
+        use crate::reticulate::{parser, serializer};
 
         // Extract links from source
         let source_obj = typst::syntax::Source::detached(source);

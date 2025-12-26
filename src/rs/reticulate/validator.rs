@@ -1,4 +1,4 @@
-use crate::links::types::LinkInfo;
+use crate::reticulate::types::LinkInfo;
 use std::path::{Path, PathBuf};
 use typst::diag::{EcoString, Severity, SourceDiagnostic};
 

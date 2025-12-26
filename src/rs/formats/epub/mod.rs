@@ -6,7 +6,7 @@ use xhtml::HtmlInfo;
 
 use crate::compile::RheoCompileOptions;
 use crate::config::{EpubConfig, EpubOptions};
-use crate::links::spine::RheoSpine;
+use crate::reticulate::spine::RheoSpine;
 use crate::{Result, RheoError};
 use anyhow::Result as AnyhowResult;
 use chrono::{DateTime, Utc};
@@ -266,7 +266,7 @@ fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Resu
         )?;
 
         // Get the spine file paths
-        let spine = crate::links::spine::generate_spine(root, config.merge.as_ref(), false)?;
+        let spine = crate::reticulate::spine::generate_spine(root, config.merge.as_ref(), false)?;
 
         // Create EpubItems from transformed sources
         let mut items = spine
@@ -413,7 +413,12 @@ impl EpubItem {
                     None => text,
                 };
                 let mut anchored_href = href.to_owned();
-                anchored_href.set_fragment(Some(Fragment::new(&id).unwrap())); // TODO: when can this panic?
+                // Heading IDs come from either Typst labels or text_to_id(), which should produce
+                // valid IRI fragments. However, Typst labels could theoretically contain characters
+                // that require percent-encoding. If this panics, we need to add proper encoding.
+                anchored_href.set_fragment(Some(
+                    Fragment::new(&id).expect("heading ID should be a valid IRI fragment"),
+                ));
                 let link = eco_format!(r#"<a href="{anchored_href}">{entry}</a>"#);
                 ((link, level, true), id)
             })

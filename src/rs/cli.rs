@@ -274,7 +274,9 @@ fn perform_compilation<'a>(
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
 
-        // For incremental mode, update world for this file
+        // For incremental mode, prepare the World for compiling this specific file
+        // 1. set_main() tells the World which file we're compiling (updates main file ID)
+        // 2. reset() clears file caches while preserving fonts/packages (enables incremental compilation)
         if let CompilationMode::Incremental { world } = &mut mode {
             world.set_main(typ_file)?;
             world.reset();
@@ -490,7 +492,7 @@ impl Cli {
         build_dir: Option<PathBuf>,
         format_flags: FormatFlags,
     ) -> Result<CompilationContext> {
-        // 1. Load project (lines 443-450 / 500-507)
+        // 1. Load project
         info!(path = %path.display(), "loading project");
         let project = crate::project::ProjectConfig::from_path(path, config_path)?;
         let file_word = if project.typ_files.len() == 1 {
@@ -506,17 +508,17 @@ impl Cli {
             file_word
         );
 
-        // 2. Determine formats (lines 453-454 / 510-511)
+        // 2. Determine formats from CLI flags and config
         let formats = determine_formats(format_flags, &project.config.formats)?;
 
-        // 3. Resolve build directory (lines 457-468 / 514-525)
+        // 3. Resolve build directory from CLI arg or config
         let resolved_build_dir = resolve_build_dir(&project, build_dir)?;
 
-        // 4. Create output config (lines 471-473 / 528-530)
+        // 4. Create output config and directories
         let output_config = crate::output::OutputConfig::new(&project.root, resolved_build_dir);
         output_config.create_dirs()?;
 
-        // 5. Resolve compilation root (lines 478-481 / 536-539)
+        // 5. Resolve compilation root from content_dir or project root
         let compilation_root = project
             .config
             .resolve_content_dir(&project.root)
@@ -649,97 +651,123 @@ impl Cli {
 
                 let world_cell = RefCell::new(world);
 
+                // Canonicalize build directory for reliable path comparison in watcher
+                // This prevents the watcher from triggering on its own output files
+                let canonical_build_dir = output_config
+                    .pdf_dir
+                    .parent()
+                    .expect("build dir has parent")
+                    .canonicalize()
+                    .map_err(|e| {
+                        crate::RheoError::io(
+                            e,
+                            format!(
+                                "canonicalizing build directory {:?}",
+                                output_config.pdf_dir.parent()
+                            ),
+                        )
+                    })?;
+
                 info!("watching for changes");
-                crate::watch::watch_project(&project_cell.borrow(), |event| {
-                    let result = match event {
-                        crate::watch::WatchEvent::FilesChanged => {
-                            info!("change detected, recompiling");
-                            let mode = CompilationMode::Incremental {
-                                world: &mut world_cell.borrow_mut(),
-                            };
-                            perform_compilation(
-                                mode,
-                                &project_cell.borrow(),
-                                &output_config,
-                                &formats,
-                            )
-                        }
-                        crate::watch::WatchEvent::ConfigChanged => {
-                            info!("configuration changed, reloading");
-                            // Reload project configuration
-                            match crate::project::ProjectConfig::from_path(&path, config.as_deref())
-                            {
-                                Ok(new_project) => {
-                                    *project_cell.borrow_mut() = new_project;
-                                    let borrowed = project_cell.borrow();
-                                    let file_word = if borrowed.typ_files.len() == 1 {
-                                        "file"
-                                    } else {
-                                        "files"
-                                    };
-                                    info!(name = %borrowed.name, files = borrowed.typ_files.len(), "reloaded ({} {})", borrowed.typ_files.len(), file_word);
+                crate::watch::watch_project(
+                    &project_cell.borrow(),
+                    &canonical_build_dir,
+                    |event| {
+                        let result = match event {
+                            crate::watch::WatchEvent::FilesChanged => {
+                                info!("change detected, recompiling");
+                                let mode = CompilationMode::Incremental {
+                                    world: &mut world_cell.borrow_mut(),
+                                };
+                                perform_compilation(
+                                    mode,
+                                    &project_cell.borrow(),
+                                    &output_config,
+                                    &formats,
+                                )
+                            }
+                            crate::watch::WatchEvent::ConfigChanged => {
+                                info!("configuration changed, reloading");
+                                // Reload project configuration
+                                match crate::project::ProjectConfig::from_path(
+                                    &path,
+                                    config.as_deref(),
+                                ) {
+                                    Ok(new_project) => {
+                                        *project_cell.borrow_mut() = new_project;
+                                        let borrowed = project_cell.borrow();
+                                        let file_word = if borrowed.typ_files.len() == 1 {
+                                            "file"
+                                        } else {
+                                            "files"
+                                        };
+                                        info!(name = %borrowed.name, files = borrowed.typ_files.len(), "reloaded ({} {})", borrowed.typ_files.len(), file_word);
 
-                                    // Recreate World with new configuration
-                                    let new_compilation_root = borrowed
-                                        .config
-                                        .resolve_content_dir(&borrowed.root)
-                                        .unwrap_or_else(|| borrowed.root.clone());
-                                    let new_initial_main =
-                                        borrowed.typ_files.first().ok_or_else(|| {
-                                            crate::RheoError::project_config("no .typ files found")
-                                        })?;
+                                        // Recreate World with new configuration
+                                        let new_compilation_root = borrowed
+                                            .config
+                                            .resolve_content_dir(&borrowed.root)
+                                            .unwrap_or_else(|| borrowed.root.clone());
+                                        let new_initial_main =
+                                            borrowed.typ_files.first().ok_or_else(|| {
+                                                crate::RheoError::project_config(
+                                                    "no .typ files found",
+                                                )
+                                            })?;
 
-                                    // Use same output_format setting as initial World creation
-                                    let output_format = if formats.contains(&OutputFormat::Html) {
-                                        Some(OutputFormat::Html)
-                                    } else {
-                                        None
-                                    };
-                                    match crate::world::RheoWorld::new(
-                                        &new_compilation_root,
-                                        new_initial_main,
-                                        output_format,
-                                    ) {
-                                        Ok(new_world) => {
-                                            *world_cell.borrow_mut() = new_world;
-                                            let mode = CompilationMode::Incremental {
-                                                world: &mut world_cell.borrow_mut(),
-                                            };
-                                            perform_compilation(
-                                                mode,
-                                                &borrowed,
-                                                &output_config,
-                                                &formats,
-                                            )
-                                        }
-                                        Err(e) => {
-                                            error!(error = %e, "failed to recreate World after config change");
-                                            Err(e)
+                                        // Use same output_format setting as initial World creation
+                                        let output_format = if formats.contains(&OutputFormat::Html)
+                                        {
+                                            Some(OutputFormat::Html)
+                                        } else {
+                                            None
+                                        };
+                                        match crate::world::RheoWorld::new(
+                                            &new_compilation_root,
+                                            new_initial_main,
+                                            output_format,
+                                        ) {
+                                            Ok(new_world) => {
+                                                *world_cell.borrow_mut() = new_world;
+                                                let mode = CompilationMode::Incremental {
+                                                    world: &mut world_cell.borrow_mut(),
+                                                };
+                                                perform_compilation(
+                                                    mode,
+                                                    &borrowed,
+                                                    &output_config,
+                                                    &formats,
+                                                )
+                                            }
+                                            Err(e) => {
+                                                error!(error = %e, "failed to recreate World after config change");
+                                                Err(e)
+                                            }
                                         }
                                     }
-                                }
-                                Err(e) => {
-                                    error!(error = %e, "failed to reload project config");
-                                    Err(e)
+                                    Err(e) => {
+                                        error!(error = %e, "failed to reload project config");
+                                        Err(e)
+                                    }
                                 }
                             }
+                        };
+
+                        // Send reload event if compilation succeeded and we have a server
+                        if result.is_ok() {
+                            // Evict old entries from the comemo cache to prevent unbounded memory growth
+                            // during long watch sessions. This matches Typst CLI's behavior.
+                            comemo::evict(10);
+
+                            if let Some((_, _, reload_tx)) = &server_info {
+                                // Ignore errors if no clients are connected
+                                let _ = reload_tx.send(());
+                            }
                         }
-                    };
 
-                    // Send reload event if compilation succeeded and we have a server
-                    if result.is_ok() {
-                        // Evict old entries from the comemo cache to prevent unbounded memory growth
-                        // during long watch sessions. This matches Typst CLI's behavior.
-                        comemo::evict(10);
-
-                        if let Some((_, _, reload_tx)) = &server_info {
-                            // Ignore errors if no clients are connected
-                            let _ = reload_tx.send(());
-                        }
-                    }
-
-                    result
-                })?;
+                        result
+                    },
+                )?;
 
                 // Server will be dropped and cleaned up automatically here
 
