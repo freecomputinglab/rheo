@@ -28,7 +28,7 @@ pub struct HtmlInfo {
 /// - Eventually the XHTML functionality should be removed once it is implemented in Typst.
 ///   See: https://github.com/typst/typst/issues/6446
 pub fn html_to_portable_xhtml(html_string: &str, heading_ids: &[EcoString]) -> (String, HtmlInfo) {
-    // TODO: should factor the XHTML-izing and portabl-izing code into seaprate functions.
+    // TODO: should factor the XHTML-izing and portabl-izing code into separate functions.
 
     let dom = html5ever::parse_document(RcDom::default(), ParseOpts::default())
         .from_utf8()
