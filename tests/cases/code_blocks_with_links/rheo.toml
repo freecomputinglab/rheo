@@ -1,2 +1,4 @@
+version = "0.1.0"
+
 # Test PDF transformation
 formats = ["pdf"]
