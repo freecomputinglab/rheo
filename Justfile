@@ -9,7 +9,10 @@ build:
 
 update-submodules:
   git submodule update --remote --merge
+  git add examples/fcl_site examples/rheo_docs
   git submodule status
+  @echo ""
+  @echo "Submodule references updated. Use 'jj status' to see changes."
 
 install:
   cargo install --path . --locked
