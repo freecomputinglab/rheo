@@ -55,3 +55,119 @@ impl<'de> Deserialize<'de> for ManifestVersion {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_current_version_is_valid() {
+        let version = ManifestVersion::current();
+        assert_eq!(version.to_string(), CURRENT);
+    }
+
+    #[test]
+    fn test_is_compatible_with_same_version() {
+        let v1 = ManifestVersion(semver::Version::parse("0.1.0").unwrap());
+        let v2 = ManifestVersion(semver::Version::parse("0.1.0").unwrap());
+        assert!(v1.is_compatible_with(&v2));
+    }
+
+    #[test]
+    fn test_is_compatible_with_older_version() {
+        let older = ManifestVersion(semver::Version::parse("0.1.0").unwrap());
+        let newer = ManifestVersion(semver::Version::parse("0.2.0").unwrap());
+        assert!(older.is_compatible_with(&newer));
+    }
+
+    #[test]
+    fn test_is_not_compatible_with_newer_version() {
+        let newer = ManifestVersion(semver::Version::parse("0.2.0").unwrap());
+        let older = ManifestVersion(semver::Version::parse("0.1.0").unwrap());
+        assert!(!newer.is_compatible_with(&older));
+    }
+
+    #[test]
+    fn test_deserialize_valid_version() {
+        #[derive(serde::Deserialize)]
+        struct Config {
+            version: ManifestVersion,
+        }
+
+        let toml_str = r#"version = "0.1.0""#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.version,
+            ManifestVersion(semver::Version::parse("0.1.0").unwrap())
+        );
+    }
+
+    #[test]
+    fn test_deserialize_invalid_version() {
+        #[derive(serde::Deserialize, Debug)]
+        struct Config {
+            version: ManifestVersion,
+        }
+
+        let toml_str = r#"version = "not-a-version""#;
+        let result: Result<Config, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("invalid manifest version"));
+        assert!(err_msg.contains("Expected semver format"));
+    }
+
+    #[test]
+    fn test_display_format() {
+        let version = ManifestVersion(semver::Version::parse("0.1.0").unwrap());
+        assert_eq!(version.to_string(), "0.1.0");
+    }
+
+    #[test]
+    fn test_deserialize_empty_string() {
+        #[derive(serde::Deserialize)]
+        struct Config {
+            version: ManifestVersion,
+        }
+
+        let toml_str = r#"version = """#;
+        let result: Result<Config, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_whitespace() {
+        #[derive(serde::Deserialize)]
+        struct Config {
+            version: ManifestVersion,
+        }
+
+        let toml_str = r#"version = " 0.1.0 ""#;
+        let result: Result<Config, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_git_tag_format() {
+        #[derive(serde::Deserialize)]
+        struct Config {
+            version: ManifestVersion,
+        }
+
+        let toml_str = r#"version = "v0.1.0""#;
+        let result: Result<Config, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_partial_version() {
+        #[derive(serde::Deserialize)]
+        struct Config {
+            version: ManifestVersion,
+        }
+
+        let toml_str = r#"version = "0.1""#;
+        let result: Result<Config, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+    }
+}
