@@ -11,10 +11,7 @@ pub struct ManifestVersion(semver::Version);
 impl ManifestVersion {
     /// Returns the current supported manifest version
     pub fn current() -> Self {
-        Self(
-            semver::Version::parse(CURRENT)
-                .expect("CURRENT constant must be valid semver"),
-        )
+        Self(semver::Version::parse(CURRENT).expect("CURRENT constant must be valid semver"))
     }
 
     /// Checks if this version is compatible with the supported version
@@ -105,6 +102,7 @@ mod tests {
     #[test]
     fn test_deserialize_invalid_version() {
         #[derive(serde::Deserialize, Debug)]
+        #[allow(dead_code)]
         struct Config {
             version: ManifestVersion,
         }
@@ -126,6 +124,7 @@ mod tests {
     #[test]
     fn test_deserialize_empty_string() {
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
         struct Config {
             version: ManifestVersion,
         }
@@ -138,6 +137,7 @@ mod tests {
     #[test]
     fn test_deserialize_whitespace() {
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
         struct Config {
             version: ManifestVersion,
         }
@@ -150,6 +150,7 @@ mod tests {
     #[test]
     fn test_deserialize_git_tag_format() {
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
         struct Config {
             version: ManifestVersion,
         }
@@ -162,6 +163,7 @@ mod tests {
     #[test]
     fn test_deserialize_partial_version() {
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
         struct Config {
             version: ManifestVersion,
         }

@@ -19,10 +19,10 @@ pub mod world;
 
 pub use cli::Cli;
 pub use config::RheoConfig;
-pub use manifest_version::ManifestVersion;
 pub use constants::*;
 pub use error::RheoError;
 pub use globset::{Glob, GlobSet, GlobSetBuilder};
+pub use manifest_version::ManifestVersion;
 pub use path_utils::PathExt;
 pub use results::{CompilationResults, FormatResult};
 use std::fmt;
