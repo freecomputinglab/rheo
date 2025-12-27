@@ -51,6 +51,7 @@ atty = "0.2"
 pathdiff = "0.2"
 toml = "0.9"
 serde = { version = "1.0", features = ["derive"] }
+semver = "1.0"
 globset = "0.4"
 glob = "0.3"
 notify = "8.2"
