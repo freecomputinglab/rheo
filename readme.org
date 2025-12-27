@@ -1,30 +1,18 @@
 #+ATTR_HTML: :alt Project header :align center :width 600px
 [[./header.png]]
 
-rheo is a static site and experimental typesetting engine based on Typst that compiles entire folders of Typst documents to PDF, HTML, and EPUB simultaneously. It provides first-class support for both HTML and PDF with experimental EPUB support, and includes a development server for rapid HTML iteration.
+Rheo is a typesetting and static site engine based on typst.
+You can use it to compile folders of typst to PDF, HTML, and EPUB simultaneously. 
+It is a standalone CLI tool that includes a development server for rapid website iteration.
 
 ** Usage
-rheo is a command-line tool for batch-compiling Typst documents to multiple output formats.
-
-*** Start developing a project
-
-Compile all =.typ= files in a directory to PDF, HTML, and EPUB:
+Compile all =.typ= files in a directory to PDF, HTML, and EPUB and recompile on change:
 
 #+begin_src bash
 rheo watch examples/blog_site --open
 #+end_src
 
-The =--open= flag starts a development server at =http://localhost:3000= with automatic browser refresh. When you edit any Typst file, the browser automatically reloads to show your changes. This provides a seamless development experience for HTML output.
-
-Compile to specific formats:
-
-#+begin_src bash
-# PDF only
-rheo compile examples/blog_site --pdf
-
-# HTML only
-rheo compile examples/blog_site --html
-#+end_src
+The =--open= flag starts a development server at =http://localhost:3000= with automatic browser refresh. 
 
 Use additional flags for customization:
 
@@ -36,49 +24,23 @@ rheo compile examples/blog_site --config /path/to/custom.toml
 rheo compile examples/blog_site --build-dir /tmp/build
 #+end_src
 
-Output is organized in each project's =build= directory: =build/pdf/=, =build/html/=, and =build/epub/=.
-
-*** Clean Build Artifacts
-
-Remove build artifacts:
-
-#+begin_src bash
-# For current directory
-rheo clean
-
-# For a specific project
-rheo clean examples/web_book
-#+end_src
-
-*** Logging
-
-Control output verbosity:
-
-#+begin_src bash
-# Quiet mode (errors only)
-rheo compile examples/web_book --quiet
-
-# Verbose mode (debug information)
-rheo compile examples/web_book --verbose
-
-# Trace-level logging
-RUST_LOG=rheo=trace rheo compile examples/web_book
-#+end_src
+See [[https://rheo.ohrg][the documentation]] for more information regarding which flags are available. 
 
 ** Installation
-
 *** Using cargo (Recommended)
-rheo requires Rust and Cargo. Install from [[https://rustup.rs/][rustup.rs]].
+Rheo requires Rust and Cargo.
+Install from [[https://rustup.rs/][rustup.rs]].
 
 #+begin_src bash
-# Build the project
-cargo build --release
+# Install from crates.io 
+cargo install rheo
 
-# Install locally
+# Or build the project from source
+git clone https://github.com/freecomputinglab/rheo
+cd rheo
+cargo build --release
 cargo install --path .
 #+end_src
-
-
 *** Using Nix flakes
 To install the compilation environment, first ensure that you have [[https://nixos.org/download/][Nix]] installed on your computer.
 You will also need to enable [[https://nixos.wiki/wiki/Flakes][Nix flakes]], which you can do by inserting the following line in your ~nix.conf~:
@@ -97,40 +59,30 @@ nix develop
 nix build
 #+end_src
 
-This might take a while the first time, as Nix is installing typst from upstream and all the other necessary software.
+** Features
+*** Relative linking 
+Rheo automatically transforms cross-document links based on the output format to ensure they work correctly in each context.
 
-** Link Transformation
-
-rheo automatically transforms cross-document links based on the output format to ensure they work correctly in each context.
-
-Relative =.typ= links are handled as follows:
-- **PDF**: Removed from output, preserving only the link text (since Typst files won't exist output)
-- **HTML**: Transformed to =.html= links with validation that linked files exist and are within project boundaries
-- **External links** (HTTP, HTTPS, mailto): Preserved identically in all formats
-- **Fragment links** (anchors within the same document): Preserved in all formats
-
-Example Typst source:
 
 #+begin_src typst
 See the #link("./about.typ")[about page] for more information.
 Visit #link("https://example.com")[our website].
 #+end_src
 
-Compiles to PDF as: "See the about page for more information. Visit our website."
-
-Compiles to HTML as: `See the <a href="./about.html">about page</a> for more information. Visit <a href="https://example.com">our website</a>.`
+In HTML, this would compile as: 
+#+begin_src html
+See the <a href="./about.html">about page</a> for more information. Visit <a href="https://example.com">our website</a>.`
+#+end_src
 
 If a linked file doesn't exist, rheo will report a detailed error during compilation.
 
-** Features
-
+See [[https://rheo.ohrg][the documentation]] for more information. 
 *** Multi-Format Compilation
+Rheo compiles Typst documents to three output formats simultaneously:
 
-rheo compiles Typst documents to three output formats simultaneously:
-
-- **PDF**: High-quality print-ready documents
-- **HTML**: Web-ready output with CSS customization
-- **EPUB**: E-book format with support for merged multi-chapter books
+- *PDF*: High-quality print-ready documents.
+- *HTML*: Web-ready output with CSS customization.
+- *EPUB*: E-book format with support for merged multi-chapter books.
 
 By default, all three formats are generated. Use format flags to compile specific outputs:
 
@@ -141,8 +93,7 @@ rheo compile my_project --epub      # EPUB only
 rheo compile my_project --pdf --html  # PDF and HTML
 #+end_src
 
-*** Watch Mode with Live Reload
-
+*** Watch Mode 
 Watch mode automatically recompiles files when they change, perfect for iterative development:
 
 #+begin_src bash
@@ -161,28 +112,27 @@ The development server:
 - Refreshes the page when files change
 - Supports multiple connected browsers
 
-*** PDF and EPUB Merge
-
+*** PDF and EPUB merging via spines 
 Combine multiple Typst files into a single PDF or EPUB document using the merge feature. Configure in =rheo.toml=:
 
 #+begin_src toml
-[pdf.merge]
+[pdf.spine]
 title = "My Book"
-spine = ["cover.typ", "chapters/**/*.typ"]
+vertebrae = ["cover.typ", "chapters/**/*.typ"]
+merge = true
 
-[epub.merge]
+[epub.spinei]
 title = "My Book"
-spine = ["cover.typ", "chapters/**/*.typ"]
+vertebrae = ["cover.typ", "chapters/**/*.typ"]
 #+end_src
 
-The =spine= field uses glob patterns to specify which files to include and in what order (lexicographic sorting).
+The =vertebrae= uses glob patterns to specify which files to include and in what order.
+Globbed files use lexicographic sorting.
+*** Automatic Defaults
+Rheo automatically infers sensible defaults for EPUB:
 
-*** Automatic Defaults for EPUB
-
-When no =rheo.toml= exists, rheo automatically infers sensible defaults for EPUB:
-
-- **Title**: Derived from filename (single file) or directory name (project)
-- **Spine**: Single file (single-file mode) or all =.typ= files sorted alphabetically (directory mode)
+- =title=: Derived from filename (single file) or directory name (project)
+- =vertebrae=: Single file (single-file mode) or all =.typ= files sorted alphabetically (directory mode)
 
 This means you can generate EPUBs without any configuration:
 
@@ -193,145 +143,17 @@ rheo compile my_document.typ --epub
 rheo compile my_book/ --epub
 # Creates my_book.epub with all .typ files included
 #+end_src
-
-** Configuration
-
-*** rheo.toml Basics
-
-Projects can include a =rheo.toml= configuration file in the project root to customize compilation behavior.
-
-**Minimal example:**
-
-#+begin_src toml
-content_dir = "content"
-formats = ["html", "pdf"]
-#+end_src
-
-**Common configuration options:**
-
-#+begin_src toml
-# Project structure
-content_dir = "content"      # Directory containing .typ files
-build_dir = "build"          # Output directory (default: "build")
-
-# Default formats when no CLI flags specified
-formats = ["html", "pdf", "epub"]
-
-# HTML customization
-[html]
-stylesheets = ["style.css", "custom.css"]
-fonts = ["https://fonts.googleapis.com/css2?family=Inter"]
-
-# PDF merge configuration
-[pdf.merge]
-title = "My Book"
-spine = ["cover.typ", "chapters/**/*.typ"]
-
-# EPUB merge configuration
-[epub.merge]
-title = "My Book"
-spine = ["cover.typ", "chapters/**/*.typ"]
-#+end_src
-
-**Configuration precedence:**
-1. CLI flags (=--pdf=, =--html=, =--epub=, =--config=, =--build-dir=) override everything
-2. =rheo.toml= settings apply when no CLI flags specified
-3. Built-in defaults apply when field not specified
-
-** Customization
+*** TOML Configuration
+Projects can include a =rheo.toml= configuration file in the project root to customize compilation behavior rather than specifying flags.
+See [[https://rheo.ohrg][the documentation]] for more information. 
 
 *** CSS Styling
+By default, rheo uses a simple, elegant and modern stylesheet to style your HTML.
+To customize this, you can add a =style.css= in your project root, which rheo will inject into your HTML output. 
 
-rheo automatically looks for =style.css= in your project root and injects it into HTML output. Customize the HTML appearance by creating this file:
-
-#+begin_src css
-/* style.css */
-body {
-  max-width: 800px;
-  margin: 0 auto;
-  font-family: 'Inter', sans-serif;
-}
-#+end_src
-
-Inject additional stylesheets via =rheo.toml=:
-
-#+begin_src toml
-[html]
-stylesheets = ["style.css", "syntax-highlighting.css", "custom.css"]
-#+end_src
-
-Stylesheet paths are relative to =build/html/= directory.
-
-*** External Fonts
-
-Add web fonts to HTML output:
-
-#+begin_src toml
-[html]
-fonts = [
-  "https://fonts.googleapis.com/css2?family=Inter:wght@400;700",
-  "https://fonts.googleapis.com/css2?family=JetBrains+Mono"
-]
-#+end_src
-
-Font URLs are injected into the HTML =<head>= element.
-
-*** rheo.typ Template
-
-rheo automatically injects =src/typ/rheo.typ= into all compiled documents, providing helper functions and utilities. This template can define:
-
-- Custom document formatting
-- Reusable components (lemmas, theorems, callouts)
-- Project-wide styling
-- Helper functions
-
-The template is automatically available in all =.typ= files without explicit imports.
-
-** Examples
-
-*** Single-File Compilation
-
-Compile a single document to all formats:
-
-#+begin_src bash
-rheo compile my_document.typ
-#+end_src
-
-Output:
-- =build/pdf/my_document.pdf=
-- =build/html/my_document.html=
-- =build/epub/my_document.epub=
-
-*** Directory Compilation
-
-Compile all =.typ= files in a directory:
-
-#+begin_src bash
-rheo compile examples/blog_site
-#+end_src
-
-Each =.typ= file generates separate PDF, HTML, and EPUB outputs (unless merge is configured).
-
-*** Multi-Chapter Book
-
-Create a merged book from multiple chapters:
-
-1. Create =rheo.toml=:
-#+begin_src toml
-content_dir = "chapters"
-
-[pdf.merge]
-title = "My Complete Book"
-spine = ["00-preface.typ", "*.typ", "99-appendix.typ"]
-
-[epub.merge]
-title = "My Complete Book"
-spine = ["00-preface.typ", "*.typ", "99-appendix.typ"]
-#+end_src
-
-2. Compile:
-#+begin_src bash
-rheo compile . --pdf --epub
-#+end_src
-
-Output: Single =my_complete_book.pdf= and =my_complete_book.epub= with all chapters merged.
+** License
+Licensed at your option under either:
+- Apache License, Version 2.0 ([[./LICENSE-APACHE][LICENSE-APACHE]])
+- MIT license ([[./LICENSE-MIT][LICENSE-MIT]])
+** Contribution
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
