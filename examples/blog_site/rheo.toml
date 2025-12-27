@@ -1,3 +1,5 @@
+version = "0.1.0"
+
 # Relative to the rheo folder, if you specify a `oontent_dir`,
 # all of the `exclude` patterns become relative to this folder.
 content_dir = "content"

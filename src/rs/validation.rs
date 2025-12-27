@@ -1,5 +1,6 @@
 use crate::config::{EpubConfig, HtmlConfig, PdfConfig, Spine};
-use crate::{Result, RheoError};
+use crate::manifest_version::ManifestVersion;
+use crate::{Result, RheoConfig, RheoError};
 use tracing::warn;
 
 /// Trait for validating configuration structs after deserialization.
@@ -13,6 +14,27 @@ pub trait ValidateConfig {
     /// # Errors
     /// Returns `RheoError::ProjectConfig` if the configuration is invalid.
     fn validate(&self) -> Result<()>;
+}
+
+impl ValidateConfig for RheoConfig {
+    fn validate(&self) -> Result<()> {
+        // Check version compatibility
+        let current = ManifestVersion::current();
+        if !self.version.is_compatible_with(&current) {
+            warn!(
+                "rheo.toml version {} is newer than supported version {}. \
+                 Some features may not work correctly. Consider upgrading rheo.",
+                self.version, current
+            );
+        }
+
+        // Delegate to existing validation
+        self.pdf.validate()?;
+        self.html.validate()?;
+        self.epub.validate()?;
+
+        Ok(())
+    }
 }
 
 impl ValidateConfig for PdfConfig {
@@ -186,6 +208,27 @@ mod tests {
             date: None,
             spine: Some(spine),
         };
+        // Should validate successfully but log warning
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_rheo_config_validates_with_compatible_version() {
+        let toml = r#"
+        version = "0.1.0"
+        "#;
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        // Should validate successfully without warnings
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_rheo_config_warns_on_newer_version() {
+        // Create config with version 99.0.0 (newer than current)
+        let toml = r#"
+        version = "99.0.0"
+        "#;
+        let config: RheoConfig = toml::from_str(toml).unwrap();
         // Should validate successfully but log warning
         assert!(config.validate().is_ok());
     }

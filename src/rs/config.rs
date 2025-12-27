@@ -1,3 +1,4 @@
+use crate::manifest_version::ManifestVersion;
 use crate::validation::ValidateConfig;
 use crate::{OutputFormat, Result};
 use chrono::{DateTime, Utc};
@@ -57,6 +58,9 @@ fn default_formats() -> Vec<OutputFormat> {
 /// Configuration for rheo compilation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RheoConfig {
+    /// Manifest version for API compatibility (required)
+    pub version: ManifestVersion,
+
     /// Directory containing .typ content files (relative to project root)
     /// If not specified, searches entire project root
     /// Example: "content"
@@ -88,6 +92,7 @@ pub struct RheoConfig {
 impl Default for RheoConfig {
     fn default() -> Self {
         Self {
+            version: ManifestVersion::current(),
             content_dir: Some("./".to_string()),
             build_dir: Some("./build".to_string()),
             formats: default_formats(),
@@ -190,9 +195,7 @@ impl RheoConfig {
             .map_err(|e| crate::RheoError::project_config(format!("invalid rheo.toml: {}", e)))?;
 
         // Validate configuration
-        config.pdf.validate()?;
-        config.html.validate()?;
-        config.epub.validate()?;
+        config.validate()?;
 
         Ok(config)
     }
@@ -235,9 +238,7 @@ impl RheoConfig {
         })?;
 
         // Stage 4: Validate configuration
-        config.pdf.validate()?;
-        config.html.validate()?;
-        config.epub.validate()?;
+        config.validate()?;
 
         debug!(path = %config_path.display(), "loaded custom configuration");
         Ok(config)
@@ -282,11 +283,26 @@ mod tests {
     fn test_default_config() {
         let config = RheoConfig::default();
         assert_eq!(config.formats, OutputFormat::all_variants());
+        assert_eq!(config.version, ManifestVersion::current());
+    }
+
+    #[test]
+    fn test_config_missing_version_field() {
+        let toml = r#"
+        content_dir = "content"
+        formats = ["pdf"]
+        "#;
+
+        let result = toml::from_str::<RheoConfig>(toml);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("missing field") || err_msg.contains("version"));
     }
 
     #[test]
     fn test_formats_from_config() {
         let toml = r#"
+        version = "0.1.0"
         formats = ["pdf"]
         "#;
 
@@ -296,7 +312,9 @@ mod tests {
 
     #[test]
     fn test_formats_defaults_when_not_specified() {
-        let toml = r#""#;
+        let toml = r#"
+        version = "0.1.0"
+        "#;
 
         let config: RheoConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.formats, OutputFormat::all_variants());
@@ -305,6 +323,7 @@ mod tests {
     #[test]
     fn test_formats_multiple_values() {
         let toml = r#"
+        version = "0.1.0"
         formats = ["html", "epub"]
         "#;
 
@@ -315,6 +334,7 @@ mod tests {
     #[test]
     fn test_formats_case_insensitive() {
         let toml = r#"
+        version = "0.1.0"
         formats = ["PDF", "Html", "ePub"]
         "#;
 
@@ -328,6 +348,7 @@ mod tests {
     #[test]
     fn test_formats_invalid_format_name() {
         let toml = r#"
+        version = "0.1.0"
         formats = ["invalid"]
         "#;
 
@@ -384,6 +405,7 @@ mod tests {
     #[test]
     fn test_html_config_custom_stylesheets() {
         let toml = r#"
+        version = "0.1.0"
         [html]
         stylesheets = ["custom.css", "theme.css"]
         "#;
@@ -397,6 +419,7 @@ mod tests {
     #[test]
     fn test_html_config_custom_fonts() {
         let toml = r#"
+        version = "0.1.0"
         [html]
         fonts = ["https://example.com/font.css"]
         "#;
@@ -410,6 +433,7 @@ mod tests {
     #[test]
     fn test_html_config_both_custom() {
         let toml = r#"
+        version = "0.1.0"
         [html]
         stylesheets = ["a.css", "b.css"]
         fonts = ["https://fonts.com/font1.css", "https://fonts.com/font2.css"]
@@ -426,6 +450,7 @@ mod tests {
     #[test]
     fn test_pdf_spine_with_merge_true() {
         let toml = r#"
+        version = "0.1.0"
         [pdf.spine]
         title = "My Book"
         vertebrae = ["cover.typ", "chapters/*.typ"]
@@ -442,6 +467,7 @@ mod tests {
     #[test]
     fn test_pdf_spine_with_merge_false() {
         let toml = r#"
+        version = "0.1.0"
         [pdf.spine]
         title = "My Book"
         vertebrae = ["cover.typ", "chapters/*.typ"]
@@ -458,6 +484,7 @@ mod tests {
     #[test]
     fn test_pdf_spine_merge_omitted() {
         let toml = r#"
+        version = "0.1.0"
         [pdf.spine]
         title = "My Book"
         vertebrae = ["cover.typ"]
@@ -473,6 +500,7 @@ mod tests {
     #[test]
     fn test_epub_spine() {
         let toml = r#"
+        version = "0.1.0"
         [epub.spine]
         title = "My EPUB"
         vertebrae = ["intro.typ", "chapter*.typ", "outro.typ"]
@@ -491,6 +519,7 @@ mod tests {
     #[test]
     fn test_html_spine() {
         let toml = r#"
+        version = "0.1.0"
         [html.spine]
         title = "My Website"
         vertebrae = ["index.typ", "about.typ"]
@@ -506,6 +535,7 @@ mod tests {
     #[test]
     fn test_spine_empty_vertebrae() {
         let toml = r#"
+        version = "0.1.0"
         [epub.spine]
         title = "Single File Book"
         vertebrae = []
@@ -520,6 +550,7 @@ mod tests {
     #[test]
     fn test_spine_complex_glob_patterns() {
         let toml = r#"
+        version = "0.1.0"
         [pdf.spine]
         title = "Complex Book"
         vertebrae = ["frontmatter/**/*.typ", "chapters/**/ch*.typ", "appendix.typ"]

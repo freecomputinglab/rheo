@@ -374,6 +374,8 @@ mod tests {
         fs::write(
             &config_path,
             r#"
+version = "0.1.0"
+
 [epub.spine]
 title = "Custom Title"
 vertebrae = ["custom.typ"]
