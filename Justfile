@@ -7,6 +7,10 @@ test:
 build:
   cargo build
 
+update-submodules:
+  git submodule update --remote --merge
+  git submodule status
+
 install:
   cargo install --path . --locked
 
