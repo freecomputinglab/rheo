@@ -195,9 +195,7 @@ impl RheoConfig {
             .map_err(|e| crate::RheoError::project_config(format!("invalid rheo.toml: {}", e)))?;
 
         // Validate configuration
-        config.pdf.validate()?;
-        config.html.validate()?;
-        config.epub.validate()?;
+        config.validate()?;
 
         Ok(config)
     }
@@ -240,9 +238,7 @@ impl RheoConfig {
         })?;
 
         // Stage 4: Validate configuration
-        config.pdf.validate()?;
-        config.html.validate()?;
-        config.epub.validate()?;
+        config.validate()?;
 
         debug!(path = %config_path.display(), "loaded custom configuration");
         Ok(config)
