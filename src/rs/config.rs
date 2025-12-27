@@ -1,3 +1,4 @@
+use crate::manifest_version::ManifestVersion;
 use crate::validation::ValidateConfig;
 use crate::{OutputFormat, Result};
 use chrono::{DateTime, Utc};
@@ -57,6 +58,9 @@ fn default_formats() -> Vec<OutputFormat> {
 /// Configuration for rheo compilation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RheoConfig {
+    /// Manifest version for API compatibility (required)
+    pub version: ManifestVersion,
+
     /// Directory containing .typ content files (relative to project root)
     /// If not specified, searches entire project root
     /// Example: "content"
@@ -88,6 +92,7 @@ pub struct RheoConfig {
 impl Default for RheoConfig {
     fn default() -> Self {
         Self {
+            version: ManifestVersion::current(),
             content_dir: Some("./".to_string()),
             build_dir: Some("./build".to_string()),
             formats: default_formats(),

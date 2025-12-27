@@ -5,6 +5,7 @@ pub mod constants;
 pub mod error;
 pub mod formats;
 pub mod logging;
+pub mod manifest_version;
 pub mod output;
 pub mod path_utils;
 pub mod postprocess;
@@ -18,6 +19,7 @@ pub mod world;
 
 pub use cli::Cli;
 pub use config::RheoConfig;
+pub use manifest_version::ManifestVersion;
 pub use constants::*;
 pub use error::RheoError;
 pub use globset::{Glob, GlobSet, GlobSetBuilder};
