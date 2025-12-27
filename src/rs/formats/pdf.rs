@@ -207,19 +207,19 @@ fn strip_typst_markup(text: &str) -> String {
 
 /// Implementation: Compile multiple Typst files into a single merged PDF (fresh compilation)
 ///
-/// Generates a spine from the PDF merge configuration, concatenates all sources
+/// Generates a spine from the PDF spine configuration, concatenates all sources
 /// with labels and transformed links, then compiles to a single PDF document.
 fn compile_pdf_merged_impl_fresh(
     config: &PdfConfig,
     output_path: &Path,
     root: &Path,
 ) -> Result<()> {
-    let merge = config.merge.as_ref().ok_or_else(|| {
-        RheoError::project_config("PDF merge configuration required for merged compilation")
+    let merge = config.spine.as_ref().ok_or_else(|| {
+        RheoError::project_config("PDF spine configuration required for merged compilation")
     })?;
 
     // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
-    let rheo_spine = RheoSpine::build(root, Some(merge), crate::OutputFormat::Pdf, &merge.title)?;
+    let rheo_spine = RheoSpine::build(root, Some(merge), crate::OutputFormat::Pdf)?;
 
     debug!(file_count = rheo_spine.source.len(), "built PDF spine");
 
@@ -278,12 +278,12 @@ fn compile_pdf_merged_impl(
     output_path: &Path,
     root: &Path,
 ) -> Result<()> {
-    let merge = config.merge.as_ref().ok_or_else(|| {
-        RheoError::project_config("PDF merge configuration required for merged compilation")
+    let merge = config.spine.as_ref().ok_or_else(|| {
+        RheoError::project_config("PDF spine configuration required for merged compilation")
     })?;
 
     // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
-    let rheo_spine = RheoSpine::build(root, Some(merge), crate::OutputFormat::Pdf, &merge.title)?;
+    let rheo_spine = RheoSpine::build(root, Some(merge), crate::OutputFormat::Pdf)?;
 
     debug!(file_count = rheo_spine.source.len(), "built PDF spine");
 
@@ -345,13 +345,16 @@ fn compile_pdf_merged_impl(
 ///
 /// # Arguments
 /// * `options` - Compilation options (input, output, root, repo_root, world)
-/// * `pdf_config` - Optional PDF merge configuration (None for single-file)
+/// * `pdf_config` - Optional PDF spine configuration (None for single-file)
 ///
 /// # Returns
 /// * `Result<()>` - Success or compilation error
 pub fn compile_pdf_new(options: RheoCompileOptions, pdf_config: Option<&PdfConfig>) -> Result<()> {
-    // Check if this is merged PDF compilation
-    let is_merged = pdf_config.and_then(|c| c.merge.as_ref()).is_some();
+    // Check if this is merged PDF compilation (spine with merge = true)
+    let is_merged = pdf_config
+        .and_then(|c| c.spine.as_ref())
+        .and_then(|s| s.merge)
+        .unwrap_or(false);
 
     match (is_merged, options.world) {
         // Merged PDF, incremental

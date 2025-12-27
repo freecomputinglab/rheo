@@ -1,9 +1,10 @@
 formats = ["html", "pdf", "epub"]
 
-[pdf.merge]
+[pdf.spine]
+merge = true
 title = "Links with Fragments Test"
-spine = ["page1.typ", "page2.typ"]
+vertebrae = ["page1.typ", "page2.typ"]
 
-[epub.merge]
+[epub.spine]
 title = "Links with Fragments Test"
-spine = ["page1.typ", "page2.typ"]
+vertebrae = ["page1.typ", "page2.typ"]

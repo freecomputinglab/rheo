@@ -7,10 +7,11 @@ content_dir = "content"
 # Default: ["pdf", "html"]
 # formats = ["html", "pdf"]
 
-[pdf.merge]
-spine = ["severance-*.typ"]
+[pdf.spine]
+merge = true
+vertebrae = ["severance-*.typ"]
 title = "Screening the Subject | Severance"
 
-[epub.merge]
-spine = ["severance-*.typ"]
+[epub.spine]
+vertebrae = ["severance-*.typ"]
 title = "Screening the Subject | Severance"

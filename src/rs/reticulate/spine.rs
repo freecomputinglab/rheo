@@ -1,4 +1,4 @@
-use crate::config::Merge;
+use crate::config::Spine;
 use crate::formats::pdf::{DocumentTitle, sanitize_label_name};
 use crate::{OutputFormat, Result, RheoError, TYP_EXT};
 use std::collections::HashSet;
@@ -31,27 +31,25 @@ impl RheoSpine {
     ///
     /// # Arguments
     /// * `root` - Project root directory
-    /// * `merge_config` - Optional merge configuration (determines spine files)
+    /// * `spine_config` - Optional spine configuration (determines spine files)
     /// * `output_format` - Target output format (determines link transformation behavior)
-    /// * `title` - Document title (used for merged outputs)
     ///
     /// # Returns
     /// A RheoSpine containing transformed Typst sources ready for compilation.
     pub fn build(
         root: &Path,
-        merge_config: Option<&Merge>,
+        spine_config: Option<&Spine>,
         output_format: OutputFormat,
-        title: &str,
     ) -> Result<RheoSpine> {
         // Generate spine: ordered list of .typ files
-        let spine_files = generate_spine(root, merge_config, false)?;
+        let spine_files = generate_spine(root, spine_config, false)?;
 
         // Check for duplicate filenames
         check_duplicate_filenames(&spine_files)?;
 
         // Determine if we should merge sources based on format and config
         let should_merge = match output_format {
-            OutputFormat::Pdf => merge_config.is_some(),
+            OutputFormat::Pdf => spine_config.and_then(|s| s.merge).unwrap_or(false),
             OutputFormat::Html | OutputFormat::Epub => false,
         };
 
@@ -92,8 +90,13 @@ impl RheoSpine {
             sources
         };
 
+        // Extract title from spine config, or use "Untitled" as fallback
+        let title = spine_config
+            .map(|s| s.title.clone())
+            .unwrap_or_else(|| "Untitled".to_string());
+
         Ok(RheoSpine {
-            title: title.to_string(),
+            title,
             is_merged: should_merge,
             source: final_sources,
         })
@@ -186,7 +189,7 @@ fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
         0 => Err(RheoError::project_config("need at least one .typ file")),
         1 => Ok(typst_files),
         _ => Err(RheoError::project_config(
-            "multiple .typ files found, specify spine in merge config",
+            "multiple .typ files found, specify spine configuration",
         )),
     }
 }
@@ -195,40 +198,40 @@ fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
 ///
 /// # Arguments
 /// * `root` - Project root directory
-/// * `merge_config` - Optional merge configuration with spine patterns
-/// * `require_merge` - If true, merge_config must be provided (PDF mode)
+/// * `spine_config` - Optional spine configuration with vertebrae patterns
+/// * `require_spine` - If true, spine_config must be provided (PDF mode)
 ///
 /// # Errors
 /// Returns error if:
-/// - `require_merge=true` and `merge_config=None`
+/// - `require_spine=true` and `spine_config=None`
 /// - No .typ files found (fallback mode)
-/// - Multiple .typ files found without merge config (fallback mode)
-/// - Merge spine matched no .typ files
+/// - Multiple .typ files found without spine config (fallback mode)
+/// - Spine vertebrae matched no .typ files
 pub fn generate_spine(
     root: &Path,
-    merge_config: Option<&Merge>,
-    require_merge: bool,
+    spine_config: Option<&Spine>,
+    require_spine: bool,
 ) -> Result<Vec<PathBuf>> {
-    // PDF mode: merge config is required
-    if require_merge && merge_config.is_none() {
+    // PDF mode: spine config is required
+    if require_spine && spine_config.is_none() {
         return Err(RheoError::project_config(
-            "merge configuration required but not provided",
+            "spine configuration required but not provided",
         ));
     }
 
-    match merge_config {
+    match spine_config {
         // Single-file mode
         None => collect_one_typst_file(root),
 
-        // Empty spine pattern: auto-discover single file only
-        // This is used for single-file mode with default EPUB merge config
-        Some(merge) if merge.spine.is_empty() => collect_one_typst_file(root),
+        // Empty vertebrae pattern: auto-discover single file only
+        // This is used for single-file mode with default EPUB spine config
+        Some(spine) if spine.vertebrae.is_empty() => collect_one_typst_file(root),
 
-        // Spine is specified
-        // Process glob patterns from merge config
-        Some(merge) => {
+        // Vertebrae is specified
+        // Process glob patterns from spine config
+        Some(spine) => {
             let mut typst_files = Vec::new();
-            for pattern in &merge.spine {
+            for pattern in &spine.vertebrae {
                 let glob_pattern = root.join(pattern).display().to_string();
                 let glob = glob::glob(&glob_pattern).map_err(|e| {
                     RheoError::project_config(format!("invalid glob pattern '{}': {}", pattern, e))
@@ -288,7 +291,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("merge configuration required")
+                .contains("spine configuration required")
         );
     }
 
@@ -331,9 +334,10 @@ mod tests {
     #[test]
     fn test_generate_spine_with_merge_config() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ", "c.typ"]);
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec!["*.typ".to_string()],
+            vertebrae: vec!["*.typ".to_string()],
+            merge: None,
         };
         let result = generate_spine(temp.path(), Some(&merge), false);
         assert!(result.is_ok());
@@ -349,13 +353,14 @@ mod tests {
             "chapters/ch2.typ",
             "appendix.typ",
         ]);
-        let merge = Merge {
+        let merge = Spine {
             title: "Book".to_string(),
-            spine: vec![
+            vertebrae: vec![
                 "cover.typ".to_string(),
                 "chapters/*.typ".to_string(),
                 "appendix.typ".to_string(),
             ],
+            merge: None,
         };
         let result = generate_spine(temp.path(), Some(&merge), true);
         assert!(result.is_ok());
@@ -386,9 +391,10 @@ mod tests {
     #[test]
     fn test_generate_spine_merge_no_matches_error() {
         let temp = create_test_dir_with_files(&["readme.md"]);
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec!["*.typ".to_string()],
+            vertebrae: vec!["*.typ".to_string()],
+            merge: None,
         };
         let result = generate_spine(temp.path(), Some(&merge), false);
         assert!(result.is_err());
@@ -403,9 +409,10 @@ mod tests {
     #[test]
     fn test_generate_spine_empty_pattern_single_file() {
         let temp = create_test_dir_with_files(&["single.typ"]);
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec![], // Empty spine
+            vertebrae: vec![], // Empty vertebrae
+            merge: None,
         };
 
         let result = generate_spine(temp.path(), Some(&merge), false);
@@ -418,9 +425,10 @@ mod tests {
     #[test]
     fn test_generate_spine_empty_pattern_multiple_files_error() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec![], // Empty spine with multiple files
+            vertebrae: vec![], // Empty vertebrae with multiple files
+            merge: None,
         };
 
         let result = generate_spine(temp.path(), Some(&merge), false);

@@ -117,7 +117,7 @@ fn date_format(dt: &DateTime<Utc>) -> EcoString {
 pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> AnyhowResult<String> {
     let info = &items[0].document.info;
     let language = info.locale.unwrap_or_default().rfc_3066();
-    let title = match &config.merge {
+    let title = match &config.spine {
         None => items[0].title(),
         Some(combined) => combined.title.clone().into(),
     };
@@ -254,19 +254,10 @@ pub fn zip_epub(
 fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
         // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
-        let rheo_spine = RheoSpine::build(
-            root,
-            config.merge.as_ref(),
-            crate::OutputFormat::Epub,
-            config
-                .merge
-                .as_ref()
-                .map(|m| m.title.as_str())
-                .unwrap_or("Untitled"),
-        )?;
+        let rheo_spine = RheoSpine::build(root, config.spine.as_ref(), crate::OutputFormat::Epub)?;
 
         // Get the spine file paths
-        let spine = crate::reticulate::spine::generate_spine(root, config.merge.as_ref(), false)?;
+        let spine = crate::reticulate::spine::generate_spine(root, config.spine.as_ref(), false)?;
 
         // Create EpubItems from transformed sources
         let mut items = spine

@@ -194,16 +194,17 @@ fonts = []                   # External font URLs to inject into HTML
 
 # PDF-specific configuration
 [pdf]
-# Optional: Configure PDF merge mode for multi-chapter books
-[pdf.merge]
-title = "My Book"           # Title for the merged PDF document
-spine = ["cover.typ", "chapters/**/*.typ"]  # Glob patterns for files to include
-                                            # Patterns evaluated relative to content_dir
-                                            # Results sorted lexicographically
-                                            # Example patterns:
-                                            #   - "cover.typ" (single file)
-                                            #   - "chapters/**" (all files in chapters/)
-                                            #   - "**/*.typ" (all .typ files recursively)
+# Optional: Configure PDF spine for multi-chapter books
+[pdf.spine]
+title = "My Book"           # Title for the PDF document
+vertebrae = ["cover.typ", "chapters/**/*.typ"]  # Glob patterns for files to include
+                                                # Patterns evaluated relative to content_dir
+                                                # Results sorted lexicographically
+                                                # Example patterns:
+                                                #   - "cover.typ" (single file)
+                                                #   - "chapters/**" (all files in chapters/)
+                                                #   - "**/*.typ" (all .typ files recursively)
+merge = true                # Optional: merge vertebrae into single PDF (default: false)
 
 # EPUB-specific configuration
 [epub]
@@ -215,11 +216,11 @@ date = 2025-01-15T00:00:00Z  # Publication date (ISO 8601 format)
                               # Optional, separate from modification timestamp
                               # Default: current date if not specified
 
-# Optional: Configure EPUB merge mode for multi-chapter books
-[epub.merge]
-title = "My Book"           # Title for the merged EPUB document
-spine = ["cover.typ", "chapters/**/*.typ"]  # Glob patterns for files to include
-                                            # Same format as pdf.merge.spine
+# Optional: Configure EPUB spine for multi-chapter books
+[epub.spine]
+title = "My Book"           # Title for the EPUB document
+vertebrae = ["cover.typ", "chapters/**/*.typ"]  # Glob patterns for files to include
+                                                # Same format as pdf.spine.vertebrae
 ```
 
 **Configuration Field Details:**
@@ -232,18 +233,24 @@ spine = ["cover.typ", "chapters/**/*.typ"]  # Glob patterns for files to include
 **[html] section:**
 - `stylesheets` (array of strings): CSS files to inject. Paths relative to `build/html/`. Default: `["style.css"]`.
 - `fonts` (array of strings): External font URLs to inject into HTML `<head>`. Default: empty.
+- `spine` (object, optional): Configuration for HTML output (multiple files, not merged).
+  - `title` (string, required if spine used): Title for the HTML site.
+  - `vertebrae` (array of strings, required if spine used): Glob patterns for files to include.
+  - `merge` (boolean, optional): Ignored for HTML (always produces per-file output). Defaults to None.
 
 **[pdf] section:**
-- `merge` (object, optional): Configuration for merging multiple .typ files into a single PDF.
-  - `title` (string, required if merge used): Title for the merged PDF.
-  - `spine` (array of strings, required if merge used): Glob patterns for files to include, sorted lexicographically.
+- `spine` (object, optional): Configuration for merging multiple .typ files into a single PDF.
+  - `title` (string, required if spine used): Title for the merged PDF.
+  - `vertebrae` (array of strings, required if spine used): Glob patterns for files to include, sorted lexicographically.
+  - `merge` (boolean, optional): Whether to merge files into single PDF. Defaults to false.
 
 **[epub] section:**
 - `identifier` (string, optional): Unique identifier for the EPUB (URN, URL, or ISBN). Auto-generated if omitted.
 - `date` (datetime, optional): Publication date in ISO 8601 format. Defaults to current date.
-- `merge` (object, optional): Configuration for merging multiple .typ files into a single EPUB.
-  - `title` (string, required if merge used): Title for the merged EPUB.
-  - `spine` (array of strings, required if merge used): Glob patterns for files to include, sorted lexicographically.
+- `spine` (object, optional): Configuration for merging multiple .typ files into a single EPUB.
+  - `title` (string, required if spine used): Title for the merged EPUB.
+  - `vertebrae` (array of strings, required if spine used): Glob patterns for files to include, sorted lexicographically.
+  - `merge` (boolean, optional): Ignored for EPUB (always merges). Defaults to None.
 
 **Precedence rules:**
 1. CLI flags (`--pdf`, `--html`, `--epub`, `--config`, `--build-dir`) take highest precedence

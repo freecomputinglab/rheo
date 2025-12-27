@@ -1,4 +1,4 @@
-use crate::config::Merge;
+use crate::config::Spine;
 use crate::formats::pdf::DocumentTitle;
 use crate::{Result, RheoConfig, RheoError};
 use std::path::{Path, PathBuf};
@@ -203,7 +203,7 @@ impl ProjectConfig {
 
 /// Apply smart defaults when no rheo.toml exists.
 ///
-/// This generates sensible merge configurations for EPUB based on the project
+/// This generates sensible spine configurations for EPUB based on the project
 /// mode and name. PDF is not modified to maintain backwards compatibility
 /// (users expect per-file PDFs by default).
 fn apply_smart_defaults(
@@ -214,13 +214,17 @@ fn apply_smart_defaults(
     // Generate human-readable title from project/file name
     let title = DocumentTitle::to_readable_name(project_name);
 
-    // Apply EPUB defaults if merge not configured
-    if config.epub.merge.is_none() {
-        let spine = match mode {
+    // Apply EPUB defaults if spine not configured
+    if config.epub.spine.is_none() {
+        let vertebrae = match mode {
             ProjectMode::SingleFile => vec![], // Empty: will auto-discover single file
             ProjectMode::Directory => vec!["**/*.typ".to_string()], // All files
         };
-        config.epub.merge = Some(Merge { title, spine });
+        config.epub.spine = Some(Spine {
+            title,
+            vertebrae,
+            merge: None,
+        });
     }
 
     config
@@ -340,11 +344,11 @@ mod tests {
 
         let project = ProjectConfig::from_path(&file, None).unwrap();
 
-        // Should have default merge config for EPUB
-        assert!(project.config.epub.merge.is_some());
-        let merge = project.config.epub.merge.as_ref().unwrap();
+        // Should have default spine config for EPUB
+        assert!(project.config.epub.spine.is_some());
+        let merge = project.config.epub.spine.as_ref().unwrap();
         assert_eq!(merge.title, "My Document");
-        assert!(merge.spine.is_empty());
+        assert!(merge.vertebrae.is_empty());
     }
 
     #[test]
@@ -355,10 +359,10 @@ mod tests {
 
         let project = ProjectConfig::from_path(temp.path(), None).unwrap();
 
-        // Should have default merge config for EPUB
-        assert!(project.config.epub.merge.is_some());
-        let merge = project.config.epub.merge.as_ref().unwrap();
-        assert_eq!(merge.spine, vec!["**/*.typ"]);
+        // Should have default spine config for EPUB
+        assert!(project.config.epub.spine.is_some());
+        let merge = project.config.epub.spine.as_ref().unwrap();
+        assert_eq!(merge.vertebrae, vec!["**/*.typ"]);
         // Title should be based on temp directory name (will vary)
         assert!(!merge.title.is_empty());
     }
@@ -370,9 +374,9 @@ mod tests {
         fs::write(
             &config_path,
             r#"
-[epub.merge]
+[epub.spine]
 title = "Custom Title"
-spine = ["custom.typ"]
+vertebrae = ["custom.typ"]
 "#,
         )
         .unwrap();
@@ -381,9 +385,9 @@ spine = ["custom.typ"]
         let project = ProjectConfig::from_path(temp.path(), None).unwrap();
 
         // Should preserve explicit config
-        let merge = project.config.epub.merge.as_ref().unwrap();
+        let merge = project.config.epub.spine.as_ref().unwrap();
         assert_eq!(merge.title, "Custom Title");
-        assert_eq!(merge.spine, vec!["custom.typ"]);
+        assert_eq!(merge.vertebrae, vec!["custom.typ"]);
     }
 
     #[test]
@@ -394,7 +398,7 @@ spine = ["custom.typ"]
 
         let project = ProjectConfig::from_path(temp.path(), None).unwrap();
 
-        // PDF should not get default merge config (backwards compatibility)
-        assert!(project.config.pdf.merge.is_none());
+        // PDF should not get default spine config (backwards compatibility)
+        assert!(project.config.pdf.spine.is_none());
     }
 }

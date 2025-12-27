@@ -1,5 +1,6 @@
-use crate::config::{EpubConfig, HtmlConfig, Merge, PdfConfig};
+use crate::config::{EpubConfig, HtmlConfig, PdfConfig, Spine};
 use crate::{Result, RheoError};
+use tracing::warn;
 
 /// Trait for validating configuration structs after deserialization.
 ///
@@ -16,8 +17,8 @@ pub trait ValidateConfig {
 
 impl ValidateConfig for PdfConfig {
     fn validate(&self) -> Result<()> {
-        if let Some(merge) = &self.merge {
-            merge.validate()?;
+        if let Some(spine) = &self.spine {
+            spine.validate()?;
         }
         Ok(())
     }
@@ -25,7 +26,13 @@ impl ValidateConfig for PdfConfig {
 
 impl ValidateConfig for HtmlConfig {
     fn validate(&self) -> Result<()> {
-        // No validation needed for HTML config currently
+        if let Some(spine) = &self.spine {
+            spine.validate()?;
+            // Warn if merge field is set - it's ignored for HTML
+            if spine.merge.is_some() {
+                warn!("html.spine.merge field is ignored (HTML always produces per-file output)");
+            }
+        }
         // Stylesheet and font paths are validated at usage time
         Ok(())
     }
@@ -33,20 +40,24 @@ impl ValidateConfig for HtmlConfig {
 
 impl ValidateConfig for EpubConfig {
     fn validate(&self) -> Result<()> {
-        if let Some(merge) = &self.merge {
-            merge.validate()?;
+        if let Some(spine) = &self.spine {
+            spine.validate()?;
+            // Warn if merge field is set - it's ignored for EPUB
+            if spine.merge.is_some() {
+                warn!("epub.spine.merge field is ignored (EPUB always merges into single .epub)");
+            }
         }
         Ok(())
     }
 }
 
-impl ValidateConfig for Merge {
+impl ValidateConfig for Spine {
     fn validate(&self) -> Result<()> {
-        // Empty spine is allowed - it has special behavior for single-file mode
+        // Empty vertebrae is allowed - it has special behavior for single-file mode
         // See spine.rs lines 62-87
 
         // Validate that all glob patterns are syntactically valid
-        for pattern in &self.spine {
+        for pattern in &self.vertebrae {
             glob::Pattern::new(pattern).map_err(|e| {
                 RheoError::project_config(format!("invalid glob pattern '{}': {}", pattern, e))
             })?;
@@ -62,27 +73,30 @@ mod tests {
 
     #[test]
     fn test_merge_validate_empty_spine() {
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec![],
+            vertebrae: vec![],
+            merge: None,
         };
         assert!(merge.validate().is_ok());
     }
 
     #[test]
     fn test_merge_validate_valid_patterns() {
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec!["*.typ".to_string(), "chapters/**/*.typ".to_string()],
+            vertebrae: vec!["*.typ".to_string(), "chapters/**/*.typ".to_string()],
+            merge: None,
         };
         assert!(merge.validate().is_ok());
     }
 
     #[test]
     fn test_merge_validate_invalid_pattern() {
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec!["[invalid".to_string()], // Unclosed bracket is invalid glob
+            vertebrae: vec!["[invalid".to_string()], // Unclosed bracket is invalid glob
+            merge: None,
         };
         let result = merge.validate();
         assert!(result.is_err());
@@ -92,41 +106,44 @@ mod tests {
 
     #[test]
     fn test_pdf_config_validate_with_valid_merge() {
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec!["*.typ".to_string()],
+            vertebrae: vec!["*.typ".to_string()],
+            merge: None,
         };
-        let config = PdfConfig { merge: Some(merge) };
+        let config = PdfConfig { spine: Some(merge) };
         assert!(config.validate().is_ok());
     }
 
     #[test]
     fn test_pdf_config_validate_with_invalid_merge() {
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec!["[invalid".to_string()],
+            vertebrae: vec!["[invalid".to_string()],
+            merge: None,
         };
-        let config = PdfConfig { merge: Some(merge) };
+        let config = PdfConfig { spine: Some(merge) };
         let result = config.validate();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_pdf_config_validate_no_merge() {
-        let config = PdfConfig { merge: None };
+        let config = PdfConfig { spine: None };
         assert!(config.validate().is_ok());
     }
 
     #[test]
     fn test_epub_config_validate() {
-        let merge = Merge {
+        let merge = Spine {
             title: "Test".to_string(),
-            spine: vec!["*.typ".to_string()],
+            vertebrae: vec!["*.typ".to_string()],
+            merge: None,
         };
         let config = EpubConfig {
             identifier: None,
             date: None,
-            merge: Some(merge),
+            spine: Some(merge),
         };
         assert!(config.validate().is_ok());
     }
@@ -136,7 +153,40 @@ mod tests {
         let config = HtmlConfig {
             stylesheets: vec!["style.css".to_string()],
             fonts: vec![],
+            spine: None,
         };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_html_config_warns_on_merge_field() {
+        let spine = Spine {
+            title: "Test".to_string(),
+            vertebrae: vec!["*.typ".to_string()],
+            merge: Some(true),
+        };
+        let config = HtmlConfig {
+            stylesheets: vec![],
+            fonts: vec![],
+            spine: Some(spine),
+        };
+        // Should validate successfully but log warning
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_epub_config_warns_on_merge_field() {
+        let spine = Spine {
+            title: "Test".to_string(),
+            vertebrae: vec!["*.typ".to_string()],
+            merge: Some(false),
+        };
+        let config = EpubConfig {
+            identifier: None,
+            date: None,
+            spine: Some(spine),
+        };
+        // Should validate successfully but log warning
         assert!(config.validate().is_ok());
     }
 }

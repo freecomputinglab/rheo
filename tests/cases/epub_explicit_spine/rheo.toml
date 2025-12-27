@@ -1,0 +1,3 @@
+[epub.spine]
+title = "My EPUB Book"
+vertebrae = ["intro.typ", "chapter.typ"]

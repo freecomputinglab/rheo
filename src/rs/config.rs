@@ -100,7 +100,7 @@ impl Default for RheoConfig {
 
 /// Configuration for merging outputs
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Merge {
+pub struct Spine {
     /// Title for merged document
     pub title: String,
 
@@ -108,7 +108,13 @@ pub struct Merge {
     /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
     /// Output of patterns are sorted lexicographically
     /// Example: ["cover.typ", "chapters/**"]"
-    pub spine: Vec<String>,
+    pub vertebrae: Vec<String>,
+
+    /// Whether to merge vertebrae into a single output file.
+    /// Only meaningful for PDF (HTML always false, EPUB always true).
+    /// If not specified for PDF, defaults to false (per-file compilation).
+    #[serde(default)]
+    pub merge: Option<bool>,
 }
 
 /// HTML output configuration
@@ -121,6 +127,11 @@ pub struct HtmlConfig {
     /// Font URLs to inject
     #[serde(default = "default_fonts")]
     pub fonts: Vec<String>,
+
+    /// Configuration for an HTML spine (sitemap/navbar).
+    /// HTML never merges vertebrae.
+    #[serde(default)]
+    pub spine: Option<Spine>,
 }
 
 impl Default for HtmlConfig {
@@ -128,6 +139,7 @@ impl Default for HtmlConfig {
         Self {
             stylesheets: default_stylesheets(),
             fonts: default_fonts(),
+            spine: None,
         }
     }
 }
@@ -135,8 +147,8 @@ impl Default for HtmlConfig {
 /// PDF output configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PdfConfig {
-    /// Configuration for a merged PDF with multiple chapters.
-    pub merge: Option<Merge>,
+    /// Configuration for a PDF spine with multiple chapters.
+    pub spine: Option<Spine>,
 }
 
 /// EPUB output configuration
@@ -155,8 +167,8 @@ pub struct EpubConfig {
     /// See: EPUB 3.3, The `dc:date` element <https://www.w3.org/TR/epub-33/#sec-opf-dcdate>
     pub date: Option<DateTime<Utc>>,
 
-    /// Configuration for a merged EPUB with multiple chapters.
-    pub merge: Option<Merge>,
+    /// Configuration for an EPUB spine with multiple chapters.
+    pub spine: Option<Spine>,
 }
 
 impl RheoConfig {
@@ -409,5 +421,116 @@ mod tests {
             config.html.fonts,
             vec!["https://fonts.com/font1.css", "https://fonts.com/font2.css"]
         );
+    }
+
+    #[test]
+    fn test_pdf_spine_with_merge_true() {
+        let toml = r#"
+        [pdf.spine]
+        title = "My Book"
+        vertebrae = ["cover.typ", "chapters/*.typ"]
+        merge = true
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.pdf.spine.as_ref().unwrap();
+        assert_eq!(spine.title, "My Book");
+        assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
+        assert_eq!(spine.merge, Some(true));
+    }
+
+    #[test]
+    fn test_pdf_spine_with_merge_false() {
+        let toml = r#"
+        [pdf.spine]
+        title = "My Book"
+        vertebrae = ["cover.typ", "chapters/*.typ"]
+        merge = false
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.pdf.spine.as_ref().unwrap();
+        assert_eq!(spine.title, "My Book");
+        assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
+        assert_eq!(spine.merge, Some(false));
+    }
+
+    #[test]
+    fn test_pdf_spine_merge_omitted() {
+        let toml = r#"
+        [pdf.spine]
+        title = "My Book"
+        vertebrae = ["cover.typ"]
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.pdf.spine.as_ref().unwrap();
+        assert_eq!(spine.title, "My Book");
+        assert_eq!(spine.vertebrae, vec!["cover.typ"]);
+        assert_eq!(spine.merge, None);
+    }
+
+    #[test]
+    fn test_epub_spine() {
+        let toml = r#"
+        [epub.spine]
+        title = "My EPUB"
+        vertebrae = ["intro.typ", "chapter*.typ", "outro.typ"]
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.epub.spine.as_ref().unwrap();
+        assert_eq!(spine.title, "My EPUB");
+        assert_eq!(
+            spine.vertebrae,
+            vec!["intro.typ", "chapter*.typ", "outro.typ"]
+        );
+        assert_eq!(spine.merge, None);
+    }
+
+    #[test]
+    fn test_html_spine() {
+        let toml = r#"
+        [html.spine]
+        title = "My Website"
+        vertebrae = ["index.typ", "about.typ"]
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.html.spine.as_ref().unwrap();
+        assert_eq!(spine.title, "My Website");
+        assert_eq!(spine.vertebrae, vec!["index.typ", "about.typ"]);
+        assert_eq!(spine.merge, None);
+    }
+
+    #[test]
+    fn test_spine_empty_vertebrae() {
+        let toml = r#"
+        [epub.spine]
+        title = "Single File Book"
+        vertebrae = []
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.epub.spine.as_ref().unwrap();
+        assert_eq!(spine.title, "Single File Book");
+        assert!(spine.vertebrae.is_empty());
+    }
+
+    #[test]
+    fn test_spine_complex_glob_patterns() {
+        let toml = r#"
+        [pdf.spine]
+        title = "Complex Book"
+        vertebrae = ["frontmatter/**/*.typ", "chapters/**/ch*.typ", "appendix.typ"]
+        merge = true
+        "#;
+
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let spine = config.pdf.spine.as_ref().unwrap();
+        assert_eq!(spine.vertebrae.len(), 3);
+        assert_eq!(spine.vertebrae[0], "frontmatter/**/*.typ");
+        assert_eq!(spine.vertebrae[1], "chapters/**/ch*.typ");
+        assert_eq!(spine.vertebrae[2], "appendix.typ");
     }
 }

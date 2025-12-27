@@ -1,5 +1,6 @@
 formats = ["html", "pdf"]
 
-[pdf.merge]
+[pdf.spine]
+merge = true
 title = "Cross Directory Test"
-spine = ["intro.typ", "chapters/ch1.typ", "chapters/ch2.typ", "appendix/notes.typ"]
+vertebrae = ["intro.typ", "chapters/ch1.typ", "chapters/ch2.typ", "appendix/notes.typ"]

@@ -219,7 +219,7 @@ fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
 ///
 /// Logic:
 /// - HTML: Always compile (one HTML per .typ file)
-/// - PDF: Only if pdf.merge is NOT configured (merged PDF is handled separately)
+/// - PDF: Only if pdf.spine.merge is NOT true (merged PDF is handled separately)
 /// - EPUB: Never (EPUB is always merged and handled separately)
 fn get_per_file_formats(
     config: &crate::RheoConfig,
@@ -349,8 +349,16 @@ fn perform_compilation<'a>(
         }
     }
 
-    // Generate merged PDF if configured
-    if formats.contains(&OutputFormat::Pdf) && project.config.pdf.merge.is_some() {
+    // Generate merged PDF if configured with merge = true
+    if formats.contains(&OutputFormat::Pdf)
+        && project
+            .config
+            .pdf
+            .spine
+            .as_ref()
+            .and_then(|s| s.merge)
+            .unwrap_or(false)
+    {
         let pdf_filename = format!("{}.pdf", project.name);
         let pdf_path = output_config.pdf_dir.join(&pdf_filename);
 
