@@ -1,0 +1,4 @@
+# Exclude all files and subdirectories in tests/ref
+tests/ref/** linguist-vendored
+tests/cases/** linguist-vendored
+
