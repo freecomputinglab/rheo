@@ -439,25 +439,23 @@ fn perform_compilation<'a>(
     // Report results with per-format summary
     results.log_summary(formats);
 
-    // Graceful degradation: succeed if ANY requested format fully succeeded
-    let any_format_succeeded = formats.iter().any(|fmt| {
-        let result = results.get(*fmt);
-        result.succeeded > 0 && result.failed == 0
-    });
-
-    if any_format_succeeded {
-        // At least one format succeeded completely
-        if results.has_failures() {
-            info!("compilation complete (some formats had errors)");
+    // Fail if any format had failures
+    if results.has_failures() {
+        if formats.iter().any(|fmt| results.get(*fmt).succeeded > 0) {
+            // Partial success - some formats worked, some failed
+            Err(crate::RheoError::project_config(
+                "some formats failed to compile".to_string(),
+            ))
         } else {
-            info!("compilation complete");
+            // Total failure - all formats failed
+            Err(crate::RheoError::project_config(
+                "all formats failed or no files were compiled".to_string(),
+            ))
         }
-        Ok(())
     } else {
-        // All requested formats had failures or no compilations occurred
-        Err(crate::RheoError::project_config(
-            "all formats failed or no files were compiled".to_string(),
-        ))
+        // All requested formats succeeded
+        info!("compilation complete");
+        Ok(())
     }
 }
 
