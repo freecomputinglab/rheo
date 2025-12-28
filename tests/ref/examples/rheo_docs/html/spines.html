@@ -14,7 +14,7 @@
         <li class=""><a href="./what-and-why-is-rheo.html">What and why is rheo?</a></li>
         <li class=""><a href="./getting-started.html">Getting started</a></li>
         <li class=""><a href="./relative-linking.html">Relative linking</a></li>
-        <li class=""><a href="./configuration.html">Configuration</a></li>
+        <li class=""><a href="./rheotoml.html">Rheo.toml</a></li>
         <li class=""><a href="./build-dir.html">Build directory</a></li>
         <li class=""><a href="./content-dir.html">Content directory</a></li>
         <li class=""><a href="./formats.html">Formats</a></li>
@@ -24,19 +24,20 @@
     </nav>
     <div class="content">
       <h2>Spines</h2>
-      <p>A spine in rheo is the backbone, or table of contents, of Typst source files that should be included in an output format. It takes its name from the <a href="https://www.edrlab.org/open-standards/anatomy-of-an-epub-3-file/">epub specification</a>, in which the spine articulates—or <em>reticulates</em>— the set and order of chapters included.</p>
-      <p>You can specify a spine’s vertebrae for an output format using an array of <a href="https://www.man7.org/linux/man-pages/man7/glob.7.html">glob</a> strings in <code>rheo.toml</code>:</p>
+      <p>A spine in rheo is the backbone or ‘table of contents’ of Typst source files that should be compiled to an output format. It takes its name from the <a href="https://www.edrlab.org/open-standards/anatomy-of-an-epub-3-file/">epub specification</a>, in which the spine articulates—or <em>reticulates</em>— the set and order of chapters included.</p>
+      <p>You can specify a spine’s vertebrae for any output format using an array of <a href="https://www.man7.org/linux/man-pages/man7/glob.7.html">glob</a> strings in <code>rheo.toml</code>:</p>
       <pre><code data-lang="toml">[<span style="color: #4b69c6">epub</span>.<span style="color: #4b69c6">spine</span>]<br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">My epub</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">intro.typ</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">*.typ</span><span style="color: #198810">"</span>]</code></pre>
       <p>Notice how the first entry <code>intro.typ</code> is a specific file, whereas the second <code>*.typ</code> captures a range of files. When a glob string captures a range of source files, they will be ordered lexicographically in the spine.</p>
       <h3>EPUB</h3>
       <p>An EPUB must have a spine in order to be valid. By default, rheo will infer the following spine if not specified:</p>
-      <pre><code data-lang="toml">[<span style="color: #4b69c6">epub</span>.<span style="color: #4b69c6">spine</span>]<br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">[project folder name]</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">**/*typ</span><span style="color: #198810">"</span>]</code></pre>
+      <pre><code data-lang="toml">[<span style="color: #4b69c6">epub</span>.<span style="color: #4b69c6">spine</span>]<br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">[project folder name]</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">**/*.typ</span><span style="color: #198810">"</span>]</code></pre>
       <h3>PDF</h3>
-      <p>By default, rheo generates one PDF per Typst source file. You can specify a spine in order to reticulate multiple source files into a single PDF by indicating the vertebrae and setting <code>merge</code> to <code>true</code>:</p>
+      <p>By default, rheo generates one PDF per Typst source file. You can specify a spine for the PDF format in order to reticulate multiple source documents into a single output PDF by indicating the vertebrae and setting <code>merge</code> to <code>true</code>:</p>
       <pre><code data-lang="toml">[<span style="color: #4b69c6">pdf</span>.<span style="color: #4b69c6">spine</span>]<br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">My reticulated pdf</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">intro.typ</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">*.typ</span><span style="color: #198810">"</span>]<br><span style="color: #4b69c6">merge</span> = <span style="color: #d73948">true</span></code></pre>
+      <p>In a PDF generated in this way, <a href="./relative-linking.html">relative links</a> will resolve to internal document links that point to the relevant section.</p>
       <h3>HTML</h3>
       <p>Rheo does not currently support customizing HTML spines. The default spine uses all Typst files:</p>
-      <pre><code data-lang="toml">[<span style="color: #4b69c6">html</span>.<span style="color: #4b69c6">spine</span>]<br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">[project folder name]</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">**/*typ</span><span style="color: #198810">"</span>]</code></pre>
+      <pre><code data-lang="toml">[<span style="color: #4b69c6">html</span>.<span style="color: #4b69c6">spine</span>]<br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">[project folder name]</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">**/*.typ</span><span style="color: #198810">"</span>]</code></pre>
     </div>
     <div class="nav-arrows desktop-nav"><a href="./formats.html" class="nav-arrow prev-arrow"><span class="arrow-icon">←</span> <span class="arrow-text">Formats</span></a> <a href="./custom-css.html" class="nav-arrow next-arrow"><span class="arrow-text">Custom CSS</span> <span class="arrow-icon">→</span></a></div>
     <div class="nav-arrows mobile-nav"><a href="./formats.html" class="nav-arrow prev-arrow"><span class="arrow-icon">←</span> <span class="arrow-text">Previous</span></a> <a href="./custom-css.html" class="nav-arrow next-arrow"><span class="arrow-text">Next</span> <span class="arrow-icon">→</span></a></div>

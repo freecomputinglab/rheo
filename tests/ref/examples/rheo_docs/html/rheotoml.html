@@ -14,7 +14,7 @@
         <li class=""><a href="./what-and-why-is-rheo.html">What and why is rheo?</a></li>
         <li class=""><a href="./getting-started.html">Getting started</a></li>
         <li class=""><a href="./relative-linking.html">Relative linking</a></li>
-        <li class="active"><a href="./configuration.html">Configuration</a></li>
+        <li class="active"><a href="./rheotoml.html">Rheo.toml</a></li>
         <li class=""><a href="./build-dir.html">Build directory</a></li>
         <li class=""><a href="./content-dir.html">Content directory</a></li>
         <li class=""><a href="./formats.html">Formats</a></li>
@@ -23,16 +23,16 @@
       </ul>
     </nav>
     <div class="content">
-      <p>Rheo is a CLI that produces pdf, html, and epub simultaneously from a directory of Typst source documents. The directory that contains your Typst is called the <strong>project directory</strong>, and you can compile it via rheo like so:</p>
-      <pre><code data-lang="bash"><span style="color: #4b69c6">rheo</span> compile path/to/project</code></pre>
-      <p>In general, there are two ways to configure rheo:</p>
+      <p>Rheo is a CLI that produces PDF, HTML, and EPUB simultaneously from a directory of Typst source documents. The directory that contains your Typst is called the <strong>project directory</strong>, and you can compile it like so:</p>
+      <pre><code data-lang="bash"><span style="color: #4b69c6">rheo</span> compile path/to/projectdirectory</code></pre>
+      <p>In general, there are two ways to configure Rheo:</p>
       <ol>
         <li>By passing <strong>flags</strong> directly to the CLI command.</li>
-        <li>By specifying configuration in a <strong>rheo.toml</strong> file at the root of the project directory.</li>
+        <li>By specifying configuration in a <code>rheo.toml</code> file at the root of the project directory.</li>
       </ol>
-      <p>If you compile a rheo project directory without a <code>rheo.toml</code> file, the following default settings will be applied to compile your project.</p>
-      <pre><code data-lang="toml"><span style="color: #4b69c6">content_dir</span> = <span style="color: #198810">"</span><span style="color: #198810">./</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">build_dir</span> = <span style="color: #198810">"</span><span style="color: #198810">build</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">formats</span> = [<span style="color: #198810">"</span><span style="color: #198810">pdf</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">html</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">epub</span><span style="color: #198810">"</span>]<br><br>[<span style="color: #4b69c6">epub</span>.<span style="color: #4b69c6">merge</span>]<br><span style="color: #4b69c6">spine</span> = [<span style="color: #198810">"</span><span style="color: #198810">*.typ</span><span style="color: #198810">"</span>]<br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">[project directory name]</span><span style="color: #198810">"</span></code></pre>
-      <p>To point rheo to a rheo.toml file that is not at the root of the project directory, specify it directly via the CLI:</p>
+      <p>If you compile a Rheo project directory without a <code>rheo.toml</code> file, the following default settings will be applied to compile your project.</p>
+      <pre><code data-lang="toml"><span style="color: #4b69c6">version</span> = <span style="color: #198810">"</span><span style="color: #198810">0.1.0</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">content_dir</span> = <span style="color: #198810">"</span><span style="color: #198810">./</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">build_dir</span> = <span style="color: #198810">"</span><span style="color: #198810">build</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">formats</span> = [<span style="color: #198810">"</span><span style="color: #198810">pdf</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">html</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">epub</span><span style="color: #198810">"</span>]<br><br>[<span style="color: #4b69c6">epub</span>.<span style="color: #4b69c6">spine</span>]<br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">**/*.typ</span><span style="color: #198810">"</span>]<br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">[project directory name]</span><span style="color: #198810">"</span></code></pre>
+      <p>To point Rheo to a rheo.toml file that is not at the root of the project directory, specify it directly via the CLI:</p>
       <pre><code data-lang="sh"><span style="color: #4b69c6">rheo</span> compile path/to/project --config path/to/config </code></pre>
     </div>
     <div class="nav-arrows desktop-nav"><a href="./relative-linking.html" class="nav-arrow prev-arrow"><span class="arrow-icon">←</span> <span class="arrow-text">Relative linking</span></a> <a href="./build-dir.html" class="nav-arrow next-arrow"><span class="arrow-text">Build directory</span> <span class="arrow-icon">→</span></a></div>

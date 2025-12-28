@@ -14,7 +14,7 @@
         <li class=""><a href="./what-and-why-is-rheo.html">What and why is rheo?</a></li>
         <li class=""><a href="./getting-started.html">Getting started</a></li>
         <li class=""><a href="./relative-linking.html">Relative linking</a></li>
-        <li class=""><a href="./configuration.html">Configuration</a></li>
+        <li class=""><a href="./rheotoml.html">Rheo.toml</a></li>
         <li class=""><a href="./build-dir.html">Build directory</a></li>
         <li class="active"><a href="./content-dir.html">Content directory</a></li>
         <li class=""><a href="./formats.html">Formats</a></li>
@@ -24,8 +24,8 @@
     </nav>
     <div class="content">
       <h2>Content directory</h2>
-      <p>By default, rheo will search your entire project directory for Typst source files. You can, however, indicate a specific subdirectory that rheo should search if you prefer. (This can be helpful for structuring projects, as it allows you for example to keep a separate drafts folder which rheo will not compile.)</p>
-      <p>The default content directory is the same path as the rheo project directory. It is important to note that if you specify a custom content directory, all other configuration such as <code>build_dir</code> and <code>spine</code> globs will operate relative to the content directory.</p>
+      <p>By default, Rheo will search your entire project directory for Typst documents. You can, however, indicate a specific subdirectory that Rheo should use if you prefer. This can be helpful for structuring projects, as it allows you, for example, to keep a separate <code>drafts</code> folder that Rheo will not compile.</p>
+      <p>The default content directory is the same path as the Rheo project directory. It is important to note that if you specify a custom content directory, all other configuration such as <code>build_dir</code> and <code>spine</code> globs will operate <em>relative to the content directory</em>.</p>
       <h3>Configuration</h3>
       <h4><code>rheo.toml</code></h4>
       <p>A custom content directory can be specified at the top level of the <code>rheo.toml</code>. The path is calculated relative to the project directory:</p>

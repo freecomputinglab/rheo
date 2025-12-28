@@ -14,7 +14,7 @@
         <li class=""><a href="./what-and-why-is-rheo.html">What and why is rheo?</a></li>
         <li class="active"><a href="./getting-started.html">Getting started</a></li>
         <li class=""><a href="./relative-linking.html">Relative linking</a></li>
-        <li class=""><a href="./configuration.html">Configuration</a></li>
+        <li class=""><a href="./rheotoml.html">Rheo.toml</a></li>
         <li class=""><a href="./build-dir.html">Build directory</a></li>
         <li class=""><a href="./content-dir.html">Content directory</a></li>
         <li class=""><a href="./formats.html">Formats</a></li>
@@ -24,19 +24,18 @@
     </nav>
     <div class="content">
       <h3>Installation</h3>
-      <p>The easiest way to install rheo is from <a href="https://crates.io/">crates.io</a>, the Rust language’s package manager. If you don’t already have Rust/cargo, you will need to <a href="https://doc.rust-lang.org/cargo/getting-started/installation.html">install those first</a>. Open your terminal, and run the following command:</p>
+      <p>The easiest way to install Rheo is from <a href="https://crates.io/">crates.io</a>, the Rust language’s package manager. If you don’t already have Rust/cargo, you will need to <a href="https://doc.rust-lang.org/cargo/getting-started/installation.html">install those first</a>. Open your terminal, and run the following command:</p>
       <pre><code data-lang="bash"><span style="color: #4b69c6">cargo</span> install rheo</code></pre>
-      <p>Rheo is packaged as a standalone binary, and doesn’t require any version of Typst on your system. (Note that even if you already have Typst on your system, rheo will use its own embedded version of the compiler.) Refer to rheo’s <a href="https://github.com/freecomputinglab/rheo">source code</a> for more information and installation options.</p>
+      <p>Rheo is packaged as a standalone binary, and doesn’t require any version of Typst on your system. (Note that even if you already have Typst on your system, Rheo will use its own embedded version of the compiler.) Refer to <a href="https://github.com/freecomputinglab/rheo">Rheo’s source code</a> for more information and installation options.</p>
       <h3>Firing up</h3>
-      <p>The <a href="https://rheo.ohrg.org">source code for rheo’s documentation</a> is a collection of Typst files. Rheo allows us to produce a static site, a pdf document, and an epub, all from that collection.</p>
-      <p>Let’s clone the source code for this documentation to understand what we can do:</p>
+      <p><a href="https://rheo.ohrg.org">Rheo’s documentation</a> is a written in Typst. With Rheo we can produce a static site, a PDF, and an EPUB from it. Let’s clone the documentation source to see how Rheo works:</p>
       <p><code data-lang="bash"><span style="color: #4b69c6">git</span> clone https://github.com/freecomputinglab/rheo.ohrg.org</code></p>
-      <p>Take a quick look at the structure of the source code. Besides some configuration files at the top level, it’s almost entirely just Typst files. Rheo doesn’t require that you add any special syntax or metadata to your files to work. It keeps out of your way as much as possible.</p>
-      <p>Now that we have some Typst on our system, we can see rheo at work:</p>
+      <p>Take a quick look at the structure of the source code. Besides some configuration files at the top level, it’s almost entirely just regular Typst. Rheo aims to keep out of your way as much as possible, and doesn’t require that you add any special syntax or metadata to your files to work.</p>
+      <p>Now that we have some Typst on our system, we can see Rheo at work:</p>
       <pre><code data-lang="bash"><span style="color: #4b69c6">rheo</span> compile rheo.ohrg.org</code></pre>
-      <p>This command produces a <code>build</code> subdirectory inside the <code>rheo.ohrg.org</code> directory which contains a pdf, an epub, and a static site. It’s a little tiring to have to run the compile command every time we make a change, though. Let’s spin up a development server to see live changes across all output formats as we edit the source typst:</p>
+      <p>This command produces a <code>build</code> subdirectory inside the base directory which contains a PDF, an EPUB, and a static site (HTML and CSS). It’s a little tiring to have to run the compile command every time we make a change, though. Let’s spin up a development server to see live changes across all output formats as we edit the source:</p>
       <pre><code data-lang="bash"><span style="color: #4b69c6">rheo</span> watch rheo.ohrg.org --open</code></pre>
-      <p>The <code>--open</code> flag here indicates that we’d like to open all of the outputs using our system’s default applications. You should now have a pdf, an epub, and a website in front of you. Huzzah!</p>
+      <p>The <code>--open</code> flag here indicates that we’d like to open the output using our system’s default applications. Provided you have an EPUB reader on your system (if you don’t, we recommend installing <a href="https://github.com/nota-lang/bene">bene</a>), you should now have a PDF, an EPUB, and a website in front of you. Huzzah!</p>
     </div>
     <div class="nav-arrows desktop-nav"><a href="./what-and-why-is-rheo.html" class="nav-arrow prev-arrow"><span class="arrow-icon">←</span> <span class="arrow-text">What and why is rheo?</span></a> <a href="./relative-linking.html" class="nav-arrow next-arrow"><span class="arrow-text">Relative linking</span> <span class="arrow-icon">→</span></a></div>
     <div class="nav-arrows mobile-nav"><a href="./what-and-why-is-rheo.html" class="nav-arrow prev-arrow"><span class="arrow-icon">←</span> <span class="arrow-text">Previous</span></a> <a href="./relative-linking.html" class="nav-arrow next-arrow"><span class="arrow-text">Next</span> <span class="arrow-icon">→</span></a></div>
