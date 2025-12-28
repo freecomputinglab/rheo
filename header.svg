@@ -1,0 +1,49 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="420"
+  height="120"
+  viewBox="0 0 420 120"
+>
+  <!-- Color definition -->
+  <defs>
+    <style>
+      .text {
+        fill: #3d2645;
+        font-family: "Berkeley Mono", "JetBrains Mono", "IBM Plex Mono", monospace;
+        font-size: 64px;
+        font-weight: 500;
+        dominant-baseline: middle;
+      }
+    </style>
+  </defs>
+
+  <!-- R character (your provided glyph) -->
+  <g transform="translate(10, 10) scale(1.2)">
+    <!-- tau base -->
+    <path
+      d="M20 20 H60 V25 H30 V80"
+      stroke="#3d2645"
+      stroke-width="6"
+      fill="none"
+      stroke-linecap="square"
+    />
+    <!-- rho flow -->
+    <path
+      d="M60 25 C70 30, 70 60, 50 65 C40 67, 45 50, 55 50"
+      stroke="#3d2645"
+      stroke-width="6"
+      fill="none"
+      stroke-linecap="round"
+    />
+  </g>
+
+  <!-- "heo" text -->
+  <text
+    x="110"
+    y="60"
+    class="text"
+    letter-spacing="0.02em"
+  >
+    heo
+  </text>
+</svg>
