@@ -5,16 +5,16 @@
   <body>
     <div class="topbar">
       <button class="sidebar-toggle" aria-label="Toggle sidebar"><span class="hamburger"></span></button>
-      <div class="topbar-title">Rheo</div>
+      <div class="topbar-title"><img src="data:image/svg+xml;base64,PHN2ZwogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjYwIgogIGhlaWdodD0iMTIwIgogIHZpZXdCb3g9IjAgMCAyNjAgMTIwIgo+CiAgPCEtLSBDb2xvciBkZWZpbml0aW9uIC0tPgogIDxkZWZzPgogICAgPHN0eWxlPgogICAgICAudGV4dCB7CiAgICAgICAgZmlsbDogIzNkMjY0NTsKICAgICAgICBmb250LWZhbWlseTogIkJlcmtlbGV5IE1vbm8iLCAiSmV0QnJhaW5zIE1vbm8iLCAiSUJNIFBsZXggTW9ubyIsIG1vbm9zcGFjZTsKICAgICAgICBmb250LXNpemU6IDY0cHg7CiAgICAgICAgZm9udC13ZWlnaHQ6IDUwMDsKICAgICAgICBkb21pbmFudC1iYXNlbGluZTogbWlkZGxlOwogICAgICB9CiAgICA8L3N0eWxlPgogIDwvZGVmcz4KCiAgPCEtLSBSIGNoYXJhY3RlciAoeW91ciBwcm92aWRlZCBnbHlwaCkgLS0+CiAgPGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMTAsIDEwKSBzY2FsZSgxLjIpIj4KICAgIDwhLS0gdGF1IGJhc2UgLS0+CiAgICA8cGF0aAogICAgICBkPSJNMjAgMjAgSDYwIFYyNSBIMzAgVjgwIgogICAgICBzdHJva2U9IiMzZDI2NDUiCiAgICAgIHN0cm9rZS13aWR0aD0iNiIKICAgICAgZmlsbD0ibm9uZSIKICAgICAgc3Ryb2tlLWxpbmVjYXA9InNxdWFyZSIKICAgIC8+CiAgICA8IS0tIHJobyBmbG93IC0tPgogICAgPHBhdGgKICAgICAgZD0iTTYwIDI1IEM3MCAzMCwgNzAgNjAsIDUwIDY1IEM0MCA2NywgNDUgNTAsIDU1IDUwIgogICAgICBzdHJva2U9IiMzZDI2NDUiCiAgICAgIHN0cm9rZS13aWR0aD0iNiIKICAgICAgZmlsbD0ibm9uZSIKICAgICAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIgogICAgLz4KICA8L2c+CgogIDwhLS0gImhlbyIgdGV4dCAtLT4KICA8dGV4dAogICAgeD0iMTEwIgogICAgeT0iNjAiCiAgICBjbGFzcz0idGV4dCIKICAgIGxldHRlci1zcGFjaW5nPSIwLjAyZW0iCiAgPgogICAgaGVvCiAgPC90ZXh0Pgo8L3N2Zz4K" style="height: 24pt"></div>
     </div>
     <nav class="sidebar">
-      <div class="banner"><a href="./"></a></div>
+      <div class="banner"><a href="#"></a></div>
       <ul class="sidebar-nav">
         <li class=""><a href="./">Home</a></li>
         <li class=""><a href="./what-and-why-is-rheo.html">What and why is rheo?</a></li>
         <li class=""><a href="./getting-started.html">Getting started</a></li>
         <li class=""><a href="./relative-linking.html">Relative linking</a></li>
-        <li class=""><a href="./configuration.html">Configuration</a></li>
+        <li class=""><a href="./rheotoml.html">Rheo.toml</a></li>
         <li class=""><a href="./build-dir.html">Build directory</a></li>
         <li class=""><a href="./content-dir.html">Content directory</a></li>
         <li class="active"><a href="./formats.html">Formats</a></li>
@@ -24,16 +24,16 @@
     </nav>
     <div class="content">
       <h2>Formats</h2>
-      <p>By default, rheo produces three different output formats simultaneously: <strong>pdf</strong>, <strong>html</strong>, and <strong>epub</strong>. There are cases in which you may only want to produce one of these formats, however, or to exclude one format because your project cannot support or does not require it.</p>
-      <h3>pdf</h3>
-      <p>The pdf format is natively and fully supported by <a href="https://typst.app/">typst</a>, the programming language and compilation toolchain that underlies rheo.</p>
-      <h3>html</h3>
-      <p>The html format is <a href="https://typst.app/docs/reference/html/">experimentally supported</a> by typst. This means that not all Typst syntax will translate to a meaningful html structure. The most common features in everyday prose are all supported, however, such as text markup, links, headings, footnotes, and citations.For more information on which features are currently supported in html export, refer to the <a href="https://github.com/typst/typst/issues/5512">HTML export tracking issue</a>.</p>
-      <h3>epub</h3>
-      <p>The epub format is <a href="https://github.com/typst/typst/issues/188">not yet supported</a> in upstream typst, but is experimentally supported in rheo. As epub export is on typst’s roadmap, rheo will track this feature closely and look to integrate with it when it lands in the future.</p>
+      <p>By default, rheo produces three different output formats simultaneously: <strong>PDF</strong>, <strong>HTML</strong>, and <strong>EPUB</strong>. There are cases in which you may only want to produce one of these formats, however, or to exclude one format because your project either cannot support or does not require it.</p>
+      <h3>PDF</h3>
+      <p>The PDF format is natively and fully supported by <a href="https://typst.app/">Typst</a>, the programming language and compilation toolchain that underwrites Rheo.</p>
+      <h3>HTML</h3>
+      <p>The HTML format is <a href="https://typst.app/docs/reference/html/">experimentally supported</a> by Typst. This means that not all Typst syntax will translate to a meaningful HTML structure. The most common features in everyday prose are all supported, however, such as text markup, links, headings, footnotes, and citations. For more information on which features are currently supported in Typst’s HTML export, refer to the <a href="https://github.com/typst/typst/issues/5512">HTML export tracking issue</a>.</p>
+      <h3>EPUB</h3>
+      <p>The EPUB format is <a href="https://github.com/typst/typst/issues/188">not yet supported</a> in upstream Typst, but is experimentally supported in Rheo. As EPUB export is on Typst’s roadmap, Rheo will track this feature closely and look to integrate with it when it lands in the future.</p>
       <h3>Configuration</h3>
       <h4>CLI flag</h4>
-      <p>You can constrain rheo to producing one or more formats by passing one or more of the following flags to <code>compile</code> or <code>watch</code>:</p>
+      <p>You can constrain Rheo to producing one or more formats by passing one or more of the following flags to <code>compile</code> or <code>watch</code>:</p>
       <pre><code data-lang="bash"><span style="color: #4b69c6">rheo</span> compile path/to/project --pdf<br><span style="color: #4b69c6">rheo</span> compile path/to/project --html<br><span style="color: #4b69c6">rheo</span> compile path/to/project --epub</code></pre>
       <h4><code>rheo.toml</code></h4>
       <p>You can also specify formats at the top level of <code>rheo.toml</code> in an array that contains one or more formats. The default, if <code>formats</code> is not specified, is an array with all three formats:</p>

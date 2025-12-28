@@ -5,16 +5,16 @@
   <body>
     <div class="topbar">
       <button class="sidebar-toggle" aria-label="Toggle sidebar"><span class="hamburger"></span></button>
-      <div class="topbar-title">Rheo</div>
+      <div class="topbar-title"><img src="data:image/svg+xml;base64,PHN2ZwogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB3aWR0aD0iMjYwIgogIGhlaWdodD0iMTIwIgogIHZpZXdCb3g9IjAgMCAyNjAgMTIwIgo+CiAgPCEtLSBDb2xvciBkZWZpbml0aW9uIC0tPgogIDxkZWZzPgogICAgPHN0eWxlPgogICAgICAudGV4dCB7CiAgICAgICAgZmlsbDogIzNkMjY0NTsKICAgICAgICBmb250LWZhbWlseTogIkJlcmtlbGV5IE1vbm8iLCAiSmV0QnJhaW5zIE1vbm8iLCAiSUJNIFBsZXggTW9ubyIsIG1vbm9zcGFjZTsKICAgICAgICBmb250LXNpemU6IDY0cHg7CiAgICAgICAgZm9udC13ZWlnaHQ6IDUwMDsKICAgICAgICBkb21pbmFudC1iYXNlbGluZTogbWlkZGxlOwogICAgICB9CiAgICA8L3N0eWxlPgogIDwvZGVmcz4KCiAgPCEtLSBSIGNoYXJhY3RlciAoeW91ciBwcm92aWRlZCBnbHlwaCkgLS0+CiAgPGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMTAsIDEwKSBzY2FsZSgxLjIpIj4KICAgIDwhLS0gdGF1IGJhc2UgLS0+CiAgICA8cGF0aAogICAgICBkPSJNMjAgMjAgSDYwIFYyNSBIMzAgVjgwIgogICAgICBzdHJva2U9IiMzZDI2NDUiCiAgICAgIHN0cm9rZS13aWR0aD0iNiIKICAgICAgZmlsbD0ibm9uZSIKICAgICAgc3Ryb2tlLWxpbmVjYXA9InNxdWFyZSIKICAgIC8+CiAgICA8IS0tIHJobyBmbG93IC0tPgogICAgPHBhdGgKICAgICAgZD0iTTYwIDI1IEM3MCAzMCwgNzAgNjAsIDUwIDY1IEM0MCA2NywgNDUgNTAsIDU1IDUwIgogICAgICBzdHJva2U9IiMzZDI2NDUiCiAgICAgIHN0cm9rZS13aWR0aD0iNiIKICAgICAgZmlsbD0ibm9uZSIKICAgICAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIgogICAgLz4KICA8L2c+CgogIDwhLS0gImhlbyIgdGV4dCAtLT4KICA8dGV4dAogICAgeD0iMTEwIgogICAgeT0iNjAiCiAgICBjbGFzcz0idGV4dCIKICAgIGxldHRlci1zcGFjaW5nPSIwLjAyZW0iCiAgPgogICAgaGVvCiAgPC90ZXh0Pgo8L3N2Zz4K" style="height: 24pt"></div>
     </div>
     <nav class="sidebar">
-      <div class="banner"><a href="./"></a></div>
+      <div class="banner"><a href="#"></a></div>
       <ul class="sidebar-nav">
         <li class="active"><a href="./">Home</a></li>
         <li class=""><a href="./what-and-why-is-rheo.html">What and why is rheo?</a></li>
         <li class=""><a href="./getting-started.html">Getting started</a></li>
         <li class=""><a href="./relative-linking.html">Relative linking</a></li>
-        <li class=""><a href="./configuration.html">Configuration</a></li>
+        <li class=""><a href="./rheotoml.html">Rheo.toml</a></li>
         <li class=""><a href="./build-dir.html">Build directory</a></li>
         <li class=""><a href="./content-dir.html">Content directory</a></li>
         <li class=""><a href="./formats.html">Formats</a></li>
@@ -23,17 +23,17 @@
       </ul>
     </nav>
     <div class="content">
-      <p>Rheo (<em>ree-oh</em>) is a typesetting and static site engine based on <a href="https://typst.app/">Typst</a>. If ‘static site engine’ is all Greek to you—don’t worry! We can also explain rheo through what it allows you to do.</p>
-      <p>Rheo allows you to produce a website, a fixed-size document, and an adaptive document from a single set of source Typst files. It’s sort of like <a href="https://www.latex-project.org/">LaTeX</a>—except that Typst is <em>much</em> simpler to write, and we can compile it to a greater number of formats. The documentation that you are reading now, for example, was typeset with rheo. As a result, you can read it as:</p>
+      <p>Rheo (<em>ree-oh</em>) is a typesetting and static site engine based on <a href="https://typst.app/">Typst</a>. If ‘static site engine’ is all Greek to you—don’t worry! We can also explain Rheo through what it allows you to do.</p>
+      <p>Rheo allows you to produce a website, a fixed-size document, and an adaptive document from a single set of source Typst files. It allows you to do something similar to <a href="https://www.latex-project.org/">LaTeX</a>—except that Typst is <em>much</em> simpler to write, and we can compile it to a greater number of formats. The documentation that you are reading now, for example, was typeset with Rheo. As a result, you can read it as:</p>
       <ul>
         <li><a href="https://rheo.ohrg.org">HTML</a> - as a website for browsers.</li>
         <li><a href="https://rheo.ohrg.org/rheo-docs.pdf">PDF</a> - as a fixed-size document for printing.</li>
         <li><a href="https://rheo.ohrg.org/rheo-docs.epub">EPUB</a> - as an adaptive document for e-readers.</li>
       </ul>
-      <h3>Who should use rheo?</h3>
-      <p>If you write anything as simple as a blog or as complex as a dissertation or monograph in typst, rheo enables you to publish it in multiple formats. If you are willing to learn <a href="https://typst.app/docs/reference/syntax/">a little bit of syntax</a>, you can turn a piece of writing into a website, an adaptive document, a printable document—or all three simultaneously.</p>
-      <p>Rheo is for anyone who has ever spent regrettable hours formatting citatons in a bibliography or fighting with LaTeX, anyone who has experienced the limitatons of Markdown as a markup language, and anyone who wants to benefit from typst’s richer features and capabilities in the writing experience (more on this in the next section). It is for students and teachers, humanists and scientists, bloggers and novelists.</p>
-      <p>If you have only ever used Microsoft Word to author text, or haven’t heard the phrase ‘markup language’ before, we recommend first familiarizing yourself with Markdown via <a href="https://www.markdowntutorial.com">the beginner’s tutorial</a>. This should give you a good intuition for what Typst is—a markup language similar to but also more powerful than Markdown—and why you might want to use rheo to typeset your documents.</p>
+      <h3>Who should use Rheo?</h3>
+      <p>If you write anything as simple as a blog or as complex as a dissertation or monograph in Typst, Rheo enables you to publish it in multiple formats. If you are willing to learn <a href="https://typst.app/docs/reference/syntax/">a little bit of syntax</a>, you can turn a piece of writing into a website, an adaptive document, and/or a printable document.</p>
+      <p>Rheo is for anyone who has ever spent regrettable hours formatting citatons, fighting with LaTeX, who has experienced the limitatons of Markdown, or who wants to benefit from the richer writing experience that Typst makes possible (more on this in the next section). It is for students and teachers, humanists and scientists, bloggers and novelists.</p>
+      <p>If you have only ever used Microsoft Word to author text, or haven’t heard the phrase ‘markup language’ before, we recommend first familiarizing yourself with Markdown via <a href="https://www.markdowntutorial.com">the beginner’s tutorial</a>. This should give you a good intuition for what Typst is—a markup language similar to but also more powerful than Markdown—and why you might want to use Rheo to typeset your documents.</p>
     </div>
     <div class="nav-arrows desktop-nav"><a href="./what-and-why-is-rheo.html" class="nav-arrow next-arrow"><span class="arrow-text">What and why is rheo?</span> <span class="arrow-icon">→</span></a></div>
     <div class="nav-arrows mobile-nav"><a href="./what-and-why-is-rheo.html" class="nav-arrow next-arrow"><span class="arrow-text">Next</span> <span class="arrow-icon">→</span></a></div>
