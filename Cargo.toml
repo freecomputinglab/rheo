@@ -3,11 +3,10 @@ name = "rheo"
 version = "0.1.0"
 edition = "2024"
 authors = ["Lachlan Kermode <lachie@ohrg.org>"]
-description = "A tool for flowing typst into html, epub, and pdf simultaneously"
+description = "A typesetting and static site engine based on Typst"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/breezykermo/rheo"
+repository = "https://github.com/freecomputinglab/rheo"
 exclude = [
-  "docs/",
   "tests/",
   "examples/",
   ".github/",
