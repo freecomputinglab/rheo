@@ -5,6 +5,10 @@ on:
     branches: [main]
     types: [labeled,closed]
 
+permissions:
+  contents: write
+  pull-requests: read
+
 jobs:
   build-artifacts:
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
@@ -44,3 +48,32 @@ jobs:
           tag: ${{ github.ref }}
           overwrite: true
           github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-crate:
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    needs: build-artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check version has been bumped
+        run: |
+          # Extract version from Cargo.toml
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "Current Cargo.toml version: $VERSION"
+
+          # Check if version exists on crates.io
+          if cargo search rheo --limit 1 | grep -q "rheo = \"$VERSION\""; then
+            echo "Error: Version $VERSION already exists on crates.io"
+            echo "Please bump the version in Cargo.toml before releasing"
+            exit 1
+          fi
+
+          echo "Version check passed: $VERSION is new"
+
+      - name: Publish to crates.io
+        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
