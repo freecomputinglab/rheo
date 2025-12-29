@@ -6,6 +6,7 @@ authors = ["Lachlan Kermode <lachie@ohrg.org>"]
 description = "A typesetting and static site engine based on Typst"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/freecomputinglab/rheo"
+readme = "README.md"
 exclude = [
   "tests/",
   "examples/",
@@ -17,7 +18,6 @@ exclude = [
   ".envrc",
   "CLAUDE.md",
   "Justfile",
-  "header.png"
 ]
 
 [[bin]]
