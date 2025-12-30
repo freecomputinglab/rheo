@@ -21,11 +21,11 @@
   <g transform="translate(10, 10) scale(1.2)">
     <!-- tau base -->
     <path
-      d="M20 20 H60 V25 H30 V80"
+      d="M30 20 V80 M30 25 H60"
       stroke="#3d2645"
       stroke-width="6"
       fill="none"
-      stroke-linecap="square"
+      stroke-linecap="round"
     />
     <!-- rho flow -->
     <path
