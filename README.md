@@ -2,9 +2,9 @@
   <img src="./header.svg" alt="Project header" width="600px">
 </p>
 
-Rheo is a typesetting and static site engine based on typst.
-You can use it to compile folders of typst to PDF, HTML, and EPUB simultaneously.
-It is a standalone CLI tool that includes a development server for rapid website iteration.
+Rheo is a typesetting and static site engine based on [Typst](https://typst.app/).
+You can use it to compile folders containing Typst to PDF, HTML, and EPUB simultaneously.
+Rheo is a standalone CLI tool that includes a development server for rapid website iteration.
 
 ## Usage
 Compile all `.typ` files in a directory to PDF, HTML, and EPUB and recompile on change:
