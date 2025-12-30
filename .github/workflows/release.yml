@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled,closed]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  create-release:
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from Cargo.toml
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ steps.version.outputs.tag }} \
+            --title "Release ${{ steps.version.outputs.version }}" \
+            --notes "Release ${{ steps.version.outputs.version }}" \
+            --draft=false \
+            --prerelease=false
+
+  build-artifacts:
+    needs: create-release
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain for target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build for target
+        run: cargo build --release --target ${{ matrix.target }} --verbose
+
+      - name: Package artifacts (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf rheo-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz rheo
+          shasum -a 256 rheo-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz > rheo-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz.sha256
+
+      - name: Package artifacts (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          7z a rheo-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip rheo.exe
+          certutil -hashfile rheo-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip SHA256 > rheo-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip.sha256
+
+      - name: Upload Release Assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ needs.create-release.outputs.tag }} target/${{ matrix.target }}/release/rheo-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.* --clobber
+
+  publish-crate:
+    needs: [create-release, build-artifacts]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check version has been bumped
+        run: |
+          VERSION="${{ needs.create-release.outputs.version }}"
+          echo "Releasing version: $VERSION"
+
+          # Check if version exists on crates.io
+          if cargo search rheo --limit 1 | grep -q "rheo = \"$VERSION\""; then
+            echo "Error: Version $VERSION already exists on crates.io"
+            echo "Please bump the version in Cargo.toml before releasing"
+            exit 1
+          fi
+
+          echo "Version check passed: $VERSION is new"
+
+      - name: Publish to crates.io
+        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
