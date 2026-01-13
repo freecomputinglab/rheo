@@ -28,6 +28,7 @@ use std::path::PathBuf;
 #[test_case("tests/cases/multiple_links_inline.typ")]
 #[test_case("tests/cases/pdf_individual")]
 #[test_case("tests/cases/relative_path_links")]
+#[test_case("tests/cases/target_function")]
 #[test_case("tests/cases/error_formatting/type_error.typ")]
 #[test_case("tests/cases/error_formatting/undefined_var.typ")]
 #[test_case("tests/cases/error_formatting/syntax_error.typ")]

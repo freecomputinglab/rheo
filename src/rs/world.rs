@@ -291,7 +291,19 @@ impl World for RheoWorld {
         if id == self.main {
             // Embed rheo.typ content directly (it's small and avoids path issues)
             let rheo_content = include_str!("../typ/rheo.typ");
-            let template_inject = format!("{}\n#show: rheo_template\n\n", rheo_content);
+
+            // For EPUB, prepend target() override to shadow Typst's built-in
+            let target_override = if matches!(self.output_format, Some(OutputFormat::Epub)) {
+                "// Shadow Typst's target() to return \"epub\" for EPUB compilation\n\
+                 #let target() = \"epub\"\n\n"
+            } else {
+                "" // Use Typst's built-in for HTML/PDF
+            };
+
+            let template_inject = format!(
+                "{}{}\n#show: rheo_template\n\n",
+                target_override, rheo_content
+            );
             text = format!("{}{}", template_inject, text);
         }
 

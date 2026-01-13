@@ -1,11 +1,11 @@
 {
   "filetype": "epub",
-  "file_size": 110296,
+  "file_size": 131337,
   "title": "Rheo Manual",
   "language": "en",
   "spine_files": [
     "index.xhtml",
-    "what-and-why-is-rheo.xhtml",
+    "why-is-rheo.xhtml",
     "getting-started.xhtml",
     "relative-linking.xhtml",
     "rheotoml.xhtml",
@@ -14,6 +14,7 @@
     "formats.xhtml",
     "spines.xhtml",
     "custom-css.xhtml",
+    "faq.xhtml",
     "endmatter.xhtml"
   ],
   "has_nav": true
