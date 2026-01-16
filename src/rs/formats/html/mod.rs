@@ -8,9 +8,13 @@ use std::path::Path;
 use tracing::{debug, info};
 use typst_html::HtmlDocument;
 
-pub fn compile_html_to_document(input: &Path, root: &Path) -> Result<HtmlDocument> {
-    // Create the compilation world with HTML format for link transformations
-    let world = RheoWorld::new(root, input, Some(OutputFormat::Html))?;
+pub fn compile_html_to_document(
+    input: &Path,
+    root: &Path,
+    output_format: OutputFormat,
+) -> Result<HtmlDocument> {
+    // Create the compilation world with specified format for link transformations
+    let world = RheoWorld::new(root, input, Some(output_format))?;
 
     // Compile the document to HtmlDocument
     info!(input = %input.display(), "compiling to HTML");
@@ -47,7 +51,7 @@ fn compile_html_impl_fresh(
     html_options: &HtmlOptions,
 ) -> Result<()> {
     // Compile to HTML document (transformations happen in RheoWorld)
-    let doc = compile_html_to_document(input, root)?;
+    let doc = compile_html_to_document(input, root, OutputFormat::Html)?;
     let html_string = compile_document_to_string(&doc)?;
 
     // Inject CSS and font links into <head>

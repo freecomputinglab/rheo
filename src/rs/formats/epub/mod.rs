@@ -7,7 +7,7 @@ use xhtml::HtmlInfo;
 use crate::compile::RheoCompileOptions;
 use crate::config::{EpubConfig, EpubOptions};
 use crate::reticulate::spine::RheoSpine;
-use crate::{Result, RheoError};
+use crate::{OutputFormat, Result, RheoError};
 use anyhow::Result as AnyhowResult;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
@@ -328,7 +328,8 @@ fn text_to_id(s: &str) -> EcoString {
 impl EpubItem {
     pub fn create(path: PathBuf, root: &Path) -> AnyhowResult<Self> {
         info!(file = %path.display(), "compiling spine file");
-        let document = crate::formats::html::compile_html_to_document(&path, root)?;
+        let document =
+            crate::formats::html::compile_html_to_document(&path, root, OutputFormat::Epub)?;
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
@@ -364,7 +365,8 @@ impl EpubItem {
         let temp_path = temp_file.path();
 
         // Compile to HTML document
-        let document = crate::formats::html::compile_html_to_document(temp_path, root)?;
+        let document =
+            crate::formats::html::compile_html_to_document(temp_path, root, OutputFormat::Epub)?;
 
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();

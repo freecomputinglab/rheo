@@ -1,0 +1,6 @@
+version = "0.1.0"
+formats = ["html", "pdf", "epub"]
+
+[epub.spine]
+title = "Target Function in Module"
+vertebrae = ["main.typ"]
