@@ -1,5 +1,6 @@
 use similar::{ChangeTag, TextDiff};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -508,6 +509,43 @@ pub fn extract_epub_metadata(epub_path: &Path) -> Result<EpubMetadata, String> {
         spine_files,
         has_nav,
     })
+}
+
+/// Extract XHTML content files from an EPUB archive
+pub fn extract_epub_xhtml(epub_path: &Path) -> Result<HashMap<String, String>, String> {
+    use std::io::Read;
+    use zip::ZipArchive;
+
+    let file = fs::File::open(epub_path)
+        .map_err(|e| format!("Failed to open EPUB file: {}", e))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| format!("Failed to read EPUB archive: {}", e))?;
+
+    let mut xhtml_files = HashMap::new();
+
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| format!("Failed to read archive entry: {}", e))?;
+
+        let name = file.name().to_string();
+
+        // Extract only XHTML content files (not nav.xhtml)
+        if name.starts_with("EPUB/")
+            && name.ends_with(".xhtml")
+            && !name.ends_with("nav.xhtml")
+        {
+            let mut contents = String::new();
+            file.read_to_string(&mut contents)
+                .map_err(|e| format!("Failed to read XHTML content: {}", e))?;
+
+            // Store with relative name (strip EPUB/ prefix)
+            let rel_name = name.strip_prefix("EPUB/").unwrap_or(&name);
+            xhtml_files.insert(rel_name.to_string(), contents);
+        }
+    }
+
+    Ok(xhtml_files)
 }
 
 fn compare_pdf_metadata(
