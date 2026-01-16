@@ -317,37 +317,41 @@ cargo run -- compile my_project/ --epub
 
 ### Format Detection in Typst Code
 
-Rheo provides `sys.inputs.rheo-target` so Typst code can detect the output format and render conditionally.
+Rheo polyfills the `target()` function for EPUB compilation, so you can use standard Typst patterns:
 
-**Helper Functions (automatically available via rheo.typ injection):**
+**Basic usage (recommended):**
 
 ```typst
-// Get the current output format: "epub", "html", "pdf"
-// Falls back to Typst's target() in vanilla Typst compilation
-#let format = rheo-target()
+// target() returns "epub" for EPUB, "html" for HTML, "paged" for PDF
+#context if target() == "epub" {
+  [EPUB-specific content]
+} else if target() == "html" {
+  [HTML-specific content]
+} else {
+  [PDF content]
+}
+```
 
-// Check for specific formats (returns false in vanilla Typst)
+**Helper Functions (available via rheo.typ injection):**
+
+```typst
+// Explicit helpers for format checking
 #if is-rheo-epub() { [EPUB-only content] }
 #if is-rheo-html() { [HTML-only content] }
 #if is-rheo-pdf() { [PDF-only content] }
 ```
 
-**Direct access (for custom logic):**
+**How it works:**
+- Rheo sets `sys.inputs.rheo-target` to "epub", "html", or "pdf"
+- For EPUB compilation, a `target()` polyfill is injected that checks `sys.inputs.rheo-target`
+- This shadows the built-in `target()` so `target() == "epub"` works naturally
+- Packages that call `std.target()` still see the underlying format ("html" for EPUB)
 
+**For package authors:**
+Packages can adopt the same pattern to support rheo-aware EPUB detection:
 ```typst
-// sys.inputs.rheo-target is set by rheo during compilation
-#let format = if "rheo-target" in sys.inputs {
-  sys.inputs.rheo-target  // "epub", "html", or "pdf"
-} else {
-  target()  // Fallback for vanilla Typst
-}
+#let target() = if "rheo-target" in sys.inputs { sys.inputs.rheo-target } else { std.target() }
 ```
-
-**Key Points:**
-- Uses Typst's official `sys.inputs` mechanism for CLI-to-document configuration
-- Works in vanilla Typst (the key just won't exist, so fallback applies)
-- Works with Universe packages (packages can adopt this pattern)
-- EPUB compilation uses HTML export internally, so `target()` returns "html" not "epub"
 
 ### Incremental Compilation
 

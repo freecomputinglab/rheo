@@ -1,10 +1,10 @@
 // @rheo:test
 // @rheo:formats html,epub
-// @rheo:description Tests sys.inputs.rheo-target vs packages using std.target()
+// @rheo:description Tests target() polyfill vs packages using std.target()
 //
-// This test demonstrates the sys.inputs.rheo-target mechanism for format detection:
+// This test demonstrates rheo's target() polyfill:
 //
-// - User code using sys.inputs.rheo-target correctly sees "epub" for EPUB output
+// - User code using target() sees "epub" for EPUB output (via polyfill)
 // - Universe packages that call std.target() see "html" (the underlying compile target)
 //
 // Why packages see "html":
@@ -12,19 +12,10 @@
 // - Packages like bullseye explicitly call std.target() to get the "real" target
 // - This is expected behavior - std.target() returns the underlying format
 //
-// Solution for packages:
-// - Packages can adopt sys.inputs.rheo-target to detect rheo output format
+// For package authors:
+// - Packages can adopt rheo's pattern to detect rheo output format
 // - The pattern: `if "rheo-target" in sys.inputs { sys.inputs.rheo-target } else { target() }`
 // - This provides graceful degradation when compiled outside rheo
-
-// Helper to get the rheo output format, with fallback to Typst's target()
-#let rheo-target() = {
-  if "rheo-target" in sys.inputs {
-    sys.inputs.rheo-target
-  } else {
-    target()
-  }
-}
 
 #import "@preview/bullseye:0.1.0": on-target
 
@@ -38,7 +29,7 @@
   paged: [Package sees: *paged*],
 )
 
-== Using sys.inputs.rheo-target
+== Using target()
 
-// Expected: "html" for HTML, "epub" for EPUB (uses sys.inputs)
-Main file rheo-target: #context [*#rheo-target()*]
+// Expected: "html" for HTML, "epub" for EPUB (uses polyfill)
+Main file target: #context [*#target()*]

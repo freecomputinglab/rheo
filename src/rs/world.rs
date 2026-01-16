@@ -310,12 +310,28 @@ impl World for RheoWorld {
         let path = self.path_for_id(id)?;
         let mut text = fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
 
-        // For the main file, inject the rheo.typ template
-        // Note: Output format detection is now via sys.inputs.rheo-target (no source injection needed)
+        // Inject target() polyfill into ALL .typ files for EPUB compilation
+        // This shadows the built-in target() to check sys.inputs.rheo-target first,
+        // allowing user code to use `if target() == "epub"` naturally.
+        // Packages can also adopt this pattern, or use sys.inputs directly.
+        let target_polyfill = if matches!(self.output_format, Some(OutputFormat::Epub)) {
+            "// Polyfill target() to return rheo's output format from sys.inputs\n\
+             #let target() = if \"rheo-target\" in sys.inputs { sys.inputs.rheo-target } else { std.target() }\n\n"
+        } else {
+            ""
+        };
+
+        // For the main file, also inject the rheo.typ template
         if id == self.main {
             let rheo_content = include_str!("../typ/rheo.typ");
-            let template_inject = format!("{}\n#show: rheo_template\n\n", rheo_content);
+            let template_inject = format!(
+                "{}{}\n#show: rheo_template\n\n",
+                target_polyfill, rheo_content
+            );
             text = format!("{}{}", template_inject, text);
+        } else if !target_polyfill.is_empty() {
+            // For all other files (local modules and packages), just inject the target polyfill
+            text = format!("{}{}", target_polyfill, text);
         }
 
         // Apply link transformations for ALL .typ files if output format is set
