@@ -315,6 +315,40 @@ cargo run -- compile my_project/ --epub
 
 **Note:** Existing projects with explicit `rheo.toml` configurations are not affected—explicit configs always take precedence over inferred defaults.
 
+### Format Detection in Typst Code
+
+Rheo provides `sys.inputs.rheo-target` so Typst code can detect the output format and render conditionally.
+
+**Helper Functions (automatically available via rheo.typ injection):**
+
+```typst
+// Get the current output format: "epub", "html", "pdf"
+// Falls back to Typst's target() in vanilla Typst compilation
+#let format = rheo-target()
+
+// Check for specific formats (returns false in vanilla Typst)
+#if is-rheo-epub() { [EPUB-only content] }
+#if is-rheo-html() { [HTML-only content] }
+#if is-rheo-pdf() { [PDF-only content] }
+```
+
+**Direct access (for custom logic):**
+
+```typst
+// sys.inputs.rheo-target is set by rheo during compilation
+#let format = if "rheo-target" in sys.inputs {
+  sys.inputs.rheo-target  // "epub", "html", or "pdf"
+} else {
+  target()  // Fallback for vanilla Typst
+}
+```
+
+**Key Points:**
+- Uses Typst's official `sys.inputs` mechanism for CLI-to-document configuration
+- Works in vanilla Typst (the key just won't exist, so fallback applies)
+- Works with Universe packages (packages can adopt this pattern)
+- EPUB compilation uses HTML export internally, so `target()` returns "html" not "epub"
+
 ### Incremental Compilation
 
 **Overview:**
