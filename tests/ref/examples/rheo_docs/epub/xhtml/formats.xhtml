@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml"><head>
-    <meta charset="utf-8"></meta>
-    <meta name="viewport" content="width=device-width, initial-scale=1"></meta>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <title>Formats</title>
   </head>
   <body><article>
@@ -17,7 +17,7 @@
     <h3 id="configuration">Configuration</h3>
     <h4 id="cli-flag">CLI flag</h4>
     <p>You can constrain Rheo to producing one or more formats by passing one or more of the following flags to <code>compile</code> or <code>watch</code>:</p>
-    <pre><code data-lang="bash"><span style="color: #4b69c6">rheo</span> compile path/to/project --pdf<br></br><span style="color: #4b69c6">rheo</span> compile path/to/project --html<br></br><span style="color: #4b69c6">rheo</span> compile path/to/project --epub</code></pre>
+    <pre><code data-lang="bash"><span style="color: #4b69c6">rheo</span> compile path/to/project --pdf<br/><span style="color: #4b69c6">rheo</span> compile path/to/project --html<br/><span style="color: #4b69c6">rheo</span> compile path/to/project --epub</code></pre>
     <h4 id="rheo.toml"><code>rheo.toml</code></h4>
     <p>You can also specify formats at the top level of <code>rheo.toml</code> in an array that contains one or more formats. The default, if <code>formats</code> is not specified, is an array with all three formats:</p>
     <pre><code data-lang="toml"><span style="color: #4b69c6">formats</span> = [<span style="color: #198810">"</span><span style="color: #198810">pdf</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">html</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">epub</span><span style="color: #198810">"</span>] </code></pre>

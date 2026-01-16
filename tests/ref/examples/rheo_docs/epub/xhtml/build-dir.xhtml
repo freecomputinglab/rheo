@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml"><head>
-    <meta charset="utf-8"></meta>
-    <meta name="viewport" content="width=device-width, initial-scale=1"></meta>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <title>Build directory</title>
   </head>
   <body><article>
     <h2 id="build-directory">Build directory</h2>
     <p>Rheo produces outputs in a simple directory structure with one subdirectory for each kind of output. By default, Rheo produces all outputs (PDF, HTML, and EPUB) in a <code>build</code> directory instide the project directory:</p>
-    <pre><code>build/<br></br>├── epub<br></br>│   └── blog_post.epub<br></br>├── html<br></br>│   ├── portable_epubs.html<br></br>│   └── style.css<br></br>└── pdf<br></br>    └── portable_epubs.pdf</code></pre>
+    <pre><code>build/<br/>├── epub<br/>│   └── blog_post.epub<br/>├── html<br/>│   ├── portable_epubs.html<br/>│   └── style.css<br/>└── pdf<br/>    └── portable_epubs.pdf</code></pre>
     <p>The build directory path is calculated <em>relative to the content directory</em>. This is important, as if you change the <a href="./content-dir.xhtml">content directory</a>, then your build directory path will become relevant to that directory.</p>
     <h2 id="configuration">Configuration</h2>
     <h3 id="cli-flag">CLI flag</h3>
