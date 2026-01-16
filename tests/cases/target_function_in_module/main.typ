@@ -1,13 +1,13 @@
 // @rheo:test
 // @rheo:formats html,pdf,epub
-// @rheo:description Verifies target() works in imported modules
+// @rheo:description Verifies sys.inputs.rheo-target works in imported modules
 
-#import "lib/format_helper.typ": get_format, format_specific_content
+#import "lib/format_helper.typ": rheo-target, get_format, format_specific_content
 
 = Target Function in Module
 
 == Main File
-#context [Main: *#target()*]
+#context [Main: *#rheo-target()*]
 
 == Imported Module
 #context [Module returns: *#get_format()*]

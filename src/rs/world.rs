@@ -7,7 +7,7 @@ use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
 use parking_lot::Mutex;
 use typst::diag::{FileError, FileResult};
-use typst::foundations::{Bytes, Datetime};
+use typst::foundations::{Bytes, Datetime, Dict, IntoValue};
 use typst::syntax::{FileId, Lines, Source, VirtualPath};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
@@ -16,6 +16,25 @@ use typst_kit::download::Downloader;
 use typst_kit::fonts::{FontSlot, Fonts};
 use typst_kit::package::PackageStorage;
 use typst_library::{Feature, Features};
+
+/// Build sys.inputs Dict for Typst compilation.
+///
+/// This creates the dictionary that's accessible via `sys.inputs` in Typst code.
+/// For EPUB/HTML/PDF compilation, we pass `{"rheo-target": "epub"|"html"|"pdf"}`
+/// so user code can detect the output format using:
+/// `if "rheo-target" in sys.inputs { sys.inputs.rheo-target }`
+fn build_inputs(output_format: Option<OutputFormat>) -> Dict {
+    let mut dict = Dict::new();
+    if let Some(format) = output_format {
+        let format_str = match format {
+            OutputFormat::Pdf => "pdf",
+            OutputFormat::Html => "html",
+            OutputFormat::Epub => "epub",
+        };
+        dict.insert("rheo-target".into(), format_str.into_value());
+    }
+    dict
+}
 
 /// A simple World implementation for rheo compilation.
 pub struct RheoWorld {
@@ -80,9 +99,13 @@ impl RheoWorld {
         })?;
         let main = FileId::new(None, main_vpath);
 
-        // Build library with HTML feature enabled
+        // Build library with HTML feature enabled and sys.inputs for format detection
         let features: Features = [Feature::Html].into_iter().collect();
-        let library = Library::builder().with_features(features).build();
+        let inputs = build_inputs(output_format);
+        let library = Library::builder()
+            .with_features(features)
+            .with_inputs(inputs)
+            .build();
 
         // Search for fonts using typst-kit
         // Respect TYPST_IGNORE_SYSTEM_FONTS for test consistency
@@ -287,26 +310,12 @@ impl World for RheoWorld {
         let path = self.path_for_id(id)?;
         let mut text = fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
 
-        // Inject target() override into ALL .typ files for EPUB compilation
-        // This ensures ALL code (local modules AND Typst Universe packages) see "epub"
-        let target_override = if matches!(self.output_format, Some(OutputFormat::Epub)) {
-            "// Shadow Typst's target() to return \"epub\" for EPUB compilation\n\
-             #let target() = \"epub\"\n\n"
-        } else {
-            ""
-        };
-
-        // For the main file, also inject the rheo.typ template
+        // For the main file, inject the rheo.typ template
+        // Note: Output format detection is now via sys.inputs.rheo-target (no source injection needed)
         if id == self.main {
             let rheo_content = include_str!("../typ/rheo.typ");
-            let template_inject = format!(
-                "{}{}\n#show: rheo_template\n\n",
-                target_override, rheo_content
-            );
+            let template_inject = format!("{}\n#show: rheo_template\n\n", rheo_content);
             text = format!("{}{}", template_inject, text);
-        } else if !target_override.is_empty() {
-            // For all other files (local modules and packages), just inject the target override
-            text = format!("{}{}", target_override, text);
         }
 
         // Apply link transformations for ALL .typ files if output format is set

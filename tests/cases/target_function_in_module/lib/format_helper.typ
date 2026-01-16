@@ -1,12 +1,21 @@
-// Module that uses target() function
-// Tests whether target() override propagates to imported files
+// Module that uses sys.inputs.rheo-target for format detection
+// Tests whether sys.inputs propagates to imported files
+
+// Helper to get the rheo output format, with fallback to Typst's target()
+#let rheo-target() = {
+  if "rheo-target" in sys.inputs {
+    sys.inputs.rheo-target
+  } else {
+    target()
+  }
+}
 
 #let get_format() = {
-  target()
+  rheo-target()
 }
 
 #let format_specific_content() = context {
-  let fmt = target()
+  let fmt = rheo-target()
   if fmt == "epub" {
     [Module: EPUB]
   } else if fmt == "html" {
