@@ -6,16 +6,16 @@
     <title>Rheo</title>
   </head>
   <body><article>
-    <h2 id="frequently-asked-questions">1. Frequently Asked Questions</h2>
-    <h3 id="what-is-the-difference-between-typst-and-rheo?">1.1. What is the difference between Typst and Rheo?</h3>
+    <h2 id="frequently-asked-questions">Frequently Asked Questions</h2>
+    <h3 id="what-is-the-difference-between-typst-and-rheo?">What is the difference between Typst and Rheo?</h3>
     <p><a href="https://typst.app/">Typst</a> is a markup/programming language that provides its own toolchain which includes a CLI. You can use the Typst CLI to compile one Typst document to one kind of output file:</p>
     <pre><code data-lang="sh"><span style="color: #4b69c6">typst</span> compile source.typ <span style="color: #74747c">#</span><span style="color: #74747c"> compile to PDF</span><br></br><span style="color: #4b69c6">typst</span> compile --features html --format html source.typ <span style="color: #74747c">#</span><span style="color: #74747c"> compile to HTML</span></code></pre>
     <p>Rheo compiles a <em>project folder</em> to three outputs—PDF, HTML, and EPUB—concurrently. It allows you to configure how certain source files should be merged (to produce a ‘combined’ EPUB or PDF file, for example, via <a href="./spines.xhtml">spines</a>), and also allows you to enrich certain outputs (such as HTML via <a href="./custom-css.xhtml">custom CSS</a>) with non-Typst content. Rheo supports EPUB natively, which is not currently supported by the upstream Typst CLI (though it is <a href="https://github.com/typst/typst/issues/188">on the roadmap</a>). In summary, Rheo is a opinionated way to manage writing projects with Typst.</p>
-    <h3 id="how-do-i-read-epubs-on-my-system?">1.2. How do I read EPUBs on my system?</h3>
+    <h3 id="how-do-i-read-epubs-on-my-system?">How do I read EPUBs on my system?</h3>
     <p>Mileage varies greatly on EPUB reading niceness across systems! If you’re interested to learn more, we have written more about this <a href="https://willcrichton.net/notes/portable-epubs/">here</a>. If you don’t have a good EPUB reading experience currently, we recommend trying <a href="https://github.com/nota-lang/bene">bene</a>, an EPUB reading system that we are developing.</p>
-    <h3 id="who-maintains-rheo?">1.3. Who maintains Rheo?</h3>
+    <h3 id="who-maintains-rheo?">Who maintains Rheo?</h3>
     <p>Rheo is developed by the <a href="https://freecomputinglab.ohrg.org/">Free Computing Lab</a>, an academic research consortium that researches the nature of computing freedom. If you’re interested to learn more or get involved, you can <a href="https://freecomputinglab.zulipchat.com/join/dit724hcwgbhic3xxwkdpkqs/">join our Zulip</a>.</p>
-    <h3 id="can-i-contribute-to-rheo?">1.4. Can I contribute to Rheo?</h3>
+    <h3 id="can-i-contribute-to-rheo?">Can I contribute to Rheo?</h3>
     <p>Yes! Rheo is written in Rust and developed in public through <a href="https://github.com/freecomputinglab/rheo">Github</a>. You can track development and submit issues or requests for features through that platform. While in principle we welcome community pull requests, it’s best to <a href="https://freecomputinglab.zulipchat.com/join/dit724hcwgbhic3xxwkdpkqs/">join our Zulip</a> and ask about it first, to confirm that your work will not go to waste.</p>
   
 

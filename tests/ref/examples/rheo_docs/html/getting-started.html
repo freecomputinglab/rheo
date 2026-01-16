@@ -1,7 +1,7 @@
 <!DOCTYPE html><html><head><link rel="stylesheet" href="style.css">
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Getting started | Rheo</title>
+    <title>Getting started</title>
   </head>
   <body>
     <div class="topbar">
@@ -29,10 +29,11 @@
       <p>The easiest way to install Rheo is from <a href="https://crates.io/">crates.io</a>, the Rust language’s package manager. If you don’t already have Rust/cargo, you will need to <a href="https://doc.rust-lang.org/cargo/getting-started/installation.html">install those first</a>. Open your terminal, and run the following command:</p>
       <pre><code data-lang="bash"><span style="color: #4b69c6">cargo</span> install rheo --locked</code></pre>
       <p>Rheo is packaged as a standalone binary, and doesn’t require any version of Typst on your system. (Note that even if you already have Typst on your system, Rheo will use its own embedded version of the compiler.) Refer to <a href="https://github.com/freecomputinglab/rheo">Rheo’s source code</a> for more information and installation options.</p>
-      <h3>Firing up</h3>
+      <h2>Firing up</h2>
       <p>With Rheo we can produce a static site, a PDF, and an EPUB from a Typst document. Let’s create a directory with a single Typst file in it:</p>
       <pre><code data-lang="bash"><span style="color: #4b69c6">mkdir</span> project_uno<br><span style="color: #4b69c6">touch</span> project_uno/index.typ</code></pre>
       <p>As one of Rheo’s outputs is a static site, the landing page will default to one named ‘index’. (If this file doesn’t exist, Rheo will present you with a basic listing of all the other files in the site.) Let’s put some Typst in the <code>index.typ</code> file:</p>
+      <p><code>project_uno/index.typ</code></p>
       <pre><code data-lang="typ"><span style="text-decoration: underline"><strong>=</strong></span><span style="text-decoration: underline"><strong> </strong></span><span style="text-decoration: underline"><strong>Project uno</strong></span><br><br>Project uno is a writing project.</code></pre>
       <p>Rheo aims to keep out of your way as much as possible, and doesn’t require that you add any special syntax or metadata to your files to work. This single Typst file we need to get started. Provided you’ve already installed Rheo on your system, we can compile the project. You can tell Rheo to compile a folder by pointing the <code>compile</code> command at it:</p>
       <pre><code data-lang="bash"><span style="color: #4b69c6">rheo</span> compile project_uno </code></pre>
@@ -41,28 +42,28 @@
       <p>It’s a little tiring to have to run the compile command every time we make a change, though. Let’s spin up a development server to see live changes across all output formats as we edit the source:</p>
       <pre><code data-lang="bash"><span style="color: #4b69c6">rheo</span> watch project_uno --open</code></pre>
       <p>The <code>--open</code> flag here indicates that we’d like to open the output using our system’s default applications. Provided you have an EPUB reader on your system (if you don’t, we recommend installing <a href="https://github.com/nota-lang/bene">bene</a>), you should now have a PDF, an EPUB, and a website in front of you. As simple as that!</p>
-      <h3>Scaling up</h3>
+      <h2>Scaling up</h2>
       <p>Let’s kill that process (with Ctrl-C). Rheo compiles documents from across your project directory towards EPUB, PDF, and HTML simultaneously, whereas the Typst compiler typically takes just one Typst file and produces one kind of output.<a id="loc-1" href="#loc-2" role="doc-noteref"><sup>1</sup></a> Let’s add a couple of files to our project and link between them:</p>
-      <p><strong>project_uno/about.typ</strong></p>
+      <p><code>project_uno/about.typ</code></p>
       <pre><code data-lang="typ"><span style="text-decoration: underline"><strong>=</strong></span><span style="text-decoration: underline"><strong> </strong></span><span style="text-decoration: underline"><strong>About</strong></span><br><br>Project uno is an incredible writing project that will transform the way we understand the world.<br>If you want to be involved, see the <span style="color: #4b69c6">#</span><span style="color: #4b69c6">link</span>(<span style="color: #198810">"./contact.typ"</span>)[Contact page].</code></pre>
-      <p><strong>project_uno/contact.typ</strong></p>
+      <p><code>project_uno/contact.typ</code></p>
       <pre><code data-lang="typ"><span style="color: #d73948">#</span><span style="color: #d73948">let</span> email <span style="color: #d73948">=</span> <span style="color: #198810">"myemail@mydomain.com"</span><br><span style="text-decoration: underline"><strong>=</strong></span><span style="text-decoration: underline"><strong> </strong></span><span style="text-decoration: underline"><strong>Contact</strong></span> <br><br>To learn more about project uno, email me at <span style="color: #4b69c6">#</span><span style="color: #4b69c6">link</span>(<span style="color: #198810">"mailto:"</span> <span style="color: #d73948">+</span> email)[<span style="color: #8b41b1">#</span><span style="color: #8b41b1">email</span>]</code></pre>
       <p>And let’s also link to the two new pages on the index page:</p>
-      <p><strong>project_uno/index.typ</strong></p>
+      <p><code>project_uno/index.typ</code></p>
       <pre><code data-lang="typ"><span style="text-decoration: underline"><strong>=</strong></span><span style="text-decoration: underline"><strong> </strong></span><span style="text-decoration: underline"><strong>Project uno</strong></span><br><br>Project uno is a writing project.<br><br><span style="color: #8b41b1">-</span> <span style="color: #4b69c6">#</span><span style="color: #4b69c6">link</span>(<span style="color: #198810">"./about.typ"</span>)[About]<br><span style="color: #8b41b1">-</span> <span style="color: #4b69c6">#</span><span style="color: #4b69c6">link</span>(<span style="color: #198810">"./contact.typ"</span>)[Contact]</code></pre>
       <p>Now let’s run Rheo again, but this time let’s only build the HTML and EPUB outputs:</p>
       <pre><code data-lang="bash"><span style="color: #4b69c6">rheo</span> watch project_uno --html --epub --open</code></pre>
       <p>Note how the relative links are working across both the EPUB and the PDF. <a href="./relative-linking.html">Relative linking</a> is one of the key features in Rheo that enables you to build richer static sites and EPUBs beyond using just Typst. All of <a href="https://typst.app/docs/reference/scripting/">Typst’s other features</a> such as variables are fair game, too, as Rheo just uses Typst’s compiler under the hood.</p>
-      <h3>Adding a config</h3>
+      <h2>Adding a config</h2>
       <p>One issue with the EPUB that is currently being produced is that the <code>index.typ</code> section shows up last, after the <code>about.typ</code> and <code>contact.typ</code>, as Rheo orders files lexicographically by default. This is probably not what we want, as the index page acts as a sort of table of contents in our writing project currently.</p>
       <p>To sophisticate the way that Rheo produces outputs, we can add a <a href="./rheotoml.html">rheo.toml config</a> at the base of the project directory:</p>
-      <p><strong>project_uno/rheo.toml</strong></p>
+      <p><code>project_uno/rheo.toml</code></p>
       <pre><code data-lang="toml"><span style="color: #4b69c6">version</span> = <span style="color: #198810">"</span><span style="color: #198810">0.1.0</span><span style="color: #198810">"</span><br><br>[<span style="color: #4b69c6">epub</span>.<span style="color: #4b69c6">spine</span>]<br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">Project Uno</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">index.typ</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">about.typ</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">contact.typ</span><span style="color: #198810">"</span>]</code></pre>
       <p>This config uses the notion of a <a href="./spines.html">spine</a> to indicate a custom order for the sections. We’ll learn more about these later on in this documentation.</p>
       <p>Let’s run the <code>watch</code> command again, this time with all outputs like the first time:</p>
       <pre><code data-lang="bash"><span style="color: #4b69c6">rheo</span> watch project_uno --open</code></pre>
       <p>Great! The EPUB order is fixed. We now, however, have three distinct PDFs that are being created: one for each page. This is because Rheo defaults to producing one PDF per file in the project directory. We can configure Rheo to merge files together into a single PDF output by specifying a PDF spine, as we did with EPUB, and setting the <code>merge</code> attribute to <code>true</code>:</p>
-      <p><strong>project_uno/rheo.toml</strong></p>
+      <p><code>project_uno/rheo.toml</code></p>
       <pre><code data-lang="toml"><span style="color: #4b69c6">version</span> = <span style="color: #198810">"</span><span style="color: #198810">0.1.0</span><span style="color: #198810">"</span><br><br>[<span style="color: #4b69c6">epub</span>.<span style="color: #4b69c6">spine</span>]<br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">Project Uno</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">index.typ</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">about.typ</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">contact.typ</span><span style="color: #198810">"</span>]<br><br>[<span style="color: #4b69c6">pdf</span>.<span style="color: #4b69c6">spine</span>]<br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">Project Uno</span><span style="color: #198810">"</span><br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">index.typ</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">about.typ</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">contact.typ</span><span style="color: #198810">"</span>]<br><span style="color: #4b69c6">merge</span> = <span style="color: #d73948">true</span></code></pre>
       <p>Before we run this again, let’s also clean the outputs in the build directory, as we don’t need those individual PDFs that we produced anymore:</p>
       <pre><code data-lang="sh"><span style="color: #4b69c6">rheo</span> clean project_uno<br><span style="color: #4b69c6">rheo</span> watch project_uno --open</code></pre>

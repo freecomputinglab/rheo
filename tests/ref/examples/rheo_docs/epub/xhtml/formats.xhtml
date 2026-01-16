@@ -3,22 +3,22 @@
 <html xmlns="http://www.w3.org/1999/xhtml"><head>
     <meta charset="utf-8"></meta>
     <meta name="viewport" content="width=device-width, initial-scale=1"></meta>
-    <title>Formats | Rheo</title>
+    <title>Formats</title>
   </head>
   <body><article>
-    <h2 id="formats">1. Formats</h2>
+    <h2 id="formats">Formats</h2>
     <p>By default, Rheo produces three different output formats simultaneously: <strong>PDF</strong>, <strong>HTML</strong>, and <strong>EPUB</strong>. There are cases in which you may only want to produce one of these formats, however, or to exclude one format because your project either cannot support or does not require it.</p>
-    <h3 id="pdf">1.1. PDF</h3>
+    <h3 id="pdf">PDF</h3>
     <p><a href="https://typst.app/">Typst</a>, the programming language and compilation toolchain that underwrites Rheo, natively and fully supports PDF.</p>
-    <h3 id="html">1.2. HTML</h3>
+    <h3 id="html">HTML</h3>
     <p>Typst <a href="https://typst.app/docs/reference/html/">experimentally supports</a> HTML. This means that not all Typst syntax will translate to a meaningful HTML structure. The most common features in everyday prose are all supported, however, such as text markup, links, headings, footnotes, and citations. For more information on which features are currently supported in Typst’s HTML export, refer to the <a href="https://github.com/typst/typst/issues/5512">HTML export tracking issue</a>.</p>
-    <h3 id="epub">1.3. EPUB</h3>
+    <h3 id="epub">EPUB</h3>
     <p>Typst does <a href="https://github.com/typst/typst/issues/188">not yet support</a> EPUB, but it is supported in Rheo. As EPUB export is on Typst’s roadmap, Rheo will track this feature closely and look to integrate with it when it lands in the future.</p>
-    <h3 id="configuration">1.4. Configuration</h3>
-    <h4 id="cli-flag">1.4.1. CLI flag</h4>
+    <h3 id="configuration">Configuration</h3>
+    <h4 id="cli-flag">CLI flag</h4>
     <p>You can constrain Rheo to producing one or more formats by passing one or more of the following flags to <code>compile</code> or <code>watch</code>:</p>
     <pre><code data-lang="bash"><span style="color: #4b69c6">rheo</span> compile path/to/project --pdf<br></br><span style="color: #4b69c6">rheo</span> compile path/to/project --html<br></br><span style="color: #4b69c6">rheo</span> compile path/to/project --epub</code></pre>
-    <h4 id="rheo.toml">1.4.2. <code>rheo.toml</code></h4>
+    <h4 id="rheo.toml"><code>rheo.toml</code></h4>
     <p>You can also specify formats at the top level of <code>rheo.toml</code> in an array that contains one or more formats. The default, if <code>formats</code> is not specified, is an array with all three formats:</p>
     <pre><code data-lang="toml"><span style="color: #4b69c6">formats</span> = [<span style="color: #198810">"</span><span style="color: #198810">pdf</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">html</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">epub</span><span style="color: #198810">"</span>] </code></pre>
   

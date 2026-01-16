@@ -3,22 +3,22 @@
 <html xmlns="http://www.w3.org/1999/xhtml"><head>
     <meta charset="utf-8"></meta>
     <meta name="viewport" content="width=device-width, initial-scale=1"></meta>
-    <title>Spines | Rheo</title>
+    <title>Spines</title>
   </head>
   <body><article>
-    <h2 id="spines">1. Spines</h2>
+    <h2 id="spines">Spines</h2>
     <p>A spine in Rheo is the backbone or ‘table of contents’ of Typst source files that should be compiled to an output format. It takes its name from the <a href="https://www.edrlab.org/open-standards/anatomy-of-an-epub-3-file/">epub specification</a>, in which the spine articulates—or <em>reticulates</em>— the set and order of chapters included.</p>
     <p>You can specify a spine’s vertebrae for any output format using an array of <a href="https://www.man7.org/linux/man-pages/man7/glob.7.html">glob</a> strings in <code>rheo.toml</code>:</p>
     <pre><code data-lang="toml">[<span style="color: #4b69c6">epub</span>.<span style="color: #4b69c6">spine</span>]<br></br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">My epub</span><span style="color: #198810">"</span><br></br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">intro.typ</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">*.typ</span><span style="color: #198810">"</span>]</code></pre>
     <p>Notice how the first entry <code>intro.typ</code> is a specific file, whereas the second <code>*.typ</code> captures a range of files. When a glob string captures a range of source files, they will be ordered lexicographically in the spine.</p>
-    <h3 id="epub">1.1. EPUB</h3>
+    <h3 id="epub">EPUB</h3>
     <p>An EPUB must have a spine in order to be valid. By default, Rheo will infer the following spine if not specified:</p>
     <pre><code data-lang="toml">[<span style="color: #4b69c6">epub</span>.<span style="color: #4b69c6">spine</span>]<br></br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">[project folder name]</span><span style="color: #198810">"</span><br></br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">**/*.typ</span><span style="color: #198810">"</span>]</code></pre>
-    <h3 id="pdf">1.2. PDF</h3>
+    <h3 id="pdf">PDF</h3>
     <p>By default, Rheo generates one PDF per Typst source file. You can specify a spine for the PDF format in order to reticulate multiple source documents into a single output PDF by indicating the vertebrae and setting <code>merge</code> to <code>true</code>:</p>
     <pre><code data-lang="toml">[<span style="color: #4b69c6">pdf</span>.<span style="color: #4b69c6">spine</span>]<br></br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">My reticulated pdf</span><span style="color: #198810">"</span><br></br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">intro.typ</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">*.typ</span><span style="color: #198810">"</span>]<br></br><span style="color: #4b69c6">merge</span> = <span style="color: #d73948">true</span></code></pre>
     <p>In a PDF generated in this way, <a href="./relative-linking.xhtml">relative links</a> will resolve to internal document links that point to the relevant section.</p>
-    <h3 id="html">1.3. HTML</h3>
+    <h3 id="html">HTML</h3>
     <p>Rheo does not currently support customizing HTML spines. The default spine uses all Typst files:</p>
     <pre><code data-lang="toml">[<span style="color: #4b69c6">html</span>.<span style="color: #4b69c6">spine</span>]<br></br><span style="color: #4b69c6">title</span> = <span style="color: #198810">"</span><span style="color: #198810">[project folder name]</span><span style="color: #198810">"</span><br></br><span style="color: #4b69c6">vertebrae</span> = [<span style="color: #198810">"</span><span style="color: #198810">**/*.typ</span><span style="color: #198810">"</span>]</code></pre>
   
