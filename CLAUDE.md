@@ -345,13 +345,29 @@ Rheo polyfills the `target()` function for EPUB compilation, so you can use stan
 - Rheo sets `sys.inputs.rheo-target` to "epub", "html", or "pdf"
 - For EPUB compilation, a `target()` polyfill is injected that checks `sys.inputs.rheo-target`
 - This shadows the built-in `target()` so `target() == "epub"` works naturally
-- Packages that call `std.target()` still see the underlying format ("html" for EPUB)
+- The polyfill is syntactic sugar for user code convenience
 
-**For package authors:**
-Packages can adopt the same pattern to support rheo-aware EPUB detection:
+**For Typst library/package authors:**
+
+The `target()` polyfill only shadows the local function name. Packages that call `std.target()` (common practice to get the "real" target) will bypass the polyfill and see "html" for EPUB compilation.
+
+To properly support rheo's EPUB detection, library authors should check `sys.inputs.rheo-target` directly:
+
 ```typst
-#let target() = if "rheo-target" in sys.inputs { sys.inputs.rheo-target } else { std.target() }
+// Recommended pattern for libraries
+#let get-format() = {
+  if "rheo-target" in sys.inputs {
+    sys.inputs.rheo-target  // "epub", "html", or "pdf" when compiled with rheo
+  } else {
+    target()  // Fallback for vanilla Typst
+  }
+}
 ```
+
+This pattern:
+- Returns the correct format when compiled with rheo
+- Gracefully degrades to standard `target()` in vanilla Typst
+- Works regardless of whether the package calls `target()` or `std.target()`
 
 ### Incremental Compilation
 
