@@ -287,24 +287,26 @@ impl World for RheoWorld {
         let path = self.path_for_id(id)?;
         let mut text = fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
 
-        // For the main file, inject the rheo.typ template automatically
+        // Inject target() override into ALL .typ files for EPUB compilation
+        // This ensures ALL code (local modules AND Typst Universe packages) see "epub"
+        let target_override = if matches!(self.output_format, Some(OutputFormat::Epub)) {
+            "// Shadow Typst's target() to return \"epub\" for EPUB compilation\n\
+             #let target() = \"epub\"\n\n"
+        } else {
+            ""
+        };
+
+        // For the main file, also inject the rheo.typ template
         if id == self.main {
-            // Embed rheo.typ content directly (it's small and avoids path issues)
             let rheo_content = include_str!("../typ/rheo.typ");
-
-            // For EPUB, prepend target() override to shadow Typst's built-in
-            let target_override = if matches!(self.output_format, Some(OutputFormat::Epub)) {
-                "// Shadow Typst's target() to return \"epub\" for EPUB compilation\n\
-                 #let target() = \"epub\"\n\n"
-            } else {
-                "" // Use Typst's built-in for HTML/PDF
-            };
-
             let template_inject = format!(
                 "{}{}\n#show: rheo_template\n\n",
                 target_override, rheo_content
             );
             text = format!("{}{}", template_inject, text);
+        } else if !target_override.is_empty() {
+            // For all other files (local modules and packages), just inject the target override
+            text = format!("{}{}", target_override, text);
         }
 
         // Apply link transformations for ALL .typ files if output format is set
