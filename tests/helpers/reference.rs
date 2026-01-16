@@ -175,7 +175,7 @@ pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), S
 
 /// Update EPUB metadata references from test output
 pub fn update_epub_references(test_name: &str, actual_dir: &Path) -> Result<(), String> {
-    use crate::helpers::comparison::extract_epub_metadata;
+    use crate::helpers::comparison::{extract_epub_metadata, extract_epub_xhtml};
 
     // Determine if this is a single-file test
     let ref_dir = if test_name.contains("_slash")
@@ -262,6 +262,23 @@ pub fn update_epub_references(test_name: &str, actual_dir: &Path) -> Result<(), 
                 .map_err(|e| format!("Failed to write metadata: {}", e))?;
 
             println!("Updated EPUB metadata for {}", rel_path.display());
+
+            // Extract and save XHTML content files
+            let xhtml_content = extract_epub_xhtml(entry.path())?;
+            let xhtml_dir = ref_dir.join("xhtml");
+            fs::create_dir_all(&xhtml_dir)
+                .map_err(|e| format!("Failed to create XHTML directory: {}", e))?;
+
+            for (filename, content) in xhtml_content {
+                let xhtml_path = xhtml_dir.join(&filename);
+                // Create parent dirs if nested (e.g., chapters/ch1.xhtml)
+                if let Some(parent) = xhtml_path.parent() {
+                    fs::create_dir_all(parent).ok();
+                }
+                fs::write(&xhtml_path, &content)
+                    .map_err(|e| format!("Failed to write XHTML: {}", e))?;
+                println!("Updated EPUB XHTML: {}", filename);
+            }
         }
     }
 
