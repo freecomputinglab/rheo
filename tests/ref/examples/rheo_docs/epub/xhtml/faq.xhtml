@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml"><head>
-    <meta charset="utf-8"></meta>
-    <meta name="viewport" content="width=device-width, initial-scale=1"></meta>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <title>Rheo</title>
   </head>
   <body><article>
     <h2 id="frequently-asked-questions">Frequently Asked Questions</h2>
     <h3 id="what-is-the-difference-between-typst-and-rheo?">What is the difference between Typst and Rheo?</h3>
     <p><a href="https://typst.app/">Typst</a> is a markup/programming language that provides its own toolchain which includes a CLI. You can use the Typst CLI to compile one Typst document to one kind of output file:</p>
-    <pre><code data-lang="sh"><span style="color: #4b69c6">typst</span> compile source.typ <span style="color: #74747c">#</span><span style="color: #74747c"> compile to PDF</span><br></br><span style="color: #4b69c6">typst</span> compile --features html --format html source.typ <span style="color: #74747c">#</span><span style="color: #74747c"> compile to HTML</span></code></pre>
+    <pre><code data-lang="sh"><span style="color: #4b69c6">typst</span> compile source.typ <span style="color: #74747c">#</span><span style="color: #74747c"> compile to PDF</span><br/><span style="color: #4b69c6">typst</span> compile --features html --format html source.typ <span style="color: #74747c">#</span><span style="color: #74747c"> compile to HTML</span></code></pre>
     <p>Rheo compiles a <em>project folder</em> to three outputs—PDF, HTML, and EPUB—concurrently. It allows you to configure how certain source files should be merged (to produce a ‘combined’ EPUB or PDF file, for example, via <a href="./spines.xhtml">spines</a>), and also allows you to enrich certain outputs (such as HTML via <a href="./custom-css.xhtml">custom CSS</a>) with non-Typst content. Rheo supports EPUB natively, which is not currently supported by the upstream Typst CLI (though it is <a href="https://github.com/typst/typst/issues/188">on the roadmap</a>). In summary, Rheo is a opinionated way to manage writing projects with Typst.</p>
     <h3 id="how-do-i-read-epubs-on-my-system?">How do I read EPUBs on my system?</h3>
     <p>Mileage varies greatly on EPUB reading niceness across systems! If you’re interested to learn more, we have written more about this <a href="https://willcrichton.net/notes/portable-epubs/">here</a>. If you don’t have a good EPUB reading experience currently, we recommend trying <a href="https://github.com/nota-lang/bene">bene</a>, an EPUB reading system that we are developing.</p>
