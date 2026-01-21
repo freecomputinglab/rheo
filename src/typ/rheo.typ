@@ -24,3 +24,6 @@
 #let rheo_template(doc) = context {
   doc
 }
+
+// Set a default font
+#set text(font: ("Times New Roman", "Arial", "Helvetica"))
