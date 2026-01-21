@@ -26,4 +26,4 @@
 }
 
 // Set a default font
-#set text(font: ("Inter", "San Francisco", "Arial", "Helvetica"))
+#set text(font: ("Times New Roman", "Arial", "Helvetica"))
