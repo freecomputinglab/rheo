@@ -34,7 +34,7 @@ Install from [rustup.rs](https://rustup.rs/).
 
 ```bash
 # Install from crates.io
-cargo install rheo
+cargo install --locked rheo
 
 # Or build the project from source
 git clone https://github.com/freecomputinglab/rheo

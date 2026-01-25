@@ -85,10 +85,10 @@ impl LinkTransformer {
         let mut transformations = Vec::new();
 
         // For Pdf (merged mode), build a map of filename stems to labels
-        let label_map = if self.output_format == OutputFormat::Pdf && self.spine.is_some() {
-            build_label_map(self.spine.as_ref().unwrap())
-        } else {
-            HashMap::new()
+
+        let label_map = match (&self.output_format, &self.spine) {
+            (OutputFormat::Pdf, Some(spine)) => build_label_map(spine),
+            _ => HashMap::new(),
         };
 
         for link in links {
