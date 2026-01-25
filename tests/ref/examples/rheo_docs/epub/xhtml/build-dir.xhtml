@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Build directory</title>
+  </head>
+  <body><article>
+    <h2 id="build-directory">Build directory</h2>
+    <p>Rheo produces outputs in a simple directory structure with one subdirectory for each kind of output. By default, Rheo produces all outputs (PDF, HTML, and EPUB) in a <code>build</code> directory instide the project directory:</p>
+    <pre><code>build/<br/>├── epub<br/>│   └── blog_post.epub<br/>├── html<br/>│   ├── portable_epubs.html<br/>│   └── style.css<br/>└── pdf<br/>    └── portable_epubs.pdf</code></pre>
+    <p>The build directory path is calculated <em>relative to the content directory</em>. This is important, as if you change the <a href="./content-dir.xhtml">content directory</a>, then your build directory path will become relevant to that directory.</p>
+    <h2 id="configuration">Configuration</h2>
+    <h3 id="cli-flag">CLI flag</h3>
+    <p>You can specify a build directory with either the <code>compile</code> and <code>watch</code> commands:</p>
+    <pre><code data-lang="bash"><span style="color: #4b69c6">rheo</span> compile path/to/project --build-dir path/to/build</code></pre>
+    <h3 id="rheo.toml"><code>rheo.toml</code></h3>
+    <p>The build directory is specified at the top level of the <code>rheo.toml</code>:</p>
+    <pre><code data-lang="toml"><span style="color: #4b69c6">build_dir</span> = <span style="color: #198810">"</span><span style="color: #198810">custom_build_directory</span><span style="color: #198810">"</span></code></pre>
+  
+
+</article></body></html>

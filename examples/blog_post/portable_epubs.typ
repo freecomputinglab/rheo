@@ -3,7 +3,7 @@
 // @rheo:description Long-form article with custom HTML elements and code examples
 
 #let html-element(body, name: "div", attrs: (:)) = context {
-    if target() == "html" {
+    if target() == "html" or target() == "epub" {
       html.elem(name, attrs: attrs, body)
     } else {
       block(body)

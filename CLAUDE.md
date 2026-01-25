@@ -315,6 +315,60 @@ cargo run -- compile my_project/ --epub
 
 **Note:** Existing projects with explicit `rheo.toml` configurations are not affected—explicit configs always take precedence over inferred defaults.
 
+### Format Detection in Typst Code
+
+Rheo polyfills the `target()` function for EPUB compilation, so you can use standard Typst patterns:
+
+**Basic usage (recommended):**
+
+```typst
+// target() returns "epub" for EPUB, "html" for HTML, "paged" for PDF
+#context if target() == "epub" {
+  [EPUB-specific content]
+} else if target() == "html" {
+  [HTML-specific content]
+} else {
+  [PDF content]
+}
+```
+
+**Helper Functions (available via rheo.typ injection):**
+
+```typst
+// Explicit helpers for format checking
+#if is-rheo-epub() { [EPUB-only content] }
+#if is-rheo-html() { [HTML-only content] }
+#if is-rheo-pdf() { [PDF-only content] }
+```
+
+**How it works:**
+- Rheo sets `sys.inputs.rheo-target` to "epub", "html", or "pdf"
+- For EPUB compilation, a `target()` polyfill is injected that checks `sys.inputs.rheo-target`
+- This shadows the built-in `target()` so `target() == "epub"` works naturally
+- The polyfill is syntactic sugar for user code convenience
+
+**For Typst library/package authors:**
+
+The `target()` polyfill only shadows the local function name. Packages that call `std.target()` (common practice to get the "real" target) will bypass the polyfill and see "html" for EPUB compilation.
+
+To properly support rheo's EPUB detection, library authors should check `sys.inputs.rheo-target` directly:
+
+```typst
+// Recommended pattern for libraries
+#let get-format() = {
+  if "rheo-target" in sys.inputs {
+    sys.inputs.rheo-target  // "epub", "html", or "pdf" when compiled with rheo
+  } else {
+    target()  // Fallback for vanilla Typst
+  }
+}
+```
+
+This pattern:
+- Returns the correct format when compiled with rheo
+- Gracefully degrades to standard `target()` in vanilla Typst
+- Works regardless of whether the package calls `target()` or `std.target()`
+
 ### Incremental Compilation
 
 **Overview:**

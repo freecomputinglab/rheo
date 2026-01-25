@@ -1,4 +1,5 @@
 use similar::{ChangeTag, TextDiff};
+use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::env;
 use std::fs;
@@ -510,6 +511,96 @@ pub fn extract_epub_metadata(epub_path: &Path) -> Result<EpubMetadata, String> {
     })
 }
 
+/// Extract XHTML content files from an EPUB archive
+pub fn extract_epub_xhtml(epub_path: &Path) -> Result<HashMap<String, String>, String> {
+    use std::io::Read;
+    use zip::ZipArchive;
+
+    let file = fs::File::open(epub_path).map_err(|e| format!("Failed to open EPUB file: {}", e))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| format!("Failed to read EPUB archive: {}", e))?;
+
+    let mut xhtml_files = HashMap::new();
+
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| format!("Failed to read archive entry: {}", e))?;
+
+        let name = file.name().to_string();
+
+        // Extract only XHTML content files (not nav.xhtml)
+        if name.starts_with("EPUB/") && name.ends_with(".xhtml") && !name.ends_with("nav.xhtml") {
+            let mut contents = String::new();
+            file.read_to_string(&mut contents)
+                .map_err(|e| format!("Failed to read XHTML content: {}", e))?;
+
+            // Store with relative name (strip EPUB/ prefix)
+            let rel_name = name.strip_prefix("EPUB/").unwrap_or(&name);
+            xhtml_files.insert(rel_name.to_string(), contents);
+        }
+    }
+
+    Ok(xhtml_files)
+}
+
+/// Verify EPUB XHTML content against reference files
+fn verify_epub_xhtml_content(
+    ref_dir: &Path,
+    actual_xhtml: &HashMap<String, String>,
+    test_name: &str,
+) -> Result<(), String> {
+    let xhtml_ref_dir = ref_dir.join("xhtml");
+
+    // If no xhtml reference directory exists, skip XHTML verification
+    if !xhtml_ref_dir.exists() {
+        return Ok(());
+    }
+
+    // Check all reference XHTML files exist in actual
+    for entry in WalkDir::new(&xhtml_ref_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.file_type().is_file()
+                && e.path()
+                    .extension()
+                    .map(|ext| ext == "xhtml")
+                    .unwrap_or(false)
+        })
+    {
+        let rel_path = entry
+            .path()
+            .strip_prefix(&xhtml_ref_dir)
+            .map_err(|e| format!("Failed to get relative path: {}", e))?;
+        let filename = rel_path.to_string_lossy().to_string();
+
+        let ref_content = fs::read_to_string(entry.path())
+            .map_err(|e| format!("Failed to read reference XHTML: {}", e))?;
+
+        let actual_content = actual_xhtml
+            .get(&filename)
+            .ok_or_else(|| format!("Missing XHTML file in EPUB: {}", filename))?;
+
+        if ref_content != *actual_content {
+            let diff = compute_html_diff(&ref_content, actual_content);
+
+            let test_name_sanitized = test_name
+                .replace('/', "_slash")
+                .replace('.', "_full_stop")
+                .replace(':', "_colon")
+                .replace('-', "_minus");
+
+            return Err(format!(
+                "EPUB XHTML content mismatch for {}\n\n{}\n\nTo update, run: UPDATE_REFERENCES=1 cargo test run_test_case_{}",
+                filename, diff, test_name_sanitized
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn compare_pdf_metadata(
     reference: &BinaryFileMetadata,
     actual: &BinaryFileMetadata,
@@ -817,6 +908,11 @@ pub fn verify_epub_output(test_name: &str, actual_dir: &Path) {
             extract_epub_metadata(entry.path()).expect("Failed to extract EPUB metadata");
 
         compare_epub_metadata(&ref_metadata, &actual_metadata).expect("EPUB metadata mismatch");
+
+        // Verify XHTML content if reference files exist
+        let actual_xhtml = extract_epub_xhtml(entry.path()).expect("Failed to extract EPUB XHTML");
+        verify_epub_xhtml_content(&ref_dir, &actual_xhtml, test_name)
+            .expect("EPUB XHTML content mismatch");
     });
 }
 

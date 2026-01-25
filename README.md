@@ -25,7 +25,7 @@ rheo compile examples/blog_site --config /path/to/custom.toml
 rheo compile examples/blog_site --build-dir /tmp/build
 ```
 
-See [the documentation](https://rheo.ohrg) for more information regarding which flags are available.
+See [the documentation](https://rheo.ohrg.org) for more information regarding which flags are available.
 
 ## Installation
 ### Using cargo (Recommended)
@@ -34,7 +34,7 @@ Install from [rustup.rs](https://rustup.rs/).
 
 ```bash
 # Install from crates.io
-cargo install rheo
+cargo install --locked rheo
 
 # Or build the project from source
 git clone https://github.com/freecomputinglab/rheo
@@ -77,7 +77,7 @@ See the <a href="./about.html">about page</a> for more information. Visit <a hre
 
 If a linked file doesn't exist, rheo will report a detailed error during compilation.
 
-See [the documentation](https://rheo.ohrg) for more information.
+See [the documentation](https://rheo.ohrg.org) for more information.
 ### Multi-Format Compilation
 Rheo compiles Typst documents to three output formats simultaneously:
 
@@ -146,7 +146,7 @@ rheo compile my_book/ --epub
 ```
 ### TOML Configuration
 Projects can include a `rheo.toml` configuration file in the project root to customize compilation behavior rather than specifying flags.
-See [the documentation](https://rheo.ohrg) for more information.
+See [the documentation](https://rheo.ohrg.org) for more information.
 
 ### CSS Styling
 By default, rheo uses a simple, elegant and modern stylesheet to style your HTML.

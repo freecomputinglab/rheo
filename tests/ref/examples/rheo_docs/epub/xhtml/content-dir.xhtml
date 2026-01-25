@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Content directory</title>
+  </head>
+  <body><article>
+    <h2 id="content-directory">Content directory</h2>
+    <p>By default, Rheo will search your entire project directory for Typst documents. You can, however, indicate a specific subdirectory that Rheo should use if you prefer. This can be helpful for structuring projects, as it allows you, for example, to keep a separate <code>drafts</code> folder that Rheo will not compile.</p>
+    <p>The default content directory is the same path as the Rheo project directory. It is important to note that if you specify a custom content directory, all other configuration such as <code>build_dir</code> and <code>spine</code> globs will operate <em>relative to the content directory</em>.</p>
+    <h2 id="configuration">Configuration</h2>
+    <h3 id="rheo.toml"><code>rheo.toml</code></h3>
+    <p>A custom content directory can be specified at the top level of the <code>rheo.toml</code>. The path is calculated relative to the project directory:</p>
+    <pre><code data-lang="toml"><span style="color: #4b69c6">content_dir</span> = <span style="color: #198810">"</span><span style="color: #198810">pages</span><span style="color: #198810">"</span></code></pre>
+  
+
+</article></body></html>
