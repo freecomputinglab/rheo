@@ -119,7 +119,7 @@ pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> AnyhowResult
     let language = info.locale.unwrap_or_default().rfc_3066();
     let title = match &config.spine {
         None => items[0].title(),
-        Some(combined) => combined.title.clone().into(),
+        Some(combined) => combined.title.as_ref().unwrap().into(),
     };
 
     const INTERNAL_UNIQUE_ID: &str = "uid";
@@ -242,22 +242,19 @@ pub fn zip_epub(
     Ok(())
 }
 
-// ============================================================================
-// EPUB compilation (implementation function)
-// ============================================================================
-
-/// Implementation: Compile multiple Typst files to EPUB format.
-///
 /// Generates a spine from the EPUB configuration using RheoSpine for AST-based
-/// link transformation (.typ → .xhtml), compiles each file to HTML,
+/// link transformation (.typ → .xhtml), compiles each file to XHTML,
 /// generates navigation, and packages everything into a .epub (zip) file.
 fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
+        // Convert spine config to trait object for generic spine handling
+        let spine_config = config.spine.as_ref().map(|s| s as &dyn crate::config::SpineConfig);
+
         // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
-        let rheo_spine = RheoSpine::build(root, config.spine.as_ref(), crate::OutputFormat::Epub)?;
+        let rheo_spine = RheoSpine::build(root, spine_config, crate::OutputFormat::Epub)?;
 
         // Get the spine file paths
-        let spine = crate::reticulate::spine::generate_spine(root, config.spine.as_ref(), false)?;
+        let spine = crate::reticulate::spine::generate_spine(root, spine_config, false)?;
 
         // Create EpubItems from transformed sources
         let mut items = spine

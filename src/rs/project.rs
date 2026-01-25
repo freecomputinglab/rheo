@@ -1,4 +1,4 @@
-use crate::config::Spine;
+use crate::config::EpubSpine;
 use crate::formats::pdf::DocumentTitle;
 use crate::{Result, RheoConfig, RheoError};
 use std::path::{Path, PathBuf};
@@ -212,7 +212,7 @@ fn apply_smart_defaults(
     mode: ProjectMode,
 ) -> RheoConfig {
     // Generate human-readable title from project/file name
-    let title = DocumentTitle::to_readable_name(project_name);
+    let title = Some(DocumentTitle::to_readable_name(project_name));
 
     // Apply EPUB defaults if spine not configured
     if config.epub.spine.is_none() {
@@ -220,11 +220,7 @@ fn apply_smart_defaults(
             ProjectMode::SingleFile => vec![], // Empty: will auto-discover single file
             ProjectMode::Directory => vec!["**/*.typ".to_string()], // All files
         };
-        config.epub.spine = Some(Spine {
-            title,
-            vertebrae,
-            merge: None,
-        });
+        config.epub.spine = Some(EpubSpine { title, vertebrae });
     }
 
     config
@@ -347,7 +343,7 @@ mod tests {
         // Should have default spine config for EPUB
         assert!(project.config.epub.spine.is_some());
         let merge = project.config.epub.spine.as_ref().unwrap();
-        assert_eq!(merge.title, "My Document");
+        assert_eq!(merge.title.as_ref().unwrap(), "My Document");
         assert!(merge.vertebrae.is_empty());
     }
 
@@ -364,7 +360,7 @@ mod tests {
         let merge = project.config.epub.spine.as_ref().unwrap();
         assert_eq!(merge.vertebrae, vec!["**/*.typ"]);
         // Title should be based on temp directory name (will vary)
-        assert!(!merge.title.is_empty());
+        assert!(!merge.title.is_none());
     }
 
     #[test]
@@ -388,7 +384,7 @@ vertebrae = ["custom.typ"]
 
         // Should preserve explicit config
         let merge = project.config.epub.spine.as_ref().unwrap();
-        assert_eq!(merge.title, "Custom Title");
+        assert_eq!(merge.title.clone().unwrap(), "Custom Title");
         assert_eq!(merge.vertebrae, vec!["custom.typ"]);
     }
 
