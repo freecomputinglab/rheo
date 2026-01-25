@@ -248,7 +248,10 @@ pub fn zip_epub(
 fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
         // Convert spine config to trait object for generic spine handling
-        let spine_config = config.spine.as_ref().map(|s| s as &dyn crate::config::SpineConfig);
+        let spine_config = config
+            .spine
+            .as_ref()
+            .map(|s| s as &dyn crate::config::SpineConfig);
 
         // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
         let rheo_spine = RheoSpine::build(root, spine_config, crate::OutputFormat::Epub)?;
