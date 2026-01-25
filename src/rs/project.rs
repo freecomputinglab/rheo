@@ -360,7 +360,7 @@ mod tests {
         let merge = project.config.epub.spine.as_ref().unwrap();
         assert_eq!(merge.vertebrae, vec!["**/*.typ"]);
         // Title should be based on temp directory name (will vary)
-        assert!(!merge.title.is_none());
+        assert!(merge.title.is_some());
     }
 
     #[test]

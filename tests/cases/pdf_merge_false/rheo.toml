@@ -1,6 +1,6 @@
 version = "0.1.0"
 
-formats = ["pdf"]
+formats = ["pdf", "html"]
 
 [pdf.spine]
 vertebrae = [
@@ -8,3 +8,9 @@ vertebrae = [
   "c.typ"
 ]
 merge = false
+
+[html.spine]
+vertebrae = [
+  "a.typ",
+  "c.typ"
+]
