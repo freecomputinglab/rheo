@@ -103,23 +103,104 @@ impl Default for RheoConfig {
     }
 }
 
-/// Configuration for merging outputs
+/// PDF spine configuration for merging multiple files into a single PDF.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Spine {
-    /// Title for merged document
-    pub title: String,
+pub struct PdfSpine {
+    /// Title of the merged PDF document.
+    /// Required when merge=true.
+    pub title: Option<String>,
 
-    /// Glob patterns for files to include in the combined document
-    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set)
-    /// Output of patterns are sorted lexicographically
-    /// Example: ["cover.typ", "chapters/**"]"
+    /// Glob patterns for files to include in the combined document.
+    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set).
+    /// Results are sorted lexicographically.
+    /// Example: ["cover.typ", "chapters/**"]
     pub vertebrae: Vec<String>,
 
-    /// Whether to merge vertebrae into a single output file.
-    /// Only meaningful for PDF (HTML always false, EPUB always true).
-    /// If not specified for PDF, defaults to false (per-file compilation).
+    /// Whether to merge vertebrae into a single PDF file.
+    /// If false or not specified, compiles each file separately.
     #[serde(default)]
     pub merge: Option<bool>,
+}
+
+/// EPUB spine configuration for combining multiple files into a single EPUB.
+/// EPUB always merges files - there is no merge option.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpubSpine {
+    /// Title of the EPUB document.
+    /// Required for EPUB output.
+    pub title: Option<String>,
+
+    /// Glob patterns for files to include in the EPUB.
+    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set).
+    /// Results are sorted lexicographically.
+    /// Example: ["cover.typ", "chapters/**"]
+    pub vertebrae: Vec<String>,
+}
+
+/// HTML spine configuration for organizing multiple HTML files.
+/// HTML always produces per-file output - there is no merge option.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HtmlSpine {
+    /// Title of the HTML site/collection.
+    pub title: Option<String>,
+
+    /// Glob patterns for files to include.
+    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set).
+    /// Results are sorted lexicographically.
+    /// Example: ["index.typ", "pages/**"]
+    pub vertebrae: Vec<String>,
+}
+
+/// Common interface for spine configurations across output formats.
+///
+/// This trait provides uniform access to spine fields, allowing generic
+/// code to work with any spine type (PDF, EPUB, HTML).
+pub trait SpineConfig {
+    /// Returns the spine title, if configured.
+    fn title(&self) -> Option<&str>;
+
+    /// Returns the vertebrae glob patterns.
+    fn vertebrae(&self) -> &[String];
+
+    /// Returns whether to merge outputs into a single file.
+    /// Only meaningful for PDF; returns None for other formats.
+    fn merge(&self) -> Option<bool> {
+        None
+    }
+}
+
+impl SpineConfig for PdfSpine {
+    fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    fn vertebrae(&self) -> &[String] {
+        &self.vertebrae
+    }
+
+    fn merge(&self) -> Option<bool> {
+        self.merge
+    }
+}
+
+impl SpineConfig for EpubSpine {
+    fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    fn vertebrae(&self) -> &[String] {
+        &self.vertebrae
+    }
+}
+
+impl SpineConfig for HtmlSpine {
+    fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    fn vertebrae(&self) -> &[String] {
+        &self.vertebrae
+    }
 }
 
 /// HTML output configuration
@@ -136,7 +217,7 @@ pub struct HtmlConfig {
     /// Configuration for an HTML spine (sitemap/navbar).
     /// HTML never merges vertebrae.
     #[serde(default)]
-    pub spine: Option<Spine>,
+    pub spine: Option<HtmlSpine>,
 }
 
 impl Default for HtmlConfig {
@@ -153,7 +234,7 @@ impl Default for HtmlConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PdfConfig {
     /// Configuration for a PDF spine with multiple chapters.
-    pub spine: Option<Spine>,
+    pub spine: Option<PdfSpine>,
 }
 
 /// EPUB output configuration
@@ -173,7 +254,7 @@ pub struct EpubConfig {
     pub date: Option<DateTime<Utc>>,
 
     /// Configuration for an EPUB spine with multiple chapters.
-    pub spine: Option<Spine>,
+    pub spine: Option<EpubSpine>,
 }
 
 impl RheoConfig {
@@ -459,7 +540,7 @@ mod tests {
 
         let config: RheoConfig = toml::from_str(toml).unwrap();
         let spine = config.pdf.spine.as_ref().unwrap();
-        assert_eq!(spine.title, "My Book");
+        assert_eq!(spine.title.as_ref().unwrap(), "My Book");
         assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
         assert_eq!(spine.merge, Some(true));
     }
@@ -476,7 +557,7 @@ mod tests {
 
         let config: RheoConfig = toml::from_str(toml).unwrap();
         let spine = config.pdf.spine.as_ref().unwrap();
-        assert_eq!(spine.title, "My Book");
+        assert_eq!(spine.title.as_ref().unwrap(), "My Book");
         assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
         assert_eq!(spine.merge, Some(false));
     }
@@ -492,7 +573,7 @@ mod tests {
 
         let config: RheoConfig = toml::from_str(toml).unwrap();
         let spine = config.pdf.spine.as_ref().unwrap();
-        assert_eq!(spine.title, "My Book");
+        assert_eq!(spine.title.as_ref().unwrap(), "My Book");
         assert_eq!(spine.vertebrae, vec!["cover.typ"]);
         assert_eq!(spine.merge, None);
     }
@@ -508,12 +589,12 @@ mod tests {
 
         let config: RheoConfig = toml::from_str(toml).unwrap();
         let spine = config.epub.spine.as_ref().unwrap();
-        assert_eq!(spine.title, "My EPUB");
+        assert_eq!(spine.title.as_ref().unwrap(), "My EPUB");
         assert_eq!(
             spine.vertebrae,
             vec!["intro.typ", "chapter*.typ", "outro.typ"]
         );
-        assert_eq!(spine.merge, None);
+        // assert_eq!(spine.merge, None);
     }
 
     #[test]
@@ -527,9 +608,9 @@ mod tests {
 
         let config: RheoConfig = toml::from_str(toml).unwrap();
         let spine = config.html.spine.as_ref().unwrap();
-        assert_eq!(spine.title, "My Website");
+        assert_eq!(spine.title.as_ref().unwrap(), "My Website");
         assert_eq!(spine.vertebrae, vec!["index.typ", "about.typ"]);
-        assert_eq!(spine.merge, None);
+        // Note: HtmlSpine has no merge field - HTML always produces per-file output
     }
 
     #[test]
@@ -543,7 +624,7 @@ mod tests {
 
         let config: RheoConfig = toml::from_str(toml).unwrap();
         let spine = config.epub.spine.as_ref().unwrap();
-        assert_eq!(spine.title, "Single File Book");
+        assert_eq!(spine.title.as_ref().unwrap(), "Single File Book");
         assert!(spine.vertebrae.is_empty());
     }
 

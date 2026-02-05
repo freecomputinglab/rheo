@@ -1,0 +1,16 @@
+version = "0.1.0"
+
+formats = ["pdf", "html"]
+
+[pdf.spine]
+vertebrae = [
+  "a.typ",
+  "c.typ"
+]
+merge = false
+
+[html.spine]
+vertebrae = [
+  "a.typ",
+  "c.typ"
+]

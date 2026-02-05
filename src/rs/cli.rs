@@ -1,9 +1,11 @@
 use crate::CompilationResults;
 use crate::compile::RheoCompileOptions;
-use crate::config::{EpubOptions, HtmlOptions};
+use crate::config::{EpubOptions, HtmlOptions, SpineConfig};
 use crate::formats::{epub, html, pdf};
+use crate::reticulate::spine::generate_spine;
 use crate::{OutputFormat, Result, open_all_files_in_folder};
 use clap::{Parser, Subcommand};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, warn};
 
@@ -232,6 +234,54 @@ fn get_per_file_formats(
         .collect()
 }
 
+/// Returns the set of files to compile for a given format based on spine config.
+/// If no spine is configured, returns all project files.
+fn get_files_for_format<'a>(
+    format: OutputFormat,
+    project: &'a crate::project::ProjectConfig,
+    per_file_formats: &[OutputFormat],
+) -> Result<HashSet<&'a PathBuf>> {
+    if !per_file_formats.contains(&format) {
+        return Ok(HashSet::new());
+    }
+
+    let content_dir = project
+        .config
+        .resolve_content_dir(&project.root)
+        .unwrap_or_else(|| project.root.clone());
+
+    match format {
+        OutputFormat::Pdf => match &project.config.pdf.spine {
+            None => Ok(project.typ_files.iter().collect()),
+            Some(spine) if spine.merge == Some(true) => Ok(HashSet::new()),
+            Some(spine) => {
+                let spine_files =
+                    generate_spine(&content_dir, Some(spine as &dyn SpineConfig), false)?;
+                let spine_set: HashSet<_> = spine_files.iter().collect();
+                Ok(project
+                    .typ_files
+                    .iter()
+                    .filter(|f| spine_set.contains(f))
+                    .collect())
+            }
+        },
+        OutputFormat::Html => match &project.config.html.spine {
+            None => Ok(project.typ_files.iter().collect()),
+            Some(spine) => {
+                let spine_files =
+                    generate_spine(&content_dir, Some(spine as &dyn SpineConfig), false)?;
+                let spine_set: HashSet<_> = spine_files.iter().collect();
+                Ok(project
+                    .typ_files
+                    .iter()
+                    .filter(|f| spine_set.contains(f))
+                    .collect())
+            }
+        },
+        OutputFormat::Epub => Ok(HashSet::new()), // EPUB is always merged, not per-file
+    }
+}
+
 /// Perform compilation for a project with specified formats
 ///
 /// This is the unified compilation logic that supports both fresh and incremental compilation
@@ -265,14 +315,23 @@ fn perform_compilation<'a>(
     // Determine which formats should be compiled per-file
     let per_file_formats = get_per_file_formats(&project.config, formats);
 
+    // Compute filtered file sets based on spine configuration
+    let pdf_files = get_files_for_format(OutputFormat::Pdf, project, &per_file_formats)?;
+    let html_files = get_files_for_format(OutputFormat::Html, project, &per_file_formats)?;
+
     // Copy HTML assets (style.css) if HTML compilation is requested
-    if per_file_formats.contains(&OutputFormat::Html) {
+    if !html_files.is_empty() {
         output_config.copy_html_assets(project.style_css.as_deref())?;
     }
 
     // Per-file compilation
     for typ_file in &project.typ_files {
         let filename = get_output_filename(typ_file)?;
+
+        // Skip files not in either filtered set
+        if !pdf_files.contains(typ_file) && !html_files.contains(typ_file) {
+            continue;
+        }
 
         // For incremental mode, prepare the World for compiling this specific file
         // 1. set_main() tells the World which file we're compiling (updates main file ID)
@@ -283,7 +342,7 @@ fn perform_compilation<'a>(
         }
 
         // Compile to PDF (per-file mode)
-        if per_file_formats.contains(&OutputFormat::Pdf) {
+        if pdf_files.contains(typ_file) {
             let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
             let options = match &mode {
                 CompilationMode::Fresh { root } => {
@@ -312,7 +371,7 @@ fn perform_compilation<'a>(
         }
 
         // Compile to HTML
-        if per_file_formats.contains(&OutputFormat::Html) {
+        if html_files.contains(typ_file) {
             let output_path = output_config
                 .html_dir
                 .join(&filename)

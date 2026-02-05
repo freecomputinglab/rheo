@@ -1,4 +1,4 @@
-use crate::config::Spine;
+use crate::config::SpineConfig;
 use crate::formats::pdf::{DocumentTitle, sanitize_label_name};
 use crate::{OutputFormat, Result, RheoError, TYP_EXT};
 use std::collections::HashSet;
@@ -10,7 +10,7 @@ use walkdir::WalkDir;
 #[derive(Debug, Clone)]
 pub struct RheoSpine {
     /// The name of the file or website that the spine will generate.
-    pub title: String,
+    pub title: Option<String>,
 
     /// Whether or not the source has been merged into a single file.
     /// This is only false in the case of HTML currently.
@@ -38,7 +38,7 @@ impl RheoSpine {
     /// A RheoSpine containing transformed Typst sources ready for compilation.
     pub fn build(
         root: &Path,
-        spine_config: Option<&Spine>,
+        spine_config: Option<&dyn SpineConfig>,
         output_format: OutputFormat,
     ) -> Result<RheoSpine> {
         // Generate spine: ordered list of .typ files
@@ -49,7 +49,7 @@ impl RheoSpine {
 
         // Determine if we should merge sources based on format and config
         let should_merge = match output_format {
-            OutputFormat::Pdf => spine_config.and_then(|s| s.merge).unwrap_or(false),
+            OutputFormat::Pdf => spine_config.and_then(|s| s.merge()).unwrap_or(false),
             OutputFormat::Html | OutputFormat::Epub => false,
         };
 
@@ -90,10 +90,8 @@ impl RheoSpine {
             sources
         };
 
-        // Extract title from spine config, or use "Untitled" as fallback
-        let title = spine_config
-            .map(|s| s.title.clone())
-            .unwrap_or_else(|| "Untitled".to_string());
+        // Extract title from spine config
+        let title = spine_config.and_then(|s| s.title().map(String::from));
 
         Ok(RheoSpine {
             title,
@@ -209,7 +207,7 @@ fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
 /// - Spine vertebrae matched no .typ files
 pub fn generate_spine(
     root: &Path,
-    spine_config: Option<&Spine>,
+    spine_config: Option<&dyn SpineConfig>,
     require_spine: bool,
 ) -> Result<Vec<PathBuf>> {
     // PDF mode: spine config is required
@@ -225,13 +223,13 @@ pub fn generate_spine(
 
         // Empty vertebrae pattern: auto-discover single file only
         // This is used for single-file mode with default EPUB spine config
-        Some(spine) if spine.vertebrae.is_empty() => collect_one_typst_file(root),
+        Some(spine) if spine.vertebrae().is_empty() => collect_one_typst_file(root),
 
         // Vertebrae is specified
         // Process glob patterns from spine config
         Some(spine) => {
             let mut typst_files = Vec::new();
-            for pattern in &spine.vertebrae {
+            for pattern in spine.vertebrae() {
                 let glob_pattern = root.join(pattern).display().to_string();
                 let glob = glob::glob(&glob_pattern).map_err(|e| {
                     RheoError::project_config(format!("invalid glob pattern '{}': {}", pattern, e))
@@ -267,6 +265,7 @@ pub fn generate_spine(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{HtmlSpine, PdfSpine};
     use std::fs;
     use tempfile::TempDir;
 
@@ -332,14 +331,13 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_spine_with_merge_config() {
+    fn test_generate_spine_with_html_config() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ", "c.typ"]);
-        let merge = Spine {
-            title: "Test".to_string(),
+        let spine = HtmlSpine {
+            title: Some("Test".to_string()),
             vertebrae: vec!["*.typ".to_string()],
-            merge: None,
         };
-        let result = generate_spine(temp.path(), Some(&merge), false);
+        let result = generate_spine(temp.path(), Some(&spine), false);
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 3);
@@ -353,8 +351,8 @@ mod tests {
             "chapters/ch2.typ",
             "appendix.typ",
         ]);
-        let merge = Spine {
-            title: "Book".to_string(),
+        let spine = PdfSpine {
+            title: Some("Book".to_string()),
             vertebrae: vec![
                 "cover.typ".to_string(),
                 "chapters/*.typ".to_string(),
@@ -362,7 +360,7 @@ mod tests {
             ],
             merge: None,
         };
-        let result = generate_spine(temp.path(), Some(&merge), true);
+        let result = generate_spine(temp.path(), Some(&spine), true);
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 4);
@@ -389,14 +387,14 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_spine_merge_no_matches_error() {
+    fn test_generate_spine_no_matches_error() {
         let temp = create_test_dir_with_files(&["readme.md"]);
-        let merge = Spine {
-            title: "Test".to_string(),
+        let spine = PdfSpine {
+            title: None,
             vertebrae: vec!["*.typ".to_string()],
             merge: None,
         };
-        let result = generate_spine(temp.path(), Some(&merge), false);
+        let result = generate_spine(temp.path(), Some(&spine), false);
         assert!(result.is_err());
         assert!(
             result
@@ -409,13 +407,13 @@ mod tests {
     #[test]
     fn test_generate_spine_empty_pattern_single_file() {
         let temp = create_test_dir_with_files(&["single.typ"]);
-        let merge = Spine {
-            title: "Test".to_string(),
+        let spine = PdfSpine {
+            title: Some("Test".to_string()),
             vertebrae: vec![], // Empty vertebrae
             merge: None,
         };
 
-        let result = generate_spine(temp.path(), Some(&merge), false);
+        let result = generate_spine(temp.path(), Some(&spine), false);
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 1);
@@ -425,13 +423,13 @@ mod tests {
     #[test]
     fn test_generate_spine_empty_pattern_multiple_files_error() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
-        let merge = Spine {
-            title: "Test".to_string(),
+        let spine = PdfSpine {
+            title: Some("Test".to_string()),
             vertebrae: vec![], // Empty vertebrae with multiple files
             merge: None,
         };
 
-        let result = generate_spine(temp.path(), Some(&merge), false);
+        let result = generate_spine(temp.path(), Some(&spine), false);
         assert!(result.is_err());
         assert!(
             result
