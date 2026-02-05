@@ -1,0 +1,79 @@
+name: Pre-release
+
+on:
+  pull_request:
+    branches:
+      - "main"
+    types: [opened,labeled,edited,synchronize]
+
+jobs:
+  test-artifacts:
+    if: contains(github.event.pull_request.labels.*.name, 'release')
+
+    env:
+      RUST_BACKTRACE: 1
+      RUST_LIB_BACKTRACE: 1
+      TOKIO_WORKER_THREADS: 1
+
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            command: test
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            command: test
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            command: build
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            command: test
+          # disabling windows tests for now bc of a bunch of biome issues
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            command: build
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
+            command: build
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+      - name: Setup
+        uses: ./.github/workflows/setup
+      - name: Compile binary
+        run: cargo ${{ matrix.command }} --locked --target ${{ matrix.target }}
+      - name: Compress artifacts (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/debug
+          Compress-Archive -Path ${{ github.event.repository.name }}.exe -Destination ${{ matrix.target }}.zip
+      - name: Compress artifacts (Non-Windows)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/debug
+          zip -9 ${{ matrix.target }}.zip ${{ github.event.repository.name }}
+
+  publish-dry-run:
+    if: contains(github.event.pull_request.labels.*.name, 'release')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Login to crates.io
+        run: cargo login ${{ secrets.CRATES_IO_TOKEN }}
+      - name: Dry run of crate publish
+        run: cargo publish --workspace --dry-run
+
+  check-pr-name:
+    if: contains(github.event.pull_request.labels.*.name, 'release')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that PR name is a release number
+        run: echo "${{ github.event.pull_request.title }}" |  grep -q -E "^v[0-9]+\.[0-9]+\.[0-9]+$"
+
