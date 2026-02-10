@@ -560,6 +560,7 @@ When ready to cut a new release:
    - Publishes to crates.io
    - Creates a git tag matching the PR title
    - Creates a GitHub Release with platform-specific zip files
+   - Auto-generates release notes from merged PR titles since the last release (no manual changelog needed)
 
 **Supported Platforms:**
 - `x86_64-unknown-linux-gnu` (Linux x86_64)
@@ -570,7 +571,7 @@ When ready to cut a new release:
 - `aarch64-pc-windows-msvc` (Windows ARM64)
 
 **Release Artifacts:**
-Each release includes zip files for each platform containing the `rheo` binary, available on the GitHub Releases page.
+Each release includes zip files for each platform containing the `rheo` binary, available on the GitHub Releases page. Zip files are named `rheo-{target}.zip` for compatibility with `cargo binstall rheo`.
 
 ---
 

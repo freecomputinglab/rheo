@@ -28,7 +28,14 @@ rheo compile examples/blog_site --build-dir /tmp/build
 See [the documentation](https://rheo.ohrg.org) for more information regarding which flags are available.
 
 ## Installation
-### Using cargo (Recommended)
+### Using cargo binstall (Recommended)
+[cargo-binstall](https://github.com/cargo-bins/cargo-binstall) downloads a prebuilt binary from GitHub Releases, so you don't need to compile from source:
+
+```bash
+cargo binstall rheo
+```
+
+### Using cargo
 Rheo requires Rust and Cargo.
 Install from [rustup.rs](https://rustup.rs/).
 
