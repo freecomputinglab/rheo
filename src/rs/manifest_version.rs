@@ -13,7 +13,6 @@ impl ManifestVersion {
     pub fn current() -> Self {
         Self(semver::Version::parse(CURRENT).expect("CURRENT constant must be valid semver"))
     }
-
 }
 
 impl fmt::Display for ManifestVersion {

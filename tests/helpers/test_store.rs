@@ -48,11 +48,7 @@ fn copy_rheo_toml_with_version(src: &Path, dest: &Path) -> Result<(), String> {
             .map_err(|e| format!("Failed to write {}: {}", dest.display(), e))?;
     } else {
         // Inject version at the top
-        let versioned = format!(
-            "version = \"{}\"\n{}",
-            env!("CARGO_PKG_VERSION"),
-            content
-        );
+        let versioned = format!("version = \"{}\"\n{}", env!("CARGO_PKG_VERSION"), content);
         fs::write(dest, versioned)
             .map_err(|e| format!("Failed to write {}: {}", dest.display(), e))?;
     }

@@ -471,9 +471,7 @@ mod tests {
 
     #[test]
     fn test_html_config_custom_stylesheets() {
-        let toml = versioned_toml(
-            "[html]\nstylesheets = [\"custom.css\", \"theme.css\"]",
-        );
+        let toml = versioned_toml("[html]\nstylesheets = [\"custom.css\", \"theme.css\"]");
         let config: RheoConfig = toml::from_str(&toml).unwrap();
         assert_eq!(config.html.stylesheets, vec!["custom.css", "theme.css"]);
         assert_eq!(config.html.fonts.len(), 0);
@@ -481,9 +479,7 @@ mod tests {
 
     #[test]
     fn test_html_config_custom_fonts() {
-        let toml = versioned_toml(
-            "[html]\nfonts = [\"https://example.com/font.css\"]",
-        );
+        let toml = versioned_toml("[html]\nfonts = [\"https://example.com/font.css\"]");
         let config: RheoConfig = toml::from_str(&toml).unwrap();
         assert_eq!(config.html.fonts, vec!["https://example.com/font.css"]);
         assert_eq!(config.html.stylesheets, vec!["style.css"]);
@@ -528,9 +524,7 @@ mod tests {
 
     #[test]
     fn test_pdf_spine_merge_omitted() {
-        let toml = versioned_toml(
-            "[pdf.spine]\ntitle = \"My Book\"\nvertebrae = [\"cover.typ\"]",
-        );
+        let toml = versioned_toml("[pdf.spine]\ntitle = \"My Book\"\nvertebrae = [\"cover.typ\"]");
         let config: RheoConfig = toml::from_str(&toml).unwrap();
         let spine = config.pdf.spine.as_ref().unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "My Book");
@@ -565,9 +559,7 @@ mod tests {
 
     #[test]
     fn test_spine_empty_vertebrae() {
-        let toml = versioned_toml(
-            "[epub.spine]\ntitle = \"Single File Book\"\nvertebrae = []",
-        );
+        let toml = versioned_toml("[epub.spine]\ntitle = \"Single File Book\"\nvertebrae = []");
         let config: RheoConfig = toml::from_str(&toml).unwrap();
         let spine = config.epub.spine.as_ref().unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "Single File Book");
