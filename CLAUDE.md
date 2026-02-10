@@ -571,7 +571,7 @@ When ready to cut a new release:
 - `aarch64-pc-windows-msvc` (Windows ARM64)
 
 **Release Artifacts:**
-Each release includes zip files for each platform containing the `rheo` binary, available on the GitHub Releases page.
+Each release includes zip files for each platform containing the `rheo` binary, available on the GitHub Releases page. Zip files are named `rheo-{target}.zip` for compatibility with `cargo binstall rheo`.
 
 ---
 
