@@ -533,6 +533,45 @@ cargo test test_warning_formatting -- --nocapture
 - Typst libraries are pulled from git main branch
 - Keep dependencies minimal and well-justified
 
+### Branching and Release Workflow
+
+**Development Model:**
+- All development happens via pull requests to `main`
+- The `main` branch is the primary development branch
+- No long-lived feature branches; PRs are merged directly to main
+
+**Release Process:**
+
+When ready to cut a new release:
+
+1. **Update version in Cargo.toml** to the new version number
+
+2. **Create a release PR:**
+   - PR title MUST be the version tag (e.g., `v0.2.0`)
+   - Add the `release` label to the PR
+
+3. **Pre-release validation** (automated via `.github/workflows/pre-release.yml`):
+   - Builds and tests on all supported platforms (Linux x86_64/ARM, macOS x86_64/ARM, Windows x86_64/ARM)
+   - Validates PR title matches `vX.Y.Z` format
+   - Runs `cargo publish --dry-run` to verify crates.io readiness
+
+4. **Merge the PR** - triggers release automation (`.github/workflows/release.yml`):
+   - Builds release binaries for all platforms
+   - Publishes to crates.io
+   - Creates a git tag matching the PR title
+   - Creates a GitHub Release with platform-specific zip files
+
+**Supported Platforms:**
+- `x86_64-unknown-linux-gnu` (Linux x86_64)
+- `aarch64-unknown-linux-gnu` (Linux ARM64)
+- `x86_64-apple-darwin` (macOS Intel)
+- `aarch64-apple-darwin` (macOS Apple Silicon)
+- `x86_64-pc-windows-msvc` (Windows x86_64)
+- `aarch64-pc-windows-msvc` (Windows ARM64)
+
+**Release Artifacts:**
+Each release includes zip files for each platform containing the `rheo` binary, available on the GitHub Releases page.
+
 ---
 
 ## Version Control with Jujutsu
