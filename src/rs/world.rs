@@ -118,7 +118,7 @@ impl RheoWorld {
         let package_storage = PackageStorage::new(
             None, // Use default cache directory
             None, // Use default data directory
-            Downloader::new("rheo/0.1.0"),
+            Downloader::new(concat!("rheo/", env!("CARGO_PKG_VERSION"))),
         );
 
         Ok(Self {

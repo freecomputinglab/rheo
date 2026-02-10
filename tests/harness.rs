@@ -245,20 +245,19 @@ fn test_pdf_merge() {
 
     let test_name = "pdf_merge";
     let test_case = TestCase::new(&format!("tests/cases/{}", test_name));
-    let project_path = test_case.project_path();
+    let original_project_path = test_case.project_path();
 
-    // Clean and compile
-    let clean_output = std::process::Command::new("cargo")
-        .args(["run", "--", "clean", project_path.to_str().unwrap()])
-        .output()
-        .expect("Failed to run rheo clean");
-
-    if !clean_output.status.success() {
-        eprintln!(
-            "Warning: Clean failed: {}",
-            String::from_utf8_lossy(&clean_output.stderr)
-        );
+    // Create isolated test store
+    let test_store = PathBuf::from("tests/store").join(test_name);
+    if test_store.exists() {
+        std::fs::remove_dir_all(&test_store).expect("Failed to clean test store");
     }
+    std::fs::create_dir_all(&test_store).expect("Failed to create test store");
+    copy_project_to_test_store(original_project_path, &test_store)
+        .expect("Failed to copy project to test store");
+
+    let project_path = test_store.clone();
+    let build_dir = test_store.join("build");
 
     // Compile with PDF merge
     let output = std::process::Command::new("cargo")
@@ -268,6 +267,8 @@ fn test_pdf_merge() {
             "compile",
             project_path.to_str().unwrap(),
             "--pdf",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
         ])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
@@ -281,7 +282,7 @@ fn test_pdf_merge() {
     }
 
     // Verify merged PDF created with correct name
-    let pdf_path = project_path.join("build/pdf/pdf_merge.pdf");
+    let pdf_path = build_dir.join("pdf/pdf_merge.pdf");
     assert!(pdf_path.exists(), "Merged PDF not created at expected path");
 
     // Verify valid PDF format and can be loaded
@@ -305,9 +306,10 @@ fn test_pdf_merge() {
         "Page count mismatch"
     );
 
-    // Note: lopdf doesn't easily expose document title from metadata
-    // The title is set via compile_pdf_merged but verifying it would require
-    // parsing PDF metadata stream which lopdf doesn't expose directly
+    // Clean up
+    if test_store.exists() {
+        std::fs::remove_dir_all(&test_store).ok();
+    }
 }
 
 /// Test error case: link to file not in spine

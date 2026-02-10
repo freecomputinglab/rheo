@@ -1,8 +1,8 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
-/// Current supported manifest version
-pub const CURRENT: &str = "0.1.0";
+/// Current supported manifest version (derived from Cargo.toml)
+pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
 /// Newtype wrapper around semver::Version for type-safe manifest versioning
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,12 +14,6 @@ impl ManifestVersion {
         Self(semver::Version::parse(CURRENT).expect("CURRENT constant must be valid semver"))
     }
 
-    /// Checks if this version is compatible with the supported version
-    ///
-    /// Returns true if self <= supported (forward compatibility)
-    pub fn is_compatible_with(&self, supported: &ManifestVersion) -> bool {
-        self.0 <= supported.0
-    }
 }
 
 impl fmt::Display for ManifestVersion {
@@ -60,28 +54,22 @@ mod tests {
     #[test]
     fn test_current_version_is_valid() {
         let version = ManifestVersion::current();
-        assert_eq!(version.to_string(), CURRENT);
+        // Verify it parses and matches the crate version
+        assert_eq!(version.to_string(), env!("CARGO_PKG_VERSION"));
     }
 
     #[test]
-    fn test_is_compatible_with_same_version() {
-        let v1 = ManifestVersion(semver::Version::parse("0.1.0").unwrap());
-        let v2 = ManifestVersion(semver::Version::parse("0.1.0").unwrap());
-        assert!(v1.is_compatible_with(&v2));
+    fn test_matches_same_version() {
+        let current = ManifestVersion::current();
+        let same = ManifestVersion(semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap());
+        assert_eq!(current, same);
     }
 
     #[test]
-    fn test_is_compatible_with_older_version() {
-        let older = ManifestVersion(semver::Version::parse("0.1.0").unwrap());
-        let newer = ManifestVersion(semver::Version::parse("0.2.0").unwrap());
-        assert!(older.is_compatible_with(&newer));
-    }
-
-    #[test]
-    fn test_is_not_compatible_with_newer_version() {
-        let newer = ManifestVersion(semver::Version::parse("0.2.0").unwrap());
-        let older = ManifestVersion(semver::Version::parse("0.1.0").unwrap());
-        assert!(!newer.is_compatible_with(&older));
+    fn test_mismatch_with_different_version() {
+        let current = ManifestVersion::current();
+        let different = ManifestVersion(semver::Version::parse("0.0.1").unwrap());
+        assert_ne!(current, different);
     }
 
     #[test]
@@ -91,12 +79,9 @@ mod tests {
             version: ManifestVersion,
         }
 
-        let toml_str = r#"version = "0.1.0""#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(
-            config.version,
-            ManifestVersion(semver::Version::parse("0.1.0").unwrap())
-        );
+        let toml_str = format!("version = \"{}\"", env!("CARGO_PKG_VERSION"));
+        let config: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(config.version, ManifestVersion::current());
     }
 
     #[test]
@@ -117,8 +102,8 @@ mod tests {
 
     #[test]
     fn test_display_format() {
-        let version = ManifestVersion(semver::Version::parse("0.1.0").unwrap());
-        assert_eq!(version.to_string(), "0.1.0");
+        let version = ManifestVersion(semver::Version::parse("1.2.3").unwrap());
+        assert_eq!(version.to_string(), "1.2.3");
     }
 
     #[test]

@@ -369,13 +369,10 @@ mod tests {
         let config_path = temp.path().join("rheo.toml");
         fs::write(
             &config_path,
-            r#"
-version = "0.1.0"
-
-[epub.spine]
-title = "Custom Title"
-vertebrae = ["custom.typ"]
-"#,
+            format!(
+                "version = \"{}\"\n\n[epub.spine]\ntitle = \"Custom Title\"\nvertebrae = [\"custom.typ\"]\n",
+                env!("CARGO_PKG_VERSION")
+            ),
         )
         .unwrap();
         fs::write(temp.path().join("custom.typ"), "content").unwrap();

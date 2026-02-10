@@ -360,6 +360,11 @@ impl RheoConfig {
 mod tests {
     use super::*;
 
+    /// Build a test TOML string with the current crate version prepended.
+    fn versioned_toml(rest: &str) -> String {
+        format!("version = \"{}\"\n{}", env!("CARGO_PKG_VERSION"), rest)
+    }
+
     #[test]
     fn test_default_config() {
         let config = RheoConfig::default();
@@ -382,44 +387,29 @@ mod tests {
 
     #[test]
     fn test_formats_from_config() {
-        let toml = r#"
-        version = "0.1.0"
-        formats = ["pdf"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml(r#"formats = ["pdf"]"#);
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         assert_eq!(config.formats, vec![OutputFormat::Pdf]);
     }
 
     #[test]
     fn test_formats_defaults_when_not_specified() {
-        let toml = r#"
-        version = "0.1.0"
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml("");
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         assert_eq!(config.formats, OutputFormat::all_variants());
     }
 
     #[test]
     fn test_formats_multiple_values() {
-        let toml = r#"
-        version = "0.1.0"
-        formats = ["html", "epub"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml(r#"formats = ["html", "epub"]"#);
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         assert_eq!(config.formats, vec![OutputFormat::Html, OutputFormat::Epub]);
     }
 
     #[test]
     fn test_formats_case_insensitive() {
-        let toml = r#"
-        version = "0.1.0"
-        formats = ["PDF", "Html", "ePub"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml(r#"formats = ["PDF", "Html", "ePub"]"#);
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         assert_eq!(
             config.formats,
             vec![OutputFormat::Pdf, OutputFormat::Html, OutputFormat::Epub]
@@ -428,12 +418,8 @@ mod tests {
 
     #[test]
     fn test_formats_invalid_format_name() {
-        let toml = r#"
-        version = "0.1.0"
-        formats = ["invalid"]
-        "#;
-
-        let result = toml::from_str::<RheoConfig>(toml);
+        let toml = versioned_toml(r#"formats = ["invalid"]"#);
+        let result = toml::from_str::<RheoConfig>(&toml);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("unknown variant"));
@@ -485,42 +471,30 @@ mod tests {
 
     #[test]
     fn test_html_config_custom_stylesheets() {
-        let toml = r#"
-        version = "0.1.0"
-        [html]
-        stylesheets = ["custom.css", "theme.css"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml(
+            "[html]\nstylesheets = [\"custom.css\", \"theme.css\"]",
+        );
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         assert_eq!(config.html.stylesheets, vec!["custom.css", "theme.css"]);
-        // Fonts should use default (empty)
         assert_eq!(config.html.fonts.len(), 0);
     }
 
     #[test]
     fn test_html_config_custom_fonts() {
-        let toml = r#"
-        version = "0.1.0"
-        [html]
-        fonts = ["https://example.com/font.css"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml(
+            "[html]\nfonts = [\"https://example.com/font.css\"]",
+        );
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         assert_eq!(config.html.fonts, vec!["https://example.com/font.css"]);
-        // Stylesheets should use default
         assert_eq!(config.html.stylesheets, vec!["style.css"]);
     }
 
     #[test]
     fn test_html_config_both_custom() {
-        let toml = r#"
-        version = "0.1.0"
-        [html]
-        stylesheets = ["a.css", "b.css"]
-        fonts = ["https://fonts.com/font1.css", "https://fonts.com/font2.css"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml(
+            "[html]\nstylesheets = [\"a.css\", \"b.css\"]\nfonts = [\"https://fonts.com/font1.css\", \"https://fonts.com/font2.css\"]",
+        );
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         assert_eq!(config.html.stylesheets, vec!["a.css", "b.css"]);
         assert_eq!(
             config.html.fonts,
@@ -530,15 +504,10 @@ mod tests {
 
     #[test]
     fn test_pdf_spine_with_merge_true() {
-        let toml = r#"
-        version = "0.1.0"
-        [pdf.spine]
-        title = "My Book"
-        vertebrae = ["cover.typ", "chapters/*.typ"]
-        merge = true
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml(
+            "[pdf.spine]\ntitle = \"My Book\"\nvertebrae = [\"cover.typ\", \"chapters/*.typ\"]\nmerge = true",
+        );
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         let spine = config.pdf.spine.as_ref().unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "My Book");
         assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
@@ -547,15 +516,10 @@ mod tests {
 
     #[test]
     fn test_pdf_spine_with_merge_false() {
-        let toml = r#"
-        version = "0.1.0"
-        [pdf.spine]
-        title = "My Book"
-        vertebrae = ["cover.typ", "chapters/*.typ"]
-        merge = false
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml(
+            "[pdf.spine]\ntitle = \"My Book\"\nvertebrae = [\"cover.typ\", \"chapters/*.typ\"]\nmerge = false",
+        );
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         let spine = config.pdf.spine.as_ref().unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "My Book");
         assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
@@ -564,14 +528,10 @@ mod tests {
 
     #[test]
     fn test_pdf_spine_merge_omitted() {
-        let toml = r#"
-        version = "0.1.0"
-        [pdf.spine]
-        title = "My Book"
-        vertebrae = ["cover.typ"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml(
+            "[pdf.spine]\ntitle = \"My Book\"\nvertebrae = [\"cover.typ\"]",
+        );
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         let spine = config.pdf.spine.as_ref().unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "My Book");
         assert_eq!(spine.vertebrae, vec!["cover.typ"]);
@@ -580,49 +540,35 @@ mod tests {
 
     #[test]
     fn test_epub_spine() {
-        let toml = r#"
-        version = "0.1.0"
-        [epub.spine]
-        title = "My EPUB"
-        vertebrae = ["intro.typ", "chapter*.typ", "outro.typ"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml(
+            "[epub.spine]\ntitle = \"My EPUB\"\nvertebrae = [\"intro.typ\", \"chapter*.typ\", \"outro.typ\"]",
+        );
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         let spine = config.epub.spine.as_ref().unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "My EPUB");
         assert_eq!(
             spine.vertebrae,
             vec!["intro.typ", "chapter*.typ", "outro.typ"]
         );
-        // assert_eq!(spine.merge, None);
     }
 
     #[test]
     fn test_html_spine() {
-        let toml = r#"
-        version = "0.1.0"
-        [html.spine]
-        title = "My Website"
-        vertebrae = ["index.typ", "about.typ"]
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml(
+            "[html.spine]\ntitle = \"My Website\"\nvertebrae = [\"index.typ\", \"about.typ\"]",
+        );
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         let spine = config.html.spine.as_ref().unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "My Website");
         assert_eq!(spine.vertebrae, vec!["index.typ", "about.typ"]);
-        // Note: HtmlSpine has no merge field - HTML always produces per-file output
     }
 
     #[test]
     fn test_spine_empty_vertebrae() {
-        let toml = r#"
-        version = "0.1.0"
-        [epub.spine]
-        title = "Single File Book"
-        vertebrae = []
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml(
+            "[epub.spine]\ntitle = \"Single File Book\"\nvertebrae = []",
+        );
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         let spine = config.epub.spine.as_ref().unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "Single File Book");
         assert!(spine.vertebrae.is_empty());
@@ -630,15 +576,10 @@ mod tests {
 
     #[test]
     fn test_spine_complex_glob_patterns() {
-        let toml = r#"
-        version = "0.1.0"
-        [pdf.spine]
-        title = "Complex Book"
-        vertebrae = ["frontmatter/**/*.typ", "chapters/**/ch*.typ", "appendix.typ"]
-        merge = true
-        "#;
-
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+        let toml = versioned_toml(
+            "[pdf.spine]\ntitle = \"Complex Book\"\nvertebrae = [\"frontmatter/**/*.typ\", \"chapters/**/ch*.typ\", \"appendix.typ\"]\nmerge = true",
+        );
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         let spine = config.pdf.spine.as_ref().unwrap();
         assert_eq!(spine.vertebrae.len(), 3);
         assert_eq!(spine.vertebrae[0], "frontmatter/**/*.typ");
