@@ -25,5 +25,5 @@
   doc
 }
 
-// Set a default font
-#set text(font: ("Times New Roman", "Arial", "Helvetica"))
+// Libertinus Serif is embedded in Typst, so we can rely on it always being available. Any subsequent font declarations will override this. 
+#set text(font: "Libertinus Serif")
