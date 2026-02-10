@@ -18,12 +18,12 @@ pub trait ValidateConfig {
 
 impl ValidateConfig for RheoConfig {
     fn validate(&self) -> Result<()> {
-        // Check version compatibility
+        // Check version match
         let current = ManifestVersion::current();
-        if !self.version.is_compatible_with(&current) {
+        if self.version != current {
             warn!(
-                "rheo.toml version {} is newer than supported version {}. \
-                 Some features may not work correctly. Consider upgrading rheo.",
+                "rheo.toml version {} does not match rheo version {}. \
+                 Consider updating your rheo.toml version field.",
                 self.version, current
             );
         }
@@ -258,11 +258,9 @@ mod tests {
     }
 
     #[test]
-    fn test_rheo_config_validates_with_compatible_version() {
-        let toml = r#"
-        version = "0.1.0"
-        "#;
-        let config: RheoConfig = toml::from_str(toml).unwrap();
+    fn test_rheo_config_validates_with_matching_version() {
+        let toml = format!("version = \"{}\"", env!("CARGO_PKG_VERSION"));
+        let config: RheoConfig = toml::from_str(&toml).unwrap();
         // Should validate successfully without warnings
         assert!(config.validate().is_ok());
     }
@@ -274,7 +272,18 @@ mod tests {
         version = "99.0.0"
         "#;
         let config: RheoConfig = toml::from_str(toml).unwrap();
-        // Should validate successfully but log warning
+        // Should validate successfully but log warning (mismatch)
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_rheo_config_warns_on_older_version() {
+        // Create config with version 0.0.1 (older than current)
+        let toml = r#"
+        version = "0.0.1"
+        "#;
+        let config: RheoConfig = toml::from_str(toml).unwrap();
+        // Should validate successfully but log warning (mismatch)
         assert!(config.validate().is_ok());
     }
 }

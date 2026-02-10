@@ -1,4 +1,3 @@
-version = "0.1.0"
 
 # Test project for error formatting validation
 formats = ["pdf"]
