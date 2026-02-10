@@ -82,7 +82,7 @@ ntest = "0.9.3"
 sha2 = "0.10"
 
 [profile.release]
-opt-level = 3
+opt-level = 1
 lto = true
 codegen-units = 1
 
