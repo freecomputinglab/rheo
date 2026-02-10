@@ -150,7 +150,7 @@ Projects can include a `rheo.toml` configuration file in the project root to cus
 
 **Example rheo.toml:**
 ```toml
-version = "0.1.1"
+version = "0.1.2"
 
 content_dir = "content"
 
@@ -172,9 +172,9 @@ formats = ["html", "pdf"]
 
 ```toml
 # Manifest version (required)
-version = "0.1.1"  # Required: Manifest version for rheo.toml API compatibility
-                   # Must be valid semver (e.g., "0.1.1")
-                   # Current supported version: 0.1.1
+version = "0.1.2"  # Required: Manifest version for rheo.toml API compatibility
+                   # Must be valid semver (e.g., "0.1.2")
+                   # Current supported version: 0.1.2
 
 # Project-level configuration
 content_dir = "content"  # Directory containing .typ files (relative to project root)
@@ -233,7 +233,7 @@ vertebrae = ["cover.typ", "chapters/**/*.typ"]  # Glob patterns for files to inc
 **Configuration Field Details:**
 
 **Top-level fields:**
-- `version` (string, required): Manifest version for rheo.toml API compatibility. Must be valid semver (e.g., "0.1.1"). The manifest version must match the rheo CLI version. Current supported version: 0.1.1
+- `version` (string, required): Manifest version for rheo.toml API compatibility. Must be valid semver (e.g., "0.1.2"). The manifest version must match the rheo CLI version. Current supported version: 0.1.2
 - `content_dir` (string, optional): Directory containing .typ source files. If omitted, searches entire project root.
 - `build_dir` (string, optional): Output directory for compiled files. Defaults to `./build`.
 - `formats` (array of strings, optional): Default output formats. Defaults to `["html", "epub", "pdf"]`.
@@ -269,15 +269,15 @@ vertebrae = ["cover.typ", "chapters/**/*.typ"]  # Glob patterns for files to inc
 
 rheo.toml files must include a version field that matches the rheo CLI version.
 
-- **Required field**: Every rheo.toml must have `version = "0.1.1"` (quoted string)
+- **Required field**: Every rheo.toml must have `version = "0.1.2"` (quoted string)
 - **Semantic versioning**: Uses full semver format (major.minor.patch)
 - **Exact match required**: rheo warns if config version doesn't match CLI version
-- **Current version**: 0.1.1
+- **Current version**: 0.1.2
 - **When to bump**: Manifest version now tracks the CLI version (bumped with each release)
 
 **Error handling:**
 - **Missing version**: Error at config load time with message to add version field
-- **Invalid version**: Error with explanation of expected semver format (must be quoted string like "0.1.1")
+- **Invalid version**: Error with explanation of expected semver format (must be quoted string like "0.1.2")
 - **Version mismatch**: Warning (non-fatal) suggesting rheo.toml version update
 
 ### Default Behavior Without rheo.toml
