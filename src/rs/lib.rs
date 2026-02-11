@@ -4,6 +4,7 @@ pub mod config;
 pub mod constants;
 pub mod error;
 pub mod formats;
+pub mod init;
 pub mod logging;
 pub mod manifest_version;
 pub mod output;
