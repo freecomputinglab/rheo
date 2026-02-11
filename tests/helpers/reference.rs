@@ -369,9 +369,9 @@ fn create_binary_metadata(
     };
 
     // Detect source file location to create repo-relative path
-    // For CSS files, use the common source location since they're copied from src/css/
+    // For CSS files, store the build-relative path directly (CSS is at the html root)
     let repo_relative_path = if filetype == "css" {
-        PathBuf::from("src/css").join(rel_path)
+        PathBuf::from(rel_path)
     } else if project_path.join("content").join(rel_path).exists() {
         project_path.join("content").join(rel_path)
     } else if project_path.join(rel_path).exists() {

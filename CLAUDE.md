@@ -759,6 +759,7 @@ Then use `mcp__beads__*` functions instead of CLI commands.
 - ❌ Do NOT create markdown TODO lists
 - ❌ Do NOT use external issue trackers
 - ❌ Do NOT duplicate tracking systems
+- ❌ Do NOT run `bd sync` — beads is local-only in this project, there is nothing to sync
 
 ---
 

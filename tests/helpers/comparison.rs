@@ -124,7 +124,12 @@ where
 
 fn extract_build_relative_path(repo_relative_path: &str) -> PathBuf {
     let path = PathBuf::from(repo_relative_path);
-    let after_project = path.components().skip(2).collect::<PathBuf>();
+    let components: Vec<_> = path.components().collect();
+    // If path has fewer than 3 components, it's already a build-relative path (e.g. "style.css")
+    if components.len() <= 2 {
+        return path;
+    }
+    let after_project = components.into_iter().skip(2).collect::<PathBuf>();
     after_project
         .strip_prefix("content")
         .unwrap_or(&after_project)

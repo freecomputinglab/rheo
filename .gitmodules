@@ -1,7 +1,0 @@
-[submodule "examples/rheo_docs"]
-	path = examples/rheo_docs
-	url = https://github.com/freecomputinglab/rheo.ohrg.org
-
-[submodule "examples/fcl_site"]
-	path = examples/fcl_site
-	url = https://github.com/freecomputinglab/freecomputinglab.ohrg.org
