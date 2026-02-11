@@ -80,7 +80,7 @@ impl OutputConfig {
     /// * `Err` if copying failed
     pub fn copy_html_assets(&self, project_style_css: Option<&Path>) -> Result<()> {
         // Default bundled CSS (embedded at compile time)
-        const DEFAULT_CSS: &str = include_str!("../css/style.css");
+        const DEFAULT_CSS: &str = include_str!("../templates/init/style.css");
 
         let dest_path = self.html_dir.join("style.css");
 

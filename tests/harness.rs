@@ -15,7 +15,6 @@ use std::path::PathBuf;
 #[test_case("examples/blog_post")]
 #[test_case("examples/rheo_docs")]
 #[test_case("examples/fcl_site")]
-#[test_case("examples/init_template")]
 #[test_case("examples/cover-letter.typ")]
 #[test_case("examples/blog_site/content/index.typ")]
 #[test_case("examples/blog_site/content/severance-ep-1.typ")]
@@ -578,4 +577,71 @@ fn test_warning_formatting() {
     let _ = std::process::Command::new("cargo")
         .args(["run", "--", "clean", test_dir.to_str().unwrap()])
         .output();
+}
+
+/// Test that `rheo init` creates a valid project that compiles successfully
+#[test]
+fn test_rheo_init_and_compile() {
+    let test_dir = PathBuf::from("tests/store/init_project");
+
+    // Clean previous test artifacts
+    if test_dir.exists() {
+        std::fs::remove_dir_all(&test_dir).expect("Failed to clean test dir");
+    }
+
+    // Run `rheo init`
+    let init_output = std::process::Command::new("cargo")
+        .args(["run", "--", "init", test_dir.to_str().unwrap()])
+        .output()
+        .expect("Failed to run rheo init");
+
+    assert!(
+        init_output.status.success(),
+        "rheo init failed: {}",
+        String::from_utf8_lossy(&init_output.stderr)
+    );
+
+    // Verify expected files exist
+    assert!(test_dir.join("rheo.toml").exists(), "Missing rheo.toml");
+    assert!(test_dir.join("style.css").exists(), "Missing style.css");
+    assert!(
+        test_dir.join("content/index.typ").exists(),
+        "Missing content/index.typ"
+    );
+    assert!(
+        test_dir.join("content/about.typ").exists(),
+        "Missing content/about.typ"
+    );
+
+    // Compile the initialized project
+    let build_dir = test_dir.join("build");
+    let compile_output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "--",
+            "compile",
+            test_dir.to_str().unwrap(),
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        compile_output.status.success(),
+        "Compilation of init project failed: {}",
+        String::from_utf8_lossy(&compile_output.stderr)
+    );
+
+    // Verify outputs were created
+    assert!(
+        build_dir.join("html").exists(),
+        "HTML output directory missing"
+    );
+
+    // Clean up
+    if test_dir.exists() {
+        std::fs::remove_dir_all(&test_dir).ok();
+    }
 }

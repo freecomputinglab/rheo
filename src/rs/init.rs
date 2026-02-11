@@ -4,12 +4,12 @@ use tracing::info;
 
 use crate::Result;
 
-const RHEO_TOML: &str = include_str!("../../examples/init_template/rheo.toml");
-const STYLE_CSS: &str = include_str!("../../examples/init_template/style.css");
-const INDEX_TYP: &str = include_str!("../../examples/init_template/content/index.typ");
-const ABOUT_TYP: &str = include_str!("../../examples/init_template/content/about.typ");
-const REFERENCES_BIB: &str = include_str!("../../examples/init_template/content/references.bib");
-const HEADER_SVG: &str = include_str!("../../examples/init_template/content/img/header.svg");
+const RHEO_TOML: &str = include_str!("../templates/init/rheo.toml");
+const STYLE_CSS: &str = include_str!("../templates/init/style.css");
+const INDEX_TYP: &str = include_str!("../templates/init/content/index.typ");
+const ABOUT_TYP: &str = include_str!("../templates/init/content/about.typ");
+const REFERENCES_BIB: &str = include_str!("../templates/init/content/references.bib");
+const HEADER_SVG: &str = include_str!("../templates/init/content/img/header.svg");
 
 /// Initialize a new Rheo project at the given path.
 ///
