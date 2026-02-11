@@ -1,0 +1,10 @@
+name: Setup Rust
+description: Setup Rust toolchain
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    - name: Cache cargo dependencies
+      uses: Swatinem/rust-cache@v2
