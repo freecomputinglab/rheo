@@ -28,7 +28,7 @@ pub fn init_project(path: &Path) -> Result<()> {
             entry
                 .file_name()
                 .to_str()
-                .map_or(true, |name| !name.starts_with('.'))
+                .is_none_or(|name| !name.starts_with('.'))
         });
 
     if has_non_hidden {
@@ -39,9 +39,8 @@ pub fn init_project(path: &Path) -> Result<()> {
     }
 
     // Create subdirectories
-    fs::create_dir_all(path.join("content/img")).map_err(|e| {
-        crate::RheoError::io(e, "creating content/img directory")
-    })?;
+    fs::create_dir_all(path.join("content/img"))
+        .map_err(|e| crate::RheoError::io(e, "creating content/img directory"))?;
 
     // Write template files
     let files: &[(&str, &str)] = &[
