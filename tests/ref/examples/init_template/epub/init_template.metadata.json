@@ -1,10 +1,11 @@
 {
   "filetype": "epub",
-  "file_size": 1307924,
-  "title": "The Free Computing Lab",
+  "file_size": 5083,
+  "title": "rheo_project",
   "language": "en",
   "spine_files": [
-    "index.xhtml"
+    "index.xhtml",
+    "about.xhtml"
   ],
   "has_nav": true
 }

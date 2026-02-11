@@ -162,6 +162,12 @@ pub enum Commands {
         #[arg(long)]
         build_dir: Option<PathBuf>,
     },
+
+    /// Initialize a new Rheo project
+    Init {
+        /// Path to the new project directory
+        path: PathBuf,
+    },
 }
 
 /// Resolve a path relative to a base directory
@@ -856,6 +862,7 @@ impl Cli {
                 info!(project = %project.name, "build artifacts removed");
                 Ok(())
             }
+            Commands::Init { path } => crate::init::init_project(&path),
         }
     }
 }
