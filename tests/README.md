@@ -15,11 +15,16 @@ tests/
 │   └── markers.rs           # Test marker parser for .typ files
 ├── ref/                     # Reference outputs (committed to git)
 │   ├── examples/            # Project tests
-│   │   └── blog_site/
-│   │       ├── html/        # Reference HTML outputs
-│   │       └── pdf/         # Reference PDF metadata (*.metadata.json)
+│   │   ├── blog_site/
+│   │   │   ├── html/        # Reference HTML outputs
+│   │   │   ├── pdf/         # Reference PDF metadata (*.metadata.json)
+│   │   │   └── epub/        # Reference EPUB metadata
+│   │   ├── blog_post/
+│   │   ├── rheo_docs/
+│   │   ├── fcl_site/
+│   │   └── init_template/
 │   ├── cases/               # Custom project tests
-│   └── files/               # Single-file tests (NEW)
+│   └── files/               # Single-file tests
 │       └── <hash>/          # Hash-based directory for each file
 │           └── <filename>/
 │               ├── html/
@@ -36,7 +41,7 @@ cargo test
 
 ### Run integration tests only
 ```bash
-cargo test --test integration_test
+cargo test --test harness
 ```
 
 ### Run with verbose output
@@ -106,7 +111,7 @@ When you make intentional changes to rheo's output, update the reference files:
 
 ### Update all references
 ```bash
-UPDATE_REFERENCES=1 cargo test --test integration_test
+UPDATE_REFERENCES=1 cargo test --test harness
 ```
 
 This will:
@@ -120,12 +125,12 @@ After updating, commit the changed reference files to git.
 
 ### Run only HTML tests (across all projects that support HTML)
 ```bash
-RUN_HTML_TESTS=1 cargo test --test integration_test
+RUN_HTML_TESTS=1 cargo test --test harness
 ```
 
 ### Run only PDF tests (across all projects that support PDF)
 ```bash
-RUN_PDF_TESTS=1 cargo test --test integration_test
+RUN_PDF_TESTS=1 cargo test --test harness
 ```
 
 ### Run both formats explicitly
