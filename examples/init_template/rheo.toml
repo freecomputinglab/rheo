@@ -1,0 +1,11 @@
+version = "0.1.1"
+content_dir = "content"
+
+[pdf.spine]
+title = "rheo_project"
+vertebrae = ["index.typ"]
+merge = true
+
+[epub.spine]
+title = "rheo_project"
+vertebrae = ["index.typ", "about.typ"]
