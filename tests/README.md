@@ -20,8 +20,6 @@ tests/
 │   │   │   ├── pdf/         # Reference PDF metadata (*.metadata.json)
 │   │   │   └── epub/        # Reference EPUB metadata
 │   │   ├── blog_post/
-│   │   ├── rheo_docs/
-│   │   ├── fcl_site/
 │   │   └── init_template/
 │   ├── cases/               # Custom project tests
 │   └── files/               # Single-file tests
@@ -48,38 +46,6 @@ cargo test --test harness
 ```bash
 cargo test -- --nocapture
 ```
-
-## Git Submodules
-
-This project includes external example repositories as git submodules:
-
-- `examples/rheo_docs` - Rheo documentation/manual
-
-### Setup
-
-After cloning the repository, initialize submodules before running tests:
-
-```bash
-# Initialize submodules
-git submodule update --init --recursive
-```
-
-### Updating Submodules
-
-To update submodules to the latest upstream version:
-
-```bash
-# Update all submodules to latest
-git submodule update --remote
-
-# Or update specific submodule
-cd examples/rheo_docs
-git pull origin main
-cd ../..
-git add examples/rheo_docs
-```
-
-**Note**: While rheo uses Jujutsu (jj) for version control, git submodule commands must be used for submodule management. After using git commands for submodules, return to the normal jj workflow for committing changes.
 
 ## Font Consistency
 
