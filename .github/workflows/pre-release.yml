@@ -4,7 +4,7 @@ on:
   pull_request:
     branches:
       - "main"
-    types: [opened,labeled,edited,synchronize]
+    types: [labeled,edited,synchronize]
 
 jobs:
   test-artifacts:
