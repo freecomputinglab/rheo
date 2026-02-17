@@ -42,9 +42,10 @@ pub fn init_project(path: &Path) -> Result<()> {
     fs::create_dir_all(path.join("content/img"))
         .map_err(|e| crate::RheoError::io(e, "creating content/img directory"))?;
 
-    // Write template files
+    // Write template files, replacing version placeholder in rheo.toml
+    let rheo_toml = RHEO_TOML.replace("{{VERSION}}", env!("CARGO_PKG_VERSION"));
     let files: &[(&str, &str)] = &[
-        ("rheo.toml", RHEO_TOML),
+        ("rheo.toml", &rheo_toml),
         ("style.css", STYLE_CSS),
         ("content/index.typ", INDEX_TYP),
         ("content/about.typ", ABOUT_TYP),
