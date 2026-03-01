@@ -1,4 +1,3 @@
-use crate::OutputFormat;
 use std::collections::HashMap;
 use tracing::info;
 
@@ -12,7 +11,7 @@ pub struct FormatResult {
 /// Aggregated compilation results across all output formats
 #[derive(Debug, Default)]
 pub struct CompilationResults {
-    results: HashMap<OutputFormat, FormatResult>,
+    results: HashMap<String, FormatResult>,
 }
 
 impl CompilationResults {
@@ -23,19 +22,19 @@ impl CompilationResults {
         }
     }
 
-    /// Record a successful compilation for the given format
-    pub fn record_success(&mut self, format: OutputFormat) {
-        self.results.entry(format).or_default().succeeded += 1;
+    /// Record a successful compilation for the given plugin
+    pub fn record_success(&mut self, name: &str) {
+        self.results.entry(name.to_string()).or_default().succeeded += 1;
     }
 
-    /// Record a failed compilation for the given format
-    pub fn record_failure(&mut self, format: OutputFormat) {
-        self.results.entry(format).or_default().failed += 1;
+    /// Record a failed compilation for the given plugin
+    pub fn record_failure(&mut self, name: &str) {
+        self.results.entry(name.to_string()).or_default().failed += 1;
     }
 
-    /// Get the result counts for a specific format
-    pub fn get(&self, format: OutputFormat) -> FormatResult {
-        self.results.get(&format).copied().unwrap_or_default()
+    /// Get the result counts for a specific plugin
+    pub fn get(&self, name: &str) -> FormatResult {
+        self.results.get(name).copied().unwrap_or_default()
     }
 
     /// Check if any compilations failed
@@ -43,20 +42,20 @@ impl CompilationResults {
         self.results.values().any(|r| r.failed > 0)
     }
 
-    /// Log a summary of compilation results for requested formats
-    pub fn log_summary(&self, requested_formats: &[OutputFormat]) {
-        for format in requested_formats {
-            let result = self.get(*format);
+    /// Log a summary of compilation results for requested plugins
+    pub fn log_summary(&self, names: &[&str]) {
+        for name in names {
+            let result = self.get(name);
             let total = result.succeeded + result.failed;
             if total > 0 {
                 if result.failed == 0 {
                     info!(
-                        format = format!("{:?}", format),
+                        format = *name,
                         "successfully compiled {} file(s)", result.succeeded
                     );
                 } else {
                     info!(
-                        format = format!("{:?}", format),
+                        format = *name,
                         "compiled {} file(s), {} failed", result.succeeded, result.failed
                     );
                 }

@@ -4,8 +4,9 @@ use crate::constants::TYPST_LABEL_PATTERN;
 use crate::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::reticulate::spine::RheoSpine;
 use crate::world::RheoWorld;
-use crate::{OutputFormat, Result, RheoError};
+use crate::{Result, RheoError};
 use std::io::Write;
+
 use std::path::Path;
 use tempfile::NamedTempFile;
 use tracing::{debug, info};
@@ -18,14 +19,6 @@ pub struct PdfPlugin;
 
 impl FormatPlugin for PdfPlugin {
     fn name(&self) -> &'static str {
-        "pdf"
-    }
-
-    fn output_format(&self) -> OutputFormat {
-        OutputFormat::Pdf
-    }
-
-    fn extension(&self) -> &'static str {
         "pdf"
     }
 
@@ -55,7 +48,7 @@ impl FormatPlugin for PdfPlugin {
 /// Pipeline: Compile (with transformations) → Export → Write
 fn compile_pdf_single_impl_fresh(input: &Path, output: &Path, root: &Path) -> Result<()> {
     // Create format-aware world (handles link removal on import)
-    let world = RheoWorld::new(root, input, Some(OutputFormat::Pdf))?;
+    let world = RheoWorld::new(root, input, Some("pdf"))?;
 
     // Compile the document
     info!(input = %input.display(), "compiling to PDF");

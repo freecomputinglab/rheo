@@ -7,7 +7,8 @@ use xhtml::HtmlInfo;
 use crate::compile::RheoCompileOptions;
 use crate::config::{EpubConfig, EpubOptions, RheoConfig, SpineConfig};
 use crate::reticulate::spine::RheoSpine;
-use crate::{OutputFormat, Result, RheoError};
+use crate::{Result, RheoError};
+
 use anyhow::Result as AnyhowResult;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
@@ -36,14 +37,6 @@ pub struct EpubPlugin;
 
 impl FormatPlugin for EpubPlugin {
     fn name(&self) -> &'static str {
-        "epub"
-    }
-
-    fn output_format(&self) -> OutputFormat {
-        OutputFormat::Epub
-    }
-
-    fn extension(&self) -> &'static str {
         "epub"
     }
 
@@ -358,7 +351,7 @@ impl EpubItem {
         let document = crate::plugins::html::compile_html_to_document(
             &path,
             root,
-            OutputFormat::Epub,
+            "epub",
         )?;
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();
@@ -398,7 +391,7 @@ impl EpubItem {
         let document = crate::plugins::html::compile_html_to_document(
             temp_path,
             root,
-            OutputFormat::Epub,
+            "epub",
         )?;
 
         let parent = path.parent().unwrap();

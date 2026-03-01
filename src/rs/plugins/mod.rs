@@ -2,7 +2,7 @@ use crate::compile::RheoCompileOptions;
 use crate::config::{RheoConfig, SpineConfig};
 use crate::output::OutputConfig;
 use crate::project::ProjectConfig;
-use crate::{OutputFormat, Result};
+use crate::Result;
 use std::path::Path;
 
 pub mod epub;
@@ -33,14 +33,8 @@ pub struct PluginContext<'a> {
 }
 
 pub trait FormatPlugin: Send + Sync {
-    /// Plugin identifier and CLI flag (e.g. "html", "pdf", "epub")
+    /// Plugin identifier, CLI flag, and output subdirectory name (e.g. "html", "pdf", "epub")
     fn name(&self) -> &'static str;
-
-    /// OutputFormat for RheoWorld link-transform selection
-    fn output_format(&self) -> OutputFormat;
-
-    /// Output file extension (usually same as name)
-    fn extension(&self) -> &'static str;
 
     /// Whether this plugin supports the dev server / live preview
     fn supports_live_preview(&self) -> bool {
@@ -68,9 +62,9 @@ pub fn all_plugins() -> Vec<Box<dyn FormatPlugin>> {
     ]
 }
 
-pub fn plugins_for_formats(formats: &[OutputFormat]) -> Vec<Box<dyn FormatPlugin>> {
+pub fn plugins_for_names(names: &[String]) -> Vec<Box<dyn FormatPlugin>> {
     all_plugins()
         .into_iter()
-        .filter(|p| formats.contains(&p.output_format()))
+        .filter(|p| names.iter().any(|n| n == p.name()))
         .collect()
 }

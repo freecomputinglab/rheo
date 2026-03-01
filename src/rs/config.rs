@@ -1,6 +1,6 @@
 use crate::manifest_version::ManifestVersion;
 use crate::validation::ValidateConfig;
-use crate::{OutputFormat, Result};
+use crate::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -51,8 +51,8 @@ impl From<&EpubConfig> for EpubOptions {
     }
 }
 
-fn default_formats() -> Vec<OutputFormat> {
-    OutputFormat::all_variants()
+fn default_formats() -> Vec<String> {
+    vec!["html".to_string(), "epub".to_string(), "pdf".to_string()]
 }
 
 /// Configuration for rheo compilation
@@ -74,7 +74,7 @@ pub struct RheoConfig {
     /// Default formats to compile (if none specified via CLI).
     /// Example: ["pdf", "html", "epub"]
     #[serde(default = "default_formats")]
-    pub formats: Vec<OutputFormat>,
+    pub formats: Vec<String>,
 
     /// HTML-specific configuration
     #[serde(default)]
@@ -374,15 +374,15 @@ impl RheoConfig {
     }
 
     pub fn has_pdf(&self) -> bool {
-        self.formats.contains(&OutputFormat::Pdf)
+        self.formats.iter().any(|f| f == "pdf")
     }
 
     pub fn has_html(&self) -> bool {
-        self.formats.contains(&OutputFormat::Html)
+        self.formats.iter().any(|f| f == "html")
     }
 
     pub fn has_epub(&self) -> bool {
-        self.formats.contains(&OutputFormat::Epub)
+        self.formats.iter().any(|f| f == "epub")
     }
 }
 
@@ -398,7 +398,10 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = RheoConfig::default();
-        assert_eq!(config.formats, OutputFormat::all_variants());
+        assert_eq!(
+            config.formats,
+            vec!["html".to_string(), "epub".to_string(), "pdf".to_string()]
+        );
         assert_eq!(config.version, ManifestVersion::current());
     }
 
@@ -419,40 +422,33 @@ mod tests {
     fn test_formats_from_config() {
         let toml = versioned_toml(r#"formats = ["pdf"]"#);
         let config: RheoConfig = toml::from_str(&toml).unwrap();
-        assert_eq!(config.formats, vec![OutputFormat::Pdf]);
+        assert_eq!(config.formats, vec!["pdf"]);
     }
 
     #[test]
     fn test_formats_defaults_when_not_specified() {
         let toml = versioned_toml("");
         let config: RheoConfig = toml::from_str(&toml).unwrap();
-        assert_eq!(config.formats, OutputFormat::all_variants());
+        assert_eq!(
+            config.formats,
+            vec!["html".to_string(), "epub".to_string(), "pdf".to_string()]
+        );
     }
 
     #[test]
     fn test_formats_multiple_values() {
         let toml = versioned_toml(r#"formats = ["html", "epub"]"#);
         let config: RheoConfig = toml::from_str(&toml).unwrap();
-        assert_eq!(config.formats, vec![OutputFormat::Html, OutputFormat::Epub]);
+        assert_eq!(config.formats, vec!["html", "epub"]);
     }
 
     #[test]
-    fn test_formats_case_insensitive() {
-        let toml = versioned_toml(r#"formats = ["PDF", "Html", "ePub"]"#);
+    fn test_formats_stored_as_given() {
+        // Formats are stored as-is from TOML (no normalization at parse time).
+        // Plugin lookup uses name() which is always lowercase.
+        let toml = versioned_toml(r#"formats = ["pdf", "html", "epub"]"#);
         let config: RheoConfig = toml::from_str(&toml).unwrap();
-        assert_eq!(
-            config.formats,
-            vec![OutputFormat::Pdf, OutputFormat::Html, OutputFormat::Epub]
-        );
-    }
-
-    #[test]
-    fn test_formats_invalid_format_name() {
-        let toml = versioned_toml(r#"formats = ["invalid"]"#);
-        let result = toml::from_str::<RheoConfig>(&toml);
-        assert!(result.is_err());
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains("unknown variant"));
+        assert_eq!(config.formats, vec!["pdf", "html", "epub"]);
     }
 
     #[test]

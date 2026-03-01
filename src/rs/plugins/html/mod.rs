@@ -6,7 +6,7 @@ use crate::config::{HtmlOptions, RheoConfig, SpineConfig};
 use crate::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::project::ProjectConfig;
 use crate::world::RheoWorld;
-use crate::{OutputFormat, Result, RheoError};
+use crate::{Result, RheoError};
 use std::path::Path;
 use tracing::{debug, info};
 use typst_html::HtmlDocument;
@@ -17,14 +17,6 @@ pub struct HtmlPlugin;
 
 impl FormatPlugin for HtmlPlugin {
     fn name(&self) -> &'static str {
-        "html"
-    }
-
-    fn output_format(&self) -> OutputFormat {
-        OutputFormat::Html
-    }
-
-    fn extension(&self) -> &'static str {
         "html"
     }
 
@@ -87,10 +79,10 @@ pub fn copy_html_assets(project_style_css: Option<&Path>, dest_dir: &Path) -> Re
 pub fn compile_html_to_document(
     input: &Path,
     root: &Path,
-    output_format: OutputFormat,
+    format_name: &str,
 ) -> Result<HtmlDocument> {
     // Create the compilation world with specified format for link transformations
-    let world = RheoWorld::new(root, input, Some(output_format))?;
+    let world = RheoWorld::new(root, input, Some(format_name))?;
 
     // Compile the document to HtmlDocument
     info!(input = %input.display(), "compiling to HTML");
@@ -127,7 +119,7 @@ fn compile_html_impl_fresh(
     html_options: &HtmlOptions,
 ) -> Result<()> {
     // Compile to HTML document (transformations happen in RheoWorld)
-    let doc = compile_html_to_document(input, root, OutputFormat::Html)?;
+    let doc = compile_html_to_document(input, root, "html")?;
     let html_string = compile_document_to_string(&doc)?;
 
     // Inject CSS and font links into <head>

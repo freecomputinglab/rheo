@@ -26,7 +26,6 @@ pub use globset::{Glob, GlobSet, GlobSetBuilder};
 pub use manifest_version::ManifestVersion;
 pub use path_utils::PathExt;
 pub use results::{CompilationResults, FormatResult};
-use std::fmt;
 use std::path::PathBuf;
 use tracing::{info, warn};
 use walkdir::WalkDir;
@@ -34,41 +33,13 @@ use walkdir::WalkDir;
 /// Result type alias using RheoError
 pub type Result<T> = std::result::Result<T, RheoError>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
-pub enum OutputFormat {
+/// Internal output format enum for link transformation and world configuration.
+/// Not part of the public API — plugins identify themselves by name string only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OutputFormat {
     Html,
     Epub,
     Pdf,
-}
-
-impl OutputFormat {
-    pub fn all_variants() -> Vec<Self> {
-        vec![Self::Html, Self::Epub, Self::Pdf]
-    }
-}
-
-impl fmt::Display for OutputFormat {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for OutputFormat {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        match s.to_lowercase().as_str() {
-            "html" => Ok(OutputFormat::Html),
-            "epub" => Ok(OutputFormat::Epub),
-            "pdf" => Ok(OutputFormat::Pdf),
-            _ => Err(serde::de::Error::unknown_variant(
-                &s,
-                &["html", "epub", "pdf"],
-            )),
-        }
-    }
 }
 
 pub fn open_all_files_in_folder(folder: PathBuf, ext: &str) -> Result<()> {

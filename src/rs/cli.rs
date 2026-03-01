@@ -1,8 +1,8 @@
 use crate::CompilationResults;
 use crate::compile::RheoCompileOptions;
-use crate::plugins::{FormatPlugin, PluginConfig, PluginContext, SpineOptions, plugins_for_formats};
+use crate::plugins::{FormatPlugin, PluginConfig, PluginContext, SpineOptions, plugins_for_names};
 use crate::reticulate::spine::generate_spine;
-use crate::{OutputFormat, Result, open_all_files_in_folder};
+use crate::{Result, open_all_files_in_folder};
 use clap::{Parser, Subcommand};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -36,8 +36,8 @@ enum WorldMode<'a> {
 struct CompilationContext {
     /// Loaded project configuration
     project: crate::project::ProjectConfig,
-    /// Formats to compile (resolved from CLI flags and config)
-    formats: Vec<OutputFormat>,
+    /// Format names to compile (resolved from CLI flags and config)
+    formats: Vec<String>,
     /// Output configuration with resolved build directory
     output_config: crate::output::OutputConfig,
     /// Compilation root (content_dir or project root)
@@ -45,30 +45,30 @@ struct CompilationContext {
 }
 
 /// Determine which formats to compile based on CLI flags and config defaults
-fn determine_formats(
-    flags: FormatFlags,
-    config_defaults: &[OutputFormat],
-) -> Result<Vec<OutputFormat>> {
+fn determine_formats(flags: FormatFlags, config_defaults: &[String]) -> Result<Vec<String>> {
     // If any CLI flags are set, use those
     if flags.any_set() {
         let mut formats = Vec::new();
         if flags.pdf {
-            formats.push(OutputFormat::Pdf);
+            formats.push("pdf".to_string());
         }
         if flags.html {
-            formats.push(OutputFormat::Html);
+            formats.push("html".to_string());
         }
         if flags.epub {
-            formats.push(OutputFormat::Epub);
+            formats.push("epub".to_string());
         }
         return Ok(formats);
     }
 
-    // Otherwise, use config defaults provided not empty
+    // Otherwise, use config defaults if not empty; fall back to all plugin names
     if !config_defaults.is_empty() {
         Ok(config_defaults.to_vec())
     } else {
-        Ok(OutputFormat::all_variants())
+        Ok(crate::plugins::all_plugins()
+            .iter()
+            .map(|p| p.name().to_string())
+            .collect())
     }
 }
 
@@ -278,8 +278,14 @@ fn perform_compilation<'a>(
     let mut results = CompilationResults::new();
 
     for plugin in plugins {
-        let plugin_output_dir = output_config.dir_for_format(plugin.output_format());
-        plugin.copy_assets(project, plugin_output_dir)?;
+        let plugin_output_dir = output_config.dir_for_plugin(plugin.name());
+        std::fs::create_dir_all(&plugin_output_dir).map_err(|e| {
+            crate::RheoError::io(
+                e,
+                format!("creating output directory for {}", plugin.name()),
+            )
+        })?;
+        plugin.copy_assets(project, &plugin_output_dir)?;
 
         // Resolve standardized PluginConfig from format-specific spine config
         let spine_cfg = plugin.spine_config(&project.config);
@@ -301,7 +307,7 @@ fn perform_compilation<'a>(
                 .unwrap_or_else(|| project.root.clone());
             let output_path = plugin_output_dir
                 .join(&project.name)
-                .with_extension(plugin.extension());
+                .with_extension(plugin.name());
 
             let options = match &mode {
                 WorldMode::Fresh { root: _ } => {
@@ -330,12 +336,12 @@ fn perform_compilation<'a>(
 
             match plugin.compile(ctx) {
                 Ok(_) => {
-                    results.record_success(plugin.output_format());
+                    results.record_success(plugin.name());
                     info!(output = %output_path.display(), "{} generation complete", plugin.name());
                 }
                 Err(e) => {
                     error!(error = %e, "{} generation failed", plugin.name());
-                    results.record_failure(plugin.output_format());
+                    results.record_failure(plugin.name());
                 }
             }
         } else {
@@ -354,7 +360,7 @@ fn perform_compilation<'a>(
                 let filename = get_output_filename(typ_file)?;
                 let output_path = plugin_output_dir
                     .join(&filename)
-                    .with_extension(plugin.extension());
+                    .with_extension(plugin.name());
 
                 let options = match &mode {
                     WorldMode::Fresh { root } => {
@@ -382,10 +388,10 @@ fn perform_compilation<'a>(
                 };
 
                 match plugin.compile(ctx) {
-                    Ok(_) => results.record_success(plugin.output_format()),
+                    Ok(_) => results.record_success(plugin.name()),
                     Err(e) => {
                         error!(file = %typ_file.display(), error = %e, "{} compilation failed", plugin.name());
-                        results.record_failure(plugin.output_format());
+                        results.record_failure(plugin.name());
                     }
                 }
             }
@@ -393,12 +399,12 @@ fn perform_compilation<'a>(
     }
 
     // Report results with per-format summary
-    let formats: Vec<OutputFormat> = plugins.iter().map(|p| p.output_format()).collect();
-    results.log_summary(&formats);
+    let names: Vec<&str> = plugins.iter().map(|p| p.name()).collect();
+    results.log_summary(&names);
 
     // Fail if any format had failures
     if results.has_failures() {
-        if formats.iter().any(|fmt| results.get(*fmt).succeeded > 0) {
+        if names.iter().any(|name| results.get(name).succeeded > 0) {
             // Partial success - some formats worked, some failed
             Err(crate::RheoError::project_config(
                 "some formats failed to compile".to_string(),
@@ -477,9 +483,8 @@ impl Cli {
         // 3. Resolve build directory from CLI arg or config
         let resolved_build_dir = resolve_build_dir(&project, build_dir)?;
 
-        // 4. Create output config and directories
+        // 4. Create output config (directories are created per-plugin in perform_compilation)
         let output_config = crate::output::OutputConfig::new(&project.root, resolved_build_dir);
-        output_config.create_dirs()?;
 
         // 5. Resolve compilation root from content_dir or project root
         let compilation_root = project
@@ -512,7 +517,7 @@ impl Cli {
                     Self::setup_compilation_context(&path, config.as_deref(), build_dir, flags)?;
 
                 // Build plugin list from resolved formats
-                let plugins = plugins_for_formats(&ctx.formats);
+                let plugins = plugins_for_names(&ctx.formats);
 
                 // Create world mode (Fresh)
                 let mode = WorldMode::Fresh {
@@ -537,7 +542,7 @@ impl Cli {
                     Self::setup_compilation_context(&path, config.as_deref(), build_dir, flags)?;
 
                 // Build plugin list from resolved formats
-                let plugins = plugins_for_formats(&ctx.formats);
+                let plugins = plugins_for_names(&ctx.formats);
 
                 // Perform initial compilation (Fresh mode)
                 info!("compiling project");
@@ -564,7 +569,7 @@ impl Cli {
                     let runtime = tokio::runtime::Runtime::new()
                         .map_err(|e| crate::RheoError::io(e, "creating tokio runtime"))?;
 
-                    let html_dir = output_config.html_dir.clone();
+                    let html_dir = output_config.dir_for_plugin("html");
                     let (server_handle, reload_tx, server_url) = runtime
                         .block_on(async { crate::server::start_server(html_dir, 3000).await })?;
 
@@ -582,9 +587,8 @@ impl Cli {
                 if open {
                     for plugin in &plugins {
                         if !plugin.supports_live_preview() {
-                            let dir =
-                                output_config.dir_for_format(plugin.output_format()).clone();
-                            open_all_files_in_folder(dir, plugin.extension())?;
+                            let dir = output_config.dir_for_plugin(plugin.name());
+                            open_all_files_in_folder(dir, plugin.name())?;
                         }
                     }
                 }
@@ -606,20 +610,20 @@ impl Cli {
                     .first()
                     .ok_or_else(|| crate::RheoError::project_config("no .typ files found"))?;
 
-                // For watch mode: find the first per-file plugin to determine World output format
+                // For watch mode: find the first per-file plugin to determine the format name
                 // for link transformation. If no per-file plugins, use None (no transformation).
-                let output_format = plugins
+                let format_name = plugins
                     .iter()
                     .find(|p| {
                         let spine_cfg = p.spine_config(&borrowed_project.config);
                         !spine_cfg.and_then(|s| s.merge()).unwrap_or(false)
                     })
-                    .map(|p| p.output_format());
+                    .map(|p| p.name());
 
                 let world = crate::world::RheoWorld::new(
                     &compilation_root,
                     initial_main,
-                    output_format,
+                    format_name,
                 )?;
                 drop(borrowed_project); // Release borrow before moving into RefCell
 
@@ -628,16 +632,19 @@ impl Cli {
                 // Canonicalize build directory for reliable path comparison in watcher
                 // This prevents the watcher from triggering on its own output files
                 let canonical_build_dir = output_config
-                    .pdf_dir
-                    .parent()
-                    .expect("build dir has parent")
+                    .base
                     .canonicalize()
+                    .or_else(|_| {
+                        // If the base dir doesn't exist yet, create it and canonicalize
+                        std::fs::create_dir_all(&output_config.base).ok();
+                        output_config.base.canonicalize()
+                    })
                     .map_err(|e| {
                         crate::RheoError::io(
                             e,
                             format!(
                                 "canonicalizing build directory {:?}",
-                                output_config.pdf_dir.parent()
+                                output_config.base
                             ),
                         )
                     })?;
@@ -689,8 +696,8 @@ impl Cli {
                                                 )
                                             })?;
 
-                                        // Use same output_format logic as initial World creation
-                                        let output_format = plugins
+                                        // Use same format_name logic as initial World creation
+                                        let format_name = plugins
                                             .iter()
                                             .find(|p| {
                                                 let spine_cfg =
@@ -699,12 +706,12 @@ impl Cli {
                                                     .and_then(|s| s.merge())
                                                     .unwrap_or(false)
                                             })
-                                            .map(|p| p.output_format());
+                                            .map(|p| p.name());
 
                                         match crate::world::RheoWorld::new(
                                             &new_compilation_root,
                                             new_initial_main,
-                                            output_format,
+                                            format_name,
                                         ) {
                                             Ok(new_world) => {
                                                 *world_cell.borrow_mut() = new_world;
@@ -782,7 +789,7 @@ mod tests {
     #[test]
     fn test_determine_formats_cli_flags_override_config() {
         // CLI flags should override config defaults
-        let config_defaults = vec![OutputFormat::Pdf];
+        let config_defaults = vec!["pdf".to_string()];
         let flags = FormatFlags {
             pdf: true,
             html: false,
@@ -791,12 +798,12 @@ mod tests {
 
         let formats = determine_formats(flags, &config_defaults).unwrap();
         assert_eq!(formats.len(), 1);
-        assert!(formats.contains(&OutputFormat::Pdf));
+        assert!(formats.contains(&"pdf".to_string()));
     }
 
     #[test]
     fn test_determine_formats_uses_config_defaults_when_no_flags() {
-        let config_defaults = vec![OutputFormat::Html];
+        let config_defaults = vec!["html".to_string()];
         let flags = FormatFlags {
             pdf: false,
             html: false,
@@ -805,12 +812,12 @@ mod tests {
 
         let formats = determine_formats(flags, &config_defaults).unwrap();
         assert_eq!(formats.len(), 1);
-        assert!(formats.contains(&OutputFormat::Html));
+        assert!(formats.contains(&"html".to_string()));
     }
 
     #[test]
     fn test_determine_formats_falls_back_to_all_when_empty() {
-        let config_defaults = vec![];
+        let config_defaults: Vec<String> = vec![];
         let flags = FormatFlags {
             pdf: false,
             html: false,
@@ -819,14 +826,14 @@ mod tests {
 
         let formats = determine_formats(flags, &config_defaults).unwrap();
         assert_eq!(formats.len(), 3);
-        assert!(formats.contains(&OutputFormat::Pdf));
-        assert!(formats.contains(&OutputFormat::Html));
-        assert!(formats.contains(&OutputFormat::Epub));
+        assert!(formats.contains(&"pdf".to_string()));
+        assert!(formats.contains(&"html".to_string()));
+        assert!(formats.contains(&"epub".to_string()));
     }
 
     #[test]
     fn test_determine_formats_multiple_cli_flags() {
-        let config_defaults = vec![OutputFormat::Epub];
+        let config_defaults = vec!["epub".to_string()];
         let flags = FormatFlags {
             pdf: true,
             html: true,
@@ -835,13 +842,13 @@ mod tests {
 
         let formats = determine_formats(flags, &config_defaults).unwrap();
         assert_eq!(formats.len(), 2);
-        assert!(formats.contains(&OutputFormat::Pdf));
-        assert!(formats.contains(&OutputFormat::Html));
+        assert!(formats.contains(&"pdf".to_string()));
+        assert!(formats.contains(&"html".to_string()));
     }
 
     #[test]
     fn test_determine_formats_all_three_formats() {
-        let config_defaults = OutputFormat::all_variants();
+        let config_defaults = vec!["html".to_string(), "epub".to_string(), "pdf".to_string()];
         let flags = FormatFlags {
             pdf: false,
             html: false,
@@ -850,8 +857,8 @@ mod tests {
 
         let formats = determine_formats(flags, &config_defaults).unwrap();
         assert_eq!(formats.len(), 3);
-        assert!(formats.contains(&OutputFormat::Pdf));
-        assert!(formats.contains(&OutputFormat::Html));
-        assert!(formats.contains(&OutputFormat::Epub));
+        assert!(formats.contains(&"pdf".to_string()));
+        assert!(formats.contains(&"html".to_string()));
+        assert!(formats.contains(&"epub".to_string()));
     }
 }

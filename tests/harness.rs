@@ -7,7 +7,7 @@ use helpers::{
     test_store::copy_project_to_test_store,
 };
 use ntest::test_case;
-use rheo::{OutputFormat, RheoConfig, project::ProjectConfig};
+use rheo::{RheoConfig, project::ProjectConfig};
 use std::env;
 use std::path::PathBuf;
 
@@ -101,13 +101,13 @@ fn run_test_case(name: &str) {
     // Compute which formats to actually run
     // For single-file tests: use declared formats (config check optional, markers are authoritative)
     // For directory tests: require config support (preserve existing behavior)
-    let run_html = declared_formats.contains(&OutputFormat::Html)
+    let run_html = declared_formats.iter().any(|f| f == "html")
         && (run_all || env_html)
         && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_html()));
-    let run_pdf = declared_formats.contains(&OutputFormat::Pdf)
+    let run_pdf = declared_formats.iter().any(|f| f == "pdf")
         && (run_all || env_pdf)
         && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_pdf()));
-    let run_epub = declared_formats.contains(&OutputFormat::Epub)
+    let run_epub = declared_formats.iter().any(|f| f == "epub")
         && (run_all || env_epub)
         && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_epub()));
 

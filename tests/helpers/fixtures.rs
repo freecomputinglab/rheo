@@ -1,4 +1,3 @@
-use rheo::OutputFormat;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -19,7 +18,7 @@ pub enum TestCase {
     SingleFile {
         name: String,
         file_path: PathBuf,
-        formats: Vec<OutputFormat>,
+        formats: Vec<String>,
         metadata: Option<super::markers::TestMetadata>,
     },
 }
@@ -40,18 +39,12 @@ impl TestCase {
             let metadata = read_test_metadata(file_path);
             let formats = metadata
                 .as_ref()
-                .map(|m| {
-                    m.formats
-                        .iter()
-                        .filter_map(|f| match f.as_str() {
-                            "html" => Some(OutputFormat::Html),
-                            "pdf" => Some(OutputFormat::Pdf),
-                            "epub" => Some(OutputFormat::Epub),
-                            _ => None,
-                        })
-                        .collect()
-                })
-                .unwrap_or_else(OutputFormat::all_variants);
+                .map(|m| m.formats.clone())
+                .unwrap_or_else(|| vec![
+                    "html".to_string(),
+                    "epub".to_string(),
+                    "pdf".to_string(),
+                ]);
 
             return Self::SingleFile {
                 name,
@@ -69,18 +62,12 @@ impl TestCase {
             let test_metadata = read_test_metadata(path);
             let formats = test_metadata
                 .as_ref()
-                .map(|m| {
-                    m.formats
-                        .iter()
-                        .filter_map(|f| match f.as_str() {
-                            "html" => Some(OutputFormat::Html),
-                            "pdf" => Some(OutputFormat::Pdf),
-                            "epub" => Some(OutputFormat::Epub),
-                            _ => None,
-                        })
-                        .collect()
-                })
-                .unwrap_or_else(OutputFormat::all_variants);
+                .map(|m| m.formats.clone())
+                .unwrap_or_else(|| vec![
+                    "html".to_string(),
+                    "epub".to_string(),
+                    "pdf".to_string(),
+                ]);
 
             Self::SingleFile {
                 name,
@@ -133,10 +120,14 @@ impl TestCase {
         }
     }
 
-    /// Returns the formats to test for this test case
-    pub fn formats(&self) -> Vec<OutputFormat> {
+    /// Returns the format names to test for this test case
+    pub fn formats(&self) -> Vec<String> {
         match self {
-            TestCase::Directory { .. } => OutputFormat::all_variants(),
+            TestCase::Directory { .. } => vec![
+                "html".to_string(),
+                "epub".to_string(),
+                "pdf".to_string(),
+            ],
             TestCase::SingleFile { formats, .. } => formats.clone(),
         }
     }

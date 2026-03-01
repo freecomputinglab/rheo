@@ -36,7 +36,7 @@ impl RheoSpine {
     ///
     /// # Returns
     /// A RheoSpine containing transformed Typst sources ready for compilation.
-    pub fn build(
+    pub(crate) fn build(
         root: &Path,
         spine_config: Option<&dyn SpineConfig>,
         output_format: OutputFormat,
