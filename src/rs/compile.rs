@@ -65,7 +65,7 @@ impl<'a> RheoCompileOptions<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::formats::pdf;
+    use crate::plugins::pdf;
 
     #[test]
     fn test_filename_to_title() {

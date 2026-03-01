@@ -1,4 +1,4 @@
-use crate::{Result, RheoError};
+use crate::{OutputFormat, Result, RheoError};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::debug;
@@ -64,6 +64,15 @@ impl OutputConfig {
         }
 
         Ok(())
+    }
+
+    /// Get the output directory for a given format.
+    pub fn dir_for_format(&self, format: OutputFormat) -> &PathBuf {
+        match format {
+            OutputFormat::Pdf => &self.pdf_dir,
+            OutputFormat::Html => &self.html_dir,
+            OutputFormat::Epub => &self.epub_dir,
+        }
     }
 
     /// Copy style.css to HTML output directory

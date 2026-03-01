@@ -1,5 +1,5 @@
 use crate::config::SpineConfig;
-use crate::formats::pdf::{DocumentTitle, sanitize_label_name};
+use crate::plugins::pdf::{DocumentTitle, sanitize_label_name};
 use crate::{OutputFormat, Result, RheoError, TYP_EXT};
 use std::collections::HashSet;
 use std::fs;

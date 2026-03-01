@@ -1,12 +1,85 @@
 use crate::compile::RheoCompileOptions;
-use crate::config::HtmlOptions;
+use crate::config::{HtmlOptions, RheoConfig, SpineConfig};
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::postprocess;
+use crate::project::ProjectConfig;
 use crate::world::RheoWorld;
 use crate::{OutputFormat, Result, RheoError};
 use std::path::Path;
 use tracing::{debug, info};
 use typst_html::HtmlDocument;
+
+use super::{CompilationDispatch, FormatPlugin, PluginContext};
+
+pub struct HtmlPlugin;
+
+impl FormatPlugin for HtmlPlugin {
+    fn name(&self) -> &'static str {
+        "html"
+    }
+
+    fn output_format(&self) -> OutputFormat {
+        OutputFormat::Html
+    }
+
+    fn extension(&self) -> &'static str {
+        "html"
+    }
+
+    fn supports_live_preview(&self) -> bool {
+        true
+    }
+
+    fn compilation_dispatch(&self, _config: &RheoConfig) -> CompilationDispatch {
+        CompilationDispatch::PerFile
+    }
+
+    fn spine_config<'a>(&self, config: &'a RheoConfig) -> Option<&'a dyn SpineConfig> {
+        config.html.spine.as_ref().map(|s| s as &dyn SpineConfig)
+    }
+
+    fn copy_assets(&self, project: &ProjectConfig, output_dir: &Path) -> Result<()> {
+        copy_html_assets(project.style_css.as_deref(), output_dir)
+    }
+
+    fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
+        let html_options = HtmlOptions {
+            stylesheets: ctx.project.config.html.stylesheets.clone(),
+            fonts: ctx.project.config.html.fonts.clone(),
+        };
+        compile_html_new(ctx.options, html_options)
+    }
+}
+
+/// Copy style.css to the HTML output directory.
+///
+/// Priority:
+/// 1. If project has style.css in its root, use that (project-specific override)
+/// 2. Otherwise, use bundled default style.css
+pub fn copy_html_assets(project_style_css: Option<&Path>, dest_dir: &Path) -> Result<()> {
+    const DEFAULT_CSS: &str = include_str!("../../../templates/init/style.css");
+    let dest_path = dest_dir.join("style.css");
+
+    if let Some(project_css) = project_style_css {
+        std::fs::copy(project_css, &dest_path).map_err(|e| {
+            RheoError::io(
+                e,
+                format!(
+                    "copying project style.css from {:?} to {:?}",
+                    project_css, dest_path
+                ),
+            )
+        })?;
+        debug!(source = %project_css.display(), dest = %dest_path.display(), "copied project-specific style.css");
+    } else {
+        std::fs::write(&dest_path, DEFAULT_CSS).map_err(|e| {
+            RheoError::io(e, format!("writing default style.css to {:?}", dest_path))
+        })?;
+        debug!(dest = %dest_path.display(), "copied default style.css");
+    }
+
+    Ok(())
+}
 
 pub fn compile_html_to_document(
     input: &Path,
@@ -79,14 +152,6 @@ fn compile_html_impl_fresh(
 /// through Typst's comemo caching system).
 ///
 /// Pipeline: Update World → Compile (with transformations) → Export → Inject Head → Write
-///
-/// # Arguments
-/// * `world` - Existing RheoWorld instance (will be updated with new main file)
-/// * `input` - Path to the source .typ file
-/// * `output` - Path where the HTML should be written
-/// * `root` - Project root path (unused, for API consistency)
-/// * `repo_root` - Repository root path (unused, for API consistency)
-/// * `html_options` - HTML-specific options (stylesheets, fonts)
 fn compile_html_impl(
     world: &RheoWorld,
     input: &Path,
@@ -157,7 +222,3 @@ pub fn compile_html_new(options: RheoCompileOptions, html_options: HtmlOptions) 
         ),
     }
 }
-
-// ============================================================================
-// Helper functions
-// ============================================================================

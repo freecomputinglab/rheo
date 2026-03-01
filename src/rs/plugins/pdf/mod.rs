@@ -1,5 +1,5 @@
 use crate::compile::RheoCompileOptions;
-use crate::config::PdfConfig;
+use crate::config::{PdfConfig, RheoConfig, SpineConfig};
 use crate::constants::TYPST_LABEL_PATTERN;
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::reticulate::spine::RheoSpine;
@@ -11,6 +11,59 @@ use tempfile::NamedTempFile;
 use tracing::{debug, info};
 use typst::layout::PagedDocument;
 use typst_pdf::PdfOptions;
+
+use super::{CompilationDispatch, FormatPlugin, PluginContext};
+
+pub struct PdfPlugin;
+
+impl FormatPlugin for PdfPlugin {
+    fn name(&self) -> &'static str {
+        "pdf"
+    }
+
+    fn output_format(&self) -> OutputFormat {
+        OutputFormat::Pdf
+    }
+
+    fn extension(&self) -> &'static str {
+        "pdf"
+    }
+
+    fn compilation_dispatch(&self, config: &RheoConfig) -> CompilationDispatch {
+        if config
+            .pdf
+            .spine
+            .as_ref()
+            .and_then(|s| s.merge)
+            .unwrap_or(false)
+        {
+            CompilationDispatch::Merged
+        } else {
+            CompilationDispatch::PerFile
+        }
+    }
+
+    fn spine_config<'a>(&self, config: &'a RheoConfig) -> Option<&'a dyn SpineConfig> {
+        config.pdf.spine.as_ref().map(|s| s as &dyn SpineConfig)
+    }
+
+    fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
+        let is_merged = ctx
+            .project
+            .config
+            .pdf
+            .spine
+            .as_ref()
+            .and_then(|s| s.merge)
+            .unwrap_or(false);
+        let pdf_config = if is_merged {
+            Some(&ctx.project.config.pdf)
+        } else {
+            None
+        };
+        compile_pdf_new(ctx.options, pdf_config)
+    }
+}
 
 // ============================================================================
 // Single-file PDF compilation (implementation functions)
@@ -381,3 +434,4 @@ pub fn compile_pdf_new(options: RheoCompileOptions, pdf_config: Option<&PdfConfi
         }
     }
 }
+

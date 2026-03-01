@@ -9,6 +9,7 @@ pub mod logging;
 pub mod manifest_version;
 pub mod output;
 pub mod path_utils;
+pub mod plugins;
 pub mod postprocess;
 pub mod project;
 pub mod results;
@@ -45,32 +46,6 @@ impl OutputFormat {
     pub fn all_variants() -> Vec<Self> {
         vec![Self::Html, Self::Epub, Self::Pdf]
     }
-
-    /// Check if this format supports per-file compilation with the given config
-    ///
-    /// Returns true if this format should be compiled once per .typ file,
-    /// or false if it requires merged/batch compilation.
-    pub fn supports_per_file(&self, config: &RheoConfig) -> bool {
-        match self {
-            OutputFormat::Html => {
-                // HTML is always compiled per-file
-                true
-            }
-            OutputFormat::Pdf => {
-                // PDF is per-file unless merge is explicitly true
-                !config
-                    .pdf
-                    .spine
-                    .as_ref()
-                    .and_then(|s| s.merge)
-                    .unwrap_or(false)
-            }
-            OutputFormat::Epub => {
-                // EPUB is never per-file (always merged)
-                false
-            }
-        }
-    }
 }
 
 impl fmt::Display for OutputFormat {
@@ -97,13 +72,7 @@ impl<'de> serde::Deserialize<'de> for OutputFormat {
     }
 }
 
-pub fn open_all_files_in_folder(folder: PathBuf, fmt: OutputFormat) -> Result<()> {
-    let ext = if fmt == OutputFormat::Epub {
-        "epub"
-    } else {
-        "pdf"
-    };
-
+pub fn open_all_files_in_folder(folder: PathBuf, ext: &str) -> Result<()> {
     for entry in WalkDir::new(&folder)
         .max_depth(1)
         .into_iter()

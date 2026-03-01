@@ -1,5 +1,5 @@
 use crate::config::EpubSpine;
-use crate::formats::pdf::DocumentTitle;
+use crate::plugins::pdf::DocumentTitle;
 use crate::{Result, RheoConfig, RheoError};
 use std::path::{Path, PathBuf};
 use tracing::debug;

@@ -1,6 +1,6 @@
 use super::types::{LinkInfo, LinkTransform};
 use crate::constants::TYP_EXT;
-use crate::formats::pdf::sanitize_label_name;
+use crate::plugins::pdf::sanitize_label_name;
 use crate::reticulate::validator::is_relative_typ_link;
 use crate::{HTML_EXT, OutputFormat, Result, RheoError, XHTML_EXT};
 use std::collections::HashMap;

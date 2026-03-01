@@ -5,7 +5,7 @@ use package::{Item, ItemRef, Package};
 use xhtml::HtmlInfo;
 
 use crate::compile::RheoCompileOptions;
-use crate::config::{EpubConfig, EpubOptions};
+use crate::config::{EpubConfig, EpubOptions, RheoConfig, SpineConfig};
 use crate::reticulate::spine::RheoSpine;
 use crate::{OutputFormat, Result, RheoError};
 use anyhow::Result as AnyhowResult;
@@ -29,6 +29,37 @@ use typst::{
 use typst_html::HtmlDocument;
 use uuid::Uuid;
 use zip::{result::ZipError, write::SimpleFileOptions};
+
+use super::{CompilationDispatch, FormatPlugin, PluginContext};
+
+pub struct EpubPlugin;
+
+impl FormatPlugin for EpubPlugin {
+    fn name(&self) -> &'static str {
+        "epub"
+    }
+
+    fn output_format(&self) -> OutputFormat {
+        OutputFormat::Epub
+    }
+
+    fn extension(&self) -> &'static str {
+        "epub"
+    }
+
+    fn compilation_dispatch(&self, _config: &RheoConfig) -> CompilationDispatch {
+        CompilationDispatch::Merged
+    }
+
+    fn spine_config<'a>(&self, config: &'a RheoConfig) -> Option<&'a dyn SpineConfig> {
+        config.epub.spine.as_ref().map(|s| s as &dyn SpineConfig)
+    }
+
+    fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
+        let epub_options = EpubOptions::from(&ctx.project.config.epub);
+        compile_epub_new(ctx.options, epub_options)
+    }
+}
 
 const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
@@ -328,14 +359,17 @@ fn text_to_id(s: &str) -> EcoString {
 impl EpubItem {
     pub fn create(path: PathBuf, root: &Path) -> AnyhowResult<Self> {
         info!(file = %path.display(), "compiling spine file");
-        let document =
-            crate::formats::html::compile_html_to_document(&path, root, OutputFormat::Epub)?;
+        let document = crate::plugins::html::compile_html_to_document(
+            &path,
+            root,
+            OutputFormat::Epub,
+        )?;
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
         let (heading_ids, outline) = Self::outline(&document, &href);
         // Export to HTML (links already transformed by RheoWorld)
-        let html_string = crate::formats::html::compile_document_to_string(&document)?;
+        let html_string = crate::plugins::html::compile_document_to_string(&document)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
         Ok(EpubItem {
@@ -365,8 +399,11 @@ impl EpubItem {
         let temp_path = temp_file.path();
 
         // Compile to HTML document
-        let document =
-            crate::formats::html::compile_html_to_document(temp_path, root, OutputFormat::Epub)?;
+        let document = crate::plugins::html::compile_html_to_document(
+            temp_path,
+            root,
+            OutputFormat::Epub,
+        )?;
 
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();
@@ -374,7 +411,7 @@ impl EpubItem {
         let (heading_ids, outline) = Self::outline(&document, &href);
 
         // Export to HTML (links already .typ → .xhtml from RheoSpine)
-        let html_string = crate::formats::html::compile_document_to_string(&document)?;
+        let html_string = crate::plugins::html::compile_document_to_string(&document)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
         Ok(EpubItem {

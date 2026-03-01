@@ -1,7 +1,6 @@
 use crate::CompilationResults;
 use crate::compile::RheoCompileOptions;
-use crate::config::{EpubOptions, HtmlOptions, SpineConfig};
-use crate::formats::{epub, html, pdf};
+use crate::plugins::{CompilationDispatch, FormatPlugin, PluginContext, plugins_for_formats};
 use crate::reticulate::spine::generate_spine;
 use crate::{OutputFormat, Result, open_all_files_in_folder};
 use clap::{Parser, Subcommand};
@@ -23,8 +22,8 @@ impl FormatFlags {
     }
 }
 
-/// Compilation mode for perform_compilation
-enum CompilationMode<'a> {
+/// World mode for perform_compilation
+enum WorldMode<'a> {
     /// Fresh compilation (creates new World for each file)
     Fresh { root: PathBuf },
     /// Incremental compilation (reuses existing World)
@@ -223,90 +222,50 @@ fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
         })
 }
 
-/// Determine which formats should be compiled for a given file.
-///
-/// Logic:
-/// - HTML: Always compile (one HTML per .typ file)
-/// - PDF: Only if pdf.spine.merge is NOT true (merged PDF is handled separately)
-/// - EPUB: Never (EPUB is always merged and handled separately)
-fn get_per_file_formats(
-    config: &crate::RheoConfig,
-    requested_formats: &[OutputFormat],
-) -> Vec<OutputFormat> {
-    requested_formats
-        .iter()
-        .copied()
-        .filter(|format| format.supports_per_file(config))
-        .collect()
-}
-
-/// Returns the set of files to compile for a given format based on spine config.
+/// Returns the set of files to compile for a given plugin based on its spine config.
 /// If no spine is configured, returns all project files.
-fn get_files_for_format<'a>(
-    format: OutputFormat,
+fn get_files_for_plugin<'a>(
+    plugin: &dyn FormatPlugin,
     project: &'a crate::project::ProjectConfig,
-    per_file_formats: &[OutputFormat],
-) -> Result<HashSet<&'a PathBuf>> {
-    if !per_file_formats.contains(&format) {
-        return Ok(HashSet::new());
-    }
-
+) -> Result<Vec<&'a PathBuf>> {
     let content_dir = project
         .config
         .resolve_content_dir(&project.root)
         .unwrap_or_else(|| project.root.clone());
 
-    match format {
-        OutputFormat::Pdf => match &project.config.pdf.spine {
-            None => Ok(project.typ_files.iter().collect()),
-            Some(spine) if spine.merge == Some(true) => Ok(HashSet::new()),
-            Some(spine) => {
-                let spine_files =
-                    generate_spine(&content_dir, Some(spine as &dyn SpineConfig), false)?;
-                let spine_set: HashSet<_> = spine_files.iter().collect();
-                Ok(project
-                    .typ_files
-                    .iter()
-                    .filter(|f| spine_set.contains(f))
-                    .collect())
-            }
-        },
-        OutputFormat::Html => match &project.config.html.spine {
-            None => Ok(project.typ_files.iter().collect()),
-            Some(spine) => {
-                let spine_files =
-                    generate_spine(&content_dir, Some(spine as &dyn SpineConfig), false)?;
-                let spine_set: HashSet<_> = spine_files.iter().collect();
-                Ok(project
-                    .typ_files
-                    .iter()
-                    .filter(|f| spine_set.contains(f))
-                    .collect())
-            }
-        },
-        OutputFormat::Epub => Ok(HashSet::new()), // EPUB is always merged, not per-file
+    match plugin.spine_config(&project.config) {
+        None => Ok(project.typ_files.iter().collect()),
+        Some(spine) => {
+            let spine_files = generate_spine(&content_dir, Some(spine), false)?;
+            let spine_set: HashSet<_> = spine_files.iter().collect();
+            Ok(project
+                .typ_files
+                .iter()
+                .filter(|f| spine_set.contains(f))
+                .collect())
+        }
     }
 }
 
-/// Perform compilation for a project with specified formats
+/// Perform compilation for a project with specified plugins
 ///
 /// This is the unified compilation logic that supports both fresh and incremental compilation
-/// based on the CompilationMode parameter.
+/// based on the WorldMode parameter.
 ///
 /// # Arguments
-/// * `mode` - Compilation mode (Fresh or Incremental)
+/// * `mode` - World mode (Fresh or Incremental)
 /// * `project` - Project configuration with source files and assets
 /// * `output_config` - Output directory configuration
-/// * `formats` - List of formats to compile to
+/// * `plugins` - List of format plugins to compile with
 ///
 /// # Returns
 /// * `Ok(())` if at least one format fully succeeded
 /// * `Err` if all formats failed
 fn perform_compilation<'a>(
-    mut mode: CompilationMode<'a>,
+    mut mode: WorldMode<'a>,
     project: &crate::project::ProjectConfig,
     output_config: &crate::output::OutputConfig,
-    formats: &[OutputFormat],
+    plugins: &[Box<dyn FormatPlugin>],
 ) -> Result<()> {
     // Check for .typ files
     if project.typ_files.is_empty() {
@@ -318,191 +277,110 @@ fn perform_compilation<'a>(
     // Track success/failure per format for graceful degradation
     let mut results = CompilationResults::new();
 
-    // Determine which formats should be compiled per-file
-    let per_file_formats = get_per_file_formats(&project.config, formats);
+    for plugin in plugins {
+        let plugin_output_dir = output_config.dir_for_format(plugin.output_format());
+        plugin.copy_assets(project, plugin_output_dir)?;
+        let files = get_files_for_plugin(plugin.as_ref(), project)?;
 
-    // Compute filtered file sets based on spine configuration
-    let pdf_files = get_files_for_format(OutputFormat::Pdf, project, &per_file_formats)?;
-    let html_files = get_files_for_format(OutputFormat::Html, project, &per_file_formats)?;
+        match plugin.compilation_dispatch(&project.config) {
+            CompilationDispatch::PerFile => {
+                for typ_file in &files {
+                    // For incremental mode, prepare the World for compiling this specific file
+                    // 1. set_main() tells the World which file we're compiling
+                    // 2. reset() clears file caches while preserving fonts/packages
+                    if let WorldMode::Incremental { world } = &mut mode {
+                        world.set_main(typ_file)?;
+                        world.reset();
+                    }
 
-    // Copy HTML assets (style.css) if HTML compilation is requested
-    if !html_files.is_empty() {
-        output_config.copy_html_assets(project.style_css.as_deref())?;
-    }
+                    let filename = get_output_filename(typ_file)?;
+                    let output_path = plugin_output_dir
+                        .join(&filename)
+                        .with_extension(plugin.extension());
 
-    // Per-file compilation
-    for typ_file in &project.typ_files {
-        let filename = get_output_filename(typ_file)?;
+                    let options = match &mode {
+                        WorldMode::Fresh { root } => {
+                            RheoCompileOptions::new(typ_file, &output_path, root)
+                        }
+                        WorldMode::Incremental { .. } => {
+                            if let WorldMode::Incremental { world } = &mut mode {
+                                RheoCompileOptions::incremental(
+                                    typ_file,
+                                    &output_path,
+                                    &project.root,
+                                    world,
+                                )
+                            } else {
+                                unreachable!()
+                            }
+                        }
+                    };
 
-        // Skip files not in either filtered set
-        if !pdf_files.contains(typ_file) && !html_files.contains(typ_file) {
-            continue;
-        }
+                    let ctx = PluginContext {
+                        project,
+                        output_config,
+                        options,
+                    };
 
-        // For incremental mode, prepare the World for compiling this specific file
-        // 1. set_main() tells the World which file we're compiling (updates main file ID)
-        // 2. reset() clears file caches while preserving fonts/packages (enables incremental compilation)
-        if let CompilationMode::Incremental { world } = &mut mode {
-            world.set_main(typ_file)?;
-            world.reset();
-        }
-
-        // Compile to PDF (per-file mode)
-        if pdf_files.contains(typ_file) {
-            let output_path = output_config.pdf_dir.join(&filename).with_extension("pdf");
-            let options = match &mode {
-                CompilationMode::Fresh { root } => {
-                    RheoCompileOptions::new(typ_file, &output_path, root)
-                }
-                CompilationMode::Incremental { .. } => {
-                    if let CompilationMode::Incremental { world } = &mut mode {
-                        RheoCompileOptions::incremental(
-                            typ_file,
-                            &output_path,
-                            &project.root,
-                            world,
-                        )
-                    } else {
-                        unreachable!()
+                    match plugin.compile(ctx) {
+                        Ok(_) => results.record_success(plugin.output_format()),
+                        Err(e) => {
+                            error!(file = %typ_file.display(), error = %e, "{} compilation failed", plugin.name());
+                            results.record_failure(plugin.output_format());
+                        }
                     }
                 }
-            };
-            match pdf::compile_pdf_new(options, None) {
-                Ok(_) => results.record_success(OutputFormat::Pdf),
-                Err(e) => {
-                    error!(file = %typ_file.display(), error = %e, "PDF compilation failed");
-                    results.record_failure(OutputFormat::Pdf);
-                }
             }
-        }
+            CompilationDispatch::Merged => {
+                let compilation_root = project
+                    .config
+                    .resolve_content_dir(&project.root)
+                    .unwrap_or_else(|| project.root.clone());
+                let output_path = plugin_output_dir
+                    .join(&project.name)
+                    .with_extension(plugin.extension());
 
-        // Compile to HTML
-        if html_files.contains(typ_file) {
-            let output_path = output_config
-                .html_dir
-                .join(&filename)
-                .with_extension("html");
-            let options = match &mode {
-                CompilationMode::Fresh { root } => {
-                    RheoCompileOptions::new(typ_file, &output_path, root)
-                }
-                CompilationMode::Incremental { .. } => {
-                    if let CompilationMode::Incremental { world } = &mut mode {
-                        RheoCompileOptions::incremental(
-                            typ_file,
-                            &output_path,
-                            &project.root,
-                            world,
-                        )
-                    } else {
-                        unreachable!()
+                let options = match &mode {
+                    WorldMode::Fresh { root: _ } => {
+                        RheoCompileOptions::new(PathBuf::new(), &output_path, &compilation_root)
+                    }
+                    WorldMode::Incremental { .. } => {
+                        if let WorldMode::Incremental { world } = &mut mode {
+                            RheoCompileOptions::incremental(
+                                PathBuf::new(),
+                                &output_path,
+                                &compilation_root,
+                                world,
+                            )
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                };
+
+                let ctx = PluginContext {
+                    project,
+                    output_config,
+                    options,
+                };
+
+                match plugin.compile(ctx) {
+                    Ok(_) => {
+                        results.record_success(plugin.output_format());
+                        info!(output = %output_path.display(), "{} generation complete", plugin.name());
+                    }
+                    Err(e) => {
+                        error!(error = %e, "{} generation failed", plugin.name());
+                        results.record_failure(plugin.output_format());
                     }
                 }
-            };
-            // Get HTML options from config
-            let html_options = HtmlOptions {
-                stylesheets: project.config.html.stylesheets.clone(),
-                fonts: project.config.html.fonts.clone(),
-            };
-            match html::compile_html_new(options, html_options) {
-                Ok(_) => results.record_success(OutputFormat::Html),
-                Err(e) => {
-                    error!(file = %typ_file.display(), error = %e, "HTML compilation failed");
-                    results.record_failure(OutputFormat::Html);
-                }
-            }
-        }
-    }
-
-    // Generate merged PDF if configured with merge = true
-    if formats.contains(&OutputFormat::Pdf)
-        && project
-            .config
-            .pdf
-            .spine
-            .as_ref()
-            .and_then(|s| s.merge)
-            .unwrap_or(false)
-    {
-        let pdf_filename = format!("{}.pdf", project.name);
-        let pdf_path = output_config.pdf_dir.join(&pdf_filename);
-
-        let compilation_root = project
-            .config
-            .resolve_content_dir(&project.root)
-            .unwrap_or_else(|| project.root.clone());
-
-        let options = match &mode {
-            CompilationMode::Fresh { root: _ } => {
-                RheoCompileOptions::new(PathBuf::new(), &pdf_path, &compilation_root)
-            }
-            CompilationMode::Incremental { .. } => {
-                if let CompilationMode::Incremental { world } = &mut mode {
-                    RheoCompileOptions::incremental(
-                        PathBuf::new(),
-                        &pdf_path,
-                        &compilation_root,
-                        world,
-                    )
-                } else {
-                    unreachable!()
-                }
-            }
-        };
-        match pdf::compile_pdf_new(options, Some(&project.config.pdf)) {
-            Ok(_) => {
-                results.record_success(OutputFormat::Pdf);
-                info!(output = %pdf_path.display(), "PDF merge complete");
-            }
-            Err(e) => {
-                error!(error = %e, "PDF merge failed");
-                results.record_failure(OutputFormat::Pdf);
-            }
-        }
-    }
-
-    // Generate EPUB if requested
-    if formats.contains(&OutputFormat::Epub) {
-        let epub_filename = format!("{}.epub", project.name);
-        let epub_path = output_config.epub_dir.join(&epub_filename);
-
-        let compilation_root = project
-            .config
-            .resolve_content_dir(&project.root)
-            .unwrap_or_else(|| project.root.clone());
-
-        let options = match &mode {
-            CompilationMode::Fresh { root: _ } => {
-                RheoCompileOptions::new(PathBuf::new(), &epub_path, &compilation_root)
-            }
-            CompilationMode::Incremental { .. } => {
-                if let CompilationMode::Incremental { world } = &mut mode {
-                    RheoCompileOptions::incremental(
-                        PathBuf::new(),
-                        &epub_path,
-                        &compilation_root,
-                        world,
-                    )
-                } else {
-                    unreachable!()
-                }
-            }
-        };
-        let epub_options = EpubOptions::from(&project.config.epub);
-        match epub::compile_epub_new(options, epub_options) {
-            Ok(_) => {
-                results.record_success(OutputFormat::Epub);
-                info!(output = %epub_path.display(), "EPUB generation complete");
-            }
-            Err(e) => {
-                error!(error = %e, "EPUB generation failed");
-                results.record_failure(OutputFormat::Epub);
             }
         }
     }
 
     // Report results with per-format summary
-    results.log_summary(formats);
+    let formats: Vec<OutputFormat> = plugins.iter().map(|p| p.output_format()).collect();
+    results.log_summary(&formats);
 
     // Fail if any format had failures
     if results.has_failures() {
@@ -619,13 +497,16 @@ impl Cli {
                 let ctx =
                     Self::setup_compilation_context(&path, config.as_deref(), build_dir, flags)?;
 
-                // Create compilation mode (Fresh)
-                let mode = CompilationMode::Fresh {
+                // Build plugin list from resolved formats
+                let plugins = plugins_for_formats(&ctx.formats);
+
+                // Create world mode (Fresh)
+                let mode = WorldMode::Fresh {
                     root: ctx.compilation_root,
                 };
 
                 // Perform compilation
-                perform_compilation(mode, &ctx.project, &ctx.output_config, &ctx.formats)
+                perform_compilation(mode, &ctx.project, &ctx.output_config, &plugins)
             }
             Commands::Watch {
                 path,
@@ -641,13 +522,16 @@ impl Cli {
                 let ctx =
                     Self::setup_compilation_context(&path, config.as_deref(), build_dir, flags)?;
 
+                // Build plugin list from resolved formats
+                let plugins = plugins_for_formats(&ctx.formats);
+
                 // Perform initial compilation (Fresh mode)
                 info!("compiling project");
-                let mode = CompilationMode::Fresh {
+                let mode = WorldMode::Fresh {
                     root: ctx.compilation_root.clone(),
                 };
                 if let Err(e) =
-                    perform_compilation(mode, &ctx.project, &ctx.output_config, &ctx.formats)
+                    perform_compilation(mode, &ctx.project, &ctx.output_config, &plugins)
                 {
                     warn!(error = %e, "initial compilation failed, continuing to watch");
                 }
@@ -655,13 +539,13 @@ impl Cli {
                 // Destructure context for use in watch loop
                 let CompilationContext {
                     project,
-                    formats,
+                    formats: _,
                     output_config,
                     compilation_root: _,
                 } = ctx;
 
-                // Start web server if --open and HTML is in formats
-                let server_info = if open && formats.contains(&OutputFormat::Html) {
+                // Start web server if --open and any plugin supports live preview
+                let server_info = if open && plugins.iter().any(|p| p.supports_live_preview()) {
                     // Need tokio runtime for async server
                     let runtime = tokio::runtime::Runtime::new()
                         .map_err(|e| crate::RheoError::io(e, "creating tokio runtime"))?;
@@ -680,16 +564,15 @@ impl Cli {
                     None
                 };
 
-                // Open PDF(s) if --open and PDF is in formats
-                if open && formats.contains(&OutputFormat::Pdf) {
-                    let pdf_dir = output_config.pdf_dir.clone();
-                    open_all_files_in_folder(pdf_dir, OutputFormat::Pdf)?;
-                }
-
-                // Open EPUB if --open and EPUB is in formats
-                if open && formats.contains(&OutputFormat::Epub) {
-                    let epub_dir = output_config.epub_dir.clone();
-                    open_all_files_in_folder(epub_dir, OutputFormat::Epub)?;
+                // Open output files for non-live-preview plugins
+                if open {
+                    for plugin in &plugins {
+                        if !plugin.supports_live_preview() {
+                            let dir =
+                                output_config.dir_for_format(plugin.output_format()).clone();
+                            open_all_files_in_folder(dir, plugin.extension())?;
+                        }
+                    }
                 }
 
                 // Set up file watcher with interior mutability for project and world updates
@@ -709,15 +592,23 @@ impl Cli {
                     .first()
                     .ok_or_else(|| crate::RheoError::project_config("no .typ files found"))?;
 
-                // For watch mode: if compiling HTML, keep .typ links for transformation
-                // If compiling only PDF/EPUB, remove .typ links at source level
-                let output_format = if formats.contains(&OutputFormat::Html) {
-                    Some(OutputFormat::Html)
-                } else {
-                    None
-                };
-                let world =
-                    crate::world::RheoWorld::new(&compilation_root, initial_main, output_format)?;
+                // For watch mode: find the first per-file plugin to determine World output format
+                // for link transformation. If no per-file plugins, use None (no transformation).
+                let output_format = plugins
+                    .iter()
+                    .find(|p| {
+                        matches!(
+                            p.compilation_dispatch(&borrowed_project.config),
+                            CompilationDispatch::PerFile
+                        )
+                    })
+                    .map(|p| p.output_format());
+
+                let world = crate::world::RheoWorld::new(
+                    &compilation_root,
+                    initial_main,
+                    output_format,
+                )?;
                 drop(borrowed_project); // Release borrow before moving into RefCell
 
                 let world_cell = RefCell::new(world);
@@ -747,14 +638,14 @@ impl Cli {
                         let result = match event {
                             crate::watch::WatchEvent::FilesChanged => {
                                 info!("change detected, recompiling");
-                                let mode = CompilationMode::Incremental {
+                                let mode = WorldMode::Incremental {
                                     world: &mut world_cell.borrow_mut(),
                                 };
                                 perform_compilation(
                                     mode,
                                     &project_cell.borrow(),
                                     &output_config,
-                                    &formats,
+                                    &plugins,
                                 )
                             }
                             crate::watch::WatchEvent::ConfigChanged => {
@@ -786,13 +677,17 @@ impl Cli {
                                                 )
                                             })?;
 
-                                        // Use same output_format setting as initial World creation
-                                        let output_format = if formats.contains(&OutputFormat::Html)
-                                        {
-                                            Some(OutputFormat::Html)
-                                        } else {
-                                            None
-                                        };
+                                        // Use same output_format logic as initial World creation
+                                        let output_format = plugins
+                                            .iter()
+                                            .find(|p| {
+                                                matches!(
+                                                    p.compilation_dispatch(&borrowed.config),
+                                                    CompilationDispatch::PerFile
+                                                )
+                                            })
+                                            .map(|p| p.output_format());
+
                                         match crate::world::RheoWorld::new(
                                             &new_compilation_root,
                                             new_initial_main,
@@ -800,14 +695,14 @@ impl Cli {
                                         ) {
                                             Ok(new_world) => {
                                                 *world_cell.borrow_mut() = new_world;
-                                                let mode = CompilationMode::Incremental {
+                                                let mode = WorldMode::Incremental {
                                                     world: &mut world_cell.borrow_mut(),
                                                 };
                                                 perform_compilation(
                                                     mode,
                                                     &borrowed,
                                                     &output_config,
-                                                    &formats,
+                                                    &plugins,
                                                 )
                                             }
                                             Err(e) => {

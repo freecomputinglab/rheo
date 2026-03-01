@@ -454,7 +454,7 @@ pub fn extract_css_metadata(css_path: &Path) -> Result<BinaryFileMetadata, Strin
 }
 
 pub fn extract_epub_metadata(epub_path: &Path) -> Result<EpubMetadata, String> {
-    use rheo::formats::epub::package::Package;
+    use rheo::plugins::epub::package::Package;
     use std::io::Read;
     use zip::ZipArchive;
 
