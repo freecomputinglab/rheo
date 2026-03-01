@@ -3,7 +3,7 @@ mod html_head;
 
 use crate::compile::RheoCompileOptions;
 use crate::config::{HtmlOptions, RheoConfig, SpineConfig};
-use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
+use crate::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::project::ProjectConfig;
 use crate::world::RheoWorld;
 use crate::{OutputFormat, Result, RheoError};

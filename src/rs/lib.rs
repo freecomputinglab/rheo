@@ -3,7 +3,7 @@ pub mod compile;
 pub mod config;
 pub mod constants;
 pub mod error;
-pub mod formats;
+pub mod diagnostics;
 pub mod init;
 pub mod logging;
 pub mod manifest_version;
