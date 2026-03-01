@@ -11,7 +11,7 @@ use std::path::Path;
 use tracing::{debug, info};
 use typst_html::HtmlDocument;
 
-use super::{CompilationDispatch, FormatPlugin, PluginContext};
+use super::{FormatPlugin, PluginContext};
 
 pub struct HtmlPlugin;
 
@@ -32,10 +32,6 @@ impl FormatPlugin for HtmlPlugin {
         true
     }
 
-    fn compilation_dispatch(&self, _config: &RheoConfig) -> CompilationDispatch {
-        CompilationDispatch::PerFile
-    }
-
     fn spine_config<'a>(&self, config: &'a RheoConfig) -> Option<&'a dyn SpineConfig> {
         config.html.spine.as_ref().map(|s| s as &dyn SpineConfig)
     }
@@ -45,6 +41,11 @@ impl FormatPlugin for HtmlPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
+        if ctx.plugin_config.spine.merge {
+            return Err(RheoError::project_config(
+                "HTML does not support merged compilation",
+            ));
+        }
         let html_options = HtmlOptions {
             stylesheets: ctx.project.config.html.stylesheets.clone(),
             fonts: ctx.project.config.html.fonts.clone(),

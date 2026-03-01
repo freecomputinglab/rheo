@@ -1,6 +1,6 @@
 use crate::CompilationResults;
 use crate::compile::RheoCompileOptions;
-use crate::plugins::{CompilationDispatch, FormatPlugin, PluginContext, plugins_for_formats};
+use crate::plugins::{FormatPlugin, PluginConfig, PluginContext, SpineOptions, plugins_for_formats};
 use crate::reticulate::spine::generate_spine;
 use crate::{OutputFormat, Result, open_all_files_in_folder};
 use clap::{Parser, Subcommand};
@@ -280,76 +280,92 @@ fn perform_compilation<'a>(
     for plugin in plugins {
         let plugin_output_dir = output_config.dir_for_format(plugin.output_format());
         plugin.copy_assets(project, plugin_output_dir)?;
-        let files = get_files_for_plugin(plugin.as_ref(), project)?;
 
-        match plugin.compilation_dispatch(&project.config) {
-            CompilationDispatch::PerFile => {
-                for typ_file in &files {
-                    // For incremental mode, prepare the World for compiling this specific file
-                    // 1. set_main() tells the World which file we're compiling
-                    // 2. reset() clears file caches while preserving fonts/packages
+        // Resolve standardized PluginConfig from format-specific spine config
+        let spine_cfg = plugin.spine_config(&project.config);
+        let plugin_config = PluginConfig {
+            spine: SpineOptions {
+                title: spine_cfg.and_then(|s| s.title()).map(str::to_string),
+                vertebrae: spine_cfg
+                    .map(|s| s.vertebrae().to_vec())
+                    .unwrap_or_default(),
+                merge: spine_cfg.and_then(|s| s.merge()).unwrap_or(false),
+            },
+        };
+
+        if plugin_config.spine.merge {
+            // Merged mode: single output combining all spine files
+            let compilation_root = project
+                .config
+                .resolve_content_dir(&project.root)
+                .unwrap_or_else(|| project.root.clone());
+            let output_path = plugin_output_dir
+                .join(&project.name)
+                .with_extension(plugin.extension());
+
+            let options = match &mode {
+                WorldMode::Fresh { root: _ } => {
+                    RheoCompileOptions::new(PathBuf::new(), &output_path, &compilation_root)
+                }
+                WorldMode::Incremental { .. } => {
                     if let WorldMode::Incremental { world } = &mut mode {
-                        world.set_main(typ_file)?;
-                        world.reset();
-                    }
-
-                    let filename = get_output_filename(typ_file)?;
-                    let output_path = plugin_output_dir
-                        .join(&filename)
-                        .with_extension(plugin.extension());
-
-                    let options = match &mode {
-                        WorldMode::Fresh { root } => {
-                            RheoCompileOptions::new(typ_file, &output_path, root)
-                        }
-                        WorldMode::Incremental { .. } => {
-                            if let WorldMode::Incremental { world } = &mut mode {
-                                RheoCompileOptions::incremental(
-                                    typ_file,
-                                    &output_path,
-                                    &project.root,
-                                    world,
-                                )
-                            } else {
-                                unreachable!()
-                            }
-                        }
-                    };
-
-                    let ctx = PluginContext {
-                        project,
-                        output_config,
-                        options,
-                    };
-
-                    match plugin.compile(ctx) {
-                        Ok(_) => results.record_success(plugin.output_format()),
-                        Err(e) => {
-                            error!(file = %typ_file.display(), error = %e, "{} compilation failed", plugin.name());
-                            results.record_failure(plugin.output_format());
-                        }
+                        RheoCompileOptions::incremental(
+                            PathBuf::new(),
+                            &output_path,
+                            &compilation_root,
+                            world,
+                        )
+                    } else {
+                        unreachable!()
                     }
                 }
+            };
+
+            let ctx = PluginContext {
+                project,
+                output_config,
+                options,
+                plugin_config,
+            };
+
+            match plugin.compile(ctx) {
+                Ok(_) => {
+                    results.record_success(plugin.output_format());
+                    info!(output = %output_path.display(), "{} generation complete", plugin.name());
+                }
+                Err(e) => {
+                    error!(error = %e, "{} generation failed", plugin.name());
+                    results.record_failure(plugin.output_format());
+                }
             }
-            CompilationDispatch::Merged => {
-                let compilation_root = project
-                    .config
-                    .resolve_content_dir(&project.root)
-                    .unwrap_or_else(|| project.root.clone());
+        } else {
+            // Per-file mode: compile each .typ file independently
+            let files = get_files_for_plugin(plugin.as_ref(), project)?;
+
+            for typ_file in &files {
+                // For incremental mode, prepare the World for compiling this specific file
+                // 1. set_main() tells the World which file we're compiling
+                // 2. reset() clears file caches while preserving fonts/packages
+                if let WorldMode::Incremental { world } = &mut mode {
+                    world.set_main(typ_file)?;
+                    world.reset();
+                }
+
+                let filename = get_output_filename(typ_file)?;
                 let output_path = plugin_output_dir
-                    .join(&project.name)
+                    .join(&filename)
                     .with_extension(plugin.extension());
 
                 let options = match &mode {
-                    WorldMode::Fresh { root: _ } => {
-                        RheoCompileOptions::new(PathBuf::new(), &output_path, &compilation_root)
+                    WorldMode::Fresh { root } => {
+                        RheoCompileOptions::new(typ_file, &output_path, root)
                     }
                     WorldMode::Incremental { .. } => {
                         if let WorldMode::Incremental { world } = &mut mode {
                             RheoCompileOptions::incremental(
-                                PathBuf::new(),
+                                typ_file,
                                 &output_path,
-                                &compilation_root,
+                                &project.root,
                                 world,
                             )
                         } else {
@@ -362,15 +378,13 @@ fn perform_compilation<'a>(
                     project,
                     output_config,
                     options,
+                    plugin_config: plugin_config.clone(),
                 };
 
                 match plugin.compile(ctx) {
-                    Ok(_) => {
-                        results.record_success(plugin.output_format());
-                        info!(output = %output_path.display(), "{} generation complete", plugin.name());
-                    }
+                    Ok(_) => results.record_success(plugin.output_format()),
                     Err(e) => {
-                        error!(error = %e, "{} generation failed", plugin.name());
+                        error!(file = %typ_file.display(), error = %e, "{} compilation failed", plugin.name());
                         results.record_failure(plugin.output_format());
                     }
                 }
@@ -597,10 +611,8 @@ impl Cli {
                 let output_format = plugins
                     .iter()
                     .find(|p| {
-                        matches!(
-                            p.compilation_dispatch(&borrowed_project.config),
-                            CompilationDispatch::PerFile
-                        )
+                        let spine_cfg = p.spine_config(&borrowed_project.config);
+                        !spine_cfg.and_then(|s| s.merge()).unwrap_or(false)
                     })
                     .map(|p| p.output_format());
 
@@ -681,10 +693,11 @@ impl Cli {
                                         let output_format = plugins
                                             .iter()
                                             .find(|p| {
-                                                matches!(
-                                                    p.compilation_dispatch(&borrowed.config),
-                                                    CompilationDispatch::PerFile
-                                                )
+                                                let spine_cfg =
+                                                    p.spine_config(&borrowed.config);
+                                                !spine_cfg
+                                                    .and_then(|s| s.merge())
+                                                    .unwrap_or(false)
                                             })
                                             .map(|p| p.output_format());
 

@@ -12,7 +12,7 @@ use tracing::{debug, info};
 use typst::layout::PagedDocument;
 use typst_pdf::PdfOptions;
 
-use super::{CompilationDispatch, FormatPlugin, PluginContext};
+use super::{FormatPlugin, PluginContext};
 
 pub struct PdfPlugin;
 
@@ -29,34 +29,12 @@ impl FormatPlugin for PdfPlugin {
         "pdf"
     }
 
-    fn compilation_dispatch(&self, config: &RheoConfig) -> CompilationDispatch {
-        if config
-            .pdf
-            .spine
-            .as_ref()
-            .and_then(|s| s.merge)
-            .unwrap_or(false)
-        {
-            CompilationDispatch::Merged
-        } else {
-            CompilationDispatch::PerFile
-        }
-    }
-
     fn spine_config<'a>(&self, config: &'a RheoConfig) -> Option<&'a dyn SpineConfig> {
         config.pdf.spine.as_ref().map(|s| s as &dyn SpineConfig)
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        let is_merged = ctx
-            .project
-            .config
-            .pdf
-            .spine
-            .as_ref()
-            .and_then(|s| s.merge)
-            .unwrap_or(false);
-        let pdf_config = if is_merged {
+        let pdf_config = if ctx.plugin_config.spine.merge {
             Some(&ctx.project.config.pdf)
         } else {
             None

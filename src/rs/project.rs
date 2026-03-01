@@ -1,4 +1,3 @@
-use crate::config::EpubSpine;
 use crate::plugins::pdf::DocumentTitle;
 use crate::{Result, RheoConfig, RheoError};
 use std::path::{Path, PathBuf};
@@ -203,24 +202,18 @@ impl ProjectConfig {
 
 /// Apply smart defaults when no rheo.toml exists.
 ///
-/// This generates sensible spine configurations for EPUB based on the project
-/// mode and name. PDF is not modified to maintain backwards compatibility
+/// Sets the EPUB spine title from the project/file name. Vertebrae remain empty,
+/// which causes the spine generator to auto-discover all .typ files.
+/// PDF is not modified to maintain backwards compatibility
 /// (users expect per-file PDFs by default).
 fn apply_smart_defaults(
     mut config: RheoConfig,
     project_name: &str,
-    mode: ProjectMode,
+    _mode: ProjectMode,
 ) -> RheoConfig {
-    // Generate human-readable title from project/file name
-    let title = Some(DocumentTitle::to_readable_name(project_name));
-
-    // Apply EPUB defaults if spine not configured
-    if config.epub.spine.is_none() {
-        let vertebrae = match mode {
-            ProjectMode::SingleFile => vec![], // Empty: will auto-discover single file
-            ProjectMode::Directory => vec!["**/*.typ".to_string()], // All files
-        };
-        config.epub.spine = Some(EpubSpine { title, vertebrae });
+    // Set EPUB spine title from project/file name if not already configured
+    if config.epub.spine.title.is_none() {
+        config.epub.spine.title = Some(DocumentTitle::to_readable_name(project_name));
     }
 
     config
@@ -340,11 +333,11 @@ mod tests {
 
         let project = ProjectConfig::from_path(&file, None).unwrap();
 
-        // Should have default spine config for EPUB
-        assert!(project.config.epub.spine.is_some());
-        let merge = project.config.epub.spine.as_ref().unwrap();
-        assert_eq!(merge.title.as_ref().unwrap(), "My Document");
-        assert!(merge.vertebrae.is_empty());
+        // EPUB spine is always present (non-optional)
+        let spine = &project.config.epub.spine;
+        assert_eq!(spine.title.as_deref().unwrap(), "My Document");
+        assert!(spine.vertebrae.is_empty());
+        assert_eq!(spine.merge, Some(true));
     }
 
     #[test]
@@ -355,12 +348,12 @@ mod tests {
 
         let project = ProjectConfig::from_path(temp.path(), None).unwrap();
 
-        // Should have default spine config for EPUB
-        assert!(project.config.epub.spine.is_some());
-        let merge = project.config.epub.spine.as_ref().unwrap();
-        assert_eq!(merge.vertebrae, vec!["**/*.typ"]);
+        // EPUB spine is always present with empty vertebrae (auto-discovers all files)
+        let spine = &project.config.epub.spine;
+        assert!(spine.vertebrae.is_empty());
         // Title should be based on temp directory name (will vary)
-        assert!(merge.title.is_some());
+        assert!(spine.title.is_some());
+        assert_eq!(spine.merge, Some(true));
     }
 
     #[test]
@@ -380,9 +373,9 @@ mod tests {
         let project = ProjectConfig::from_path(temp.path(), None).unwrap();
 
         // Should preserve explicit config
-        let merge = project.config.epub.spine.as_ref().unwrap();
-        assert_eq!(merge.title.clone().unwrap(), "Custom Title");
-        assert_eq!(merge.vertebrae, vec!["custom.typ"]);
+        let spine = &project.config.epub.spine;
+        assert_eq!(spine.title.as_deref().unwrap(), "Custom Title");
+        assert_eq!(spine.vertebrae, vec!["custom.typ"]);
     }
 
     #[test]

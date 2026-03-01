@@ -58,9 +58,7 @@ impl ValidateConfig for HtmlConfig {
 
 impl ValidateConfig for EpubConfig {
     fn validate(&self) -> Result<()> {
-        if let Some(spine) = &self.spine {
-            spine.validate()?;
-        }
+        self.spine.validate()?;
         Ok(())
     }
 }
@@ -210,6 +208,7 @@ mod tests {
         let spine = EpubSpine {
             title: Some("Test".to_string()),
             vertebrae: vec!["*.typ".to_string()],
+            merge: Some(true),
         };
         assert!(spine.validate().is_ok());
     }
@@ -219,6 +218,7 @@ mod tests {
         let spine = EpubSpine {
             title: None,
             vertebrae: vec!["*.typ".to_string()],
+            merge: Some(true),
         };
         // EPUB title is optional (can be inferred)
         assert!(spine.validate().is_ok());
@@ -229,11 +229,12 @@ mod tests {
         let spine = EpubSpine {
             title: Some("Test".to_string()),
             vertebrae: vec!["*.typ".to_string()],
+            merge: Some(true),
         };
         let config = EpubConfig {
             identifier: None,
             date: None,
-            spine: Some(spine),
+            spine,
         };
         assert!(config.validate().is_ok());
     }
@@ -243,6 +244,7 @@ mod tests {
         let spine = HtmlSpine {
             title: Some("Test".to_string()),
             vertebrae: vec!["*.typ".to_string()],
+            merge: None,
         };
         assert!(spine.validate().is_ok());
     }

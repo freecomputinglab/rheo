@@ -30,7 +30,7 @@ use typst_html::HtmlDocument;
 use uuid::Uuid;
 use zip::{result::ZipError, write::SimpleFileOptions};
 
-use super::{CompilationDispatch, FormatPlugin, PluginContext};
+use super::{FormatPlugin, PluginContext};
 
 pub struct EpubPlugin;
 
@@ -47,12 +47,8 @@ impl FormatPlugin for EpubPlugin {
         "epub"
     }
 
-    fn compilation_dispatch(&self, _config: &RheoConfig) -> CompilationDispatch {
-        CompilationDispatch::Merged
-    }
-
     fn spine_config<'a>(&self, config: &'a RheoConfig) -> Option<&'a dyn SpineConfig> {
-        config.epub.spine.as_ref().map(|s| s as &dyn SpineConfig)
+        Some(&config.epub.spine as &dyn SpineConfig)
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
@@ -148,10 +144,12 @@ fn date_format(dt: &DateTime<Utc>) -> EcoString {
 pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> AnyhowResult<String> {
     let info = &items[0].document.info;
     let language = info.locale.unwrap_or_default().rfc_3066();
-    let title = match &config.spine {
-        None => items[0].title(),
-        Some(combined) => combined.title.as_ref().unwrap().into(),
-    };
+    let title = config
+        .spine
+        .title
+        .as_deref()
+        .map(EcoString::from)
+        .unwrap_or_else(|| items[0].title());
 
     const INTERNAL_UNIQUE_ID: &str = "uid";
 
@@ -279,16 +277,14 @@ pub fn zip_epub(
 fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
         // Convert spine config to trait object for generic spine handling
-        let spine_config = config
-            .spine
-            .as_ref()
-            .map(|s| s as &dyn crate::config::SpineConfig);
+        let spine_config: &dyn crate::config::SpineConfig = &config.spine;
 
         // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
-        let rheo_spine = RheoSpine::build(root, spine_config, crate::OutputFormat::Epub)?;
+        let rheo_spine = RheoSpine::build(root, Some(spine_config), crate::OutputFormat::Epub)?;
 
         // Get the spine file paths
-        let spine = crate::reticulate::spine::generate_spine(root, spine_config, false)?;
+        let spine =
+            crate::reticulate::spine::generate_spine(root, Some(spine_config), false)?;
 
         // Create EpubItems from transformed sources
         let mut items = spine

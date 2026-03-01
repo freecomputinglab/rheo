@@ -122,12 +122,14 @@ pub struct PdfSpine {
     pub merge: Option<bool>,
 }
 
+fn default_epub_merge() -> Option<bool> {
+    Some(true)
+}
+
 /// EPUB spine configuration for combining multiple files into a single EPUB.
-/// EPUB always merges files - there is no merge option.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EpubSpine {
     /// Title of the EPUB document.
-    /// Required for EPUB output.
     pub title: Option<String>,
 
     /// Glob patterns for files to include in the EPUB.
@@ -135,10 +137,24 @@ pub struct EpubSpine {
     /// Results are sorted lexicographically.
     /// Example: ["cover.typ", "chapters/**"]
     pub vertebrae: Vec<String>,
+
+    /// Whether to merge vertebrae into a single EPUB. Defaults to true for EPUB.
+    #[serde(default = "default_epub_merge")]
+    pub merge: Option<bool>,
+}
+
+impl Default for EpubSpine {
+    fn default() -> Self {
+        Self {
+            title: None,
+            vertebrae: vec![],
+            merge: Some(true),
+        }
+    }
 }
 
 /// HTML spine configuration for organizing multiple HTML files.
-/// HTML always produces per-file output - there is no merge option.
+/// HTML always produces per-file output by default.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HtmlSpine {
     /// Title of the HTML site/collection.
@@ -149,6 +165,10 @@ pub struct HtmlSpine {
     /// Results are sorted lexicographically.
     /// Example: ["index.typ", "pages/**"]
     pub vertebrae: Vec<String>,
+
+    /// Whether to merge vertebrae. Not supported for HTML (always per-file).
+    #[serde(default)]
+    pub merge: Option<bool>,
 }
 
 /// Common interface for spine configurations across output formats.
@@ -163,7 +183,7 @@ pub trait SpineConfig {
     fn vertebrae(&self) -> &[String];
 
     /// Returns whether to merge outputs into a single file.
-    /// Only meaningful for PDF; returns None for other formats.
+    /// Returns None if not explicitly configured (core resolves to false by default).
     fn merge(&self) -> Option<bool> {
         None
     }
@@ -191,6 +211,10 @@ impl SpineConfig for EpubSpine {
     fn vertebrae(&self) -> &[String] {
         &self.vertebrae
     }
+
+    fn merge(&self) -> Option<bool> {
+        self.merge
+    }
 }
 
 impl SpineConfig for HtmlSpine {
@@ -200,6 +224,10 @@ impl SpineConfig for HtmlSpine {
 
     fn vertebrae(&self) -> &[String] {
         &self.vertebrae
+    }
+
+    fn merge(&self) -> Option<bool> {
+        self.merge
     }
 }
 
@@ -254,7 +282,9 @@ pub struct EpubConfig {
     pub date: Option<DateTime<Utc>>,
 
     /// Configuration for an EPUB spine with multiple chapters.
-    pub spine: Option<EpubSpine>,
+    /// Defaults to merge=true with all .typ files (EPUB always merges).
+    #[serde(default)]
+    pub spine: EpubSpine,
 }
 
 impl RheoConfig {
@@ -538,8 +568,8 @@ mod tests {
             "[epub.spine]\ntitle = \"My EPUB\"\nvertebrae = [\"intro.typ\", \"chapter*.typ\", \"outro.typ\"]",
         );
         let config: RheoConfig = toml::from_str(&toml).unwrap();
-        let spine = config.epub.spine.as_ref().unwrap();
-        assert_eq!(spine.title.as_ref().unwrap(), "My EPUB");
+        let spine = &config.epub.spine;
+        assert_eq!(spine.title.as_deref().unwrap(), "My EPUB");
         assert_eq!(
             spine.vertebrae,
             vec!["intro.typ", "chapter*.typ", "outro.typ"]
@@ -561,8 +591,8 @@ mod tests {
     fn test_spine_empty_vertebrae() {
         let toml = versioned_toml("[epub.spine]\ntitle = \"Single File Book\"\nvertebrae = []");
         let config: RheoConfig = toml::from_str(&toml).unwrap();
-        let spine = config.epub.spine.as_ref().unwrap();
-        assert_eq!(spine.title.as_ref().unwrap(), "Single File Book");
+        let spine = &config.epub.spine;
+        assert_eq!(spine.title.as_deref().unwrap(), "Single File Book");
         assert!(spine.vertebrae.is_empty());
     }
 

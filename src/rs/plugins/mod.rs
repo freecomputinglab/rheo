@@ -9,12 +9,19 @@ pub mod epub;
 pub mod html;
 pub mod pdf;
 
-/// How a plugin handles multiple files.
-pub enum CompilationDispatch {
-    /// Compile each .typ file independently (HTML, PDF default)
-    PerFile,
-    /// Always merge all spine files into one output (EPUB, merged PDF)
-    Merged,
+/// Standardized spine options resolved by rheo core before calling compile().
+#[derive(Debug, Clone)]
+pub struct SpineOptions {
+    pub title: Option<String>,
+    pub vertebrae: Vec<String>,
+    /// true = merged output, false = per-file output
+    pub merge: bool,
+}
+
+/// Standardized plugin configuration passed to compile().
+#[derive(Debug, Clone)]
+pub struct PluginConfig {
+    pub spine: SpineOptions,
 }
 
 /// Context passed to plugin.compile() for each compilation unit
@@ -22,6 +29,7 @@ pub struct PluginContext<'a> {
     pub project: &'a ProjectConfig,
     pub output_config: &'a OutputConfig,
     pub options: RheoCompileOptions<'a>,
+    pub plugin_config: PluginConfig,
 }
 
 pub trait FormatPlugin: Send + Sync {
@@ -39,9 +47,6 @@ pub trait FormatPlugin: Send + Sync {
         false
     }
 
-    /// Whether this plugin compiles per-file or merged, given current config
-    fn compilation_dispatch(&self, config: &RheoConfig) -> CompilationDispatch;
-
     /// Spine config for file-set resolution (None = use all project .typ files)
     fn spine_config<'a>(&self, config: &'a RheoConfig) -> Option<&'a dyn SpineConfig>;
 
@@ -50,8 +55,8 @@ pub trait FormatPlugin: Send + Sync {
         Ok(())
     }
 
-    /// Compile one file (PerFile dispatch) or merged output (Merged dispatch).
-    /// The output path is already fully resolved via OutputConfig::dir_for_format.
+    /// Compile one file (merge=false) or merged output (merge=true).
+    /// Inspect ctx.plugin_config.spine.merge to determine the mode.
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()>;
 }
 

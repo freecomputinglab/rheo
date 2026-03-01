@@ -192,6 +192,27 @@ fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
     }
 }
 
+/// Collect all .typ files under `root`, sorted lexicographically.
+fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut typst_files: Vec<PathBuf> = WalkDir::new(root)
+        .into_iter()
+        .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext == &TYP_EXT[1..])
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if typst_files.is_empty() {
+        return Err(RheoError::project_config("need at least one .typ file"));
+    }
+
+    typst_files.sort();
+    Ok(typst_files)
+}
+
 /// Generates a spine (ordered list of .typ files) based on configuration.
 ///
 /// # Arguments
@@ -221,9 +242,8 @@ pub fn generate_spine(
         // Single-file mode
         None => collect_one_typst_file(root),
 
-        // Empty vertebrae pattern: auto-discover single file only
-        // This is used for single-file mode with default EPUB spine config
-        Some(spine) if spine.vertebrae().is_empty() => collect_one_typst_file(root),
+        // Empty vertebrae: auto-discover all .typ files (supports default EpubSpine)
+        Some(spine) if spine.vertebrae().is_empty() => collect_all_typst_files(root),
 
         // Vertebrae is specified
         // Process glob patterns from spine config
@@ -336,6 +356,7 @@ mod tests {
         let spine = HtmlSpine {
             title: Some("Test".to_string()),
             vertebrae: vec!["*.typ".to_string()],
+            merge: None,
         };
         let result = generate_spine(temp.path(), Some(&spine), false);
         assert!(result.is_ok());
@@ -421,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_spine_empty_pattern_multiple_files_error() {
+    fn test_generate_spine_empty_pattern_multiple_files_returns_all() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
         let spine = PdfSpine {
             title: Some("Test".to_string()),
@@ -429,14 +450,11 @@ mod tests {
             merge: None,
         };
 
+        // Empty vertebrae now returns all .typ files (supports default EpubSpine)
         let result = generate_spine(temp.path(), Some(&spine), false);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("multiple .typ files")
-        );
+        assert!(result.is_ok());
+        let files = result.unwrap();
+        assert_eq!(files.len(), 2);
     }
 
     #[test]
