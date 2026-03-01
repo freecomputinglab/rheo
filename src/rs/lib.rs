@@ -10,7 +10,6 @@ pub mod manifest_version;
 pub mod output;
 pub mod path_utils;
 pub mod plugins;
-pub mod postprocess;
 pub mod project;
 pub mod results;
 pub mod reticulate;

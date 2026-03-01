@@ -1,7 +1,9 @@
+mod dom;
+mod html_head;
+
 use crate::compile::RheoCompileOptions;
 use crate::config::{HtmlOptions, RheoConfig, SpineConfig};
 use crate::formats::common::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
-use crate::postprocess;
 use crate::project::ProjectConfig;
 use crate::world::RheoWorld;
 use crate::{OutputFormat, Result, RheoError};
@@ -134,7 +136,7 @@ fn compile_html_impl_fresh(
         .map(|s| s.as_str())
         .collect();
     let fonts: Vec<&str> = html_options.fonts.iter().map(|s| s.as_str()).collect();
-    let html_string = postprocess::inject_head_links(&html_string, &stylesheets, &fonts)?;
+    let html_string = html_head::inject_head_links(&html_string, &stylesheets, &fonts)?;
 
     // Write to file
     debug!(size = html_string.len(), "writing HTML file");
@@ -182,7 +184,7 @@ fn compile_html_impl(
         .map(|s| s.as_str())
         .collect();
     let fonts: Vec<&str> = html_options.fonts.iter().map(|s| s.as_str()).collect();
-    let html_string = postprocess::inject_head_links(&html_string, &stylesheets, &fonts)?;
+    let html_string = html_head::inject_head_links(&html_string, &stylesheets, &fonts)?;
 
     // Write to file
     debug!(size = html_string.len(), "writing HTML file");
