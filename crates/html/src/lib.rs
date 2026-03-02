@@ -76,7 +76,7 @@ impl FormatPlugin for HtmlPlugin {
         }
         // If the project didn't provide style.css, write the bundled default.
         if !ctx.inputs.contains_key("stylesheet") {
-            const DEFAULT_CSS: &str = include_str!("../../../src/templates/init/style.css");
+            const DEFAULT_CSS: &str = include_str!("../../core/src/templates/init/style.css");
             let dest = ctx.output_config.dir_for_plugin("html").join("style.css");
             std::fs::write(&dest, DEFAULT_CSS)
                 .map_err(|e| RheoError::io(e, "writing default style.css"))?;

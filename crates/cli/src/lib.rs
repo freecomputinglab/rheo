@@ -518,7 +518,7 @@ fn init_project(target_dir: &Path) -> Result<()> {
     // Template directory is relative to the rheo-cli crate's source directory
     // Use CARGO_MANIFEST_DIR which is set at compile time
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let template_dir = manifest_dir.join("../../src/templates/init");
+    let template_dir = manifest_dir.join("../core/src/templates/init");
 
     // Copy all template files recursively
     copy_template_recursive(&template_dir, target_dir)?;

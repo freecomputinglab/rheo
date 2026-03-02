@@ -329,7 +329,7 @@ impl World for RheoWorld {
 
         // For the main file, also inject the rheo.typ template
         if id == self.main {
-            let rheo_content = include_str!("../../../src/typ/rheo.typ");
+            let rheo_content = include_str!("typ/rheo.typ");
             let template_inject = format!(
                 "{}{}\n#show: rheo_template\n\n",
                 target_polyfill, rheo_content

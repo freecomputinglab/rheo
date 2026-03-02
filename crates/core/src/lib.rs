@@ -12,6 +12,7 @@ pub mod project;
 pub mod results;
 pub mod reticulate;
 pub mod validation;
+pub mod watch;
 pub mod world;
 
 // Re-export plugins module as separate file (was plugins/mod.rs)
