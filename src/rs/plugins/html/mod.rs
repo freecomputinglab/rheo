@@ -2,16 +2,15 @@ mod dom;
 mod html_head;
 
 use crate::compile::RheoCompileOptions;
-use crate::config::{HtmlOptions, RheoConfig, SpineConfig};
+use crate::config::HtmlOptions;
 use crate::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
-use crate::project::ProjectConfig;
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use std::path::Path;
 use tracing::{debug, info};
 use typst_html::HtmlDocument;
 
-use super::{FormatPlugin, PluginContext};
+use super::{FormatPlugin, PluginContext, PluginInput};
 
 pub struct HtmlPlugin;
 
@@ -24,12 +23,12 @@ impl FormatPlugin for HtmlPlugin {
         true
     }
 
-    fn spine_config<'a>(&self, config: &'a RheoConfig) -> Option<&'a dyn SpineConfig> {
-        config.html.spine.as_ref().map(|s| s as &dyn SpineConfig)
-    }
-
-    fn copy_assets(&self, project: &ProjectConfig, output_dir: &Path) -> Result<()> {
-        copy_html_assets(project.style_css.as_deref(), output_dir)
+    fn inputs(&self) -> &'static [PluginInput] {
+        &[PluginInput {
+            name: "stylesheet",
+            path: "style.css",
+            required: false,
+        }]
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
@@ -38,42 +37,20 @@ impl FormatPlugin for HtmlPlugin {
                 "HTML does not support merged compilation",
             ));
         }
+        // If the project didn't provide style.css, write the bundled default.
+        if !ctx.inputs.contains_key("stylesheet") {
+            const DEFAULT_CSS: &str = include_str!("../../../templates/init/style.css");
+            let dest = ctx.output_config.dir_for_plugin("html").join("style.css");
+            std::fs::write(&dest, DEFAULT_CSS)
+                .map_err(|e| RheoError::io(e, "writing default style.css"))?;
+            debug!(dest = %dest.display(), "wrote bundled default style.css");
+        }
         let html_options = HtmlOptions {
             stylesheets: ctx.project.config.html.stylesheets.clone(),
             fonts: ctx.project.config.html.fonts.clone(),
         };
         compile_html_new(ctx.options, html_options)
     }
-}
-
-/// Copy style.css to the HTML output directory.
-///
-/// Priority:
-/// 1. If project has style.css in its root, use that (project-specific override)
-/// 2. Otherwise, use bundled default style.css
-pub fn copy_html_assets(project_style_css: Option<&Path>, dest_dir: &Path) -> Result<()> {
-    const DEFAULT_CSS: &str = include_str!("../../../templates/init/style.css");
-    let dest_path = dest_dir.join("style.css");
-
-    if let Some(project_css) = project_style_css {
-        std::fs::copy(project_css, &dest_path).map_err(|e| {
-            RheoError::io(
-                e,
-                format!(
-                    "copying project style.css from {:?} to {:?}",
-                    project_css, dest_path
-                ),
-            )
-        })?;
-        debug!(source = %project_css.display(), dest = %dest_path.display(), "copied project-specific style.css");
-    } else {
-        std::fs::write(&dest_path, DEFAULT_CSS).map_err(|e| {
-            RheoError::io(e, format!("writing default style.css to {:?}", dest_path))
-        })?;
-        debug!(dest = %dest_path.display(), "copied default style.css");
-    }
-
-    Ok(())
 }
 
 pub fn compile_html_to_document(

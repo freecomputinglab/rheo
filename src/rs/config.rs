@@ -384,6 +384,16 @@ impl RheoConfig {
     pub fn has_epub(&self) -> bool {
         self.formats.iter().any(|f| f == "epub")
     }
+
+    /// Return the spine config for the named plugin, if any.
+    pub fn spine_for_plugin(&self, name: &str) -> Option<&dyn SpineConfig> {
+        match name {
+            "pdf" => self.pdf.spine.as_ref().map(|s| s as &dyn SpineConfig),
+            "html" => self.html.spine.as_ref().map(|s| s as &dyn SpineConfig),
+            "epub" => Some(&self.epub.spine as &dyn SpineConfig),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

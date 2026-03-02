@@ -55,10 +55,7 @@ impl HtmlDom {
         find_element_by_tag(&self.dom.document, tag_name).map(|handle| Element { handle })
     }
 
-    /// Get the document root handle.
-    ///
-    /// # Returns
-    /// Reference to the document root handle
+    #[cfg(test)]
     pub fn document_root(&self) -> &Handle {
         &self.dom.document
     }
@@ -116,10 +113,7 @@ impl Element {
         children.insert(0, child.handle);
     }
 
-    /// Get the tag name of this element.
-    ///
-    /// # Returns
-    /// Tag name as a string slice, or empty string if not an element
+    #[cfg(test)]
     pub fn tag_name(&self) -> &str {
         match &self.handle.data {
             NodeData::Element { name, .. } => name.local.as_ref(),

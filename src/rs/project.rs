@@ -28,9 +28,6 @@ pub struct ProjectConfig {
     /// List of .typ files in the project
     pub typ_files: Vec<PathBuf>,
 
-    /// Project-specific style.css (for HTML export) if it exists
-    pub style_css: Option<PathBuf>,
-
     /// Compilation mode (directory or single file)
     pub mode: ProjectMode,
 
@@ -114,20 +111,11 @@ impl ProjectConfig {
             .map(|e| e.path().to_path_buf())
             .collect();
 
-        // Detect optional project-specific resources
-        let style_css = root.join("style.css");
-        let style_css = if style_css.is_file() {
-            Some(style_css)
-        } else {
-            None
-        };
-
         Ok(ProjectConfig {
             name,
             root,
             config,
             typ_files,
-            style_css,
             mode: ProjectMode::Directory,
             config_path: loaded_config_path,
         })
@@ -180,20 +168,11 @@ impl ProjectConfig {
         // Single file in typ_files list
         let typ_files = vec![file_path.clone()];
 
-        // Check for optional resources in root directory
-        let style_css = root.join("style.css");
-        let style_css = if style_css.is_file() {
-            Some(style_css)
-        } else {
-            None
-        };
-
         Ok(ProjectConfig {
             name,
             root,
             config,
             typ_files,
-            style_css,
             mode: ProjectMode::SingleFile,
             config_path: loaded_config_path,
         })
@@ -261,10 +240,10 @@ mod tests {
     }
 
     #[test]
-    fn test_single_file_discovers_assets() {
+    fn test_single_file_with_assets_in_root() {
         let temp = TempDir::new().unwrap();
 
-        // Create assets in parent directory
+        // Create assets in parent directory (engine discovers these at compile time)
         fs::write(temp.path().join("style.css"), "body {}").unwrap();
         fs::create_dir(temp.path().join("img")).unwrap();
         fs::write(temp.path().join("references.bib"), "@article{}").unwrap();
@@ -272,9 +251,9 @@ mod tests {
         let file = temp.path().join("document.typ");
         fs::write(&file, "#heading[Test]").unwrap();
 
+        // Project should load successfully regardless of asset presence
         let project = ProjectConfig::from_path(&file, None).unwrap();
-
-        assert!(project.style_css.is_some());
+        assert_eq!(project.root, temp.path().canonicalize().unwrap());
     }
 
     #[test]

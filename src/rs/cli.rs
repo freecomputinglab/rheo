@@ -4,7 +4,7 @@ use crate::plugins::{FormatPlugin, PluginConfig, PluginContext, SpineOptions, pl
 use crate::reticulate::spine::generate_spine;
 use crate::{Result, open_all_files_in_folder};
 use clap::{Parser, Subcommand};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, warn};
 
@@ -233,7 +233,7 @@ fn get_files_for_plugin<'a>(
         .resolve_content_dir(&project.root)
         .unwrap_or_else(|| project.root.clone());
 
-    match plugin.spine_config(&project.config) {
+    match project.config.spine_for_plugin(plugin.name()) {
         None => Ok(project.typ_files.iter().collect()),
         Some(spine) => {
             let spine_files = generate_spine(&content_dir, Some(spine), false)?;
@@ -285,10 +285,36 @@ fn perform_compilation<'a>(
                 format!("creating output directory for {}", plugin.name()),
             )
         })?;
-        plugin.copy_assets(project, &plugin_output_dir)?;
+        // Resolve declared inputs: find, copy, and collect source paths
+        let mut resolved_inputs: HashMap<&'static str, PathBuf> = HashMap::new();
+        for input in plugin.inputs() {
+            let src = project.root.join(input.path);
+            if src.is_file() {
+                let dest = plugin_output_dir.join(input.path);
+                std::fs::copy(&src, &dest).map_err(|e| {
+                    crate::RheoError::io(
+                        e,
+                        format!(
+                            "copying plugin input '{}' from {} to {}",
+                            input.name,
+                            src.display(),
+                            dest.display()
+                        ),
+                    )
+                })?;
+                resolved_inputs.insert(input.name, src);
+            } else if input.required {
+                return Err(crate::RheoError::project_config(format!(
+                    "plugin '{}' requires input '{}' at '{}' but it was not found",
+                    plugin.name(),
+                    input.name,
+                    input.path
+                )));
+            }
+        }
 
         // Resolve standardized PluginConfig from format-specific spine config
-        let spine_cfg = plugin.spine_config(&project.config);
+        let spine_cfg = project.config.spine_for_plugin(plugin.name());
         let plugin_config = PluginConfig {
             spine: SpineOptions {
                 title: spine_cfg.and_then(|s| s.title()).map(str::to_string),
@@ -332,6 +358,7 @@ fn perform_compilation<'a>(
                 output_config,
                 options,
                 plugin_config,
+                inputs: resolved_inputs,
             };
 
             match plugin.compile(ctx) {
@@ -385,6 +412,7 @@ fn perform_compilation<'a>(
                     output_config,
                     options,
                     plugin_config: plugin_config.clone(),
+                    inputs: resolved_inputs.clone(),
                 };
 
                 match plugin.compile(ctx) {
@@ -615,7 +643,8 @@ impl Cli {
                 let format_name = plugins
                     .iter()
                     .find(|p| {
-                        let spine_cfg = p.spine_config(&borrowed_project.config);
+                        let spine_cfg =
+                            borrowed_project.config.spine_for_plugin(p.name());
                         !spine_cfg.and_then(|s| s.merge()).unwrap_or(false)
                     })
                     .map(|p| p.name());
@@ -701,7 +730,7 @@ impl Cli {
                                             .iter()
                                             .find(|p| {
                                                 let spine_cfg =
-                                                    p.spine_config(&borrowed.config);
+                                                    borrowed.config.spine_for_plugin(p.name());
                                                 !spine_cfg
                                                     .and_then(|s| s.merge())
                                                     .unwrap_or(false)

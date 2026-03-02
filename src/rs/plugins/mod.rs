@@ -1,9 +1,9 @@
 use crate::compile::RheoCompileOptions;
-use crate::config::{RheoConfig, SpineConfig};
 use crate::output::OutputConfig;
 use crate::project::ProjectConfig;
 use crate::Result;
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 pub mod epub;
 pub mod html;
@@ -24,12 +24,26 @@ pub struct PluginConfig {
     pub spine: SpineOptions,
 }
 
+/// Declares an additional non-Typst input file needed from the project directory.
+pub struct PluginInput {
+    /// Key used to retrieve this input from PluginContext::inputs
+    pub name: &'static str,
+    /// Path relative to the project root where the file is expected
+    pub path: &'static str,
+    /// If true, a missing file is a compile error; if false, it is absent from ctx.inputs
+    pub required: bool,
+}
+
 /// Context passed to plugin.compile() for each compilation unit
 pub struct PluginContext<'a> {
     pub project: &'a ProjectConfig,
     pub output_config: &'a OutputConfig,
     pub options: RheoCompileOptions<'a>,
     pub plugin_config: PluginConfig,
+    /// Resolved additional input files declared by the plugin.
+    /// Keyed by PluginInput::name. Only contains files that were found;
+    /// missing optional inputs are absent. Values are source paths (project root).
+    pub inputs: HashMap<&'static str, PathBuf>,
 }
 
 pub trait FormatPlugin: Send + Sync {
@@ -41,12 +55,11 @@ pub trait FormatPlugin: Send + Sync {
         false
     }
 
-    /// Spine config for file-set resolution (None = use all project .typ files)
-    fn spine_config<'a>(&self, config: &'a RheoConfig) -> Option<&'a dyn SpineConfig>;
-
-    /// Copy assets before compilation (e.g. style.css for HTML). Default: no-op.
-    fn copy_assets(&self, _project: &ProjectConfig, _output_dir: &Path) -> Result<()> {
-        Ok(())
+    /// Declare additional non-Typst input files this plugin needs.
+    /// The engine finds each, copies it to the plugin output dir, and passes
+    /// the source path in PluginContext::inputs before calling compile().
+    fn inputs(&self) -> &'static [PluginInput] {
+        &[]
     }
 
     /// Compile one file (merge=false) or merged output (merge=true).

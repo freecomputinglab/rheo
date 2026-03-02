@@ -5,7 +5,7 @@ use package::{Item, ItemRef, Package};
 use xhtml::HtmlInfo;
 
 use crate::compile::RheoCompileOptions;
-use crate::config::{EpubConfig, EpubOptions, RheoConfig, SpineConfig};
+use crate::config::{EpubConfig, EpubOptions};
 use crate::reticulate::spine::RheoSpine;
 use crate::{Result, RheoError};
 
@@ -38,10 +38,6 @@ pub struct EpubPlugin;
 impl FormatPlugin for EpubPlugin {
     fn name(&self) -> &'static str {
         "epub"
-    }
-
-    fn spine_config<'a>(&self, config: &'a RheoConfig) -> Option<&'a dyn SpineConfig> {
-        Some(&config.epub.spine as &dyn SpineConfig)
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
