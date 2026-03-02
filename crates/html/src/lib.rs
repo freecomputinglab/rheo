@@ -127,11 +127,7 @@ pub fn compile_document_to_string(document: &HtmlDocument) -> Result<String> {
 /// The engine provides the World, handling fresh vs incremental compilation.
 ///
 /// Pipeline: Compile (with transformations) → Export → Inject Head → Write
-fn compile_html_impl(
-    world: &RheoWorld,
-    output: &Path,
-    html_options: &HtmlOptions,
-) -> Result<()> {
+fn compile_html_impl(world: &RheoWorld, output: &Path, html_options: &HtmlOptions) -> Result<()> {
     // Compile to HTML document (transformations happen in RheoWorld)
     info!("compiling to HTML");
     let result = typst::compile::<HtmlDocument>(world);

@@ -154,10 +154,7 @@ mod tests {
             DocumentTitle::to_readable_name("my_document"),
             "My Document"
         );
-        assert_eq!(
-            DocumentTitle::to_readable_name("chapter-01"),
-            "Chapter 01"
-        );
+        assert_eq!(DocumentTitle::to_readable_name("chapter-01"), "Chapter 01");
         assert_eq!(
             DocumentTitle::to_readable_name("hello_world"),
             "Hello World"

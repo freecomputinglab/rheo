@@ -275,8 +275,7 @@ fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Resu
         let rheo_spine = RheoSpine::build(root, Some(spine_config), rheo_core::OutputFormat::Epub)?;
 
         // Get the spine file paths
-        let spine =
-            rheo_core::reticulate::spine::generate_spine(root, Some(spine_config), false)?;
+        let spine = rheo_core::reticulate::spine::generate_spine(root, Some(spine_config), false)?;
 
         // Create EpubItems from transformed sources
         let mut items = spine
@@ -348,11 +347,7 @@ fn text_to_id(s: &str) -> EcoString {
 impl EpubItem {
     pub fn create(path: PathBuf, root: &Path) -> AnyhowResult<Self> {
         info!(file = %path.display(), "compiling spine file");
-        let document = rheo_html::compile_html_to_document(
-            &path,
-            root,
-            "epub",
-        )?;
+        let document = rheo_html::compile_html_to_document(&path, root, "epub")?;
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
@@ -388,11 +383,7 @@ impl EpubItem {
         let temp_path = temp_file.path();
 
         // Compile to HTML document
-        let document = rheo_html::compile_html_to_document(
-            temp_path,
-            root,
-            "epub",
-        )?;
+        let document = rheo_html::compile_html_to_document(temp_path, root, "epub")?;
 
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();

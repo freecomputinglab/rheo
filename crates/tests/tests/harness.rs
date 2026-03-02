@@ -1,11 +1,11 @@
+use ntest::test_case;
+use rheo_core::{RheoConfig, project::ProjectConfig};
 use rheo_tests::helpers::{
     comparison::{verify_epub_output, verify_html_output, verify_pdf_output},
     fixtures::TestCase,
     reference::{update_epub_references, update_html_references, update_pdf_references},
     test_store::copy_project_to_test_store,
 };
-use ntest::test_case;
-use rheo_core::{RheoConfig, project::ProjectConfig};
 use std::env;
 use std::path::PathBuf;
 
@@ -113,7 +113,14 @@ fn run_test_case(name: &str) {
     let build_dir = test_store.join("build");
 
     // Build compile command with format flags
-    let mut compile_args = vec!["run", "-p", "rheo-cli", "--", "compile", project_path.to_str().unwrap()];
+    let mut compile_args = vec![
+        "run",
+        "-p",
+        "rheo-cli",
+        "--",
+        "compile",
+        project_path.to_str().unwrap(),
+    ];
 
     // Use isolated build directory
     compile_args.push("--build-dir");
@@ -236,8 +243,8 @@ fn run_test_case(name: &str) {
 /// Test PDF merge functionality specifically
 #[test]
 fn test_pdf_merge() {
-    use rheo_tests::helpers::comparison::extract_pdf_metadata;
     use lopdf::Document;
+    use rheo_tests::helpers::comparison::extract_pdf_metadata;
 
     let test_name = "pdf_merge";
     let test_case = TestCase::new(&format!("cases/{}", test_name));
@@ -445,7 +452,14 @@ fn test_html_css_link_injection() {
 
     // Clean and compile
     let clean_output = std::process::Command::new("cargo")
-        .args(["run", "-p", "rheo-cli", "--", "clean", project_path.to_str().unwrap()])
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "clean",
+            project_path.to_str().unwrap(),
+        ])
         .output()
         .expect("Failed to run rheo clean");
 
@@ -543,12 +557,27 @@ fn test_warning_formatting() {
 
     // Clean first
     let _ = std::process::Command::new("cargo")
-        .args(["run", "-p", "rheo-cli", "--", "clean", test_dir.to_str().unwrap()])
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "clean",
+            test_dir.to_str().unwrap(),
+        ])
         .output();
 
     // Compile - should succeed with warnings
     let output = std::process::Command::new("cargo")
-        .args(["run", "-p", "rheo-cli", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "compile",
+            test_dir.to_str().unwrap(),
+            "--pdf",
+        ])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
@@ -575,7 +604,14 @@ fn test_warning_formatting() {
 
     // Clean up
     let _ = std::process::Command::new("cargo")
-        .args(["run", "-p", "rheo-cli", "--", "clean", test_dir.to_str().unwrap()])
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "clean",
+            test_dir.to_str().unwrap(),
+        ])
         .output();
 }
 
@@ -591,7 +627,14 @@ fn test_rheo_init_and_compile() {
 
     // Run `rheo init`
     let init_output = std::process::Command::new("cargo")
-        .args(["run", "-p", "rheo-cli", "--", "init", test_dir.to_str().unwrap()])
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "init",
+            test_dir.to_str().unwrap(),
+        ])
         .output()
         .expect("Failed to run rheo init");
 

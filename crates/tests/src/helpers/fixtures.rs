@@ -43,11 +43,7 @@ impl TestCase {
             let formats = metadata
                 .as_ref()
                 .map(|m| m.formats.clone())
-                .unwrap_or_else(|| vec![
-                    "html".to_string(),
-                    "epub".to_string(),
-                    "pdf".to_string(),
-                ]);
+                .unwrap_or_else(|| vec!["html".to_string(), "epub".to_string(), "pdf".to_string()]);
 
             return Self::SingleFile {
                 name,
@@ -66,11 +62,7 @@ impl TestCase {
             let formats = test_metadata
                 .as_ref()
                 .map(|m| m.formats.clone())
-                .unwrap_or_else(|| vec![
-                    "html".to_string(),
-                    "epub".to_string(),
-                    "pdf".to_string(),
-                ]);
+                .unwrap_or_else(|| vec!["html".to_string(), "epub".to_string(), "pdf".to_string()]);
 
             Self::SingleFile {
                 name,
@@ -126,11 +118,9 @@ impl TestCase {
     /// Returns the format names to test for this test case
     pub fn formats(&self) -> Vec<String> {
         match self {
-            TestCase::Directory { .. } => vec![
-                "html".to_string(),
-                "epub".to_string(),
-                "pdf".to_string(),
-            ],
+            TestCase::Directory { .. } => {
+                vec!["html".to_string(), "epub".to_string(), "pdf".to_string()]
+            }
             TestCase::SingleFile { formats, .. } => formats.clone(),
         }
     }

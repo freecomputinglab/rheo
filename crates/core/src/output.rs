@@ -29,9 +29,8 @@ impl OutputConfig {
     /// Clean this project's build artifacts
     pub fn clean(&self) -> Result<()> {
         if self.base.exists() {
-            fs::remove_dir_all(&self.base).map_err(|e| {
-                RheoError::io(e, format!("removing directory {:?}", self.base))
-            })?;
+            fs::remove_dir_all(&self.base)
+                .map_err(|e| RheoError::io(e, format!("removing directory {:?}", self.base)))?;
         }
         Ok(())
     }
@@ -97,8 +96,11 @@ mod tests {
         fs::create_dir_all(config.dir_for_plugin("html")).expect("Failed to create html dir");
         fs::write(config.dir_for_plugin("pdf").join("test.pdf"), b"dummy pdf")
             .expect("Failed to write test file");
-        fs::write(config.dir_for_plugin("html").join("test.html"), b"dummy html")
-            .expect("Failed to write test file");
+        fs::write(
+            config.dir_for_plugin("html").join("test.html"),
+            b"dummy html",
+        )
+        .expect("Failed to write test file");
 
         // Verify directories exist
         assert!(config.dir_for_plugin("pdf").exists());

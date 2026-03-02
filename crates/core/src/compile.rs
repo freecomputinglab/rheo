@@ -67,7 +67,10 @@ mod tests {
             pdf_utils::DocumentTitle::to_readable_name("hello_world"),
             "Hello World"
         );
-        assert_eq!(pdf_utils::DocumentTitle::to_readable_name("single"), "Single");
+        assert_eq!(
+            pdf_utils::DocumentTitle::to_readable_name("single"),
+            "Single"
+        );
     }
 
     #[test]

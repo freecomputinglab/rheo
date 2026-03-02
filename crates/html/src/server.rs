@@ -1,4 +1,3 @@
-use rheo_core::{constants::HTML_EXT, Result};
 use axum::{
     Router,
     body::Body,
@@ -7,6 +6,7 @@ use axum::{
     response::{IntoResponse, Response, Sse, sse::Event},
     routing::get,
 };
+use rheo_core::{Result, constants::HTML_EXT};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};

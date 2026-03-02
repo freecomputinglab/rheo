@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::manifest_version::ManifestVersion;
 use crate::validation::ValidateConfig;
-use crate::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;

@@ -73,11 +73,7 @@ fn compile_pdf_single_impl(world: &RheoWorld, output: &Path) -> Result<()> {
 /// Generates a spine from the PDF spine configuration, concatenates all sources
 /// with labels and transformed links, then compiles to a single PDF document.
 /// The engine provides the World, handling fresh vs incremental compilation.
-fn compile_pdf_merged_impl(
-    config: &PdfConfig,
-    output_path: &Path,
-    root: &Path,
-) -> Result<()> {
+fn compile_pdf_merged_impl(config: &PdfConfig, output_path: &Path, root: &Path) -> Result<()> {
     let merge = config.spine.as_ref().ok_or_else(|| {
         RheoError::project_config("PDF spine configuration required for merged compilation")
     })?;

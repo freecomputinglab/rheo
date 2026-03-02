@@ -1,3 +1,4 @@
+use clap::{Parser, Subcommand};
 use rheo_core::compile::RheoCompileOptions;
 use rheo_core::manifest_version;
 use rheo_core::output::OutputConfig;
@@ -5,7 +6,6 @@ use rheo_core::project::ProjectConfig;
 use rheo_core::results::CompilationResults;
 use rheo_core::world::RheoWorld;
 use rheo_core::{FormatPlugin, PluginConfig, PluginContext, Result, RheoError, SpineOptions};
-use clap::{Parser, Subcommand};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,7 +71,11 @@ fn determine_formats(flags: FormatFlags, config_defaults: &[String]) -> Result<V
     if !config_defaults.is_empty() {
         Ok(config_defaults.to_vec())
     } else {
-        Ok(vec!["html".to_string(), "epub".to_string(), "pdf".to_string()])
+        Ok(vec![
+            "html".to_string(),
+            "epub".to_string(),
+            "pdf".to_string(),
+        ])
     }
 }
 
@@ -215,8 +219,8 @@ fn resolve_build_dir(
 ) -> Result<Option<PathBuf>> {
     if let Some(cli_path) = cli_build_dir {
         // Priority 1: CLI argument (resolve relative to current directory)
-        let cwd = std::env::current_dir()
-            .map_err(|e| RheoError::io(e, "getting current directory"))?;
+        let cwd =
+            std::env::current_dir().map_err(|e| RheoError::io(e, "getting current directory"))?;
         debug!(dir = %cli_path.display(), "build directory");
         Ok(Some(resolve_path(&cwd, &cli_path)))
     } else if let Some(config_path) = &project.config.build_dir {
@@ -236,9 +240,7 @@ fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
         .file_stem()
         .and_then(|s| s.to_str())
         .map(|s| s.to_string())
-        .ok_or_else(|| {
-            RheoError::project_config(format!("invalid .typ filename: {:?}", typ_file))
-        })
+        .ok_or_else(|| RheoError::project_config(format!("invalid .typ filename: {:?}", typ_file)))
 }
 
 /// Returns the set of files to compile for a given plugin based on its spine config.
@@ -254,7 +256,8 @@ fn get_files_for_plugin<'a>(
                 .config
                 .resolve_content_dir(&project.root)
                 .unwrap_or_else(|| project.root.clone());
-            let spine_files = rheo_core::reticulate::spine::generate_spine(&content_dir, Some(spine), false)?;
+            let spine_files =
+                rheo_core::reticulate::spine::generate_spine(&content_dir, Some(spine), false)?;
             let spine_set: HashSet<_> = spine_files.iter().collect();
             Ok(project
                 .typ_files
@@ -289,9 +292,7 @@ fn perform_compilation<'a>(
 ) -> Result<()> {
     // Check for .typ files
     if project.typ_files.is_empty() {
-        return Err(RheoError::project_config(
-            "no .typ files found in project",
-        ));
+        return Err(RheoError::project_config("no .typ files found in project"));
     }
 
     // Track success/failure per format for graceful degradation
@@ -360,9 +361,10 @@ fn perform_compilation<'a>(
             // Create a temporary World just to satisfy the API - plugin will ignore it
             let mut temp_world = RheoWorld::new(
                 &compilation_root,
-                project.typ_files.first().ok_or_else(|| {
-                    RheoError::project_config("no .typ files found")
-                })?,
+                project
+                    .typ_files
+                    .first()
+                    .ok_or_else(|| RheoError::project_config("no .typ files found"))?,
                 format_name,
             )?;
             let options = RheoCompileOptions::new(
@@ -432,11 +434,7 @@ fn perform_compilation<'a>(
             } else {
                 // Fresh mode: create new World for each file
                 for typ_file in &files {
-                    let mut fresh_world = RheoWorld::new(
-                        &project.root,
-                        typ_file,
-                        format_name,
-                    )?;
+                    let mut fresh_world = RheoWorld::new(&project.root, typ_file, format_name)?;
 
                     let filename = get_output_filename(typ_file)?;
                     let output_path = plugin_output_dir
@@ -505,15 +503,14 @@ fn perform_compilation<'a>(
 fn init_project(target_dir: &Path) -> Result<()> {
     // Check if target directory already exists
     if target_dir.exists() {
-        return Err(RheoError::project_config(&format!(
+        return Err(RheoError::project_config(format!(
             "directory '{}' already exists",
             target_dir.display()
         )));
     }
 
     // Create target directory
-    fs::create_dir_all(target_dir)
-        .map_err(|e| RheoError::io(e, "creating target directory"))?;
+    fs::create_dir_all(target_dir).map_err(|e| RheoError::io(e, "creating target directory"))?;
 
     // Template directory is relative to the rheo-cli crate's source directory
     // Use CARGO_MANIFEST_DIR which is set at compile time
@@ -528,8 +525,7 @@ fn init_project(target_dir: &Path) -> Result<()> {
     let toml_content = fs::read_to_string(&toml_path)
         .map_err(|e| RheoError::io(e, "reading rheo.toml template"))?;
     let toml_content = toml_content.replace("{{VERSION}}", manifest_version::CURRENT);
-    fs::write(&toml_path, toml_content)
-        .map_err(|e| RheoError::io(e, "writing rheo.toml"))?;
+    fs::write(&toml_path, toml_content).map_err(|e| RheoError::io(e, "writing rheo.toml"))?;
 
     info!(
         path = %target_dir.display(),
@@ -544,20 +540,16 @@ fn init_project(target_dir: &Path) -> Result<()> {
 /// * `src` - Source template directory
 /// * `dst` - Destination directory
 fn copy_template_recursive(src: &Path, dst: &Path) -> Result<()> {
-    for entry in fs::read_dir(src)
-        .map_err(|e| RheoError::io(e, "reading template directory"))?
-    {
+    for entry in fs::read_dir(src).map_err(|e| RheoError::io(e, "reading template directory"))? {
         let entry = entry.map_err(|e| RheoError::io(e, "reading directory entry"))?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
 
         if src_path.is_dir() {
-            fs::create_dir_all(&dst_path)
-                .map_err(|e| RheoError::io(e, "creating directory"))?;
+            fs::create_dir_all(&dst_path).map_err(|e| RheoError::io(e, "creating directory"))?;
             copy_template_recursive(&src_path, &dst_path)?;
         } else {
-            fs::copy(&src_path, &dst_path)
-                .map_err(|e| RheoError::io(e, "copying file"))?;
+            fs::copy(&src_path, &dst_path).map_err(|e| RheoError::io(e, "copying file"))?;
         }
     }
     Ok(())
@@ -623,12 +615,12 @@ impl Cli {
                 info!(project = %project.name, "build artifacts removed");
                 Ok(())
             }
-            Commands::Init { path } => {
-                init_project(&path)
-            }
+            Commands::Init { path } => init_project(&path),
             Commands::Watch { .. } => {
                 // TODO: Implement watch mode (needs watch module in rheo-core or cli)
-                Err(RheoError::project_config("watch mode not yet implemented in the new architecture"))
+                Err(RheoError::project_config(
+                    "watch mode not yet implemented in the new architecture",
+                ))
             }
         }
     }
