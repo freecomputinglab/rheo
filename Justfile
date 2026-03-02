@@ -17,7 +17,7 @@ update-submodules:
   @echo "Submodule references updated and committed. Ready for 'jj git push'."
 
 install:
-  cargo install --path . --locked
+  cargo install --path crates/rheo --locked
 
 watch:
   cargo watch -x "build --profile local-dev"

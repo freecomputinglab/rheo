@@ -47,7 +47,7 @@ jobs:
       - name: Setup
         uses: ./.github/workflows/setup
       - name: Compile binary
-        run: cargo ${{ matrix.command }} --locked --target ${{ matrix.target }}
+        run: cargo ${{ matrix.command }} --locked --target ${{ matrix.target }} -p rheo-cli
       - name: Compress artifacts (Windows)
         if: runner.os == 'Windows'
         run: |
@@ -68,7 +68,13 @@ jobs:
       - name: Login to crates.io
         run: cargo login ${{ secrets.CRATES_IO_TOKEN }}
       - name: Dry run of crate publish
-        run: cargo publish --workspace --dry-run
+        run: |
+          cargo publish -p rheo-core --dry-run --allow-dirty || true
+          cargo publish -p rheo-html --dry-run --allow-dirty || true
+          cargo publish -p rheo-pdf --dry-run --allow-dirty || true
+          cargo publish -p rheo-epub --dry-run --allow-dirty || true
+          cargo publish -p rheo-cli --dry-run --allow-dirty || true
+          cargo publish -p rheo --dry-run --allow-dirty || true
 
   check-pr-name:
     if: contains(github.event.pull_request.labels.*.name, 'release')

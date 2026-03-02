@@ -9,10 +9,10 @@ repository.workspace = true
 
 [dependencies]
 # Core
-rheo-core = { path = "../core" }
+rheo-core = { path = "../core", version = "0.1.2" }
 
 # HTML plugin (EPUB uses compile_html_to_document and compile_document_to_string)
-rheo-html = { path = "../html" }
+rheo-html = { path = "../html", version = "0.1.2" }
 
 # Typst dependencies
 typst = { workspace = true }
