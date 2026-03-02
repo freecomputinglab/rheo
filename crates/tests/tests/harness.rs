@@ -101,13 +101,13 @@ fn run_test_case(name: &str) {
     // For directory tests: require config support (preserve existing behavior)
     let run_html = declared_formats.iter().any(|f| f == "html")
         && (run_all || env_html)
-        && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_html()));
+        && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_format("html")));
     let run_pdf = declared_formats.iter().any(|f| f == "pdf")
         && (run_all || env_pdf)
-        && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_pdf()));
+        && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_format("pdf")));
     let run_epub = declared_formats.iter().any(|f| f == "epub")
         && (run_all || env_epub)
-        && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_epub()));
+        && (test_case.is_single_file() || config.as_ref().is_ok_and(|cfg| cfg.has_format("epub")));
 
     // Get build directory in test store
     let build_dir = test_store.join("build");

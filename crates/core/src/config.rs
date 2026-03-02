@@ -3,90 +3,91 @@ use crate::manifest_version::ManifestVersion;
 use crate::validation::ValidateConfig;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use tracing::debug;
-
-/// HTML compilation options.
-///
-/// Controls HTML-specific behavior like stylesheet and font injection.
-#[derive(Debug, Clone)]
-pub struct HtmlOptions {
-    /// Stylesheet paths to inject (relative to build dir)
-    pub stylesheets: Vec<String>,
-    /// Font URLs to inject
-    pub fonts: Vec<String>,
-}
-
-impl Default for HtmlOptions {
-    fn default() -> Self {
-        Self {
-            stylesheets: default_stylesheets(),
-            fonts: default_fonts(),
-        }
-    }
-}
 
 fn default_stylesheets() -> Vec<String> {
     vec!["style.css".to_string()]
 }
 
-fn default_fonts() -> Vec<String> {
-    vec![]
-}
-
-/// EPUB compilation options.
+/// Universal spine configuration — replaces PdfSpine, EpubSpine, and HtmlSpine.
 ///
-/// Wraps the EpubConfig for use in the unified compilation interface.
-#[derive(Debug, Clone)]
-pub struct EpubOptions {
-    /// Reference to the EPUB configuration
-    pub config: EpubConfig,
+/// All format plugins share this single spine type. Each plugin interprets the
+/// `merge` field according to its own defaults (e.g. EPUB defaults to merge=true).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UniversalSpine {
+    /// Title for the merged output document (required when merge=true).
+    pub title: Option<String>,
+
+    /// Glob patterns for files to include, evaluated relative to content_dir.
+    /// Results are sorted lexicographically within each pattern.
+    /// Empty = auto-discover all .typ files.
+    #[serde(default)]
+    pub vertebrae: Vec<String>,
+
+    /// Whether to merge vertebrae into a single output file.
+    /// `None` means "use the plugin's default" (false for PDF/HTML, true for EPUB).
+    pub merge: Option<bool>,
 }
 
-impl From<&EpubConfig> for EpubOptions {
-    fn from(config: &EpubConfig) -> Self {
+/// Structured, fully-parsed plugin section for `[plugin_name]` in rheo.toml.
+///
+/// Contains universal fields (spine) plus all extra fields any built-in plugin
+/// may use. Plugins only read the fields relevant to them; others are silently
+/// ignored. When no `[plugin_name]` section exists in rheo.toml, `Default` is
+/// used (stylesheets = ["style.css"], everything else empty/None).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginSection {
+    // --- Universal ---
+    pub spine: Option<UniversalSpine>,
+
+    // --- HTML plugin fields ---
+    #[serde(default = "default_stylesheets")]
+    pub stylesheets: Vec<String>,
+    #[serde(default)]
+    pub fonts: Vec<String>,
+
+    // --- EPUB plugin fields ---
+    pub identifier: Option<String>,
+    pub date: Option<DateTime<Utc>>,
+}
+
+impl Default for PluginSection {
+    fn default() -> Self {
         Self {
-            config: config.clone(),
+            spine: None,
+            stylesheets: default_stylesheets(),
+            fonts: vec![],
+            identifier: None,
+            date: None,
         }
     }
 }
 
-fn default_formats() -> Vec<String> {
-    vec!["html".to_string(), "epub".to_string(), "pdf".to_string()]
-}
-
-/// Configuration for rheo compilation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Configuration for rheo compilation.
+///
+/// Loaded from `rheo.toml`. Unknown top-level table sections are parsed as
+/// `PluginSection` entries (keyed by section name), so adding a new format
+/// plugin requires no changes to this struct.
+#[derive(Debug, Clone)]
 pub struct RheoConfig {
-    /// Manifest version for API compatibility (required)
+    /// Manifest version for API compatibility (required).
     pub version: ManifestVersion,
 
-    /// Directory containing .typ content files (relative to project root)
-    /// If not specified, searches entire project root
-    /// Example: "content"
+    /// Directory containing .typ content files (relative to project root).
     pub content_dir: Option<String>,
 
-    /// Build output directory (relative to project root unless absolute)
-    /// Defaults to "build/" if not specified
-    /// Examples: "output", "../shared-build", "/tmp/rheo-build"
+    /// Build output directory (relative to project root unless absolute).
     pub build_dir: Option<String>,
 
-    /// Default formats to compile (if none specified via CLI).
-    /// Example: ["pdf", "html", "epub"]
-    #[serde(default = "default_formats")]
+    /// Default formats to compile when no CLI flags are specified.
+    /// Empty = fall back to all registered plugins.
     pub formats: Vec<String>,
 
-    /// HTML-specific configuration
-    #[serde(default)]
-    pub html: HtmlConfig,
-
-    /// PDF-specific configuration
-    #[serde(default)]
-    pub pdf: PdfConfig,
-
-    /// EPUB-specific configuration
-    #[serde(default)]
-    pub epub: EpubConfig,
+    /// Per-plugin configuration sections, keyed by plugin name.
+    /// Built from `[html]`, `[pdf]`, `[epub]` (and any other) table sections.
+    pub plugin_sections: HashMap<String, PluginSection>,
 }
 
 impl Default for RheoConfig {
@@ -95,201 +96,49 @@ impl Default for RheoConfig {
             version: ManifestVersion::current(),
             content_dir: Some("./".to_string()),
             build_dir: Some("./build".to_string()),
-            formats: default_formats(),
-            html: HtmlConfig::default(),
-            pdf: PdfConfig::default(),
-            epub: EpubConfig::default(),
+            formats: vec![],
+            plugin_sections: HashMap::new(),
         }
     }
 }
 
-/// PDF spine configuration for merging multiple files into a single PDF.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PdfSpine {
-    /// Title of the merged PDF document.
-    /// Required when merge=true.
-    pub title: Option<String>,
-
-    /// Glob patterns for files to include in the combined document.
-    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set).
-    /// Results are sorted lexicographically.
-    /// Example: ["cover.typ", "chapters/**"]
-    pub vertebrae: Vec<String>,
-
-    /// Whether to merge vertebrae into a single PDF file.
-    /// If false or not specified, compiles each file separately.
+/// Raw intermediate for custom deserialization of `RheoConfig`.
+#[derive(Debug, Deserialize)]
+pub struct RheoConfigRaw {
+    version: ManifestVersion,
+    content_dir: Option<String>,
+    build_dir: Option<String>,
     #[serde(default)]
-    pub merge: Option<bool>,
+    formats: Vec<String>,
+    #[serde(flatten)]
+    extra: HashMap<String, toml::Value>,
 }
 
-fn default_epub_merge() -> Option<bool> {
-    Some(true)
-}
+impl TryFrom<RheoConfigRaw> for RheoConfig {
+    type Error = toml::de::Error;
 
-/// EPUB spine configuration for combining multiple files into a single EPUB.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EpubSpine {
-    /// Title of the EPUB document.
-    pub title: Option<String>,
-
-    /// Glob patterns for files to include in the EPUB.
-    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set).
-    /// Results are sorted lexicographically.
-    /// Example: ["cover.typ", "chapters/**"]
-    pub vertebrae: Vec<String>,
-
-    /// Whether to merge vertebrae into a single EPUB. Defaults to true for EPUB.
-    #[serde(default = "default_epub_merge")]
-    pub merge: Option<bool>,
-}
-
-impl Default for EpubSpine {
-    fn default() -> Self {
-        Self {
-            title: None,
-            vertebrae: vec![],
-            merge: Some(true),
+    fn try_from(raw: RheoConfigRaw) -> std::result::Result<Self, Self::Error> {
+        let mut plugin_sections = HashMap::new();
+        for (key, value) in raw.extra {
+            if let toml::Value::Table(_) = &value {
+                let section: PluginSection = value.try_into()?;
+                plugin_sections.insert(key, section);
+            }
+            // Non-table entries (unknown scalar fields) are silently ignored.
         }
+        Ok(RheoConfig {
+            version: raw.version,
+            content_dir: raw.content_dir,
+            build_dir: raw.build_dir,
+            formats: raw.formats,
+            plugin_sections,
+        })
     }
-}
-
-/// HTML spine configuration for organizing multiple HTML files.
-/// HTML always produces per-file output by default.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HtmlSpine {
-    /// Title of the HTML site/collection.
-    pub title: Option<String>,
-
-    /// Glob patterns for files to include.
-    /// Patterns are evaluated relative to content_dir (or project root if content_dir not set).
-    /// Results are sorted lexicographically.
-    /// Example: ["index.typ", "pages/**"]
-    pub vertebrae: Vec<String>,
-
-    /// Whether to merge vertebrae. Not supported for HTML (always per-file).
-    #[serde(default)]
-    pub merge: Option<bool>,
-}
-
-/// Common interface for spine configurations across output formats.
-///
-/// This trait provides uniform access to spine fields, allowing generic
-/// code to work with any spine type (PDF, EPUB, HTML).
-pub trait SpineConfig {
-    /// Returns the spine title, if configured.
-    fn title(&self) -> Option<&str>;
-
-    /// Returns the vertebrae glob patterns.
-    fn vertebrae(&self) -> &[String];
-
-    /// Returns whether to merge outputs into a single file.
-    /// Returns None if not explicitly configured (core resolves to false by default).
-    fn merge(&self) -> Option<bool> {
-        None
-    }
-}
-
-impl SpineConfig for PdfSpine {
-    fn title(&self) -> Option<&str> {
-        self.title.as_deref()
-    }
-
-    fn vertebrae(&self) -> &[String] {
-        &self.vertebrae
-    }
-
-    fn merge(&self) -> Option<bool> {
-        self.merge
-    }
-}
-
-impl SpineConfig for EpubSpine {
-    fn title(&self) -> Option<&str> {
-        self.title.as_deref()
-    }
-
-    fn vertebrae(&self) -> &[String] {
-        &self.vertebrae
-    }
-
-    fn merge(&self) -> Option<bool> {
-        self.merge
-    }
-}
-
-impl SpineConfig for HtmlSpine {
-    fn title(&self) -> Option<&str> {
-        self.title.as_deref()
-    }
-
-    fn vertebrae(&self) -> &[String] {
-        &self.vertebrae
-    }
-
-    fn merge(&self) -> Option<bool> {
-        self.merge
-    }
-}
-
-/// HTML output configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HtmlConfig {
-    /// Stylesheet paths to inject (relative to build dir)
-    #[serde(default = "default_stylesheets")]
-    pub stylesheets: Vec<String>,
-
-    /// Font URLs to inject
-    #[serde(default = "default_fonts")]
-    pub fonts: Vec<String>,
-
-    /// Configuration for an HTML spine (sitemap/navbar).
-    /// HTML never merges vertebrae.
-    #[serde(default)]
-    pub spine: Option<HtmlSpine>,
-}
-
-impl Default for HtmlConfig {
-    fn default() -> Self {
-        Self {
-            stylesheets: default_stylesheets(),
-            fonts: default_fonts(),
-            spine: None,
-        }
-    }
-}
-
-/// PDF output configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PdfConfig {
-    /// Configuration for a PDF spine with multiple chapters.
-    pub spine: Option<PdfSpine>,
-}
-
-/// EPUB output configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct EpubConfig {
-    /// Unique global identifier for the EPUB document.
-    ///
-    /// See: EPUB 3.3, The `dc:identifier` element <https://www.w3.org/TR/epub-33/#sec-opf-dcidentifier>
-    pub identifier: Option<String>,
-
-    /// Publication date for the EPUB document.
-    ///
-    /// Note that this is separate from the timestamp indicating when a document was last modified,
-    /// which is automatically generated by Rheo.
-    ///
-    /// See: EPUB 3.3, The `dc:date` element <https://www.w3.org/TR/epub-33/#sec-opf-dcdate>
-    pub date: Option<DateTime<Utc>>,
-
-    /// Configuration for an EPUB spine with multiple chapters.
-    /// Defaults to merge=true with all .typ files (EPUB always merges).
-    #[serde(default)]
-    pub spine: EpubSpine,
 }
 
 impl RheoConfig {
-    /// Load configuration from rheo.toml in the given directory
-    /// If the file doesn't exist, returns default configuration
+    /// Load configuration from rheo.toml in the given directory.
+    /// If the file doesn't exist, returns default configuration.
     pub fn load(project_root: &Path) -> Result<Self> {
         let config_path = project_root.join("rheo.toml");
 
@@ -302,25 +151,17 @@ impl RheoConfig {
         let contents = std::fs::read_to_string(&config_path)
             .map_err(|e| crate::RheoError::io(e, format!("reading {}", config_path.display())))?;
 
-        let config: RheoConfig = toml::from_str(&contents)
+        let raw: RheoConfigRaw = toml::from_str(&contents)
+            .map_err(|e| crate::RheoError::project_config(format!("invalid rheo.toml: {}", e)))?;
+        let config = RheoConfig::try_from(raw)
             .map_err(|e| crate::RheoError::project_config(format!("invalid rheo.toml: {}", e)))?;
 
-        // Validate configuration
         config.validate()?;
-
         Ok(config)
     }
 
-    /// Load configuration from a specific path with validation
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - File does not exist
-    /// - Path points to a directory, not a file
-    /// - File is not valid TOML
-    /// - TOML doesn't match RheoConfig schema
+    /// Load configuration from a specific path with validation.
     pub fn load_from_path(config_path: &Path) -> Result<Self> {
-        // Stage 1: File existence
         if !config_path.exists() {
             return Err(crate::RheoError::path(
                 config_path,
@@ -334,13 +175,18 @@ impl RheoConfig {
             ));
         }
 
-        // Stage 2: Read file
         let contents = std::fs::read_to_string(config_path).map_err(|e| {
             crate::RheoError::io(e, format!("reading config file {}", config_path.display()))
         })?;
 
-        // Stage 3: Parse TOML and validate schema
-        let config: RheoConfig = toml::from_str(&contents).map_err(|e| {
+        let raw: RheoConfigRaw = toml::from_str(&contents).map_err(|e| {
+            crate::RheoError::project_config(format!(
+                "invalid config file {}: {}",
+                config_path.display(),
+                e
+            ))
+        })?;
+        let config = RheoConfig::try_from(raw).map_err(|e| {
             crate::RheoError::project_config(format!(
                 "invalid config file {}: {}",
                 config_path.display(),
@@ -348,23 +194,13 @@ impl RheoConfig {
             ))
         })?;
 
-        // Stage 4: Validate configuration
         config.validate()?;
 
         debug!(path = %config_path.display(), "loaded custom configuration");
         Ok(config)
     }
 
-    /// Resolve content_dir to an absolute path if configured
-    ///
-    /// # Arguments
-    /// * `base_dir` - Base directory to resolve content_dir against.
-    ///   In directory mode: the project root directory
-    ///   In single-file mode: the parent directory of the .typ file
-    ///
-    /// # Returns
-    /// - Some(PathBuf) if content_dir is configured (absolute path)
-    /// - None if content_dir is not set in config
+    /// Resolve content_dir to an absolute path if configured.
     pub fn resolve_content_dir(&self, base_dir: &Path) -> Option<std::path::PathBuf> {
         self.content_dir.as_ref().map(|dir| {
             let path = base_dir.join(dir);
@@ -373,26 +209,22 @@ impl RheoConfig {
         })
     }
 
-    pub fn has_pdf(&self) -> bool {
-        self.formats.iter().any(|f| f == "pdf")
-    }
-
-    pub fn has_html(&self) -> bool {
-        self.formats.iter().any(|f| f == "html")
-    }
-
-    pub fn has_epub(&self) -> bool {
-        self.formats.iter().any(|f| f == "epub")
+    /// Returns true if `name` appears in the configured formats list.
+    pub fn has_format(&self, name: &str) -> bool {
+        self.formats.iter().any(|f| f == name)
     }
 
     /// Return the spine config for the named plugin, if any.
-    pub fn spine_for_plugin(&self, name: &str) -> Option<&dyn SpineConfig> {
-        match name {
-            "pdf" => self.pdf.spine.as_ref().map(|s| s as &dyn SpineConfig),
-            "html" => self.html.spine.as_ref().map(|s| s as &dyn SpineConfig),
-            "epub" => Some(&self.epub.spine as &dyn SpineConfig),
-            _ => None,
-        }
+    pub fn spine_for_plugin(&self, name: &str) -> Option<&UniversalSpine> {
+        self.plugin_sections
+            .get(name)
+            .and_then(|s| s.spine.as_ref())
+    }
+
+    /// Return the full plugin section for the named plugin.
+    /// Returns `PluginSection::default()` if no section is configured.
+    pub fn plugin_section(&self, name: &str) -> PluginSection {
+        self.plugin_sections.get(name).cloned().unwrap_or_default()
     }
 }
 
@@ -405,13 +237,16 @@ mod tests {
         format!("version = \"{}\"\n{}", env!("CARGO_PKG_VERSION"), rest)
     }
 
+    fn parse(toml: &str) -> RheoConfig {
+        let raw: RheoConfigRaw = toml::from_str(toml).expect("parse failed");
+        RheoConfig::try_from(raw).expect("convert failed")
+    }
+
     #[test]
     fn test_default_config() {
         let config = RheoConfig::default();
-        assert_eq!(
-            config.formats,
-            vec!["html".to_string(), "epub".to_string(), "pdf".to_string()]
-        );
+        // formats is empty by default — CLI falls back to all_plugins()
+        assert!(config.formats.is_empty());
         assert_eq!(config.version, ManifestVersion::current());
     }
 
@@ -422,7 +257,7 @@ mod tests {
         formats = ["pdf"]
         "#;
 
-        let result = toml::from_str::<RheoConfig>(toml);
+        let result = toml::from_str::<RheoConfigRaw>(toml);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("missing field") || err_msg.contains("version"));
@@ -431,33 +266,29 @@ mod tests {
     #[test]
     fn test_formats_from_config() {
         let toml = versioned_toml(r#"formats = ["pdf"]"#);
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
+        let config = parse(&toml);
         assert_eq!(config.formats, vec!["pdf"]);
     }
 
     #[test]
     fn test_formats_defaults_when_not_specified() {
         let toml = versioned_toml("");
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
-        assert_eq!(
-            config.formats,
-            vec!["html".to_string(), "epub".to_string(), "pdf".to_string()]
-        );
+        let config = parse(&toml);
+        // When not specified, formats is empty (CLI falls back to all_plugins())
+        assert!(config.formats.is_empty());
     }
 
     #[test]
     fn test_formats_multiple_values() {
         let toml = versioned_toml(r#"formats = ["html", "epub"]"#);
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
+        let config = parse(&toml);
         assert_eq!(config.formats, vec!["html", "epub"]);
     }
 
     #[test]
     fn test_formats_stored_as_given() {
-        // Formats are stored as-is from TOML (no normalization at parse time).
-        // Plugin lookup uses name() which is always lowercase.
         let toml = versioned_toml(r#"formats = ["pdf", "html", "epub"]"#);
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
+        let config = parse(&toml);
         assert_eq!(config.formats, vec!["pdf", "html", "epub"]);
     }
 
@@ -499,39 +330,30 @@ mod tests {
     }
 
     #[test]
-    fn test_html_config_defaults() {
-        let config = HtmlConfig::default();
-        assert_eq!(config.stylesheets, vec!["style.css"]);
-        assert_eq!(config.fonts.len(), 0);
+    fn test_html_section_defaults() {
+        // When no [html] section, plugin_section("html") returns default
+        let config = RheoConfig::default();
+        let section = config.plugin_section("html");
+        assert_eq!(section.stylesheets, vec!["style.css"]);
+        assert_eq!(section.fonts.len(), 0);
     }
 
     #[test]
-    fn test_html_config_custom_stylesheets() {
+    fn test_html_section_custom_stylesheets() {
         let toml = versioned_toml("[html]\nstylesheets = [\"custom.css\", \"theme.css\"]");
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
-        assert_eq!(config.html.stylesheets, vec!["custom.css", "theme.css"]);
-        assert_eq!(config.html.fonts.len(), 0);
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        assert_eq!(section.stylesheets, vec!["custom.css", "theme.css"]);
+        assert_eq!(section.fonts.len(), 0);
     }
 
     #[test]
-    fn test_html_config_custom_fonts() {
+    fn test_html_section_custom_fonts() {
         let toml = versioned_toml("[html]\nfonts = [\"https://example.com/font.css\"]");
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
-        assert_eq!(config.html.fonts, vec!["https://example.com/font.css"]);
-        assert_eq!(config.html.stylesheets, vec!["style.css"]);
-    }
-
-    #[test]
-    fn test_html_config_both_custom() {
-        let toml = versioned_toml(
-            "[html]\nstylesheets = [\"a.css\", \"b.css\"]\nfonts = [\"https://fonts.com/font1.css\", \"https://fonts.com/font2.css\"]",
-        );
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
-        assert_eq!(config.html.stylesheets, vec!["a.css", "b.css"]);
-        assert_eq!(
-            config.html.fonts,
-            vec!["https://fonts.com/font1.css", "https://fonts.com/font2.css"]
-        );
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        assert_eq!(section.fonts, vec!["https://example.com/font.css"]);
+        assert_eq!(section.stylesheets, vec!["style.css"]);
     }
 
     #[test]
@@ -539,8 +361,8 @@ mod tests {
         let toml = versioned_toml(
             "[pdf.spine]\ntitle = \"My Book\"\nvertebrae = [\"cover.typ\", \"chapters/*.typ\"]\nmerge = true",
         );
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
-        let spine = config.pdf.spine.as_ref().unwrap();
+        let config = parse(&toml);
+        let spine = config.spine_for_plugin("pdf").unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "My Book");
         assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
         assert_eq!(spine.merge, Some(true));
@@ -551,20 +373,16 @@ mod tests {
         let toml = versioned_toml(
             "[pdf.spine]\ntitle = \"My Book\"\nvertebrae = [\"cover.typ\", \"chapters/*.typ\"]\nmerge = false",
         );
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
-        let spine = config.pdf.spine.as_ref().unwrap();
-        assert_eq!(spine.title.as_ref().unwrap(), "My Book");
-        assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
+        let config = parse(&toml);
+        let spine = config.spine_for_plugin("pdf").unwrap();
         assert_eq!(spine.merge, Some(false));
     }
 
     #[test]
     fn test_pdf_spine_merge_omitted() {
         let toml = versioned_toml("[pdf.spine]\ntitle = \"My Book\"\nvertebrae = [\"cover.typ\"]");
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
-        let spine = config.pdf.spine.as_ref().unwrap();
-        assert_eq!(spine.title.as_ref().unwrap(), "My Book");
-        assert_eq!(spine.vertebrae, vec!["cover.typ"]);
+        let config = parse(&toml);
+        let spine = config.spine_for_plugin("pdf").unwrap();
         assert_eq!(spine.merge, None);
     }
 
@@ -573,8 +391,8 @@ mod tests {
         let toml = versioned_toml(
             "[epub.spine]\ntitle = \"My EPUB\"\nvertebrae = [\"intro.typ\", \"chapter*.typ\", \"outro.typ\"]",
         );
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
-        let spine = &config.epub.spine;
+        let config = parse(&toml);
+        let spine = config.spine_for_plugin("epub").unwrap();
         assert_eq!(spine.title.as_deref().unwrap(), "My EPUB");
         assert_eq!(
             spine.vertebrae,
@@ -587,8 +405,8 @@ mod tests {
         let toml = versioned_toml(
             "[html.spine]\ntitle = \"My Website\"\nvertebrae = [\"index.typ\", \"about.typ\"]",
         );
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
-        let spine = config.html.spine.as_ref().unwrap();
+        let config = parse(&toml);
+        let spine = config.spine_for_plugin("html").unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "My Website");
         assert_eq!(spine.vertebrae, vec!["index.typ", "about.typ"]);
     }
@@ -596,8 +414,8 @@ mod tests {
     #[test]
     fn test_spine_empty_vertebrae() {
         let toml = versioned_toml("[epub.spine]\ntitle = \"Single File Book\"\nvertebrae = []");
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
-        let spine = &config.epub.spine;
+        let config = parse(&toml);
+        let spine = config.spine_for_plugin("epub").unwrap();
         assert_eq!(spine.title.as_deref().unwrap(), "Single File Book");
         assert!(spine.vertebrae.is_empty());
     }
@@ -607,11 +425,30 @@ mod tests {
         let toml = versioned_toml(
             "[pdf.spine]\ntitle = \"Complex Book\"\nvertebrae = [\"frontmatter/**/*.typ\", \"chapters/**/ch*.typ\", \"appendix.typ\"]\nmerge = true",
         );
-        let config: RheoConfig = toml::from_str(&toml).unwrap();
-        let spine = config.pdf.spine.as_ref().unwrap();
+        let config = parse(&toml);
+        let spine = config.spine_for_plugin("pdf").unwrap();
         assert_eq!(spine.vertebrae.len(), 3);
         assert_eq!(spine.vertebrae[0], "frontmatter/**/*.typ");
         assert_eq!(spine.vertebrae[1], "chapters/**/ch*.typ");
         assert_eq!(spine.vertebrae[2], "appendix.typ");
+    }
+
+    #[test]
+    fn test_has_format() {
+        let toml = versioned_toml(r#"formats = ["html", "pdf"]"#);
+        let config = parse(&toml);
+        assert!(config.has_format("html"));
+        assert!(config.has_format("pdf"));
+        assert!(!config.has_format("epub"));
+    }
+
+    #[test]
+    fn test_epub_identifier_and_date() {
+        let toml =
+            versioned_toml("[epub]\nidentifier = \"urn:uuid:12345\"\ndate = 2025-01-15T00:00:00Z");
+        let config = parse(&toml);
+        let section = config.plugin_section("epub");
+        assert_eq!(section.identifier.as_deref(), Some("urn:uuid:12345"));
+        assert!(section.date.is_some());
     }
 }

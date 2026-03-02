@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::{OutputFormat, Result, RheoError};
+use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
 use parking_lot::Mutex;
@@ -18,56 +18,30 @@ use typst_kit::package::PackageStorage;
 use typst_library::{Feature, Features};
 
 /// Build sys.inputs Dict for Typst compilation.
-///
-/// This creates the dictionary that's accessible via `sys.inputs` in Typst code.
-/// For EPUB/HTML/PDF compilation, we pass `{"rheo-target": "epub"|"html"|"pdf"}`
-/// so user code can detect the output format using:
-/// `if "rheo-target" in sys.inputs { sys.inputs.rheo-target }`
-fn build_inputs(output_format: Option<OutputFormat>) -> Dict {
+fn build_inputs(format_name: Option<&str>) -> Dict {
     let mut dict = Dict::new();
-    if let Some(format) = output_format {
-        let format_str = match format {
-            OutputFormat::Pdf => "pdf",
-            OutputFormat::Html => "html",
-            OutputFormat::Epub => "epub",
-        };
-        dict.insert("rheo-target".into(), format_str.into_value());
+    if let Some(name) = format_name {
+        dict.insert("rheo-target".into(), name.into_value());
     }
     dict
 }
 
 /// A simple World implementation for rheo compilation.
 pub struct RheoWorld {
-    /// The root directory for resolving imports (document directory).
     root: PathBuf,
-
-    /// The main file to compile.
     main: FileId,
-
-    /// Typst's standard library.
     library: LazyHash<Library>,
-
-    /// Metadata about discovered fonts.
     book: LazyHash<FontBook>,
-
-    /// Locations of and storage for lazily loaded fonts.
     fonts: Vec<FontSlot>,
-
-    /// Maps file ids to source files.
     slots: Mutex<HashMap<FileId, FileSlot>>,
-
-    /// Package storage for downloading and caching packages.
     package_storage: PackageStorage,
-
-    /// Output format for link transformations (None = no transformation).
-    output_format: Option<OutputFormat>,
+    /// Output format name for link transformations and polyfill injection.
+    /// None = no transformation.
+    format_name: Option<String>,
 }
 
-/// Holds the processed data for a file ID.
 struct FileSlot {
-    /// The loaded source file (for .typ files).
     source: Option<Source>,
-    /// The loaded binary data (for other files).
     file: Option<Bytes>,
 }
 
@@ -75,17 +49,10 @@ impl RheoWorld {
     /// Create a new world for compiling the given file.
     ///
     /// # Arguments
-    /// * `root` - The root directory for resolving imports (document directory)
+    /// * `root` - The root directory for resolving imports
     /// * `main_file` - The main .typ file to compile
     /// * `format_name` - Plugin name for link transformations (e.g. "pdf", "html", "epub"; None = no transformation)
     pub fn new(root: &Path, main_file: &Path, format_name: Option<&str>) -> Result<Self> {
-        let output_format = format_name.and_then(|s| match s {
-            "pdf" => Some(OutputFormat::Pdf),
-            "html" => Some(OutputFormat::Html),
-            "epub" => Some(OutputFormat::Epub),
-            _ => None,
-        });
-        // Resolve paths
         let root = root.canonicalize().map_err(|e| {
             RheoError::path(
                 root,
@@ -99,31 +66,26 @@ impl RheoWorld {
             )
         })?;
 
-        // Create virtual path for main file
         let main_vpath = VirtualPath::within_root(&main_path, &root).ok_or_else(|| {
             RheoError::path(&main_path, "main file must be within root directory")
         })?;
         let main = FileId::new(None, main_vpath);
 
-        // Build library with HTML feature enabled and sys.inputs for format detection
         let features: Features = [Feature::Html].into_iter().collect();
-        let inputs = build_inputs(output_format);
+        let inputs = build_inputs(format_name);
         let library = Library::builder()
             .with_features(features)
             .with_inputs(inputs)
             .build();
 
-        // Search for fonts using typst-kit
-        // Respect TYPST_IGNORE_SYSTEM_FONTS for test consistency
         let include_system_fonts = std::env::var("TYPST_IGNORE_SYSTEM_FONTS").is_err();
         let font_search = Fonts::searcher()
             .include_system_fonts(include_system_fonts)
             .search();
 
-        // Create package storage with default paths and downloader
         let package_storage = PackageStorage::new(
-            None, // Use default cache directory
-            None, // Use default data directory
+            None,
+            None,
             Downloader::new(concat!("rheo/", env!("CARGO_PKG_VERSION"))),
         );
 
@@ -135,29 +97,16 @@ impl RheoWorld {
             fonts: font_search.fonts,
             slots: Mutex::new(HashMap::new()),
             package_storage,
-            output_format,
+            format_name: format_name.map(str::to_string),
         })
     }
 
     /// Reset the file cache for incremental compilation.
-    ///
-    /// This clears the cached source files and binary files, forcing them to be
-    /// reloaded on the next access. Fonts, library, and package storage are preserved.
-    ///
-    /// This should be called before each recompilation in watch mode to ensure
-    /// changed files are picked up while allowing Typst's comemo system to cache
-    /// compilation results based on the actual file contents.
     pub fn reset(&self) {
         self.slots.lock().clear();
     }
 
     /// Change the main file for this world.
-    ///
-    /// This allows reusing the same World instance to compile different files
-    /// in watch mode, which is more efficient than creating a new World for each file.
-    ///
-    /// # Arguments
-    /// * `main_file` - The new main .typ file to compile
     pub fn set_main(&mut self, main_file: &Path) -> Result<()> {
         let main_path = main_file.canonicalize().map_err(|e| {
             RheoError::path(
@@ -174,68 +123,44 @@ impl RheoWorld {
         Ok(())
     }
 
-    /// Transform links in source text based on output format.
-    ///
-    /// Applies AST-based link transformations:
-    /// - HTML: .typ → .html
-    /// - EPUB: .typ → .xhtml
-    /// - PDF: Removes .typ links (or converts to labels if spine is provided)
-    ///
-    /// # Arguments
-    /// * `text` - Source text to transform
-    /// * `id` - File ID (for error reporting and path context)
-    /// * `format` - Output format to transform for
-    ///
-    /// # Returns
-    /// * `FileResult<String>` - Transformed source text
-    fn transform_links(&self, text: &str, id: FileId, format: &OutputFormat) -> FileResult<String> {
+    /// Transform links in source text based on output format name.
+    fn transform_links(&self, text: &str, id: FileId, format_name: &str) -> FileResult<String> {
         use crate::reticulate::transformer::LinkTransformer;
 
-        let transformer = LinkTransformer::new(*format);
+        let transformer = LinkTransformer::new(format_name);
         transformer
             .transform_source(text, id.vpath().as_rootless_path(), &self.root)
             .map_err(|e| FileError::Other(Some(e.to_string().into())))
     }
 
-    /// Get the absolute path for a file ID.
     fn path_for_id(&self, id: FileId) -> FileResult<PathBuf> {
-        // Special handling for stdin (which we don't support)
         if id.vpath().as_rooted_path().starts_with("<") {
             return Err(FileError::NotFound(
                 id.vpath().as_rooted_path().display().to_string().into(),
             ));
         }
 
-        // Handle package imports
         let mut root = &self.root;
 
         let buf;
         if let Some(spec) = id.package() {
-            // Download and prepare the package if needed
             buf = self
                 .package_storage
                 .prepare_package(spec, &mut PrintDownload::new(spec))?;
             root = &buf;
         }
 
-        // Construct path relative to root (or package root)
         let path = id.vpath().resolve(root).ok_or_else(|| {
             FileError::NotFound(id.vpath().as_rooted_path().display().to_string().into())
         })?;
 
-        // If the file doesn't exist at the resolved location, try the document directory
-        // This handles cases where templates in subdirectories (or packages) reference
-        // user files that are in the document root (like references.bib)
         if !path.exists() {
-            // Try resolving relative to document root
             if let Some(doc_path) = id.vpath().resolve(&self.root)
                 && doc_path.exists()
             {
                 return Ok(doc_path);
             }
 
-            // If still not found, try just the filename in the document root
-            // This handles "./references.bib" in lib/template.typ referring to ../references.bib
             if let Some(filename) = id.vpath().as_rooted_path().file_name() {
                 let filename_path = self.root.join(filename);
                 if filename_path.exists() {
@@ -247,33 +172,17 @@ impl RheoWorld {
         Ok(path)
     }
 
-    /// Look up the lines of a source file.
-    ///
-    /// This is used by the codespan-reporting integration to provide source
-    /// context when displaying diagnostics. Returns the lines from either the
-    /// cached source or loaded file bytes.
-    ///
-    /// Fallback strategy:
-    /// 1. Check source cache (fastest, already parsed)
-    /// 2. Load via World trait (handles file I/O and parsing)
-    /// 3. Try bytes cache and convert (for non-text files like images)
-    /// 4. Return empty Lines (prevents panic when file unavailable)
     pub fn lookup(&self, id: FileId) -> Lines<String> {
-        // Fallback 1: Check source cache (already parsed, fastest path)
         if let Some(slot) = self.slots.lock().get(&id)
             && let Some(source) = &slot.source
         {
             return source.lines().clone();
         }
 
-        // Fallback 2: Load source using World trait (handles file I/O and UTF-8 decoding)
         if let Ok(source) = World::source(self, id) {
             return source.lines().clone();
         }
 
-        // Fallback 3: Try bytes cache and convert to Lines
-        // This handles cases where we have raw bytes but not parsed source
-        // (e.g., binary files or files that failed source parsing)
         if let Some(slot) = self.slots.lock().get(&id)
             && let Some(bytes) = &slot.file
             && let Ok(lines) = Lines::try_from(bytes)
@@ -281,8 +190,6 @@ impl RheoWorld {
             return lines;
         }
 
-        // Fallback 4: Return empty Lines to prevent panic
-        // Occurs when file doesn't exist or all loading attempts failed
         Lines::new(String::new())
     }
 
@@ -305,29 +212,24 @@ impl World for RheoWorld {
     }
 
     fn source(&self, id: FileId) -> FileResult<Source> {
-        // Check cache first
         if let Some(slot) = self.slots.lock().get(&id)
             && let Some(source) = &slot.source
         {
             return Ok(source.clone());
         }
 
-        // Load from file system
         let path = self.path_for_id(id)?;
         let mut text = fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
 
-        // Inject target() polyfill into ALL .typ files for EPUB compilation
-        // This shadows the built-in target() to check sys.inputs.rheo-target first,
-        // allowing user code to use `if target() == "epub"` naturally.
-        // Packages can also adopt this pattern, or use sys.inputs directly.
-        let target_polyfill = if matches!(self.output_format, Some(OutputFormat::Epub)) {
+        // Inject target() polyfill into ALL .typ files for EPUB compilation.
+        let target_polyfill = if self.format_name.as_deref() == Some("epub") {
             "// Polyfill target() to return rheo's output format from sys.inputs\n\
              #let target() = if \"rheo-target\" in sys.inputs { sys.inputs.rheo-target } else { std.target() }\n\n"
         } else {
             ""
         };
 
-        // For the main file, also inject the rheo.typ template
+        // For the main file, also inject the rheo.typ template.
         if id == self.main {
             let rheo_content = include_str!("typ/rheo.typ");
             let template_inject = format!(
@@ -336,18 +238,15 @@ impl World for RheoWorld {
             );
             text = format!("{}{}", template_inject, text);
         } else if !target_polyfill.is_empty() {
-            // For all other files (local modules and packages), just inject the target polyfill
             text = format!("{}{}", target_polyfill, text);
         }
 
-        // Apply link transformations for ALL .typ files if output format is set
-        if let Some(format) = &self.output_format {
-            text = self.transform_links(&text, id, format)?;
+        // Apply link transformations for ALL .typ files if output format is set.
+        if let Some(ref name) = self.format_name {
+            text = self.transform_links(&text, id, name)?;
         }
 
         let source = Source::new(id, text);
-
-        // Cache the source
         self.slots.lock().entry(id).or_insert_with(|| FileSlot {
             source: Some(source.clone()),
             file: None,
@@ -357,20 +256,16 @@ impl World for RheoWorld {
     }
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {
-        // Check cache first
         if let Some(slot) = self.slots.lock().get(&id)
             && let Some(file) = &slot.file
         {
             return Ok(file.clone());
         }
 
-        // Load from file system
         let path = self.path_for_id(id)?;
         let data = fs::read(&path).map_err(|e| FileError::from_io(e, &path))?;
-
         let bytes = Bytes::new(data);
 
-        // Cache the file
         self.slots.lock().entry(id).or_insert_with(|| FileSlot {
             source: None,
             file: Some(bytes.clone()),
@@ -385,8 +280,6 @@ impl World for RheoWorld {
 
     fn today(&self, offset: Option<i64>) -> Option<Datetime> {
         let now = Local::now();
-
-        // The time with the specified UTC offset, or within the local time zone.
         let with_offset = match offset {
             None => now,
             Some(hours) => {
@@ -403,10 +296,6 @@ impl World for RheoWorld {
     }
 }
 
-/// Implement the Files trait from codespan-reporting for diagnostic rendering.
-///
-/// This allows RheoWorld to provide file information (name, source lines, line ranges)
-/// to codespan-reporting's diagnostic formatter.
 impl<'a> Files<'a> for RheoWorld {
     type FileId = FileId;
     type Name = String;
@@ -415,10 +304,8 @@ impl<'a> Files<'a> for RheoWorld {
     fn name(&'a self, id: FileId) -> std::result::Result<Self::Name, CodespanError> {
         let vpath = id.vpath();
         Ok(if let Some(package) = id.package() {
-            // For package files, show package name + path
             format!("{package}{}", vpath.as_rooted_path().display())
         } else {
-            // For local files, try to show relative path from root
             vpath
                 .resolve(&self.root)
                 .and_then(|abs| pathdiff::diff_paths(abs, &self.root))
@@ -458,7 +345,6 @@ impl<'a> Files<'a> for RheoWorld {
     }
 }
 
-/// Progress tracker that logs package downloads using tracing.
 struct PrintDownload {
     package_name: String,
 }

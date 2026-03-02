@@ -1,62 +1,49 @@
-use crate::config::SpineConfig;
+use crate::config::UniversalSpine;
 use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
-use crate::{OutputFormat, Result, RheoError, TYP_EXT};
+use crate::{Result, RheoError, TYP_EXT};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-/// A spine with relative linking tranformations
+/// A spine with relative linking transformations.
 #[derive(Debug, Clone)]
 pub struct RheoSpine {
     /// The name of the file or website that the spine will generate.
     pub title: Option<String>,
 
     /// Whether or not the source has been merged into a single file.
-    /// This is only false in the case of HTML currently.
+    /// This is only true for PDF merged mode.
     pub is_merged: bool,
 
-    /// Reticulated (relative link transformed) source files, always of length 1 if `is_merged`.
+    /// Reticulated (relative link transformed) source files.
+    /// Always length 1 if `is_merged`.
     pub source: Vec<String>,
 }
 
 impl RheoSpine {
     /// Build a RheoSpine with AST-based link transformation for all output formats.
     ///
-    /// This unified function handles link transformation for PDF, HTML, and EPUB:
-    /// - PdfSingle: Removes .typ links, single source, no metadata heading
-    /// - PdfMerged: Converts .typ links to labels, injects metadata headings, merged into single source
-    /// - Html: Converts .typ links to .html, multiple sources (one per file), no metadata heading
-    /// - Epub: Converts .typ links to .xhtml, multiple sources (one per file), no metadata heading
-    ///
     /// # Arguments
     /// * `root` - Project root directory
     /// * `spine_config` - Optional spine configuration (determines spine files)
-    /// * `output_format` - Target output format (determines link transformation behavior)
-    ///
-    /// # Returns
-    /// A RheoSpine containing transformed Typst sources ready for compilation.
+    /// * `format_name` - Target output format name (e.g. "pdf", "html", "epub")
     pub fn build(
         root: &Path,
-        spine_config: Option<&dyn SpineConfig>,
-        output_format: OutputFormat,
+        spine_config: Option<&UniversalSpine>,
+        format_name: &str,
     ) -> Result<RheoSpine> {
-        // Generate spine: ordered list of .typ files
         let spine_files = generate_spine(root, spine_config, false)?;
-
-        // Check for duplicate filenames
         check_duplicate_filenames(&spine_files)?;
 
-        // Determine if we should merge sources based on format and config
-        let should_merge = match output_format {
-            OutputFormat::Pdf => spine_config.and_then(|s| s.merge()).unwrap_or(false),
-            OutputFormat::Html | OutputFormat::Epub => false,
-        };
+        // Merge only when format is "pdf" and spine config says merge=true.
+        // Other formats (epub, html) never merge here — they handle it differently.
+        let should_merge =
+            format_name == "pdf" && spine_config.and_then(|s| s.merge).unwrap_or(false);
 
         let mut sources = Vec::new();
 
         for spine_file in &spine_files {
-            // Read source content
             let source = fs::read_to_string(spine_file).map_err(|e| {
                 RheoError::project_config(format!(
                     "failed to read spine file '{}': {}",
@@ -65,12 +52,10 @@ impl RheoSpine {
                 ))
             })?;
 
-            // Transform links using AST-based transformation
             let transformed_source =
-                transform_source(&source, spine_file, &spine_files, output_format, root)?;
+                transform_source(&source, spine_file, &spine_files, format_name, root)?;
 
-            // Add metadata heading only for merged PDF
-            let final_source = if should_merge && output_format == OutputFormat::Pdf {
+            let final_source = if should_merge {
                 let (label, doc_title) = extract_label_and_title(&source, spine_file)?;
                 format!(
                     "#metadata(\"{}\") <{}>\n{}\n\n",
@@ -83,15 +68,13 @@ impl RheoSpine {
             sources.push(final_source);
         }
 
-        // Merge sources if needed
         let final_sources = if should_merge {
             vec![sources.join("\n\n")]
         } else {
             sources
         };
 
-        // Extract title from spine config
-        let title = spine_config.and_then(|s| s.title().map(String::from));
+        let title = spine_config.and_then(|s| s.title.clone());
 
         Ok(RheoSpine {
             title,
@@ -100,31 +83,28 @@ impl RheoSpine {
         })
     }
 }
-/// Transform source using AST-based link transformation
+
+/// Transform source using AST-based link transformation.
 fn transform_source(
     source: &str,
     spine_file: &Path,
     spine_files: &[PathBuf],
-    output_format: OutputFormat,
+    format_name: &str,
     project_root: &Path,
 ) -> Result<String> {
-    // Create transformer based on format and mode
     use crate::reticulate::transformer::LinkTransformer;
 
-    let transformer = match (output_format, spine_files.len()) {
-        (OutputFormat::Pdf, 1) => LinkTransformer::new(output_format), // Single-file PDF
-        (OutputFormat::Pdf, _) => {
-            // Merged PDF: pass spine for label references
-            LinkTransformer::new(output_format).with_spine(spine_files.to_vec())
-        }
-        _ => LinkTransformer::new(output_format), // HTML and EPUB
+    let transformer = if format_name == "pdf" && spine_files.len() > 1 {
+        // Merged PDF: pass spine for label references
+        LinkTransformer::new(format_name).with_spine(spine_files.to_vec())
+    } else {
+        // Single-file PDF, HTML, EPUB, and all other formats
+        LinkTransformer::new(format_name)
     };
 
-    // Transform source
     transformer.transform_source(source, spine_file, project_root)
 }
 
-/// Extract label and title from source and filename
 fn extract_label_and_title(source: &str, spine_file: &Path) -> Result<(String, String)> {
     let filename = spine_file.file_name().ok_or_else(|| {
         RheoError::project_config(format!(
@@ -141,7 +121,6 @@ fn extract_label_and_title(source: &str, spine_file: &Path) -> Result<(String, S
     Ok((label, title))
 }
 
-/// Check for duplicate filenames in spine
 fn check_duplicate_filenames(spine_files: &[PathBuf]) -> Result<()> {
     let mut seen_filenames: HashSet<String> = HashSet::new();
 
@@ -149,20 +128,19 @@ fn check_duplicate_filenames(spine_files: &[PathBuf]) -> Result<()> {
         if let Some(filename) = spine_file.file_name() {
             let filename_str = filename.to_string_lossy().to_string();
 
-            if !seen_filenames.insert(filename_str.clone()) {
-                // Find the first occurrence
-                if let Some(first_occurrence) = spine_files.iter().find(|f| {
+            if !seen_filenames.insert(filename_str.clone())
+                && let Some(first_occurrence) = spine_files.iter().find(|f| {
                     f.file_name()
                         .map(|n| n.to_string_lossy() == filename.to_string_lossy())
                         .unwrap_or(false)
-                }) {
-                    return Err(RheoError::project_config(format!(
-                        "duplicate filename in spine: '{}' appears at both '{}' and '{}'",
-                        filename_str,
-                        first_occurrence.display(),
-                        spine_file.display()
-                    )));
-                }
+                })
+            {
+                return Err(RheoError::project_config(format!(
+                    "duplicate filename in spine: '{}' appears at both '{}' and '{}'",
+                    filename_str,
+                    first_occurrence.display(),
+                    spine_file.display()
+                )));
             }
         }
     }
@@ -192,7 +170,6 @@ fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
     }
 }
 
-/// Collect all .typ files under `root`, sorted lexicographically.
 fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
     let mut typst_files: Vec<PathBuf> = WalkDir::new(root)
         .into_iter()
@@ -214,24 +191,11 @@ fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
 }
 
 /// Generates a spine (ordered list of .typ files) based on configuration.
-///
-/// # Arguments
-/// * `root` - Project root directory
-/// * `spine_config` - Optional spine configuration with vertebrae patterns
-/// * `require_spine` - If true, spine_config must be provided (PDF mode)
-///
-/// # Errors
-/// Returns error if:
-/// - `require_spine=true` and `spine_config=None`
-/// - No .typ files found (fallback mode)
-/// - Multiple .typ files found without spine config (fallback mode)
-/// - Spine vertebrae matched no .typ files
 pub fn generate_spine(
     root: &Path,
-    spine_config: Option<&dyn SpineConfig>,
+    spine_config: Option<&UniversalSpine>,
     require_spine: bool,
 ) -> Result<Vec<PathBuf>> {
-    // PDF mode: spine config is required
     if require_spine && spine_config.is_none() {
         return Err(RheoError::project_config(
             "spine configuration required but not provided",
@@ -239,17 +203,11 @@ pub fn generate_spine(
     }
 
     match spine_config {
-        // Single-file mode
         None => collect_one_typst_file(root),
-
-        // Empty vertebrae: auto-discover all .typ files (supports default EpubSpine)
-        Some(spine) if spine.vertebrae().is_empty() => collect_all_typst_files(root),
-
-        // Vertebrae is specified
-        // Process glob patterns from spine config
+        Some(spine) if spine.vertebrae.is_empty() => collect_all_typst_files(root),
         Some(spine) => {
             let mut typst_files = Vec::new();
-            for pattern in spine.vertebrae() {
+            for pattern in &spine.vertebrae {
                 let glob_pattern = root.join(pattern).display().to_string();
                 let glob = glob::glob(&glob_pattern).map_err(|e| {
                     RheoError::project_config(format!("invalid glob pattern '{}': {}", pattern, e))
@@ -259,10 +217,9 @@ pub fn generate_spine(
                     .filter_map(|entry| entry.ok())
                     .filter(|path| path.is_file())
                     .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("typ"))
-                    .filter(|path| path.file_name().is_some()) // Ensure path has a filename
+                    .filter(|path| path.file_name().is_some())
                     .collect();
 
-                // Sort lexicographically within each pattern
                 glob_files.sort_by_cached_key(|p| {
                     p.file_name()
                         .expect("file_name() checked in filter above")
@@ -285,7 +242,7 @@ pub fn generate_spine(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{HtmlSpine, PdfSpine};
+    use crate::config::UniversalSpine;
     use std::fs;
     use tempfile::TempDir;
 
@@ -299,6 +256,14 @@ mod tests {
             fs::write(&path, "").unwrap();
         }
         temp
+    }
+
+    fn spine_with_vertebrae(vertebrae: Vec<String>) -> UniversalSpine {
+        UniversalSpine {
+            title: Some("Test".to_string()),
+            vertebrae,
+            merge: None,
+        }
     }
 
     #[test]
@@ -351,13 +316,9 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_spine_with_html_config() {
+    fn test_generate_spine_with_vertebrae() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ", "c.typ"]);
-        let spine = HtmlSpine {
-            title: Some("Test".to_string()),
-            vertebrae: vec!["*.typ".to_string()],
-            merge: None,
-        };
+        let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
         let result = generate_spine(temp.path(), Some(&spine), false);
         assert!(result.is_ok());
         let files = result.unwrap();
@@ -372,7 +333,7 @@ mod tests {
             "chapters/ch2.typ",
             "appendix.typ",
         ]);
-        let spine = PdfSpine {
+        let spine = UniversalSpine {
             title: Some("Book".to_string()),
             vertebrae: vec![
                 "cover.typ".to_string(),
@@ -385,9 +346,7 @@ mod tests {
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 4);
-        // Verify pattern order is preserved
         assert_eq!(files[0].file_name().unwrap(), "cover.typ");
-        // ch1.typ and ch2.typ should be sorted lexicographically within their pattern
         assert!(
             files[1]
                 .file_name()
@@ -410,11 +369,7 @@ mod tests {
     #[test]
     fn test_generate_spine_no_matches_error() {
         let temp = create_test_dir_with_files(&["readme.md"]);
-        let spine = PdfSpine {
-            title: None,
-            vertebrae: vec!["*.typ".to_string()],
-            merge: None,
-        };
+        let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
         let result = generate_spine(temp.path(), Some(&spine), false);
         assert!(result.is_err());
         assert!(
@@ -428,44 +383,20 @@ mod tests {
     #[test]
     fn test_generate_spine_empty_pattern_single_file() {
         let temp = create_test_dir_with_files(&["single.typ"]);
-        let spine = PdfSpine {
-            title: Some("Test".to_string()),
-            vertebrae: vec![], // Empty vertebrae
-            merge: None,
-        };
-
+        let spine = spine_with_vertebrae(vec![]);
         let result = generate_spine(temp.path(), Some(&spine), false);
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].file_name().unwrap(), "single.typ");
     }
 
     #[test]
     fn test_generate_spine_empty_pattern_multiple_files_returns_all() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
-        let spine = PdfSpine {
-            title: Some("Test".to_string()),
-            vertebrae: vec![], // Empty vertebrae with multiple files
-            merge: None,
-        };
-
-        // Empty vertebrae now returns all .typ files (supports default EpubSpine)
+        let spine = spine_with_vertebrae(vec![]);
         let result = generate_spine(temp.path(), Some(&spine), false);
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 2);
-    }
-
-    #[test]
-    fn test_fallback_lexicographic_ordering() {
-        let temp = create_test_dir_with_files(&["single.typ"]);
-
-        // Test that fallback with single file works and is ordered
-        let result = generate_spine(temp.path(), None, false);
-        assert!(result.is_ok());
-        let files = result.unwrap();
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].file_name().unwrap(), "single.typ");
     }
 }

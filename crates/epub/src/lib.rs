@@ -5,7 +5,8 @@ use package::{Item, ItemRef, Package};
 use xhtml::HtmlInfo;
 
 use rheo_core::compile::RheoCompileOptions;
-use rheo_core::config::{EpubConfig, EpubOptions};
+use rheo_core::config::{PluginSection, UniversalSpine};
+use rheo_core::pdf_utils::DocumentTitle;
 use rheo_core::reticulate::spine::RheoSpine;
 use rheo_core::{FormatPlugin, OpenHandle, PluginContext, Result, RheoError};
 
@@ -38,14 +39,30 @@ impl FormatPlugin for EpubPlugin {
         "epub"
     }
 
+    /// EPUB always merges multiple files into a single output.
+    fn default_merge(&self) -> bool {
+        true
+    }
+
+    /// Set EPUB smart defaults: infer spine title from project name when no config exists.
+    fn apply_defaults(&self, section: &mut PluginSection, project_name: &str) {
+        let spine = section.spine.get_or_insert_with(|| UniversalSpine {
+            title: None,
+            vertebrae: vec![],
+            merge: None,
+        });
+        if spine.title.is_none() {
+            spine.title = Some(DocumentTitle::to_readable_name(project_name));
+        }
+    }
+
     fn open(&self, output_dir: &Path, _format_name: &str) -> Result<OpenHandle> {
         rheo_core::open_all_files_in_folder(output_dir.to_path_buf(), "epub")?;
         Ok(OpenHandle::Direct)
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        let epub_options = EpubOptions::from(&ctx.project.config.epub);
-        compile_epub_new(ctx.options, epub_options)
+        compile_epub_new(ctx.options, ctx.plugin_section)
     }
 }
 
@@ -92,14 +109,11 @@ pub fn generate_nav_xhtml(items: &mut [EpubItem]) -> Result<String> {
     }
 
     let outline = if items.len() == 1 {
-        // If we only have one item, then its nav is just its outline.
         items[0]
             .outline
             .take()
             .ok_or_else(|| RheoError::invalid_data("EPUB item missing outline"))?
     } else {
-        // If we have multiple items, generate a new level of outline which contains a link
-        // to each item.
         items
             .iter_mut()
             .map(|item| {
@@ -118,7 +132,6 @@ pub fn generate_nav_xhtml(items: &mut [EpubItem]) -> Result<String> {
     };
 
     stringify_outline(&mut buf, &outline, 12);
-
     buf.push_str(NAV_FOOTER);
     Ok(buf)
 }
@@ -131,13 +144,15 @@ fn date_format(dt: &DateTime<Utc>) -> EcoString {
 }
 
 /// Generates the package.opf XML string from the generated EPUB items.
-///
-/// See: EPUB 3.3 Package document <https://www.w3.org/TR/epub-33/#sec-package-doc>
-pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> AnyhowResult<String> {
+pub fn generate_package(
+    items: &[EpubItem],
+    spine: &UniversalSpine,
+    identifier: Option<&str>,
+    date: Option<&DateTime<Utc>>,
+) -> AnyhowResult<String> {
     let info = &items[0].document.info;
     let language = info.locale.unwrap_or_default().rfc_3066();
-    let title = config
-        .spine
+    let title = spine
         .title
         .as_deref()
         .map(EcoString::from)
@@ -145,43 +160,36 @@ pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> AnyhowResult
 
     const INTERNAL_UNIQUE_ID: &str = "uid";
 
-    // If the user did not provide a unique ID, we generate a UUID for them.
-    let identifier_content = match &config.identifier {
+    let identifier_content = match identifier {
         Some(id) => id.into(),
         None => eco_format!("urn:uuid:{}", Uuid::new_v4()),
     };
 
-    // Start building the package
     let mut builder = Package::builder(title)
         .unique_identifier(INTERNAL_UNIQUE_ID)
         .lang(language.clone())
         .identifier(INTERNAL_UNIQUE_ID, identifier_content)
         .language(language);
 
-    // Concatenate all authors into a comma-separated string
     if !info.author.is_empty() {
         builder = builder.creator(info.author.join(", "));
     }
 
-    // Set date if provided
-    if let Some(ref date) = config.date {
-        builder = builder.date(date_format(date));
+    if let Some(d) = date {
+        builder = builder.date(date_format(d));
     }
 
-    // Add metadata elements
     builder = builder
         .add_meta("dcterms:modified", date_format(&chrono::Utc::now()))
         .add_meta("ppub:valid", ".");
 
-    // Add navigation item to manifest
     builder = builder.add_item(Item {
         id: "nav".into(),
         href: IriRefBuf::new("nav.xhtml".into()).unwrap(),
         media_type: XHTML_MEDIATYPE.into(),
-        properties: Some("nav".into()), // required by spec
+        properties: Some("nav".into()),
     });
 
-    // Add all content items to manifest and spine
     for item in items {
         let mut prop_list = eco_vec![];
         if item.info.scripted {
@@ -207,7 +215,6 @@ pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> AnyhowResult
             });
     }
 
-    // Build and validate the package
     let package = builder
         .build()
         .map_err(|e| anyhow::anyhow!("Package validation failed: {}", e))?;
@@ -215,9 +222,7 @@ pub fn generate_package(items: &[EpubItem], config: &EpubConfig) -> AnyhowResult
     Ok(package.to_xml()?)
 }
 
-/// Combines all EPUB components into the final .epub i.e. zip file.
-///
-/// See: EPUB 3.3 Open Container Format <https://www.w3.org/TR/epub-33/#sec-ocf>
+/// Combines all EPUB components into the final .epub (zip) file.
 pub fn zip_epub(
     epub_path: &Path,
     package_string: String,
@@ -230,20 +235,16 @@ pub fn zip_epub(
 
     let opts = SimpleFileOptions::default();
 
-    // The mimetype file must (a) be first in the archive and (b) be stored without compression.
     zip.start_file(
         "mimetype",
         opts.compression_method(zip::CompressionMethod::Stored),
     )?;
     zip.write_all(EPUB_MEDIATYPE.as_bytes())?;
 
-    // The EPUB root metadata file must be exactly at `META-INF/container.xml`.
-    // See `CONTAINER_XML` for its pre-baked definition.
     zip.add_directory("META-INF", opts)?;
     zip.start_file("META-INF/container.xml", opts)?;
     zip.write_all(CONTAINER_XML.as_bytes())?;
 
-    // All other files go in the `EPUB` directory (by convention, not standard).
     zip.add_directory("EPUB", opts)?;
 
     zip.start_file("EPUB/package.opf", opts)?;
@@ -259,25 +260,21 @@ pub fn zip_epub(
     }
 
     zip.finish()?;
-
     Ok(())
 }
 
-/// Generates a spine from the EPUB configuration using RheoSpine for AST-based
-/// link transformation (.typ → .xhtml), compiles each file to XHTML,
-/// generates navigation, and packages everything into a .epub (zip) file.
-fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Result<()> {
+fn compile_epub_impl(section: &PluginSection, epub_path: &Path, root: &Path) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
-        // Convert spine config to trait object for generic spine handling
-        let spine_config: &dyn rheo_core::config::SpineConfig = &config.spine;
+        // Use the spine from the section, or fall back to an auto-discover spine.
+        let default_spine = UniversalSpine::default();
+        let spine_config = section.spine.as_ref().unwrap_or(&default_spine);
 
         // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
-        let rheo_spine = RheoSpine::build(root, Some(spine_config), rheo_core::OutputFormat::Epub)?;
+        let rheo_spine = RheoSpine::build(root, Some(spine_config), "epub")?;
 
         // Get the spine file paths
         let spine = rheo_core::reticulate::spine::generate_spine(root, Some(spine_config), false)?;
 
-        // Create EpubItems from transformed sources
         let mut items = spine
             .iter()
             .zip(rheo_spine.source.iter())
@@ -287,7 +284,12 @@ fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Resu
             .collect::<AnyhowResult<Vec<_>>>()?;
 
         let nav_xhtml = generate_nav_xhtml(&mut items)?;
-        let package_string = generate_package(&items, config)?;
+        let package_string = generate_package(
+            &items,
+            spine_config,
+            section.identifier.as_deref(),
+            section.date.as_ref(),
+        )?;
         zip_epub(epub_path, package_string, nav_xhtml, &items)
     };
 
@@ -300,27 +302,11 @@ fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Resu
     Ok(())
 }
 
-/// Compile Typst documents to EPUB (unified API).
-///
-/// The engine provides the World, but EPUB uses a spine-based AST transformation
-/// approach via RheoSpine, which creates Worlds internally for each file.
-///
-/// # Arguments
-/// * `options` - Compilation options (input, output, root, world)
-/// * `epub_options` - EPUB-specific options (wraps EpubConfig)
-///
-/// # Returns
-/// * `Result<()>` - Success or compilation error
-pub fn compile_epub_new(options: RheoCompileOptions, epub_options: EpubOptions) -> Result<()> {
-    // EPUB uses spine-based AST transformation (RheoSpine) which creates Worlds internally.
-    // The provided World is not used directly in this compilation model.
-    let _world = options.world; // Explicitly acknowledge the parameter
-    compile_epub_impl(&epub_options.config, &options.output, &options.root)
+/// Compile Typst documents to EPUB.
+pub fn compile_epub_new(options: RheoCompileOptions, section: PluginSection) -> Result<()> {
+    let _world = options.world;
+    compile_epub_impl(&section, &options.output, &options.root)
 }
-
-// ============================================================================
-// EPUB compilation implementation
-// ============================================================================
 
 pub struct EpubItem {
     href: IriRefBuf,
@@ -331,8 +317,6 @@ pub struct EpubItem {
 }
 
 fn text_to_id(s: &str) -> EcoString {
-    // TODO: handle all the cases described here:
-    // https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/ident#syntax
     s.chars()
         .map(|char| {
             if char.is_whitespace() {
@@ -352,7 +336,6 @@ impl EpubItem {
         let bare_file = path.strip_prefix(parent).unwrap();
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
         let (heading_ids, outline) = Self::outline(&document, &href);
-        // Export to HTML (links already transformed by RheoWorld)
         let html_string = rheo_html::compile_document_to_string(&document)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
@@ -365,7 +348,6 @@ impl EpubItem {
         })
     }
 
-    /// Create EpubItem from RheoSpine-transformed source (links already .typ → .xhtml)
     pub fn create_from_source(
         path: PathBuf,
         transformed_source: &str,
@@ -375,14 +357,11 @@ impl EpubItem {
 
         info!(file = %path.display(), "compiling spine file with transformed source");
 
-        // Write transformed source to temporary file
         let mut temp_file = tempfile::NamedTempFile::new_in(root)?;
         temp_file.write_all(transformed_source.as_bytes())?;
         temp_file.flush()?;
 
         let temp_path = temp_file.path();
-
-        // Compile to HTML document
         let document = rheo_html::compile_html_to_document(temp_path, root, "epub")?;
 
         let parent = path.parent().unwrap();
@@ -390,7 +369,6 @@ impl EpubItem {
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
         let (heading_ids, outline) = Self::outline(&document, &href);
 
-        // Export to HTML (links already .typ → .xhtml from RheoSpine)
         let html_string = rheo_html::compile_document_to_string(&document)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
@@ -404,7 +382,6 @@ impl EpubItem {
     }
 
     fn outline(doc: &HtmlDocument, href: &IriRef) -> (Vec<EcoString>, Vec<OutlineNode<EcoString>>) {
-        // Adapted from https://github.com/typst/typst/blob/02cd1c13de50363010b41b95148233dc952042c2/crates/typst-pdf/src/outline.rs#L7
         let elems = doc.introspector.query(&HeadingElem::ELEM.select());
         let (nodes, heading_ids): (Vec<_>, Vec<_>) = elems
             .iter()
@@ -423,9 +400,6 @@ impl EpubItem {
                     None => text,
                 };
                 let mut anchored_href = href.to_owned();
-                // Heading IDs come from either Typst labels or text_to_id(), which should produce
-                // valid IRI fragments. However, Typst labels could theoretically contain characters
-                // that require percent-encoding. If this panics, we need to add proper encoding.
                 anchored_href.set_fragment(Some(
                     Fragment::new(&id).expect("heading ID should be a valid IRI fragment"),
                 ));
@@ -439,14 +413,11 @@ impl EpubItem {
     fn title(&self) -> EcoString {
         match &self.document.info.title {
             Some(title) => title.clone(),
-            // Default title must not be empty, so we just use the filename as a fallback
             None => self.href.path().as_str().into(),
         }
     }
 
     fn id(&self) -> EcoString {
-        // Use href as a stand-in for item ID.
-        // Eg `chapters/foo.typ` becomes `chapters-foo`
         let mut segments = self.href.path().segments();
         let file_name = Path::new(segments.next_back().unwrap().as_str())
             .file_stem()

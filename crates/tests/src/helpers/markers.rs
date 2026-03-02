@@ -200,8 +200,9 @@ mod tests {
     #[test]
     fn test_read_test_metadata_from_file() {
         // Test reading markers from an actual example file
-        let path = Path::new("examples/blog_site/content/index.typ");
-        let metadata = read_test_metadata(path).unwrap();
+        let manifest_dir = option_env!("CARGO_MANIFEST_DIR").unwrap_or(".");
+        let path = Path::new(manifest_dir).join("../../examples/blog_site/content/index.typ");
+        let metadata = read_test_metadata(&path).unwrap();
         assert_eq!(metadata.formats, vec!["html", "pdf"]);
         assert_eq!(
             metadata.description,
@@ -212,8 +213,9 @@ mod tests {
     #[test]
     fn test_read_test_metadata_pdf_only() {
         // Test reading PDF-only markers
-        let path = Path::new("examples/cover-letter.typ");
-        let metadata = read_test_metadata(path).unwrap();
+        let manifest_dir = option_env!("CARGO_MANIFEST_DIR").unwrap_or(".");
+        let path = Path::new(manifest_dir).join("../../examples/cover-letter.typ");
+        let metadata = read_test_metadata(&path).unwrap();
         assert_eq!(metadata.formats, vec!["pdf"]);
         assert_eq!(
             metadata.description,

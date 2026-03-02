@@ -33,17 +33,6 @@ use walkdir::WalkDir;
 /// Result type alias using RheoError
 pub type Result<T> = std::result::Result<T, RheoError>;
 
-/// Output format enum for link transformation and world configuration.
-///
-/// Plugins identify themselves by name string via `FormatPlugin::name()`,
-/// but this enum is used internally for AST transformations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OutputFormat {
-    Html,
-    Epub,
-    Pdf,
-}
-
 pub fn open_all_files_in_folder(folder: PathBuf, ext: &str) -> Result<()> {
     for entry in WalkDir::new(&folder)
         .max_depth(1)

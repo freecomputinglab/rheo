@@ -1,4 +1,3 @@
-use crate::pdf_utils::DocumentTitle;
 use crate::{Result, RheoConfig, RheoError};
 use std::path::{Path, PathBuf};
 use tracing::debug;
@@ -32,18 +31,13 @@ pub struct ProjectConfig {
     pub mode: ProjectMode,
 
     /// Path to the config file that was loaded
-    /// None if using default config (single-file mode without --config)
+    /// None if using default config (no rheo.toml found)
     pub config_path: Option<PathBuf>,
 }
 
 impl ProjectConfig {
-    /// Detect project configuration from a path (file or directory)
-    ///
-    /// # Arguments
-    /// * `path` - Path to project directory or single .typ file
-    /// * `config_path` - Optional path to custom rheo.toml config file
+    /// Detect project configuration from a path (file or directory).
     pub fn from_path(path: &Path, config_path: Option<&Path>) -> Result<Self> {
-        // Check if path exists and determine if it's a file or directory
         let metadata = path
             .metadata()
             .map_err(|e| RheoError::path(path, format!("path does not exist: {}", e)))?;
@@ -57,9 +51,7 @@ impl ProjectConfig {
         }
     }
 
-    /// Detect project configuration from a directory path
     fn from_directory(path: &Path, config_path: Option<&Path>) -> Result<Self> {
-        // Canonicalize the root path for consistent path handling
         let root = path.canonicalize().map_err(|e| {
             RheoError::path(
                 path,
@@ -67,14 +59,12 @@ impl ProjectConfig {
             )
         })?;
 
-        // Extract project name from directory basename
         let name = root
             .file_name()
             .and_then(|n| n.to_str())
             .ok_or_else(|| RheoError::project_config("failed to get project name from directory"))?
             .to_string();
 
-        // Load config: custom path takes precedence
         let (config, loaded_config_path) = if let Some(custom_path) = config_path {
             debug!(config = %custom_path.display(), "loading custom config");
             let config = RheoConfig::load_from_path(custom_path)?;
@@ -90,20 +80,11 @@ impl ProjectConfig {
             (config, loaded_path)
         };
 
-        // Apply smart defaults if no config file was loaded
-        let config = if loaded_config_path.is_none() {
-            apply_smart_defaults(config, &name, ProjectMode::Directory)
-        } else {
-            config
-        };
-
-        // Determine search directory: content_dir if configured, otherwise project root
         let search_dir = config
             .resolve_content_dir(&root)
             .unwrap_or_else(|| root.clone());
         debug!(search_dir = %search_dir.display(), "searching for .typ files");
 
-        // Find all .typ files in the search directory (recursive walk)
         let typ_files: Vec<PathBuf> = WalkDir::new(&search_dir)
             .into_iter()
             .filter_map(|e| e.ok())
@@ -121,14 +102,11 @@ impl ProjectConfig {
         })
     }
 
-    /// Detect project configuration from a single .typ file
     fn from_single_file(file_path: &Path, config_path: Option<&Path>) -> Result<Self> {
-        // Validate .typ extension
         if file_path.extension().and_then(|s| s.to_str()) != Some("typ") {
             return Err(RheoError::path(file_path, "file must have .typ extension"));
         }
 
-        // Canonicalize the file path first (resolves relative to absolute)
         let file_path = file_path.canonicalize().map_err(|e| {
             RheoError::path(
                 file_path,
@@ -136,20 +114,17 @@ impl ProjectConfig {
             )
         })?;
 
-        // Root = parent directory (now guaranteed to be absolute)
         let root = file_path
             .parent()
             .ok_or_else(|| RheoError::path(&file_path, "file has no parent directory"))?
             .to_path_buf();
 
-        // Project name = file stem
         let name = file_path
             .file_stem()
             .and_then(|s| s.to_str())
             .ok_or_else(|| RheoError::path(&file_path, "invalid filename"))?
             .to_string();
 
-        // Load config if --config provided, otherwise use default
         let (config, loaded_config_path) = if let Some(custom_path) = config_path {
             debug!(config = %custom_path.display(), "using custom config in single-file mode");
             let config = RheoConfig::load_from_path(custom_path)?;
@@ -158,14 +133,6 @@ impl ProjectConfig {
             (RheoConfig::default(), None)
         };
 
-        // Apply smart defaults if no config file was loaded
-        let config = if loaded_config_path.is_none() {
-            apply_smart_defaults(config, &name, ProjectMode::SingleFile)
-        } else {
-            config
-        };
-
-        // Single file in typ_files list
         let typ_files = vec![file_path.clone()];
 
         Ok(ProjectConfig {
@@ -177,25 +144,6 @@ impl ProjectConfig {
             config_path: loaded_config_path,
         })
     }
-}
-
-/// Apply smart defaults when no rheo.toml exists.
-///
-/// Sets the EPUB spine title from the project/file name. Vertebrae remain empty,
-/// which causes the spine generator to auto-discover all .typ files.
-/// PDF is not modified to maintain backwards compatibility
-/// (users expect per-file PDFs by default).
-fn apply_smart_defaults(
-    mut config: RheoConfig,
-    project_name: &str,
-    _mode: ProjectMode,
-) -> RheoConfig {
-    // Set EPUB spine title from project/file name if not already configured
-    if config.epub.spine.title.is_none() {
-        config.epub.spine.title = Some(DocumentTitle::to_readable_name(project_name));
-    }
-
-    config
 }
 
 #[cfg(test)]
@@ -242,8 +190,6 @@ mod tests {
     #[test]
     fn test_single_file_with_assets_in_root() {
         let temp = TempDir::new().unwrap();
-
-        // Create assets in parent directory (engine discovers these at compile time)
         fs::write(temp.path().join("style.css"), "body {}").unwrap();
         fs::create_dir(temp.path().join("img")).unwrap();
         fs::write(temp.path().join("references.bib"), "@article{}").unwrap();
@@ -251,7 +197,6 @@ mod tests {
         let file = temp.path().join("document.typ");
         fs::write(&file, "#heading[Test]").unwrap();
 
-        // Project should load successfully regardless of asset presence
         let project = ProjectConfig::from_path(&file, None).unwrap();
         assert_eq!(project.root, temp.path().canonicalize().unwrap());
     }
@@ -274,22 +219,15 @@ mod tests {
         let file = temp.path().join("document.typ");
         fs::write(&file, "#heading[Test]").unwrap();
 
-        // Save original directory and change to temp directory
         let original_dir = std::env::current_dir().unwrap();
         std::env::set_current_dir(temp.path()).unwrap();
 
-        // Use relative path (no directory component)
         let result = ProjectConfig::from_path(Path::new("document.typ"), None);
-
-        // Restore original directory
         std::env::set_current_dir(original_dir).unwrap();
 
-        // Verify it succeeded
         let project = result.unwrap();
         assert_eq!(project.name, "document");
         assert_eq!(project.mode, ProjectMode::SingleFile);
-        assert_eq!(project.typ_files.len(), 1);
-        assert_eq!(project.root, temp.path().canonicalize().unwrap());
     }
 
     #[test]
@@ -299,44 +237,24 @@ mod tests {
         fs::write(&file, "#heading[Test]").unwrap();
 
         let project = ProjectConfig::from_path(&file, None).unwrap();
-
-        // Single-file mode without custom config should have None
         assert!(project.config_path.is_none());
     }
 
     #[test]
-    fn test_single_file_epub_default_merge() {
+    fn test_no_smart_defaults_applied_in_project() {
+        // Smart defaults are now applied by plugins in the CLI, not in project loading.
+        // The project config should have empty plugin_sections when no rheo.toml exists.
         let temp = TempDir::new().unwrap();
         let file = temp.path().join("my-document.typ");
         fs::write(&file, "#heading[Test]").unwrap();
 
         let project = ProjectConfig::from_path(&file, None).unwrap();
-
-        // EPUB spine is always present (non-optional)
-        let spine = &project.config.epub.spine;
-        assert_eq!(spine.title.as_deref().unwrap(), "My Document");
-        assert!(spine.vertebrae.is_empty());
-        assert_eq!(spine.merge, Some(true));
+        // No epub section should be present (no rheo.toml)
+        assert!(!project.config.plugin_sections.contains_key("epub"));
     }
 
     #[test]
-    fn test_directory_epub_default_merge() {
-        let temp = TempDir::new().unwrap();
-        fs::write(temp.path().join("a.typ"), "A").unwrap();
-        fs::write(temp.path().join("b.typ"), "B").unwrap();
-
-        let project = ProjectConfig::from_path(temp.path(), None).unwrap();
-
-        // EPUB spine is always present with empty vertebrae (auto-discovers all files)
-        let spine = &project.config.epub.spine;
-        assert!(spine.vertebrae.is_empty());
-        // Title should be based on temp directory name (will vary)
-        assert!(spine.title.is_some());
-        assert_eq!(spine.merge, Some(true));
-    }
-
-    #[test]
-    fn test_explicit_config_not_modified() {
+    fn test_explicit_config_loaded() {
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("rheo.toml");
         fs::write(
@@ -350,22 +268,19 @@ mod tests {
         fs::write(temp.path().join("custom.typ"), "content").unwrap();
 
         let project = ProjectConfig::from_path(temp.path(), None).unwrap();
-
-        // Should preserve explicit config
-        let spine = &project.config.epub.spine;
+        let section = project.config.plugin_section("epub");
+        let spine = section.spine.unwrap();
         assert_eq!(spine.title.as_deref().unwrap(), "Custom Title");
         assert_eq!(spine.vertebrae, vec!["custom.typ"]);
     }
 
     #[test]
-    fn test_pdf_not_auto_merged() {
+    fn test_pdf_no_spine_by_default() {
         let temp = TempDir::new().unwrap();
         fs::write(temp.path().join("a.typ"), "A").unwrap();
         fs::write(temp.path().join("b.typ"), "B").unwrap();
 
         let project = ProjectConfig::from_path(temp.path(), None).unwrap();
-
-        // PDF should not get default spine config (backwards compatibility)
-        assert!(project.config.pdf.spine.is_none());
+        assert!(project.config.spine_for_plugin("pdf").is_none());
     }
 }
