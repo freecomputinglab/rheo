@@ -1,0 +1,36 @@
+[package]
+name = "rheo-html"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Core
+rheo-core = { path = "../core" }
+
+# Typst dependencies
+typst = { workspace = true }
+typst-html = { workspace = true }
+comemo = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Development server
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+webbrowser = { workspace = true }
+tokio-stream = { workspace = true }
+mime_guess = { workspace = true }
+
+# HTML parsing
+html5ever = { workspace = true }
+markup5ever_rcdom = { workspace = true }

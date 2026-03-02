@@ -1,0 +1,26 @@
+[package]
+name = "rheo-pdf"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Core
+rheo-core = { path = "../core" }
+
+# Typst dependencies
+typst = { workspace = true }
+typst-pdf = { workspace = true }
+comemo = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# File utilities
+tempfile = { workspace = true }

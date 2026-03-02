@@ -1,0 +1,56 @@
+[package]
+name = "rheo-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rheo"
+path = "src/main.rs"
+
+[dependencies]
+# Internal crates
+rheo-core = { path = "../core" }
+rheo-html = { path = "../html" }
+rheo-pdf = { path = "../pdf" }
+rheo-epub = { path = "../epub" }
+
+# CLI and utilities
+clap = { workspace = true }
+walkdir = { workspace = true }
+opener = { workspace = true }
+parking_lot = { workspace = true }
+atty = { workspace = true }
+pathdiff = { workspace = true }
+notify = { workspace = true }
+mime_guess = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Date/time
+chrono = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+toml = { workspace = true }
+semver = { workspace = true }
+
+# Development server
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+webbrowser = { workspace = true }
+tokio-stream = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Patterns
+globset = { workspace = true }
+glob = { workspace = true }

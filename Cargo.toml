@@ -1,5 +1,8 @@
-[package]
-name = "rheo"
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/html", "crates/pdf", "crates/epub", "crates/cli"]
+
+[workspace.package]
 version = "0.1.2"
 edition = "2024"
 authors = ["Lachlan Kermode <lachie@ohrg.org>"]
@@ -7,28 +10,15 @@ description = "A typesetting and static site engine based on Typst"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/freecomputinglab/rheo"
 readme = "README.md"
-exclude = [
-  "tests/",
-  "examples/",
-  ".github/",
-  ".beads/",
-  ".claude/",
-  "flake.nix",
-  "flake.lock",
-  ".envrc",
-  "CLAUDE.md",
-  "Justfile",
-]
 
-[[bin]]
-name = "rheo"
-path = "src/rs/main.rs"
+[workspace.dependencies]
+# Internal crates (for convenience in workspace)
+rheo-core = { path = "crates/core" }
+rheo-html = { path = "crates/html" }
+rheo-pdf = { path = "crates/pdf" }
+rheo-epub = { path = "crates/epub" }
 
-[lib]
-name = "rheo"
-path = "src/rs/lib.rs"
-
-[dependencies]
+# Typst dependencies
 typst = "0.14.2"
 typst-library = "0.14.2"
 typst-pdf = "0.14.2"
@@ -36,50 +26,60 @@ typst-html = "0.14.2"
 typst-kit = "0.14.2"
 typst-syntax = "0.14.2"
 comemo = "0.5"
+
+# Error handling and diagnostics
 codespan-reporting = "0.13"
-ecow = "0.2"
+thiserror = "2.0"
+anyhow = "1.0.100"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.9"
+semver = "1.0"
+
+# CLI and utilities
 clap = { version = "4.5", features = ["derive"] }
 walkdir = "2.5"
-thiserror = "2.0"
 opener = "0.8"
 parking_lot = "0.12"
-chrono = { version = "0.4", features = ["serde"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
 atty = "0.2"
 pathdiff = "0.2"
-toml = "0.9"
-serde = { version = "1.0", features = ["derive"] }
-semver = "1.0"
+notify = "8.2"
+mime_guess = "2.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# File system and patterns
 globset = "0.4"
 glob = "0.3"
-notify = "8.2"
+tempfile = "3.8"
+
+# Development server (HTML plugin uses, CLI also uses)
 tokio = { version = "1", features = ["rt", "sync", "time", "signal", "rt-multi-thread", "macros"] }
 axum = "0.8"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 webbrowser = "1.0"
-mime_guess = "2.0"
 tokio-stream = { version = "0.1", features = ["sync"] }
-regex = "1.10"
-lazy_static = "1.4"
-serde-xml-rs = "0.8.2"
+
+# EPUB dependencies
 zip = { version = "6.0.0", default-features = false }
 html5ever = "0.36.1"
 markup5ever_rcdom = "0.36.0"
-anyhow = "1.0.100"
 iref = { version = "3.2.2", features = ["serde"] }
-itertools = "0.14.0"
 uuid = { version = "1.18.1", features = ["v4"] }
-tempfile = "3.8"
+itertools = "0.14.0"
 
-[dev-dependencies]
-serde_json = "1.0"
-similar = "2.5"
-glob = "0.3"
-lopdf = "0.34"
-ntest = "0.9.3"
-sha2 = "0.10"
+# Other dependencies
+ecow = "0.2"
+regex = "1.10"
+lazy_static = "1.4"
+serde-xml-rs = "0.8.2"
 
 [profile.release]
 opt-level = 1
