@@ -1,0 +1,6 @@
+version = "0.1.2"
+
+[pdf.spine]
+title = "Individual PDFs"
+vertebrae = ["file*.typ"]
+merge = false

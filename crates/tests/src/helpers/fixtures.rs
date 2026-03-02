@@ -28,9 +28,12 @@ impl TestCase {
         // Check if the path is a .typ file
         if is_single_file_test(raw_path) {
             let file_path = Path::new(raw_path);
+            // Use just the file stem (filename without extension) for the test name
             let name = file_path
-                .to_string_lossy()
-                .replace('/', "_slash")
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap()
                 .replace('.', "_full_stop")
                 .replace(':', "_colon")
                 .replace('-', "_minus");
@@ -81,7 +84,7 @@ impl TestCase {
                 project_path: path.into(),
             }
         } else {
-            panic!("test case should only be a file or a directory")
+            panic!("test case should only be a file or a directory");
         }
     }
 
@@ -149,8 +152,8 @@ impl TestCase {
 /// Set up test environment (e.g., create temp directories)
 #[allow(dead_code)]
 pub fn setup_test_environment() -> PathBuf {
-    let test_store = PathBuf::from("tests/store");
-    std::fs::create_dir_all(&test_store).expect("Failed to create tests/store");
+    let test_store = PathBuf::from("store");
+    std::fs::create_dir_all(&test_store).expect("Failed to create store");
     test_store
 }
 

@@ -9,35 +9,35 @@ use rheo_core::{RheoConfig, project::ProjectConfig};
 use std::env;
 use std::path::PathBuf;
 
-#[test_case("examples/blog_site")]
-#[test_case("examples/blog_post")]
-#[test_case("examples/cover-letter.typ")]
-#[test_case("examples/blog_site/content/index.typ")]
-#[test_case("examples/blog_site/content/severance-ep-1.typ")]
-#[test_case("examples/blog_post/portable_epubs.typ")]
-#[test_case("crates/tests/cases/code_blocks_with_links")]
-#[test_case("crates/tests/cases/cross_directory_links")]
-#[test_case("crates/tests/cases/epub_inferred_spine")]
-#[test_case("crates/tests/cases/link_path_edge_cases")]
-#[test_case("crates/tests/cases/link_transformation")]
-#[test_case("crates/tests/cases/links_with_fragments")]
-#[test_case("crates/tests/cases/multiple_links_inline.typ")]
-#[test_case("crates/tests/cases/pdf_individual")]
-#[test_case("crates/tests/cases/pdf_merge_false")]
-#[test_case("crates/tests/cases/relative_path_links")]
-#[test_case("crates/tests/cases/target_function")]
-#[test_case("crates/tests/cases/target_function_in_module")]
-#[test_case("crates/tests/cases/target_function_in_package")]
-#[test_case("crates/tests/cases/error_formatting/type_error.typ")]
-#[test_case("crates/tests/cases/error_formatting/undefined_var.typ")]
-#[test_case("crates/tests/cases/error_formatting/syntax_error.typ")]
-#[test_case("crates/tests/cases/error_formatting/function_arg_error.typ")]
-#[test_case("crates/tests/cases/error_formatting/import_error.typ")]
-#[test_case("crates/tests/cases/error_formatting/unknown_function.typ")]
-#[test_case("crates/tests/cases/error_formatting/invalid_method.typ")]
-#[test_case("crates/tests/cases/error_formatting/invalid_field.typ")]
-#[test_case("crates/tests/cases/error_formatting/multiple_errors.typ")]
-#[test_case("crates/tests/cases/error_formatting/array_index_error.typ")]
+#[test_case("../../examples/blog_site")]
+#[test_case("../../examples/blog_post")]
+#[test_case("../../examples/cover-letter.typ")]
+#[test_case("../../examples/blog_site/content/index.typ")]
+#[test_case("../../examples/blog_site/content/severance-ep-1.typ")]
+#[test_case("../../examples/blog_post/portable_epubs.typ")]
+#[test_case("cases/code_blocks_with_links")]
+#[test_case("cases/cross_directory_links")]
+#[test_case("cases/epub_inferred_spine")]
+#[test_case("cases/link_path_edge_cases")]
+#[test_case("cases/link_transformation")]
+#[test_case("cases/links_with_fragments")]
+#[test_case("cases/multiple_links_inline.typ")]
+#[test_case("cases/pdf_individual")]
+#[test_case("cases/pdf_merge_false")]
+#[test_case("cases/relative_path_links")]
+#[test_case("cases/target_function")]
+#[test_case("cases/target_function_in_module")]
+#[test_case("cases/target_function_in_package")]
+#[test_case("cases/error_formatting/type_error.typ")]
+#[test_case("cases/error_formatting/undefined_var.typ")]
+#[test_case("cases/error_formatting/syntax_error.typ")]
+#[test_case("cases/error_formatting/function_arg_error.typ")]
+#[test_case("cases/error_formatting/import_error.typ")]
+#[test_case("cases/error_formatting/unknown_function.typ")]
+#[test_case("cases/error_formatting/invalid_method.typ")]
+#[test_case("cases/error_formatting/invalid_field.typ")]
+#[test_case("cases/error_formatting/multiple_errors.typ")]
+#[test_case("cases/error_formatting/array_index_error.typ")]
 fn run_test_case(name: &str) {
     let test_case = TestCase::new(name);
     let update_mode = env::var("UPDATE_REFERENCES").is_ok();
@@ -45,7 +45,7 @@ fn run_test_case(name: &str) {
     let original_project_path = test_case.project_path();
 
     // Create isolated test store
-    let test_store = PathBuf::from("crates/tests/store").join(test_name);
+    let test_store = PathBuf::from("store").join(test_name);
 
     // Clean previous test artifacts
     if test_store.exists() {
@@ -113,7 +113,7 @@ fn run_test_case(name: &str) {
     let build_dir = test_store.join("build");
 
     // Build compile command with format flags
-    let mut compile_args = vec!["run", "--", "compile", project_path.to_str().unwrap()];
+    let mut compile_args = vec!["run", "-p", "rheo-cli", "--", "compile", project_path.to_str().unwrap()];
 
     // Use isolated build directory
     compile_args.push("--build-dir");
@@ -236,15 +236,15 @@ fn run_test_case(name: &str) {
 /// Test PDF merge functionality specifically
 #[test]
 fn test_pdf_merge() {
-    use helpers::comparison::extract_pdf_metadata;
+    use rheo_tests::helpers::comparison::extract_pdf_metadata;
     use lopdf::Document;
 
     let test_name = "pdf_merge";
-    let test_case = TestCase::new(&format!("tests/cases/{}", test_name));
+    let test_case = TestCase::new(&format!("cases/{}", test_name));
     let original_project_path = test_case.project_path();
 
     // Create isolated test store
-    let test_store = PathBuf::from("crates/tests/store").join(test_name);
+    let test_store = PathBuf::from("store").join(test_name);
     if test_store.exists() {
         std::fs::remove_dir_all(&test_store).expect("Failed to clean test store");
     }
@@ -259,6 +259,8 @@ fn test_pdf_merge() {
     let output = std::process::Command::new("cargo")
         .args([
             "run",
+            "-p",
+            "rheo-cli",
             "--",
             "compile",
             project_path.to_str().unwrap(),
@@ -438,12 +440,12 @@ Content from dir2.
 /// Test HTML post-processing: CSS link injection
 #[test]
 fn test_html_css_link_injection() {
-    let test_case = TestCase::new("examples/blog_site");
+    let test_case = TestCase::new("../../examples/blog_site");
     let project_path = test_case.project_path();
 
     // Clean and compile
     let clean_output = std::process::Command::new("cargo")
-        .args(["run", "--", "clean", project_path.to_str().unwrap()])
+        .args(["run", "-p", "rheo-cli", "--", "clean", project_path.to_str().unwrap()])
         .output()
         .expect("Failed to run rheo clean");
 
@@ -457,6 +459,8 @@ fn test_html_css_link_injection() {
     let output = std::process::Command::new("cargo")
         .args([
             "run",
+            "-p",
+            "rheo-cli",
             "--",
             "compile",
             project_path.to_str().unwrap(),
@@ -535,16 +539,16 @@ fn test_html_css_link_injection() {
 #[test]
 fn test_warning_formatting() {
     // Use blog_post which has a known warning (block in paragraph)
-    let test_dir = PathBuf::from("examples/blog_post");
+    let test_dir = PathBuf::from("../../examples/blog_post");
 
     // Clean first
     let _ = std::process::Command::new("cargo")
-        .args(["run", "--", "clean", test_dir.to_str().unwrap()])
+        .args(["run", "-p", "rheo-cli", "--", "clean", test_dir.to_str().unwrap()])
         .output();
 
     // Compile - should succeed with warnings
     let output = std::process::Command::new("cargo")
-        .args(["run", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
+        .args(["run", "-p", "rheo-cli", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
@@ -571,14 +575,14 @@ fn test_warning_formatting() {
 
     // Clean up
     let _ = std::process::Command::new("cargo")
-        .args(["run", "--", "clean", test_dir.to_str().unwrap()])
+        .args(["run", "-p", "rheo-cli", "--", "clean", test_dir.to_str().unwrap()])
         .output();
 }
 
 /// Test that `rheo init` creates a valid project that compiles successfully
 #[test]
 fn test_rheo_init_and_compile() {
-    let test_dir = PathBuf::from("tests/store/init_project");
+    let test_dir = PathBuf::from("store/init_project");
 
     // Clean previous test artifacts
     if test_dir.exists() {
@@ -587,7 +591,7 @@ fn test_rheo_init_and_compile() {
 
     // Run `rheo init`
     let init_output = std::process::Command::new("cargo")
-        .args(["run", "--", "init", test_dir.to_str().unwrap()])
+        .args(["run", "-p", "rheo-cli", "--", "init", test_dir.to_str().unwrap()])
         .output()
         .expect("Failed to run rheo init");
 
@@ -614,6 +618,8 @@ fn test_rheo_init_and_compile() {
     let compile_output = std::process::Command::new("cargo")
         .args([
             "run",
+            "-p",
+            "rheo-cli",
             "--",
             "compile",
             test_dir.to_str().unwrap(),

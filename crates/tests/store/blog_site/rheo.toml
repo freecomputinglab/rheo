@@ -1,0 +1,19 @@
+version = "0.1.2"
+
+# Relative to the rheo folder, if you specify a `oontent_dir`,
+# all of the `exclude` patterns become relative to this folder.
+content_dir = "content"
+
+# Default formats to compile (if not specified via CLI flags)
+# Options: "pdf", "html", "epub"
+# Default: ["pdf", "html"]
+# formats = ["html", "pdf"]
+
+[pdf.spine]
+merge = true
+vertebrae = ["severance-*.typ"]
+title = "Screening the Subject | Severance"
+
+[epub.spine]
+vertebrae = ["severance-*.typ"]
+title = "Screening the Subject | Severance"
