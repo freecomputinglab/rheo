@@ -1,13 +1,11 @@
-mod helpers;
-
-use helpers::{
+use rheo_tests::helpers::{
     comparison::{verify_epub_output, verify_html_output, verify_pdf_output},
     fixtures::TestCase,
     reference::{update_epub_references, update_html_references, update_pdf_references},
     test_store::copy_project_to_test_store,
 };
 use ntest::test_case;
-use rheo::{RheoConfig, project::ProjectConfig};
+use rheo_core::{RheoConfig, project::ProjectConfig};
 use std::env;
 use std::path::PathBuf;
 
@@ -17,29 +15,29 @@ use std::path::PathBuf;
 #[test_case("examples/blog_site/content/index.typ")]
 #[test_case("examples/blog_site/content/severance-ep-1.typ")]
 #[test_case("examples/blog_post/portable_epubs.typ")]
-#[test_case("tests/cases/code_blocks_with_links")]
-#[test_case("tests/cases/cross_directory_links")]
-#[test_case("tests/cases/epub_inferred_spine")]
-#[test_case("tests/cases/link_path_edge_cases")]
-#[test_case("tests/cases/link_transformation")]
-#[test_case("tests/cases/links_with_fragments")]
-#[test_case("tests/cases/multiple_links_inline.typ")]
-#[test_case("tests/cases/pdf_individual")]
-#[test_case("tests/cases/pdf_merge_false")]
-#[test_case("tests/cases/relative_path_links")]
-#[test_case("tests/cases/target_function")]
-#[test_case("tests/cases/target_function_in_module")]
-#[test_case("tests/cases/target_function_in_package")]
-#[test_case("tests/cases/error_formatting/type_error.typ")]
-#[test_case("tests/cases/error_formatting/undefined_var.typ")]
-#[test_case("tests/cases/error_formatting/syntax_error.typ")]
-#[test_case("tests/cases/error_formatting/function_arg_error.typ")]
-#[test_case("tests/cases/error_formatting/import_error.typ")]
-#[test_case("tests/cases/error_formatting/unknown_function.typ")]
-#[test_case("tests/cases/error_formatting/invalid_method.typ")]
-#[test_case("tests/cases/error_formatting/invalid_field.typ")]
-#[test_case("tests/cases/error_formatting/multiple_errors.typ")]
-#[test_case("tests/cases/error_formatting/array_index_error.typ")]
+#[test_case("crates/tests/cases/code_blocks_with_links")]
+#[test_case("crates/tests/cases/cross_directory_links")]
+#[test_case("crates/tests/cases/epub_inferred_spine")]
+#[test_case("crates/tests/cases/link_path_edge_cases")]
+#[test_case("crates/tests/cases/link_transformation")]
+#[test_case("crates/tests/cases/links_with_fragments")]
+#[test_case("crates/tests/cases/multiple_links_inline.typ")]
+#[test_case("crates/tests/cases/pdf_individual")]
+#[test_case("crates/tests/cases/pdf_merge_false")]
+#[test_case("crates/tests/cases/relative_path_links")]
+#[test_case("crates/tests/cases/target_function")]
+#[test_case("crates/tests/cases/target_function_in_module")]
+#[test_case("crates/tests/cases/target_function_in_package")]
+#[test_case("crates/tests/cases/error_formatting/type_error.typ")]
+#[test_case("crates/tests/cases/error_formatting/undefined_var.typ")]
+#[test_case("crates/tests/cases/error_formatting/syntax_error.typ")]
+#[test_case("crates/tests/cases/error_formatting/function_arg_error.typ")]
+#[test_case("crates/tests/cases/error_formatting/import_error.typ")]
+#[test_case("crates/tests/cases/error_formatting/unknown_function.typ")]
+#[test_case("crates/tests/cases/error_formatting/invalid_method.typ")]
+#[test_case("crates/tests/cases/error_formatting/invalid_field.typ")]
+#[test_case("crates/tests/cases/error_formatting/multiple_errors.typ")]
+#[test_case("crates/tests/cases/error_formatting/array_index_error.typ")]
 fn run_test_case(name: &str) {
     let test_case = TestCase::new(name);
     let update_mode = env::var("UPDATE_REFERENCES").is_ok();
@@ -47,7 +45,7 @@ fn run_test_case(name: &str) {
     let original_project_path = test_case.project_path();
 
     // Create isolated test store
-    let test_store = PathBuf::from("tests/store").join(test_name);
+    let test_store = PathBuf::from("crates/tests/store").join(test_name);
 
     // Clean previous test artifacts
     if test_store.exists() {
@@ -246,7 +244,7 @@ fn test_pdf_merge() {
     let original_project_path = test_case.project_path();
 
     // Create isolated test store
-    let test_store = PathBuf::from("tests/store").join(test_name);
+    let test_store = PathBuf::from("crates/tests/store").join(test_name);
     if test_store.exists() {
         std::fs::remove_dir_all(&test_store).expect("Failed to clean test store");
     }

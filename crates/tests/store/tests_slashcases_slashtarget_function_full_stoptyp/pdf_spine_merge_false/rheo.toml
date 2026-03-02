@@ -1,0 +1,5 @@
+
+[pdf.spine]
+title = "Individual PDFs"
+vertebrae = ["file*.typ"]
+merge = false
