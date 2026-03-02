@@ -1,4 +1,5 @@
 use rheo_core::compile::RheoCompileOptions;
+use rheo_core::manifest_version;
 use rheo_core::output::OutputConfig;
 use rheo_core::project::ProjectConfig;
 use rheo_core::results::CompilationResults;
@@ -6,6 +7,7 @@ use rheo_core::world::RheoWorld;
 use rheo_core::{FormatPlugin, PluginConfig, PluginContext, Result, RheoError, SpineOptions};
 use clap::{Parser, Subcommand};
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, warn};
 
@@ -492,6 +494,75 @@ fn perform_compilation<'a>(
     }
 }
 
+/// Initialize a new rheo project by copying template files
+///
+/// # Arguments
+/// * `target_dir` - Path where the new project should be created
+///
+/// # Returns
+/// * `Ok(())` if initialization succeeded
+/// * `Err(RheoError)` if initialization failed
+fn init_project(target_dir: &Path) -> Result<()> {
+    // Check if target directory already exists
+    if target_dir.exists() {
+        return Err(RheoError::project_config(&format!(
+            "directory '{}' already exists",
+            target_dir.display()
+        )));
+    }
+
+    // Create target directory
+    fs::create_dir_all(target_dir)
+        .map_err(|e| RheoError::io(e, "creating target directory"))?;
+
+    // Template directory is relative to the rheo-cli crate's source directory
+    // Use CARGO_MANIFEST_DIR which is set at compile time
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let template_dir = manifest_dir.join("../../src/templates/init");
+
+    // Copy all template files recursively
+    copy_template_recursive(&template_dir, target_dir)?;
+
+    // Replace {{VERSION}} placeholder in rheo.toml
+    let toml_path = target_dir.join("rheo.toml");
+    let toml_content = fs::read_to_string(&toml_path)
+        .map_err(|e| RheoError::io(e, "reading rheo.toml template"))?;
+    let toml_content = toml_content.replace("{{VERSION}}", manifest_version::CURRENT);
+    fs::write(&toml_path, toml_content)
+        .map_err(|e| RheoError::io(e, "writing rheo.toml"))?;
+
+    info!(
+        path = %target_dir.display(),
+        "initialized rheo project"
+    );
+    Ok(())
+}
+
+/// Recursively copy template directory contents
+///
+/// # Arguments
+/// * `src` - Source template directory
+/// * `dst` - Destination directory
+fn copy_template_recursive(src: &Path, dst: &Path) -> Result<()> {
+    for entry in fs::read_dir(src)
+        .map_err(|e| RheoError::io(e, "reading template directory"))?
+    {
+        let entry = entry.map_err(|e| RheoError::io(e, "reading directory entry"))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            fs::create_dir_all(&dst_path)
+                .map_err(|e| RheoError::io(e, "creating directory"))?;
+            copy_template_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)
+                .map_err(|e| RheoError::io(e, "copying file"))?;
+        }
+    }
+    Ok(())
+}
+
 impl Cli {
     pub fn parse() -> Self {
         Parser::parse()
@@ -553,9 +624,7 @@ impl Cli {
                 Ok(())
             }
             Commands::Init { path } => {
-                info!(path = %path.display(), "initializing rheo project");
-                // TODO: Implement project initialization
-                Err(RheoError::project_config("project initialization not yet implemented"))
+                init_project(&path)
             }
             Commands::Watch { .. } => {
                 // TODO: Implement watch mode (needs watch module in rheo-core or cli)

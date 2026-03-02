@@ -82,7 +82,7 @@ fn get_reference_dir(actual_dir: &Path, test_name: &str, output_type: &str) -> P
                 .unwrap_or(file_path.as_os_str())
                 .to_string_lossy();
 
-            return PathBuf::from("tests/ref/files")
+            return PathBuf::from("ref/files")
                 .join(&hash)
                 .join(filename.as_ref())
                 .join(output_type);
@@ -91,11 +91,11 @@ fn get_reference_dir(actual_dir: &Path, test_name: &str, output_type: &str) -> P
 
     // Default: project-based references
     let ref_base = if actual_dir.starts_with("examples/") {
-        PathBuf::from("tests/ref/examples")
+        PathBuf::from("ref/examples")
     } else if actual_dir.starts_with("tests/cases/") {
-        PathBuf::from("tests/ref/cases")
+        PathBuf::from("ref/cases")
     } else {
-        PathBuf::from("tests/ref/examples")
+        PathBuf::from("ref/examples")
     };
     ref_base.join(test_name).join(output_type)
 }

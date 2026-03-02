@@ -38,7 +38,7 @@ pub fn update_html_references(
                 .unwrap_or(file_path.as_os_str())
                 .to_string_lossy();
 
-            PathBuf::from("tests/ref/files")
+            PathBuf::from("ref/files")
                 .join(&hash)
                 .join(filename.as_ref())
                 .join("html")
@@ -71,11 +71,11 @@ pub fn update_html_references(
 /// Get project-based reference directory
 fn get_project_ref_dir(project_path: &Path, test_name: &str, output_type: &str) -> PathBuf {
     let ref_base = if project_path.starts_with("examples/") {
-        PathBuf::from("tests/ref/examples")
+        PathBuf::from("ref/examples")
     } else if project_path.starts_with("tests/cases/") {
-        PathBuf::from("tests/ref/cases")
+        PathBuf::from("ref/cases")
     } else {
-        PathBuf::from("tests/ref/examples") // fallback
+        PathBuf::from("ref/examples") // fallback
     };
     ref_base.join(test_name).join(output_type)
 }
@@ -101,29 +101,29 @@ pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), S
                 .unwrap_or(file_path.as_os_str())
                 .to_string_lossy();
 
-            PathBuf::from("tests/ref/files")
+            PathBuf::from("ref/files")
                 .join(&hash)
                 .join(filename.as_ref())
                 .join("pdf")
         } else {
             // Fallback to project-based path
             let ref_base = if actual_dir.starts_with("examples/") {
-                PathBuf::from("tests/ref/examples")
+                PathBuf::from("ref/examples")
             } else if actual_dir.starts_with("tests/cases/") {
-                PathBuf::from("tests/ref/cases")
+                PathBuf::from("ref/cases")
             } else {
-                PathBuf::from("tests/ref/examples")
+                PathBuf::from("ref/examples")
             };
             ref_base.join(test_name).join("pdf")
         }
     } else {
         // Project-based test
         let ref_base = if actual_dir.starts_with("examples/") {
-            PathBuf::from("tests/ref/examples")
+            PathBuf::from("ref/examples")
         } else if actual_dir.starts_with("tests/cases/") {
-            PathBuf::from("tests/ref/cases")
+            PathBuf::from("ref/cases")
         } else {
-            PathBuf::from("tests/ref/examples")
+            PathBuf::from("ref/examples")
         };
         ref_base.join(test_name).join("pdf")
     };
@@ -196,29 +196,29 @@ pub fn update_epub_references(test_name: &str, actual_dir: &Path) -> Result<(), 
                 .unwrap_or(file_path.as_os_str())
                 .to_string_lossy();
 
-            PathBuf::from("tests/ref/files")
+            PathBuf::from("ref/files")
                 .join(&hash)
                 .join(filename.as_ref())
                 .join("epub")
         } else {
             // Fallback to project-based path
             let ref_base = if actual_dir.starts_with("examples/") {
-                PathBuf::from("tests/ref/examples")
+                PathBuf::from("ref/examples")
             } else if actual_dir.starts_with("tests/cases/") {
-                PathBuf::from("tests/ref/cases")
+                PathBuf::from("ref/cases")
             } else {
-                PathBuf::from("tests/ref/examples")
+                PathBuf::from("ref/examples")
             };
             ref_base.join(test_name).join("epub")
         }
     } else {
         // Project-based test
         let ref_base = if actual_dir.starts_with("examples/") {
-            PathBuf::from("tests/ref/examples")
+            PathBuf::from("ref/examples")
         } else if actual_dir.starts_with("tests/cases/") {
-            PathBuf::from("tests/ref/cases")
+            PathBuf::from("ref/cases")
         } else {
-            PathBuf::from("tests/ref/examples")
+            PathBuf::from("ref/examples")
         };
         ref_base.join(test_name).join("epub")
     };
