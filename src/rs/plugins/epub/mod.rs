@@ -31,13 +31,18 @@ use typst_html::HtmlDocument;
 use uuid::Uuid;
 use zip::{result::ZipError, write::SimpleFileOptions};
 
-use super::{FormatPlugin, PluginContext};
+use super::{FormatPlugin, OpenHandle, PluginContext};
 
 pub struct EpubPlugin;
 
 impl FormatPlugin for EpubPlugin {
     fn name(&self) -> &'static str {
         "epub"
+    }
+
+    fn open(&self, output_dir: &Path, _format_name: &str) -> Result<OpenHandle> {
+        crate::open_all_files_in_folder(output_dir.to_path_buf(), "epub")?;
+        Ok(OpenHandle::Direct)
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
@@ -300,18 +305,19 @@ fn compile_epub_impl(config: &EpubConfig, epub_path: &Path, root: &Path) -> Resu
 
 /// Compile Typst documents to EPUB (unified API).
 ///
-/// Currently routes to the implementation function. EPUB compilation does not
-/// yet support incremental compilation (only fresh compilation is available).
+/// The engine provides the World, but EPUB uses a spine-based AST transformation
+/// approach via RheoSpine, which creates Worlds internally for each file.
 ///
 /// # Arguments
-/// * `options` - Compilation options (input, output, root, repo_root, world)
+/// * `options` - Compilation options (input, output, root, world)
 /// * `epub_options` - EPUB-specific options (wraps EpubConfig)
 ///
 /// # Returns
 /// * `Result<()>` - Success or compilation error
 pub fn compile_epub_new(options: RheoCompileOptions, epub_options: EpubOptions) -> Result<()> {
-    // Note: EPUB doesn't support incremental compilation yet, so we ignore options.world
-    // and always do fresh compilation
+    // EPUB uses spine-based AST transformation (RheoSpine) which creates Worlds internally.
+    // The provided World is not used directly in this compilation model.
+    let _world = options.world; // Explicitly acknowledge the parameter
     compile_epub_impl(&epub_options.config, &options.output, &options.root)
 }
 

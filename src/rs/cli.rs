@@ -1,8 +1,8 @@
 use crate::CompilationResults;
 use crate::compile::RheoCompileOptions;
-use crate::plugins::{FormatPlugin, PluginConfig, PluginContext, SpineOptions, plugins_for_names};
+use crate::plugins::{FormatPlugin, OpenHandle, PluginConfig, PluginContext, SpineOptions, plugins_for_names};
 use crate::reticulate::spine::generate_spine;
-use crate::{Result, open_all_files_in_folder};
+use crate::Result;
 use clap::{Parser, Subcommand};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -22,16 +22,6 @@ impl FormatFlags {
     }
 }
 
-/// World mode for perform_compilation
-enum WorldMode<'a> {
-    /// Fresh compilation (creates new World for each file)
-    Fresh { root: PathBuf },
-    /// Incremental compilation (reuses existing World)
-    Incremental {
-        world: &'a mut crate::world::RheoWorld,
-    },
-}
-
 /// Pre-compiled setup context for compilation commands
 struct CompilationContext {
     /// Loaded project configuration
@@ -40,8 +30,6 @@ struct CompilationContext {
     formats: Vec<String>,
     /// Output configuration with resolved build directory
     output_config: crate::output::OutputConfig,
-    /// Compilation root (content_dir or project root)
-    compilation_root: PathBuf,
 }
 
 /// Determine which formats to compile based on CLI flags and config defaults
@@ -249,23 +237,25 @@ fn get_files_for_plugin<'a>(
 
 /// Perform compilation for a project with specified plugins
 ///
-/// This is the unified compilation logic that supports both fresh and incremental compilation
-/// based on the WorldMode parameter.
+/// The engine creates and provides a RheoWorld for each file being compiled.
+/// This enables incremental compilation through Typst's comemo caching system.
 ///
 /// # Arguments
-/// * `mode` - World mode (Fresh or Incremental)
 /// * `project` - Project configuration with source files and assets
 /// * `output_config` - Output directory configuration
 /// * `plugins` - List of format plugins to compile with
+/// * `world` - Optional existing World for incremental mode (None = fresh mode)
+/// * `format_name` - Format name for link transformation (None for merged mode)
 ///
 /// # Returns
 /// * `Ok(())` if at least one format fully succeeded
 /// * `Err` if all formats failed
 fn perform_compilation<'a>(
-    mut mode: WorldMode<'a>,
     project: &crate::project::ProjectConfig,
     output_config: &crate::output::OutputConfig,
     plugins: &[Box<dyn FormatPlugin>],
+    mut world: Option<&'a mut crate::world::RheoWorld>,
+    format_name: Option<&'a str>,
 ) -> Result<()> {
     // Check for .typ files
     if project.typ_files.is_empty() {
@@ -335,23 +325,21 @@ fn perform_compilation<'a>(
                 .join(&project.name)
                 .with_extension(plugin.name());
 
-            let options = match &mode {
-                WorldMode::Fresh { root: _ } => {
-                    RheoCompileOptions::new(PathBuf::new(), &output_path, &compilation_root)
-                }
-                WorldMode::Incremental { .. } => {
-                    if let WorldMode::Incremental { world } = &mut mode {
-                        RheoCompileOptions::incremental(
-                            PathBuf::new(),
-                            &output_path,
-                            &compilation_root,
-                            world,
-                        )
-                    } else {
-                        unreachable!()
-                    }
-                }
-            };
+            // For merged mode, the plugin creates its own World (needs temp file first)
+            // Create a temporary World just to satisfy the API - plugin will ignore it
+            let mut temp_world = crate::world::RheoWorld::new(
+                &compilation_root,
+                project.typ_files.first().ok_or_else(|| {
+                    crate::RheoError::project_config("no .typ files found")
+                })?,
+                format_name,
+            )?;
+            let options = RheoCompileOptions::new(
+                PathBuf::new(),
+                &output_path,
+                &compilation_root,
+                &mut temp_world,
+            );
 
             let ctx = PluginContext {
                 project,
@@ -375,51 +363,76 @@ fn perform_compilation<'a>(
             // Per-file mode: compile each .typ file independently
             let files = get_files_for_plugin(plugin.as_ref(), project)?;
 
-            for typ_file in &files {
-                // For incremental mode, prepare the World for compiling this specific file
-                // 1. set_main() tells the World which file we're compiling
-                // 2. reset() clears file caches while preserving fonts/packages
-                if let WorldMode::Incremental { world } = &mut mode {
-                    world.set_main(typ_file)?;
-                    world.reset();
-                }
+            if let Some(ref mut existing_world) = world {
+                // Incremental mode: reuse existing World for each file
+                for typ_file in &files {
+                    // Prepare existing World for this file
+                    existing_world.set_main(typ_file)?;
+                    existing_world.reset();
 
-                let filename = get_output_filename(typ_file)?;
-                let output_path = plugin_output_dir
-                    .join(&filename)
-                    .with_extension(plugin.name());
+                    let filename = get_output_filename(typ_file)?;
+                    let output_path = plugin_output_dir
+                        .join(&filename)
+                        .with_extension(plugin.name());
 
-                let options = match &mode {
-                    WorldMode::Fresh { root } => {
-                        RheoCompileOptions::new(typ_file, &output_path, root)
-                    }
-                    WorldMode::Incremental { .. } => {
-                        if let WorldMode::Incremental { world } = &mut mode {
-                            RheoCompileOptions::incremental(
-                                typ_file,
-                                &output_path,
-                                &project.root,
-                                world,
-                            )
-                        } else {
-                            unreachable!()
+                    let options = RheoCompileOptions::new(
+                        typ_file,
+                        &output_path,
+                        &project.root,
+                        existing_world,
+                    );
+
+                    let ctx = PluginContext {
+                        project,
+                        output_config,
+                        options,
+                        plugin_config: plugin_config.clone(),
+                        inputs: resolved_inputs.clone(),
+                    };
+
+                    match plugin.compile(ctx) {
+                        Ok(_) => results.record_success(plugin.name()),
+                        Err(e) => {
+                            error!(file = %typ_file.display(), error = %e, "{} compilation failed", plugin.name());
+                            results.record_failure(plugin.name());
                         }
                     }
-                };
+                }
+            } else {
+                // Fresh mode: create new World for each file
+                for typ_file in &files {
+                    let mut fresh_world = crate::world::RheoWorld::new(
+                        &project.root,
+                        typ_file,
+                        format_name,
+                    )?;
 
-                let ctx = PluginContext {
-                    project,
-                    output_config,
-                    options,
-                    plugin_config: plugin_config.clone(),
-                    inputs: resolved_inputs.clone(),
-                };
+                    let filename = get_output_filename(typ_file)?;
+                    let output_path = plugin_output_dir
+                        .join(&filename)
+                        .with_extension(plugin.name());
 
-                match plugin.compile(ctx) {
-                    Ok(_) => results.record_success(plugin.name()),
-                    Err(e) => {
-                        error!(file = %typ_file.display(), error = %e, "{} compilation failed", plugin.name());
-                        results.record_failure(plugin.name());
+                    let options = RheoCompileOptions::new(
+                        typ_file,
+                        &output_path,
+                        &project.root,
+                        &mut fresh_world,
+                    );
+
+                    let ctx = PluginContext {
+                        project,
+                        output_config,
+                        options,
+                        plugin_config: plugin_config.clone(),
+                        inputs: resolved_inputs.clone(),
+                    };
+
+                    match plugin.compile(ctx) {
+                        Ok(_) => results.record_success(plugin.name()),
+                        Err(e) => {
+                            error!(file = %typ_file.display(), error = %e, "{} compilation failed", plugin.name());
+                            results.record_failure(plugin.name());
+                        }
                     }
                 }
             }
@@ -514,17 +527,10 @@ impl Cli {
         // 4. Create output config (directories are created per-plugin in perform_compilation)
         let output_config = crate::output::OutputConfig::new(&project.root, resolved_build_dir);
 
-        // 5. Resolve compilation root from content_dir or project root
-        let compilation_root = project
-            .config
-            .resolve_content_dir(&project.root)
-            .unwrap_or_else(|| project.root.clone());
-
         Ok(CompilationContext {
             project,
             formats,
             output_config,
-            compilation_root,
         })
     }
 
@@ -547,13 +553,24 @@ impl Cli {
                 // Build plugin list from resolved formats
                 let plugins = plugins_for_names(&ctx.formats);
 
-                // Create world mode (Fresh)
-                let mode = WorldMode::Fresh {
-                    root: ctx.compilation_root,
-                };
+                // Determine format_name for link transformation
+                // Find first per-file plugin to determine format name
+                let format_name = plugins
+                    .iter()
+                    .find(|p| {
+                        let spine_cfg = ctx.project.config.spine_for_plugin(p.name());
+                        !spine_cfg.and_then(|s| s.merge()).unwrap_or(false)
+                    })
+                    .map(|p| p.name());
 
-                // Perform compilation
-                perform_compilation(mode, &ctx.project, &ctx.output_config, &plugins)
+                // Perform compilation (fresh mode - no existing World)
+                perform_compilation(
+                    &ctx.project,
+                    &ctx.output_config,
+                    &plugins,
+                    None, // Fresh mode: create new World for each file
+                    format_name,
+                )
             }
             Commands::Watch {
                 path,
@@ -572,14 +589,24 @@ impl Cli {
                 // Build plugin list from resolved formats
                 let plugins = plugins_for_names(&ctx.formats);
 
-                // Perform initial compilation (Fresh mode)
+                // Determine format_name for link transformation
+                let format_name = plugins
+                    .iter()
+                    .find(|p| {
+                        let spine_cfg = ctx.project.config.spine_for_plugin(p.name());
+                        !spine_cfg.and_then(|s| s.merge()).unwrap_or(false)
+                    })
+                    .map(|p| p.name());
+
+                // Perform initial compilation (Fresh mode - no existing World)
                 info!("compiling project");
-                let mode = WorldMode::Fresh {
-                    root: ctx.compilation_root.clone(),
-                };
-                if let Err(e) =
-                    perform_compilation(mode, &ctx.project, &ctx.output_config, &plugins)
-                {
+                if let Err(e) = perform_compilation(
+                    &ctx.project,
+                    &ctx.output_config,
+                    &plugins,
+                    None, // Fresh mode: create new World for each file
+                    format_name,
+                ) {
                     warn!(error = %e, "initial compilation failed, continuing to watch");
                 }
 
@@ -588,35 +615,24 @@ impl Cli {
                     project,
                     formats: _,
                     output_config,
-                    compilation_root: _,
                 } = ctx;
 
-                // Start web server if --open and any plugin supports live preview
-                let server_info = if open && plugins.iter().any(|p| p.supports_live_preview()) {
-                    // Need tokio runtime for async server
-                    let runtime = tokio::runtime::Runtime::new()
-                        .map_err(|e| crate::RheoError::io(e, "creating tokio runtime"))?;
+                // Call open() on all plugins when --open flag is used
+                // Store handles in a vector for the watch loop
+                let mut open_handles: Vec<(String, OpenHandle)> = Vec::new();
 
-                    let html_dir = output_config.dir_for_plugin("html");
-                    let (server_handle, reload_tx, server_url) = runtime
-                        .block_on(async { crate::server::start_server(html_dir, 3000).await })?;
-
-                    // Open browser
-                    if let Err(e) = crate::server::open_browser(&server_url) {
-                        warn!(error = %e, "failed to open browser, but server is running");
-                    }
-
-                    Some((runtime, server_handle, reload_tx))
-                } else {
-                    None
-                };
-
-                // Open output files for non-live-preview plugins
                 if open {
                     for plugin in &plugins {
-                        if !plugin.supports_live_preview() {
-                            let dir = output_config.dir_for_plugin(plugin.name());
-                            open_all_files_in_folder(dir, plugin.name())?;
+                        let plugin_name = plugin.name().to_string();
+                        let output_dir = output_config.dir_for_plugin(plugin.name());
+
+                        match plugin.open(&output_dir, format_name.unwrap_or("unknown")) {
+                            Ok(handle) => {
+                                open_handles.push((plugin_name, handle));
+                            }
+                            Err(e) => {
+                                warn!(plugin = %plugin_name, error = %e, "failed to open output");
+                            }
                         }
                     }
                 }
@@ -686,14 +702,12 @@ impl Cli {
                         let result = match event {
                             crate::watch::WatchEvent::FilesChanged => {
                                 info!("change detected, recompiling");
-                                let mode = WorldMode::Incremental {
-                                    world: &mut world_cell.borrow_mut(),
-                                };
                                 perform_compilation(
-                                    mode,
                                     &project_cell.borrow(),
                                     &output_config,
                                     &plugins,
+                                    Some(&mut world_cell.borrow_mut()), // Incremental mode: reuse World
+                                    format_name,
                                 )
                             }
                             crate::watch::WatchEvent::ConfigChanged => {
@@ -726,7 +740,7 @@ impl Cli {
                                             })?;
 
                                         // Use same format_name logic as initial World creation
-                                        let format_name = plugins
+                                        let new_format_name = plugins
                                             .iter()
                                             .find(|p| {
                                                 let spine_cfg =
@@ -740,18 +754,16 @@ impl Cli {
                                         match crate::world::RheoWorld::new(
                                             &new_compilation_root,
                                             new_initial_main,
-                                            format_name,
+                                            new_format_name,
                                         ) {
                                             Ok(new_world) => {
                                                 *world_cell.borrow_mut() = new_world;
-                                                let mode = WorldMode::Incremental {
-                                                    world: &mut world_cell.borrow_mut(),
-                                                };
                                                 perform_compilation(
-                                                    mode,
                                                     &borrowed,
                                                     &output_config,
                                                     &plugins,
+                                                    Some(&mut world_cell.borrow_mut()), // Incremental mode: reuse World
+                                                    new_format_name,
                                                 )
                                             }
                                             Err(e) => {
@@ -774,9 +786,11 @@ impl Cli {
                             // during long watch sessions. This matches Typst CLI's behavior.
                             comemo::evict(10);
 
-                            if let Some((_, _, reload_tx)) = &server_info {
-                                // Ignore errors if no clients are connected
-                                let _ = reload_tx.send(());
+                            // Send reload events to all server-based handles
+                            for (_plugin_name, handle) in &open_handles {
+                                if let OpenHandle::Server(server_handle) = handle {
+                                    (server_handle.reload_callback)();
+                                }
                             }
                         }
 

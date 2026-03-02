@@ -3,7 +3,32 @@ use crate::output::OutputConfig;
 use crate::project::ProjectConfig;
 use crate::Result;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Reload callback type - called by watch loop after successful compilation
+pub type ReloadCallback = Box<dyn Fn() + Send + Sync>;
+
+/// Handle returned by FormatPlugin::open() for managing the opened resource
+pub enum OpenHandle {
+    /// Server-based preview (HTML) - needs reload callback and stays alive during watch
+    Server(ServerHandle),
+    /// Direct file open (PDF/EPUB) - fire-and-forget, no reload needed
+    Direct,
+    /// No preview capability (disabled plugins)
+    None,
+}
+
+/// Handle for server-based preview with reload capability
+pub struct ServerHandle {
+    /// The tokio runtime running the server
+    pub runtime: tokio::runtime::Runtime,
+    /// The server task handle (for cleanup on drop)
+    pub server_task: tokio::task::JoinHandle<()>,
+    /// The URL the server is running on
+    pub url: String,
+    /// Callback to send reload events to connected clients
+    pub reload_callback: ReloadCallback,
+}
 
 pub mod epub;
 pub mod html;
@@ -50,10 +75,19 @@ pub trait FormatPlugin: Send + Sync {
     /// Plugin identifier, CLI flag, and output subdirectory name (e.g. "html", "pdf", "epub")
     fn name(&self) -> &'static str;
 
-    /// Whether this plugin supports the dev server / live preview
-    fn supports_live_preview(&self) -> bool {
-        false
-    }
+    /// Open the output for this format in the appropriate viewer.
+    ///
+    /// Called by watch mode when --open flag is used.
+    ///
+    /// # Returns
+    /// * `OpenHandle::Server` - For plugins that run a dev server (HTML)
+    /// * `OpenHandle::Direct` - For plugins that open files directly (PDF/EPUB)
+    /// * `OpenHandle::None` - For plugins that don't support opening
+    ///
+    /// # Context
+    /// * `output_dir` - Path to the plugin's output directory (e.g., build/html)
+    /// * `format_name` - The format name from CLI
+    fn open(&self, output_dir: &Path, format_name: &str) -> Result<OpenHandle>;
 
     /// Declare additional non-Typst input files this plugin needs.
     /// The engine finds each, copies it to the plugin output dir, and passes

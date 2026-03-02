@@ -7,10 +7,10 @@ use crate::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilati
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use std::path::Path;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use typst_html::HtmlDocument;
 
-use super::{FormatPlugin, PluginContext, PluginInput};
+use super::{FormatPlugin, PluginContext, PluginInput, OpenHandle, ReloadCallback, ServerHandle};
 
 pub struct HtmlPlugin;
 
@@ -19,8 +19,31 @@ impl FormatPlugin for HtmlPlugin {
         "html"
     }
 
-    fn supports_live_preview(&self) -> bool {
-        true
+    fn open(&self, output_dir: &Path, _format_name: &str) -> Result<OpenHandle> {
+        // Create tokio runtime for the async server
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| RheoError::io(e, "creating tokio runtime"))?;
+
+        // Start the server (async call within runtime)
+        let (server_task, reload_tx, url) = runtime
+            .block_on(async { crate::server::start_server(output_dir.to_path_buf(), 3000).await })?;
+
+        // Open browser
+        if let Err(e) = crate::server::open_browser(&url) {
+            warn!(error = %e, "failed to open browser, but server is running");
+        }
+
+        // Create reload callback
+        let reload_callback: ReloadCallback = Box::new(move || {
+            let _ = reload_tx.send(());
+        });
+
+        Ok(OpenHandle::Server(ServerHandle {
+            runtime,
+            server_task,
+            url,
+            reload_callback,
+        }))
     }
 
     fn inputs(&self) -> &'static [PluginInput] {
@@ -83,55 +106,20 @@ pub fn compile_document_to_string(document: &HtmlDocument) -> Result<String> {
 // Single-file HTML compilation (implementation functions)
 // ============================================================================
 
-/// Implementation: Compile a Typst document to HTML (fresh compilation)
+/// Implementation: Compile a Typst document to HTML.
 ///
 /// Uses format-aware RheoWorld for automatic link transformation (.typ → .html).
 /// Transformations happen on-demand during Typst compilation (including imports).
+/// The engine provides the World, handling fresh vs incremental compilation.
 ///
 /// Pipeline: Compile (with transformations) → Export → Inject Head → Write
-fn compile_html_impl_fresh(
-    input: &Path,
-    output: &Path,
-    root: &Path,
-    html_options: &HtmlOptions,
-) -> Result<()> {
-    // Compile to HTML document (transformations happen in RheoWorld)
-    let doc = compile_html_to_document(input, root, "html")?;
-    let html_string = compile_document_to_string(&doc)?;
-
-    // Inject CSS and font links into <head>
-    let stylesheets: Vec<&str> = html_options
-        .stylesheets
-        .iter()
-        .map(|s| s.as_str())
-        .collect();
-    let fonts: Vec<&str> = html_options.fonts.iter().map(|s| s.as_str()).collect();
-    let html_string = html_head::inject_head_links(&html_string, &stylesheets, &fonts)?;
-
-    // Write to file
-    debug!(size = html_string.len(), "writing HTML file");
-    std::fs::write(output, &html_string)
-        .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
-
-    info!(output = %output.display(), "successfully compiled to HTML");
-    Ok(())
-}
-
-/// Implementation: Compile a Typst document to HTML (incremental compilation)
-///
-/// Uses format-aware RheoWorld for automatic link transformation (.typ → .html).
-/// Reuses existing RheoWorld instance for compilation (enabling incremental compilation
-/// through Typst's comemo caching system).
-///
-/// Pipeline: Update World → Compile (with transformations) → Export → Inject Head → Write
 fn compile_html_impl(
     world: &RheoWorld,
-    input: &Path,
     output: &Path,
     html_options: &HtmlOptions,
 ) -> Result<()> {
     // Compile to HTML document (transformations happen in RheoWorld)
-    info!(input = %input.display(), "compiling to HTML");
+    info!("compiling to HTML");
     let result = typst::compile::<HtmlDocument>(world);
 
     // Filter out HTML development warning
@@ -171,26 +159,15 @@ fn compile_html_impl(
 
 /// Compile Typst document to HTML.
 ///
-/// Routes to the appropriate implementation based on options:
-/// - Fresh compilation: compile_html_impl_fresh() (when options.world is None)
-/// - Incremental compilation: compile_html_impl() (when options.world is Some)
+/// The engine provides the World, handling fresh vs incremental compilation.
+/// This is a single code path - the engine creates and manages the World lifecycle.
 ///
 /// # Arguments
-/// * `options` - Compilation options (input, output, root, repo_root, world)
+/// * `options` - Compilation options (input, output, root, world)
 /// * `html_options` - HTML-specific options (stylesheets, fonts for head injection)
 ///
 /// # Returns
 /// * `Result<()>` - Success or compilation error
 pub fn compile_html_new(options: RheoCompileOptions, html_options: HtmlOptions) -> Result<()> {
-    match options.world {
-        // Incremental compilation (reuse existing world)
-        Some(world) => compile_html_impl(world, &options.input, &options.output, &html_options),
-        // Fresh compilation (create new world)
-        None => compile_html_impl_fresh(
-            &options.input,
-            &options.output,
-            &options.root,
-            &html_options,
-        ),
-    }
+    compile_html_impl(options.world, &options.output, &html_options)
 }

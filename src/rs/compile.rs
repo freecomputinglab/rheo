@@ -7,7 +7,7 @@ use std::path::PathBuf;
 /// - Input file (the .typ file to compile)
 /// - Output file (where to write the result)
 /// - Root directory (for resolving imports)
-/// - Optional RheoWorld (for incremental compilation)
+/// - RheoWorld (always provided by the engine)
 pub struct RheoCompileOptions<'a> {
     /// The input .typ file to compile
     pub input: PathBuf,
@@ -15,40 +15,22 @@ pub struct RheoCompileOptions<'a> {
     pub output: PathBuf,
     /// Root directory for resolving imports
     pub root: PathBuf,
-    /// Optional existing RheoWorld for incremental compilation
-    pub world: Option<&'a mut RheoWorld>,
+    /// RheoWorld for compilation (always provided by the engine)
+    pub world: &'a mut RheoWorld,
 }
 
 impl<'a> RheoCompileOptions<'a> {
-    /// Create compilation options for a fresh (non-incremental) compilation.
+    /// Create compilation options.
+    ///
+    /// The engine always creates and provides the World, whether in fresh
+    /// or incremental mode. Plugins don't need to distinguish between these cases.
     ///
     /// # Arguments
     /// * `input` - The input .typ file to compile
     /// * `output` - The output file path
     /// * `root` - Root directory for resolving imports
+    /// * `world` - Mutable reference to RheoWorld (provided by engine)
     pub fn new(
-        input: impl Into<PathBuf>,
-        output: impl Into<PathBuf>,
-        root: impl Into<PathBuf>,
-    ) -> Self {
-        Self {
-            input: input.into(),
-            output: output.into(),
-            root: root.into(),
-            world: None,
-        }
-    }
-
-    /// Create compilation options for incremental compilation.
-    ///
-    /// Reuses an existing RheoWorld for faster recompilation.
-    ///
-    /// # Arguments
-    /// * `input` - The input .typ file to compile
-    /// * `output` - The output file path
-    /// * `root` - Root directory for resolving imports
-    /// * `world` - Mutable reference to existing RheoWorld
-    pub fn incremental(
         input: impl Into<PathBuf>,
         output: impl Into<PathBuf>,
         root: impl Into<PathBuf>,
@@ -58,7 +40,7 @@ impl<'a> RheoCompileOptions<'a> {
             input: input.into(),
             output: output.into(),
             root: root.into(),
-            world: Some(world),
+            world,
         }
     }
 }
