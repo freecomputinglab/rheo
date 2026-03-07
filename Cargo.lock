@@ -2969,13 +2969,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rheo"
-version = "0.1.2"
-dependencies = [
- "rheo-cli",
-]
-
-[[package]]
 name = "rheo-cli"
 version = "0.1.2"
 dependencies = [
