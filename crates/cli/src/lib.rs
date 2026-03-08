@@ -301,7 +301,7 @@ fn compile_one_file(
         .plugin_output_dir
         .join(&filename)
         .with_extension(pfc.plugin.name());
-    let options = RheoCompileOptions::new(typ_file, &output_path, &pfc.project.root, world);
+    let options = RheoCompileOptions::new(Some(typ_file), &output_path, &pfc.project.root, Some(world));
     let ctx = PluginContext {
         project: pfc.project,
         output_config: pfc.output_config,
@@ -430,19 +430,11 @@ fn perform_compilation<'a>(
                 .join(&project.name)
                 .with_extension(plugin.name());
 
-            let mut temp_world = RheoWorld::new(
-                &compilation_root,
-                project
-                    .typ_files
-                    .first()
-                    .ok_or_else(|| RheoError::project_config("no .typ files found"))?,
-                format_name,
-            )?;
             let options = RheoCompileOptions::new(
-                PathBuf::new(),
+                None::<PathBuf>,
                 &output_path,
                 &compilation_root,
-                &mut temp_world,
+                None,
             );
 
             let ctx = PluginContext {

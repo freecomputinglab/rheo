@@ -172,5 +172,6 @@ pub fn compile_html_new(
     css_contents: &[String],
     fonts: &[String],
 ) -> Result<()> {
-    compile_html_impl(options.world, &options.output, css_contents, fonts)
+    let world = options.world.expect("HTML plugin requires a world (never called in merged mode)");
+    compile_html_impl(world, &options.output, css_contents, fonts)
 }

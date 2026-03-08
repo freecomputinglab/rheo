@@ -323,7 +323,6 @@ fn compile_epub_impl(section: &PluginSection, epub_path: &Path, root: &Path) -> 
 
 /// Compile Typst documents to EPUB.
 pub fn compile_epub_new(options: RheoCompileOptions, section: PluginSection) -> Result<()> {
-    let _world = options.world;
     compile_epub_impl(&section, &options.output, &options.root)
 }
 
