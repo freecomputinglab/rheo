@@ -25,6 +25,47 @@ use super::dom;
 /// - HTML parsing fails
 /// - <head> element is not found
 /// - HTML serialization fails
+/// Embed CSS content directly into the HTML `<head>` as `<style>` blocks.
+///
+/// Uses string manipulation to insert `<style>` blocks before `</head>`,
+/// avoiding HTML-escaping issues that would occur with DOM-based injection
+/// (e.g., CSS selectors like `p > span` must not have `>` escaped).
+///
+/// # Arguments
+/// * `html` - The HTML content to modify
+/// * `css_blocks` - Raw CSS content strings to embed (one `<style>` per entry)
+///
+/// # Returns
+/// HTML with injected `<style>` blocks at the end of `<head>`
+///
+/// # Errors
+/// Returns an error if the HTML does not contain a `</head>` closing tag.
+pub fn inject_inline_styles(html: &str, css_blocks: &[&str]) -> Result<String> {
+    if css_blocks.is_empty() {
+        return Ok(html.to_string());
+    }
+
+    let mut styles = String::new();
+    for css in css_blocks {
+        styles.push_str("<style>");
+        styles.push_str(css);
+        styles.push_str("</style>");
+    }
+
+    if let Some(pos) = html.find("</head>") {
+        let mut result = String::with_capacity(html.len() + styles.len());
+        result.push_str(&html[..pos]);
+        result.push_str(&styles);
+        result.push_str(&html[pos..]);
+        Ok(result)
+    } else {
+        Err(RheoError::HtmlGeneration {
+            count: 1,
+            errors: "HTML document does not contain a </head> element".to_string(),
+        })
+    }
+}
+
 pub fn inject_head_links(html: &str, stylesheets: &[&str], fonts: &[&str]) -> Result<String> {
     // Parse the HTML document
     let dom = dom::HtmlDom::parse(html)?;

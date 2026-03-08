@@ -6,7 +6,7 @@ use rheo_core::compile::RheoCompileOptions;
 use rheo_core::config::PluginSection;
 use rheo_core::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use rheo_core::world::RheoWorld;
-use rheo_core::{FormatPlugin, OpenHandle, PluginContext, PluginInput};
+use rheo_core::{FormatPlugin, OpenHandle, PluginContext};
 use rheo_core::{Result, RheoError};
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -85,30 +85,36 @@ impl FormatPlugin for HtmlPlugin {
         Ok(OpenHandle::Server(Box::new(handle)))
     }
 
-    fn inputs(&self) -> &'static [PluginInput] {
-        &[PluginInput {
-            name: "stylesheet",
-            path: "style.css",
-            required: false,
-        }]
-    }
-
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
         if ctx.spine.merge {
             return Err(RheoError::project_config(
                 "HTML does not support merged compilation",
             ));
         }
-        // If the project didn't provide style.css, write the bundled default.
-        if !ctx.inputs.contains_key("stylesheet") {
-            let dest = ctx.output_config.dir_for_plugin("html").join("style.css");
-            std::fs::write(&dest, rheo_core::DEFAULT_HTML_STYLESHEET)
-                .map_err(|e| RheoError::io(e, "writing default style.css"))?;
-            debug!(dest = %dest.display(), "wrote bundled default style.css");
-        }
 
         let html_config = parse_html_config(&ctx.config);
-        compile_html_new(ctx.options, &html_config.stylesheets, &html_config.fonts)
+
+        // Resolve and read each stylesheet, collecting raw CSS content for inlining.
+        let mut css_contents: Vec<String> = Vec::new();
+        for stylesheet_path in &html_config.stylesheets {
+            let full_path = ctx.project.root.join(stylesheet_path);
+            if full_path.exists() {
+                match std::fs::read_to_string(&full_path) {
+                    Ok(content) => css_contents.push(content),
+                    Err(e) => {
+                        warn!(path = %full_path.display(), error = %e, "failed to read stylesheet, skipping")
+                    }
+                }
+            } else if stylesheet_path == "style.css" {
+                // Default name with no file present: inline the bundled stylesheet.
+                debug!("using bundled default style.css");
+                css_contents.push(rheo_core::DEFAULT_HTML_STYLESHEET.to_string());
+            } else {
+                warn!(path = %full_path.display(), "stylesheet not found, skipping");
+            }
+        }
+
+        compile_html_new(ctx.options, &css_contents, &html_config.fonts)
     }
 }
 
@@ -136,7 +142,7 @@ pub fn compile_document_to_string(document: &HtmlDocument) -> Result<String> {
 fn compile_html_impl(
     world: &RheoWorld,
     output: &Path,
-    stylesheets: &[String],
+    css_contents: &[String],
     fonts: &[String],
 ) -> Result<()> {
     info!("compiling to HTML");
@@ -153,9 +159,14 @@ fn compile_html_impl(
     let html_string =
         typst_html::html(&document).map_err(|e| handle_export_errors(e, ExportErrorType::Html))?;
 
-    let stylesheet_refs: Vec<&str> = stylesheets.iter().map(|s| s.as_str()).collect();
+    // Inject font links first (DOM-based), then inline styles (string-based).
+    // Ordering matters: string-based injection must run last to avoid re-parsing
+    // and HTML-escaping CSS content (e.g., `>` in selectors).
     let font_refs: Vec<&str> = fonts.iter().map(|s| s.as_str()).collect();
-    let html_string = html_head::inject_head_links(&html_string, &stylesheet_refs, &font_refs)?;
+    let html_string = html_head::inject_head_links(&html_string, &[], &font_refs)?;
+
+    let css_refs: Vec<&str> = css_contents.iter().map(|s| s.as_str()).collect();
+    let html_string = html_head::inject_inline_styles(&html_string, &css_refs)?;
 
     debug!(size = html_string.len(), "writing HTML file");
     std::fs::write(output, &html_string)
@@ -168,8 +179,8 @@ fn compile_html_impl(
 /// Compile Typst document to HTML using an engine-provided World.
 pub fn compile_html_new(
     options: RheoCompileOptions,
-    stylesheets: &[String],
+    css_contents: &[String],
     fonts: &[String],
 ) -> Result<()> {
-    compile_html_impl(options.world, &options.output, stylesheets, fonts)
+    compile_html_impl(options.world, &options.output, css_contents, fonts)
 }

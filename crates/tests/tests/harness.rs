@@ -495,20 +495,24 @@ fn test_html_css_link_injection() {
     let html_path = project_path.join("build/html/index.html");
     let html = std::fs::read_to_string(&html_path).expect("Failed to read HTML file");
 
-    // Test 1: CSS stylesheet link is present in head
+    // Test 1: CSS is inlined as a <style> block in head (not a <link> to an external file)
     assert!(
-        html.contains(r#"<link rel="stylesheet" href="style.css">"#),
-        "Should have stylesheet link in HTML"
+        html.contains("<style>"),
+        "Should have inline <style> block in HTML"
+    );
+    assert!(
+        !html.contains(r#"<link rel="stylesheet" href="style.css">"#),
+        "Should not have external stylesheet link (CSS is now inlined)"
     );
 
-    // Test 3: Links are in the <head> section
+    // Test 3: Style block is in the <head> section
     let head_start = html.find("<head>").expect("HTML should have <head> tag");
     let head_end = html.find("</head>").expect("HTML should have </head> tag");
     let head = &html[head_start..head_end];
 
     assert!(
-        head.contains("style.css"),
-        "CSS link should be in head section"
+        head.contains("<style>"),
+        "Inline CSS should be in head section"
     );
 
     // Test 4: NO JavaScript DOM manipulation hack
@@ -547,6 +551,123 @@ fn test_html_css_link_injection() {
             String::from_utf8_lossy(&clean_output.stderr)
         );
     }
+}
+
+/// Test that a custom stylesheet named in rheo.toml is read and inlined into HTML output.
+#[test]
+fn test_html_custom_stylesheet_inlined() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    std::fs::write(
+        project_path.join("base.css"),
+        "/* rheo-test-custom-css */\nbody { background: hotpink; }\n",
+    )
+    .expect("Failed to write base.css");
+
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        "version = \"0.1.2\"\nformats = [\"html\"]\n\n[html]\nstylesheets = [\"base.css\"]\n",
+    )
+    .expect("Failed to write rheo.toml");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let html = std::fs::read_to_string(project_path.join("build/html/main.html"))
+        .expect("Failed to read HTML file");
+
+    // Custom CSS content should be embedded as a <style> block
+    assert!(
+        html.contains("rheo-test-custom-css"),
+        "Custom CSS comment should appear in inlined <style> block"
+    );
+    assert!(
+        html.contains("background: hotpink"),
+        "Custom CSS rules should be inlined in HTML"
+    );
+
+    // Should not reference the file externally
+    assert!(
+        !html.contains(r#"href="base.css"#),
+        "Should not have a <link> pointing to base.css"
+    );
+}
+
+/// Test that a missing custom stylesheet is skipped with a warning rather than failing.
+#[test]
+fn test_html_missing_custom_stylesheet_skipped() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    // rheo.toml references a CSS file that does not exist
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        "version = \"0.1.2\"\nformats = [\"html\"]\n\n[html]\nstylesheets = [\"nonexistent.css\"]\n",
+    )
+    .expect("Failed to write rheo.toml");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    // Compilation should succeed — missing stylesheet is a warning, not an error
+    assert!(
+        output.status.success(),
+        "Compilation should succeed when custom stylesheet is missing, got: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let html_path = project_path.join("build/html/main.html");
+    assert!(html_path.exists(), "HTML file should still be produced");
+
+    let html = std::fs::read_to_string(&html_path).expect("Failed to read HTML file");
+
+    // No link to the missing file should appear
+    assert!(
+        !html.contains(r#"href="nonexistent.css"#),
+        "Should not have a <link> to nonexistent.css"
+    );
+
+    // A warning about the missing file should be emitted to stdout (rheo's tracing output)
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("nonexistent.css"),
+        "Warning about missing stylesheet should appear in output"
+    );
 }
 
 /// Test warning formatting with codespan-reporting
