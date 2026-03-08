@@ -14,7 +14,6 @@ pub enum TestCase {
         project_path: PathBuf,
     },
     /// Test a single .typ file
-    #[allow(dead_code)]
     SingleFile {
         name: String,
         file_path: PathBuf,
@@ -94,27 +93,6 @@ impl TestCase {
         }
     }
 
-    /// Returns the file path for SingleFile tests, or None for Directory tests
-    #[allow(unused)]
-    pub fn file_path(&self) -> Option<&PathBuf> {
-        match self {
-            TestCase::Directory { .. } => None,
-            TestCase::SingleFile { file_path, .. } => Some(file_path),
-        }
-    }
-
-    /// Returns the project root directory for the test case
-    #[allow(unused)]
-    pub fn project_root(&self) -> PathBuf {
-        match self {
-            TestCase::Directory { project_path, .. } => project_path.clone(),
-            TestCase::SingleFile { file_path, .. } => {
-                // For single files, use parent directory as project root
-                file_path.parent().unwrap_or(Path::new(".")).to_path_buf()
-            }
-        }
-    }
-
     /// Returns the format names to test for this test case
     pub fn formats(&self) -> Vec<String> {
         match self {
@@ -139,18 +117,3 @@ impl TestCase {
     }
 }
 
-/// Set up test environment (e.g., create temp directories)
-#[allow(dead_code)]
-pub fn setup_test_environment() -> PathBuf {
-    let test_store = PathBuf::from("store");
-    std::fs::create_dir_all(&test_store).expect("Failed to create store");
-    test_store
-}
-
-/// Clean up test environment after tests complete
-#[allow(dead_code)]
-pub fn cleanup_test_environment(path: &PathBuf) {
-    if path.exists() {
-        std::fs::remove_dir_all(path).ok();
-    }
-}

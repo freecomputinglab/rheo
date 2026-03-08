@@ -920,39 +920,3 @@ pub fn verify_epub_output(test_name: &str, actual_dir: &Path) {
             .expect("EPUB XHTML content mismatch");
     });
 }
-
-#[allow(unused)]
-fn verify_included_files_present(output_dir: &Path, patterns: &[&str]) -> Result<(), String> {
-    let mut found = vec![false; patterns.len()];
-
-    for_each_file_with_ext(output_dir, "", |entry| {
-        if let Ok(rel_path) = entry.path().strip_prefix(output_dir) {
-            let path_str = rel_path.to_string_lossy();
-            for (i, pattern) in patterns.iter().enumerate() {
-                if path_str.contains(*pattern) {
-                    found[i] = true;
-                }
-            }
-        }
-    });
-
-    let missing: Vec<_> = patterns
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !found[*i])
-        .map(|(_, p)| *p)
-        .collect();
-
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "Expected files not found in output:\n{}",
-            missing
-                .iter()
-                .map(|p| format!("  - {}", p))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ))
-    }
-}
