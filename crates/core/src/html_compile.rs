@@ -1,11 +1,15 @@
+use crate::Result;
 use crate::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::world::RheoWorld;
-use crate::Result;
 use std::path::Path;
 use tracing::info;
 use typst_html::HtmlDocument;
 
-pub fn compile_html_to_document(input: &Path, root: &Path, format_name: &str) -> Result<HtmlDocument> {
+pub fn compile_html_to_document(
+    input: &Path,
+    root: &Path,
+    format_name: &str,
+) -> Result<HtmlDocument> {
     let world = RheoWorld::new(root, input, Some(format_name))?;
     info!(input = %input.display(), "compiling to HTML");
     let result = typst::compile::<HtmlDocument>(&world);

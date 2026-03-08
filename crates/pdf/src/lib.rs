@@ -30,7 +30,10 @@ impl FormatPlugin for PdfPlugin {
             })?;
             compile_pdf_merged_impl(spine, &ctx.options.output, &ctx.options.root)
         } else {
-            let world = ctx.options.world.expect("PDF single-file compile requires a world");
+            let world = ctx
+                .options
+                .world
+                .expect("PDF single-file compile requires a world");
             compile_pdf_single_impl(world, &ctx.options.output)
         }
     }

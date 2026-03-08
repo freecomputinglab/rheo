@@ -1,9 +1,9 @@
 pub mod compile;
 pub mod config;
-pub mod html_compile;
 pub mod constants;
 pub mod diagnostics;
 pub mod error;
+pub mod html_compile;
 pub mod init_templates;
 pub mod logging;
 pub mod manifest_version;

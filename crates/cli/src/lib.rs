@@ -301,7 +301,8 @@ fn compile_one_file(
         .plugin_output_dir
         .join(&filename)
         .with_extension(pfc.plugin.name());
-    let options = RheoCompileOptions::new(Some(typ_file), &output_path, &pfc.project.root, Some(world));
+    let options =
+        RheoCompileOptions::new(Some(typ_file), &output_path, &pfc.project.root, Some(world));
     let ctx = PluginContext {
         project: pfc.project,
         output_config: pfc.output_config,
@@ -430,12 +431,8 @@ fn perform_compilation<'a>(
                 .join(&project.name)
                 .with_extension(plugin.name());
 
-            let options = RheoCompileOptions::new(
-                None::<PathBuf>,
-                &output_path,
-                &compilation_root,
-                None,
-            );
+            let options =
+                RheoCompileOptions::new(None::<PathBuf>, &output_path, &compilation_root, None);
 
             let ctx = PluginContext {
                 project,
@@ -524,8 +521,7 @@ fn init_project(target_dir: &Path) -> Result<()> {
     .map_err(|e| RheoError::io(e, "writing style.css"))?;
 
     let content_dir = target_dir.join("content");
-    fs::create_dir_all(&content_dir)
-        .map_err(|e| RheoError::io(e, "creating content directory"))?;
+    fs::create_dir_all(&content_dir).map_err(|e| RheoError::io(e, "creating content directory"))?;
 
     fs::write(
         content_dir.join("index.typ"),
