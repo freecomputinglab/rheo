@@ -25,6 +25,7 @@ use super::dom;
 /// - HTML parsing fails
 /// - <head> element is not found
 /// - HTML serialization fails
+///
 /// Embed CSS content directly into the HTML `<head>` as `<style>` blocks.
 ///
 /// Uses string manipulation to insert `<style>` blocks before `</head>`,

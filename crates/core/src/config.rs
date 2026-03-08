@@ -321,7 +321,11 @@ mod tests {
         let toml = versioned_toml("[html]\nstylesheets = [\"custom.css\", \"theme.css\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        let sheets = section.extra.get("stylesheets").and_then(|v| v.as_array()).unwrap();
+        let sheets = section
+            .extra
+            .get("stylesheets")
+            .and_then(|v| v.as_array())
+            .unwrap();
         assert_eq!(sheets.len(), 2);
         assert_eq!(sheets[0].as_str().unwrap(), "custom.css");
         assert_eq!(sheets[1].as_str().unwrap(), "theme.css");
@@ -332,7 +336,11 @@ mod tests {
         let toml = versioned_toml("[html]\nfonts = [\"https://example.com/font.css\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        let fonts = section.extra.get("fonts").and_then(|v| v.as_array()).unwrap();
+        let fonts = section
+            .extra
+            .get("fonts")
+            .and_then(|v| v.as_array())
+            .unwrap();
         assert_eq!(fonts[0].as_str().unwrap(), "https://example.com/font.css");
     }
 

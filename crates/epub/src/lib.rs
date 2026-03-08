@@ -306,12 +306,8 @@ fn compile_epub_impl(section: &PluginSection, epub_path: &Path, root: &Path) -> 
         let identifier = parse_identifier(section);
         let date = parse_date(section);
         let nav_xhtml = generate_nav_xhtml(&mut items)?;
-        let package_string = generate_package(
-            &items,
-            spine_config,
-            identifier.as_deref(),
-            date.as_ref(),
-        )?;
+        let package_string =
+            generate_package(&items, spine_config, identifier.as_deref(), date.as_ref())?;
         zip_epub(epub_path, package_string, nav_xhtml, &items)
     };
 

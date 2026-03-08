@@ -375,7 +375,9 @@ fn perform_compilation<'a>(
         let spine = SpineOptions {
             title: spine_cfg.and_then(|s| s.title.clone()),
             vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
-            merge: spine_cfg.and_then(|s| s.merge).unwrap_or(plugin.default_merge()),
+            merge: spine_cfg
+                .and_then(|s| s.merge)
+                .unwrap_or(plugin.default_merge()),
         };
 
         // Get full plugin section
@@ -444,8 +446,7 @@ fn perform_compilation<'a>(
                 }
             } else {
                 for typ_file in &files {
-                    let mut fresh_world =
-                        RheoWorld::new(&project.root, typ_file, format_name)?;
+                    let mut fresh_world = RheoWorld::new(&project.root, typ_file, format_name)?;
                     compile_one_file(&mut fresh_world, typ_file, &pfc, &mut results)?;
                 }
             }
@@ -565,7 +566,6 @@ fn setup_compilation_context(
     })
 }
 
-
 /// Main entry point using the builder-based dynamic CLI.
 pub fn run() -> Result<()> {
     let cli = build_cli();
@@ -632,7 +632,6 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
     info!(project = %project.name, "build artifacts removed");
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
