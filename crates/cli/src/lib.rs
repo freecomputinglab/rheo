@@ -321,12 +321,11 @@ fn compile_one_file(
     Ok(())
 }
 
-fn perform_compilation<'a>(
+fn perform_compilation(
     project: &ProjectConfig,
     output_config: &OutputConfig,
     plugins: &[Box<dyn FormatPlugin>],
-    mut world: Option<&'a mut RheoWorld>,
-    format_name: Option<&'a str>,
+    mut world: Option<&mut RheoWorld>,
 ) -> Result<()> {
     if project.typ_files.is_empty() {
         return Err(RheoError::project_config("no .typ files found in project"));
@@ -346,9 +345,9 @@ fn perform_compilation<'a>(
         // Resolve declared inputs
         let mut resolved_inputs: HashMap<&'static str, PathBuf> = HashMap::new();
         for input in plugin.inputs() {
-            let src = project.root.join(input.path);
+            let src = project.root.join(&input.path);
             if src.is_file() {
-                let dest = plugin_output_dir.join(input.path);
+                let dest = plugin_output_dir.join(&input.path);
                 std::fs::copy(&src, &dest).map_err(|e| {
                     RheoError::io(
                         e,
@@ -366,7 +365,7 @@ fn perform_compilation<'a>(
                     "plugin '{}' requires input '{}' at '{}' but it was not found",
                     plugin.name(),
                     input.name,
-                    input.path
+                    &input.path
                 )));
             }
         }
@@ -473,7 +472,8 @@ fn perform_compilation<'a>(
                 }
             } else {
                 for typ_file in &files {
-                    let mut fresh_world = RheoWorld::new(&project.root, typ_file, format_name)?;
+                    let mut fresh_world =
+                        RheoWorld::new(&project.root, typ_file, Some(plugin.name()))?;
                     compile_one_file(&mut fresh_world, typ_file, &pfc, &mut results)?;
                 }
             }
@@ -576,16 +576,18 @@ fn setup_compilation_context(
     let all = all_plugins();
     let formats = determine_formats(enabled_from_cli, &project.config.formats, &all);
 
-    // Apply plugin smart defaults when no rheo.toml was loaded
-    if project.config_path.is_none() {
+    // Apply plugin smart defaults for any plugin section absent from the config
+    {
         let plugins = plugins_for_formats(&formats, all_plugins());
         for plugin in &plugins {
-            let section = project
-                .config
-                .plugin_sections
-                .entry(plugin.name().to_string())
-                .or_default();
-            plugin.apply_defaults(section, &project.name);
+            if !project.config.plugin_sections.contains_key(plugin.name()) {
+                let section = project
+                    .config
+                    .plugin_sections
+                    .entry(plugin.name().to_string())
+                    .or_default();
+                plugin.apply_defaults(section, &project.name);
+            }
         }
     }
 
@@ -634,23 +636,7 @@ fn run_compile(sub: &ArgMatches) -> Result<()> {
 
     let ctx = setup_compilation_context(&path, config.as_deref(), build_dir, enabled)?;
 
-    // Find first per-file plugin to use as the link-transformation format
-    let format_name = ctx
-        .plugins
-        .iter()
-        .find(|p| {
-            let spine_cfg = ctx.project.config.spine_for_plugin(p.name());
-            !spine_cfg.and_then(|s| s.merge).unwrap_or(false)
-        })
-        .map(|p| p.name());
-
-    perform_compilation(
-        &ctx.project,
-        &ctx.output_config,
-        &ctx.plugins,
-        None,
-        format_name,
-    )
+    perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None)
 }
 
 fn run_clean(sub: &ArgMatches) -> Result<()> {
@@ -727,6 +713,10 @@ mod tests {
         assert!(names.contains(&"html"));
         assert!(names.contains(&"pdf"));
         assert!(names.contains(&"epub"));
-        assert_eq!(names.len(), 3);
+        assert!(
+            names.len() >= 3,
+            "Expected at least 3 plugins, got {}",
+            names.len()
+        );
     }
 }

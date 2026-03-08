@@ -36,7 +36,7 @@ pub struct PluginInput {
     /// Key used to retrieve this input from PluginContext::inputs
     pub name: &'static str,
     /// Path relative to the project root where the file is expected
-    pub path: &'static str,
+    pub path: String,
     /// If true, a missing file is a compile error; if false, it is absent from ctx.inputs
     pub required: bool,
 }
@@ -80,8 +80,8 @@ pub trait FormatPlugin: Send + Sync {
     fn open(&self, output_dir: &Path, format_name: &str) -> crate::Result<OpenHandle>;
 
     /// Declare additional non-Typst input files this plugin needs.
-    fn inputs(&self) -> &'static [PluginInput] {
-        &[]
+    fn inputs(&self) -> Vec<PluginInput> {
+        vec![]
     }
 
     /// Compile one file (merge=false) or merged output (merge=true).
