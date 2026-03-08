@@ -756,6 +756,7 @@ Then use `mcp__beads__*` functions instead of CLI commands.
 - ✅ Always use `--json` flag for programmatic use
 - ✅ Link discovered work with `discovered-from` dependencies
 - ✅ Check `bd ready` before asking "what should I work on?"
+- ✅ After completing a code review, always create beads issues for every finding before presenting the review to the user
 - ❌ Do NOT create markdown TODO lists
 - ❌ Do NOT use external issue trackers
 - ❌ Do NOT duplicate tracking systems
