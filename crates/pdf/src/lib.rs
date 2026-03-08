@@ -1,4 +1,3 @@
-use rheo_core::compile::RheoCompileOptions;
 use rheo_core::config::UniversalSpine;
 use rheo_core::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use rheo_core::reticulate::spine::RheoSpine;
@@ -99,24 +98,6 @@ fn compile_pdf_merged_impl(
 
     info!(output = %output_path.display(), "successfully compiled merged PDF");
     Ok(())
-}
-
-/// Compile Typst document(s) to PDF.
-///
-/// # Arguments
-/// * `options` - Compilation options (input, output, root, world)
-/// * `spine` - Optional PDF spine config (None for single-file, Some for merged)
-pub fn compile_pdf_new(options: RheoCompileOptions, spine: Option<&UniversalSpine>) -> Result<()> {
-    let is_merged = spine.and_then(|s| s.merge).unwrap_or(false);
-
-    if is_merged {
-        let s = spine.ok_or_else(|| {
-            RheoError::project_config("PDF spine required for merged compilation")
-        })?;
-        compile_pdf_merged_impl(s, &options.output, &options.root)
-    } else {
-        compile_pdf_single_impl(options.world, &options.output)
-    }
 }
 
 // Re-export PDF utilities for backwards compatibility
