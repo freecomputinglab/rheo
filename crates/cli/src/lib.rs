@@ -1,11 +1,12 @@
-use clap::{Arg, ArgAction, ArgMatches, Command, Parser};
+use clap::{Arg, ArgAction, ArgMatches, Command};
 use rheo_core::compile::RheoCompileOptions;
+use rheo_core::config::PluginSection;
 use rheo_core::manifest_version;
 use rheo_core::output::OutputConfig;
 use rheo_core::project::ProjectConfig;
 use rheo_core::results::CompilationResults;
 use rheo_core::world::RheoWorld;
-use rheo_core::{FormatPlugin, PluginConfig, PluginContext, Result, RheoError, SpineOptions};
+use rheo_core::{FormatPlugin, PluginContext, Result, RheoError, SpineOptions};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -274,6 +275,51 @@ fn get_files_for_plugin<'a>(
     }
 }
 
+/// Per-plugin invariants shared across all files in a single-plugin compilation pass.
+struct PerFileCtx<'a> {
+    plugin: &'a dyn FormatPlugin,
+    plugin_output_dir: &'a Path,
+    project: &'a ProjectConfig,
+    output_config: &'a OutputConfig,
+    spine: &'a SpineOptions,
+    plugin_section: &'a PluginSection,
+    resolved_inputs: &'a HashMap<&'static str, PathBuf>,
+}
+
+/// Compile one file with the given world, recording success/failure in `results`.
+///
+/// `get_output_filename` errors propagate; `plugin.compile()` errors are recorded
+/// as failures rather than propagated (so other files in the batch still compile).
+fn compile_one_file(
+    world: &mut RheoWorld,
+    typ_file: &Path,
+    pfc: &PerFileCtx<'_>,
+    results: &mut CompilationResults,
+) -> Result<()> {
+    let filename = get_output_filename(typ_file)?;
+    let output_path = pfc
+        .plugin_output_dir
+        .join(&filename)
+        .with_extension(pfc.plugin.name());
+    let options = RheoCompileOptions::new(typ_file, &output_path, &pfc.project.root, world);
+    let ctx = PluginContext {
+        project: pfc.project,
+        output_config: pfc.output_config,
+        options,
+        spine: pfc.spine.clone(),
+        config: pfc.plugin_section.clone(),
+        inputs: pfc.resolved_inputs.clone(),
+    };
+    match pfc.plugin.compile(ctx) {
+        Ok(_) => results.record_success(pfc.plugin.name()),
+        Err(e) => {
+            error!(file = %typ_file.display(), error = %e, "{} compilation failed", pfc.plugin.name());
+            results.record_failure(pfc.plugin.name());
+        }
+    }
+    Ok(())
+}
+
 fn perform_compilation<'a>(
     project: &ProjectConfig,
     output_config: &OutputConfig,
@@ -324,21 +370,18 @@ fn perform_compilation<'a>(
             }
         }
 
-        // Resolve spine config and build PluginConfig
+        // Resolve spine options
         let spine_cfg = project.config.spine_for_plugin(plugin.name());
-        let default_merge = plugin.default_merge();
-        let plugin_config = PluginConfig {
-            spine: SpineOptions {
-                title: spine_cfg.and_then(|s| s.title.clone()),
-                vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
-                merge: spine_cfg.and_then(|s| s.merge).unwrap_or(default_merge),
-            },
+        let spine = SpineOptions {
+            title: spine_cfg.and_then(|s| s.title.clone()),
+            vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
+            merge: spine_cfg.and_then(|s| s.merge).unwrap_or(plugin.default_merge()),
         };
 
         // Get full plugin section
         let plugin_section = project.config.plugin_section(plugin.name());
 
-        if plugin_config.spine.merge {
+        if spine.merge {
             let compilation_root = project
                 .config
                 .resolve_content_dir(&project.root)
@@ -366,8 +409,8 @@ fn perform_compilation<'a>(
                 project,
                 output_config,
                 options,
-                plugin_config,
-                plugin_section,
+                spine,
+                config: plugin_section,
                 inputs: resolved_inputs,
             };
 
@@ -383,73 +426,27 @@ fn perform_compilation<'a>(
             }
         } else {
             let files = get_files_for_plugin(plugin.as_ref(), project)?;
+            let pfc = PerFileCtx {
+                plugin: plugin.as_ref(),
+                plugin_output_dir: &plugin_output_dir,
+                project,
+                output_config,
+                spine: &spine,
+                plugin_section: &plugin_section,
+                resolved_inputs: &resolved_inputs,
+            };
 
             if let Some(ref mut existing_world) = world {
                 for typ_file in &files {
                     existing_world.set_main(typ_file)?;
                     existing_world.reset();
-
-                    let filename = get_output_filename(typ_file)?;
-                    let output_path = plugin_output_dir
-                        .join(&filename)
-                        .with_extension(plugin.name());
-
-                    let options = RheoCompileOptions::new(
-                        typ_file,
-                        &output_path,
-                        &project.root,
-                        existing_world,
-                    );
-
-                    let ctx = PluginContext {
-                        project,
-                        output_config,
-                        options,
-                        plugin_config: plugin_config.clone(),
-                        plugin_section: plugin_section.clone(),
-                        inputs: resolved_inputs.clone(),
-                    };
-
-                    match plugin.compile(ctx) {
-                        Ok(_) => results.record_success(plugin.name()),
-                        Err(e) => {
-                            error!(file = %typ_file.display(), error = %e, "{} compilation failed", plugin.name());
-                            results.record_failure(plugin.name());
-                        }
-                    }
+                    compile_one_file(existing_world, typ_file, &pfc, &mut results)?;
                 }
             } else {
                 for typ_file in &files {
-                    let mut fresh_world = RheoWorld::new(&project.root, typ_file, format_name)?;
-
-                    let filename = get_output_filename(typ_file)?;
-                    let output_path = plugin_output_dir
-                        .join(&filename)
-                        .with_extension(plugin.name());
-
-                    let options = RheoCompileOptions::new(
-                        typ_file,
-                        &output_path,
-                        &project.root,
-                        &mut fresh_world,
-                    );
-
-                    let ctx = PluginContext {
-                        project,
-                        output_config,
-                        options,
-                        plugin_config: plugin_config.clone(),
-                        plugin_section: plugin_section.clone(),
-                        inputs: resolved_inputs.clone(),
-                    };
-
-                    match plugin.compile(ctx) {
-                        Ok(_) => results.record_success(plugin.name()),
-                        Err(e) => {
-                            error!(file = %typ_file.display(), error = %e, "{} compilation failed", plugin.name());
-                            results.record_failure(plugin.name());
-                        }
-                    }
+                    let mut fresh_world =
+                        RheoWorld::new(&project.root, typ_file, format_name)?;
+                    compile_one_file(&mut fresh_world, typ_file, &pfc, &mut results)?;
                 }
             }
         }
@@ -568,29 +565,6 @@ fn setup_compilation_context(
     })
 }
 
-// Keep the derive-based Cli struct for global flags, delegating subcommand parsing
-// to the builder-based `build_cli()`.
-#[derive(Parser, Debug)]
-#[command(name = "rheo")]
-#[command(about = "A tool for flowing Typst documents into publishable outputs", long_about = None)]
-#[command(version)]
-pub struct Cli {
-    /// Decrease output verbosity (errors only)
-    #[arg(short, long, global = true, conflicts_with = "verbose")]
-    pub quiet: bool,
-
-    /// Increase output verbosity (show debug information)
-    #[arg(short, long, global = true, conflicts_with = "quiet")]
-    pub verbose: bool,
-
-    #[command(subcommand)]
-    pub command: Commands,
-}
-
-#[derive(clap::Subcommand, Debug)]
-pub enum Commands {
-    _Placeholder,
-}
 
 /// Main entry point using the builder-based dynamic CLI.
 pub fn run() -> Result<()> {
@@ -659,17 +633,6 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-impl Cli {
-    pub fn parse() -> Self {
-        Parser::parse()
-    }
-
-    pub fn run(self) -> Result<()> {
-        // Delegate to the dynamic builder-based run() function.
-        // This is called from main.rs which parses global flags separately.
-        run()
-    }
-}
 
 #[cfg(test)]
 mod tests {

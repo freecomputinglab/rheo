@@ -4,9 +4,6 @@ use crate::project::ProjectConfig;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Reload callback type - called by watch loop after successful compilation
-pub type ReloadCallback = Box<dyn Fn() + Send + Sync>;
-
 /// Handle returned by FormatPlugin::open() for managing the opened resource
 pub enum OpenHandle {
     /// Server-based preview (HTML) - opaque handle containing runtime, task, URL, and reload callback
@@ -28,12 +25,6 @@ pub struct SpineOptions {
     pub merge: bool,
 }
 
-/// Standardized plugin configuration passed to compile().
-#[derive(Debug, Clone)]
-pub struct PluginConfig {
-    pub spine: SpineOptions,
-}
-
 /// Declares an additional non-Typst input file needed from the project directory.
 pub struct PluginInput {
     /// Key used to retrieve this input from PluginContext::inputs
@@ -49,10 +40,12 @@ pub struct PluginContext<'a> {
     pub project: &'a ProjectConfig,
     pub output_config: &'a OutputConfig,
     pub options: RheoCompileOptions<'a>,
-    pub plugin_config: PluginConfig,
+    /// Resolved spine options (title, vertebrae, merge flag).
+    pub spine: SpineOptions,
     /// Full parsed plugin section from rheo.toml (or default if not configured).
-    /// Plugins read format-specific fields here (e.g. stylesheets, identifier, date).
-    pub plugin_section: PluginSection,
+    /// Plugins read format-specific fields from `config.extra` (e.g. stylesheets,
+    /// identifier, date).
+    pub config: PluginSection,
     /// Resolved additional input files declared by the plugin.
     pub inputs: HashMap<&'static str, PathBuf>,
 }

@@ -24,9 +24,9 @@ impl FormatPlugin for PdfPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        if ctx.plugin_config.spine.merge {
-            // Merged mode: use spine from plugin_section
-            let spine = ctx.plugin_section.spine.as_ref().ok_or_else(|| {
+        if ctx.spine.merge {
+            // Merged mode: use spine from config
+            let spine = ctx.config.spine.as_ref().ok_or_else(|| {
                 RheoError::project_config("PDF spine configuration required for merged compilation")
             })?;
             compile_pdf_merged_impl(spine, &ctx.options.output, &ctx.options.root)

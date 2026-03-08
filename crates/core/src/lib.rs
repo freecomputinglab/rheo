@@ -21,6 +21,10 @@ include!("plugins.rs");
 // Note: Cli is now in rheo-cli crate, not exported here
 pub use config::RheoConfig;
 pub use constants::*;
+
+/// Bundled default HTML stylesheet (from `src/templates/init/style.css`).
+/// HTML plugin uses this when the project doesn't provide its own style.css.
+pub const DEFAULT_HTML_STYLESHEET: &str = include_str!("templates/init/style.css");
 pub use error::RheoError;
 pub use globset::{Glob, GlobSet, GlobSetBuilder};
 pub use manifest_version::ManifestVersion;

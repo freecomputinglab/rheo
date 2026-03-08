@@ -3,13 +3,18 @@ mod html_head;
 mod server;
 
 use rheo_core::compile::RheoCompileOptions;
+use rheo_core::config::PluginSection;
 use rheo_core::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use rheo_core::world::RheoWorld;
-use rheo_core::{FormatPlugin, OpenHandle, PluginContext, PluginInput, ReloadCallback};
+use rheo_core::{FormatPlugin, OpenHandle, PluginContext, PluginInput};
 use rheo_core::{Result, RheoError};
 use std::path::Path;
 use tracing::{debug, info, warn};
 use typst_html::HtmlDocument;
+
+/// Reload callback type - called by watch loop after successful compilation.
+/// Defined here because it's only needed by the HTML plugin's development server.
+pub type ReloadCallback = Box<dyn Fn() + Send + Sync>;
 
 /// Server handle for HTML plugin's development server
 pub struct HtmlServerHandle {
@@ -17,6 +22,36 @@ pub struct HtmlServerHandle {
     pub server_task: tokio::task::JoinHandle<()>,
     pub url: String,
     pub reload_callback: ReloadCallback,
+}
+
+/// Format-specific configuration parsed from the `[html]` section of rheo.toml.
+struct HtmlConfig {
+    stylesheets: Vec<String>,
+    fonts: Vec<String>,
+}
+
+fn parse_html_config(section: &PluginSection) -> HtmlConfig {
+    let stylesheets = section
+        .extra
+        .get("stylesheets")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_else(|| vec!["style.css".to_string()]);
+    let fonts = section
+        .extra
+        .get("fonts")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    HtmlConfig { stylesheets, fonts }
 }
 
 pub struct HtmlPlugin;
@@ -59,25 +94,21 @@ impl FormatPlugin for HtmlPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        if ctx.plugin_config.spine.merge {
+        if ctx.spine.merge {
             return Err(RheoError::project_config(
                 "HTML does not support merged compilation",
             ));
         }
         // If the project didn't provide style.css, write the bundled default.
         if !ctx.inputs.contains_key("stylesheet") {
-            const DEFAULT_CSS: &str = include_str!("../../core/src/templates/init/style.css");
             let dest = ctx.output_config.dir_for_plugin("html").join("style.css");
-            std::fs::write(&dest, DEFAULT_CSS)
+            std::fs::write(&dest, rheo_core::DEFAULT_HTML_STYLESHEET)
                 .map_err(|e| RheoError::io(e, "writing default style.css"))?;
             debug!(dest = %dest.display(), "wrote bundled default style.css");
         }
 
-        compile_html_with_section(
-            ctx.options,
-            &ctx.plugin_section.stylesheets,
-            &ctx.plugin_section.fonts,
-        )
+        let html_config = parse_html_config(&ctx.config);
+        compile_html_new(ctx.options, &html_config.stylesheets, &html_config.fonts)
     }
 }
 
@@ -136,14 +167,6 @@ fn compile_html_impl(
 
 /// Compile Typst document to HTML using an engine-provided World.
 pub fn compile_html_new(
-    options: RheoCompileOptions,
-    stylesheets: &[String],
-    fonts: &[String],
-) -> Result<()> {
-    compile_html_impl(options.world, &options.output, stylesheets, fonts)
-}
-
-fn compile_html_with_section(
     options: RheoCompileOptions,
     stylesheets: &[String],
     fonts: &[String],

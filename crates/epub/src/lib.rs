@@ -62,7 +62,7 @@ impl FormatPlugin for EpubPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        compile_epub_new(ctx.options, ctx.plugin_section)
+        compile_epub_new(ctx.options, ctx.config)
     }
 }
 
@@ -263,6 +263,26 @@ pub fn zip_epub(
     Ok(())
 }
 
+fn parse_identifier(section: &PluginSection) -> Option<String> {
+    section
+        .extra
+        .get("identifier")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
+fn parse_date(section: &PluginSection) -> Option<DateTime<Utc>> {
+    section
+        .extra
+        .get("date")
+        .and_then(|v| v.as_datetime())
+        .and_then(|dt| {
+            chrono::DateTime::parse_from_rfc3339(&dt.to_string())
+                .ok()
+                .map(|d| d.with_timezone(&Utc))
+        })
+}
+
 fn compile_epub_impl(section: &PluginSection, epub_path: &Path, root: &Path) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
         // Use the spine from the section, or fall back to an auto-discover spine.
@@ -283,12 +303,14 @@ fn compile_epub_impl(section: &PluginSection, epub_path: &Path, root: &Path) -> 
             })
             .collect::<AnyhowResult<Vec<_>>>()?;
 
+        let identifier = parse_identifier(section);
+        let date = parse_date(section);
         let nav_xhtml = generate_nav_xhtml(&mut items)?;
         let package_string = generate_package(
             &items,
             spine_config,
-            section.identifier.as_deref(),
-            section.date.as_ref(),
+            identifier.as_deref(),
+            date.as_ref(),
         )?;
         zip_epub(epub_path, package_string, nav_xhtml, &items)
     };

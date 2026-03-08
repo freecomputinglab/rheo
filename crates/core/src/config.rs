@@ -1,15 +1,10 @@
 use crate::Result;
 use crate::manifest_version::ManifestVersion;
 use crate::validation::ValidateConfig;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use tracing::debug;
-
-fn default_stylesheets() -> Vec<String> {
-    vec!["style.css".to_string()]
-}
 
 /// Universal spine configuration — replaces PdfSpine, EpubSpine, and HtmlSpine.
 ///
@@ -31,38 +26,21 @@ pub struct UniversalSpine {
     pub merge: Option<bool>,
 }
 
-/// Structured, fully-parsed plugin section for `[plugin_name]` in rheo.toml.
+/// Plugin section for `[plugin_name]` in rheo.toml.
 ///
-/// Contains universal fields (spine) plus all extra fields any built-in plugin
-/// may use. Plugins only read the fields relevant to them; others are silently
-/// ignored. When no `[plugin_name]` section exists in rheo.toml, `Default` is
-/// used (stylesheets = ["style.css"], everything else empty/None).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Contains the universal `spine` field plus format-specific extra fields in
+/// `extra`. Each plugin reads only the keys it knows about from `extra`; unknown
+/// keys are silently ignored. Adding a new plugin requires no changes to this
+/// struct.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginSection {
-    // --- Universal ---
+    /// Universal spine configuration (shared by all plugins).
     pub spine: Option<UniversalSpine>,
 
-    // --- HTML plugin fields ---
-    #[serde(default = "default_stylesheets")]
-    pub stylesheets: Vec<String>,
-    #[serde(default)]
-    pub fonts: Vec<String>,
-
-    // --- EPUB plugin fields ---
-    pub identifier: Option<String>,
-    pub date: Option<DateTime<Utc>>,
-}
-
-impl Default for PluginSection {
-    fn default() -> Self {
-        Self {
-            spine: None,
-            stylesheets: default_stylesheets(),
-            fonts: vec![],
-            identifier: None,
-            date: None,
-        }
-    }
+    /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
+    /// `fonts` for HTML; `identifier`, `date` for EPUB).
+    #[serde(flatten, default)]
+    pub extra: toml::Table,
 }
 
 /// Configuration for rheo compilation.
@@ -331,11 +309,11 @@ mod tests {
 
     #[test]
     fn test_html_section_defaults() {
-        // When no [html] section, plugin_section("html") returns default
+        // When no [html] section, plugin_section("html") returns default (empty extra)
         let config = RheoConfig::default();
         let section = config.plugin_section("html");
-        assert_eq!(section.stylesheets, vec!["style.css"]);
-        assert_eq!(section.fonts.len(), 0);
+        assert!(section.spine.is_none());
+        assert!(section.extra.is_empty());
     }
 
     #[test]
@@ -343,8 +321,10 @@ mod tests {
         let toml = versioned_toml("[html]\nstylesheets = [\"custom.css\", \"theme.css\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        assert_eq!(section.stylesheets, vec!["custom.css", "theme.css"]);
-        assert_eq!(section.fonts.len(), 0);
+        let sheets = section.extra.get("stylesheets").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(sheets.len(), 2);
+        assert_eq!(sheets[0].as_str().unwrap(), "custom.css");
+        assert_eq!(sheets[1].as_str().unwrap(), "theme.css");
     }
 
     #[test]
@@ -352,8 +332,8 @@ mod tests {
         let toml = versioned_toml("[html]\nfonts = [\"https://example.com/font.css\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        assert_eq!(section.fonts, vec!["https://example.com/font.css"]);
-        assert_eq!(section.stylesheets, vec!["style.css"]);
+        let fonts = section.extra.get("fonts").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(fonts[0].as_str().unwrap(), "https://example.com/font.css");
     }
 
     #[test]
@@ -448,7 +428,10 @@ mod tests {
             versioned_toml("[epub]\nidentifier = \"urn:uuid:12345\"\ndate = 2025-01-15T00:00:00Z");
         let config = parse(&toml);
         let section = config.plugin_section("epub");
-        assert_eq!(section.identifier.as_deref(), Some("urn:uuid:12345"));
-        assert!(section.date.is_some());
+        assert_eq!(
+            section.extra.get("identifier").and_then(|v| v.as_str()),
+            Some("urn:uuid:12345")
+        );
+        assert!(section.extra.get("date").is_some());
     }
 }

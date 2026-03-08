@@ -798,7 +798,9 @@ For each bd task, follow this sequence:
 3. **Complete the bd task**:
    - Implement the changes
    - Test that it works
-   - Close the issue: `bd update <id> --status closed`
+   - Close all completed issues: `bd close <id1> <id2> ...`
+     - Use `bd list --status=open` to find issues to close
+     - Close multiple at once (more efficient than one at a time)
 
 4. **Squash the work**: Run `jj squash`
    - Moves all changes from the working commit (top) into the named commit (below)
