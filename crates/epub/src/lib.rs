@@ -6,6 +6,7 @@ use xhtml::HtmlInfo;
 
 use rheo_core::compile::RheoCompileOptions;
 use rheo_core::config::{PluginSection, UniversalSpine};
+use rheo_core::html_compile::{compile_document_to_string, compile_html_to_document};
 use rheo_core::pdf_utils::DocumentTitle;
 use rheo_core::reticulate::spine::RheoSpine;
 use rheo_core::{FormatPlugin, OpenHandle, PluginContext, Result, RheoError};
@@ -349,12 +350,12 @@ fn text_to_id(s: &str) -> EcoString {
 impl EpubItem {
     pub fn create(path: PathBuf, root: &Path) -> AnyhowResult<Self> {
         info!(file = %path.display(), "compiling spine file");
-        let document = rheo_html::compile_html_to_document(&path, root, "epub")?;
+        let document = compile_html_to_document(&path, root, "epub")?;
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
         let (heading_ids, outline) = Self::outline(&document, &href);
-        let html_string = rheo_html::compile_document_to_string(&document)?;
+        let html_string = compile_document_to_string(&document)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
         Ok(EpubItem {
@@ -380,14 +381,14 @@ impl EpubItem {
         temp_file.flush()?;
 
         let temp_path = temp_file.path();
-        let document = rheo_html::compile_html_to_document(temp_path, root, "epub")?;
+        let document = compile_html_to_document(temp_path, root, "epub")?;
 
         let parent = path.parent().unwrap();
         let bare_file = path.strip_prefix(parent).unwrap();
         let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
         let (heading_ids, outline) = Self::outline(&document, &href);
 
-        let html_string = rheo_html::compile_document_to_string(&document)?;
+        let html_string = compile_document_to_string(&document)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
 
         Ok(EpubItem {

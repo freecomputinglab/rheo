@@ -6,7 +6,7 @@ use rheo_core::compile::RheoCompileOptions;
 use rheo_core::config::PluginSection;
 use rheo_core::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use rheo_core::world::RheoWorld;
-use rheo_core::{FormatPlugin, OpenHandle, PluginContext};
+use rheo_core::{FormatPlugin, OpenHandle, PluginContext, ServerHandle};
 use rheo_core::{Result, RheoError};
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -22,6 +22,15 @@ pub struct HtmlServerHandle {
     pub server_task: tokio::task::JoinHandle<()>,
     pub url: String,
     pub reload_callback: ReloadCallback,
+}
+
+impl ServerHandle for HtmlServerHandle {
+    fn url(&self) -> &str {
+        &self.url
+    }
+    fn reload(&self) {
+        (self.reload_callback)();
+    }
 }
 
 /// Format-specific configuration parsed from the `[html]` section of rheo.toml.
@@ -118,26 +127,7 @@ impl FormatPlugin for HtmlPlugin {
     }
 }
 
-pub fn compile_html_to_document(
-    input: &Path,
-    root: &Path,
-    format_name: &str,
-) -> Result<HtmlDocument> {
-    let world = RheoWorld::new(root, input, Some(format_name))?;
-    info!(input = %input.display(), "compiling to HTML");
-    let result = typst::compile::<HtmlDocument>(&world);
-
-    let html_filter = |w: &typst::diag::SourceDiagnostic| {
-        !w.message
-            .contains("html export is under active development and incomplete")
-    };
-
-    unwrap_compilation_result(Some(&world), result, Some(html_filter))
-}
-
-pub fn compile_document_to_string(document: &HtmlDocument) -> Result<String> {
-    typst_html::html(document).map_err(|e| handle_export_errors(e, ExportErrorType::Html))
-}
+pub use rheo_core::html_compile::{compile_document_to_string, compile_html_to_document};
 
 fn compile_html_impl(
     world: &RheoWorld,

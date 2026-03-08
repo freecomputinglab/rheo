@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 # Typst dependencies
 typst = { workspace = true }
+typst-html = { workspace = true }
 typst-library = { workspace = true }
 typst-kit = { workspace = true }
 typst-syntax = { workspace = true }
