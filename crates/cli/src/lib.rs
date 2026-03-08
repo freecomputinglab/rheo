@@ -385,13 +385,14 @@ fn perform_compilation<'a>(
             let mut matched = false;
             for entry in entries.filter_map(|e| e.ok()).filter(|p| p.is_file()) {
                 matched = true;
-                let rel = entry
-                    .strip_prefix(&project.root)
-                    .unwrap_or_else(|_| entry.as_path());
+                let rel = entry.strip_prefix(&project.root).unwrap_or(entry.as_path());
                 let dest = plugin_output_dir.join(rel);
                 if let Some(parent) = dest.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| {
-                        RheoError::io(e, format!("creating directory for copy of {}", rel.display()))
+                        RheoError::io(
+                            e,
+                            format!("creating directory for copy of {}", rel.display()),
+                        )
                     })?;
                 }
                 std::fs::copy(&entry, &dest).map_err(|e| {

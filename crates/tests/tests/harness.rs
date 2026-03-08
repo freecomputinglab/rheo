@@ -745,8 +745,7 @@ fn test_copy_patterns() {
     // Source files to copy
     std::fs::write(project_path.join("readme.txt"), "hello world")
         .expect("Failed to write readme.txt");
-    std::fs::create_dir_all(project_path.join("assets"))
-        .expect("Failed to create assets dir");
+    std::fs::create_dir_all(project_path.join("assets")).expect("Failed to create assets dir");
     std::fs::write(project_path.join("assets/logo.png"), b"\x89PNG\r\n\x1a\n")
         .expect("Failed to write assets/logo.png");
 
