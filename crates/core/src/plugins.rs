@@ -4,10 +4,16 @@ use crate::project::ProjectConfig;
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Trait for managing a running preview server.
+pub trait ServerHandle: Send + Sync {
+    fn url(&self) -> &str;
+    fn reload(&self);
+}
+
 /// Handle returned by FormatPlugin::open() for managing the opened resource
 pub enum OpenHandle {
-    /// Server-based preview (HTML) - opaque handle containing runtime, task, URL, and reload callback
-    Server(Box<dyn std::any::Any + Send + Sync>),
+    /// Server-based preview — usable via ServerHandle trait methods.
+    Server(Box<dyn ServerHandle>),
     /// Direct file open (PDF/EPUB) - fire-and-forget, no reload needed
     Direct,
     /// No preview capability

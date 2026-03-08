@@ -520,37 +520,46 @@ fn init_project(target_dir: &Path) -> Result<()> {
 
     fs::create_dir_all(target_dir).map_err(|e| RheoError::io(e, "creating target directory"))?;
 
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let template_dir = manifest_dir.join("../core/src/templates/init");
+    let toml_content =
+        rheo_core::init_templates::RHEO_TOML.replace("{{VERSION}}", manifest_version::CURRENT);
+    fs::write(target_dir.join("rheo.toml"), toml_content)
+        .map_err(|e| RheoError::io(e, "writing rheo.toml"))?;
 
-    copy_template_recursive(&template_dir, target_dir)?;
+    fs::write(
+        target_dir.join("style.css"),
+        rheo_core::init_templates::STYLE_CSS,
+    )
+    .map_err(|e| RheoError::io(e, "writing style.css"))?;
 
-    let toml_path = target_dir.join("rheo.toml");
-    let toml_content = fs::read_to_string(&toml_path)
-        .map_err(|e| RheoError::io(e, "reading rheo.toml template"))?;
-    let toml_content = toml_content.replace("{{VERSION}}", manifest_version::CURRENT);
-    fs::write(&toml_path, toml_content).map_err(|e| RheoError::io(e, "writing rheo.toml"))?;
+    let content_dir = target_dir.join("content");
+    fs::create_dir_all(&content_dir)
+        .map_err(|e| RheoError::io(e, "creating content directory"))?;
 
-    info!(
-        path = %target_dir.display(),
-        "initialized rheo project"
-    );
-    Ok(())
-}
+    fs::write(
+        content_dir.join("index.typ"),
+        rheo_core::init_templates::CONTENT_INDEX_TYP,
+    )
+    .map_err(|e| RheoError::io(e, "writing index.typ"))?;
+    fs::write(
+        content_dir.join("about.typ"),
+        rheo_core::init_templates::CONTENT_ABOUT_TYP,
+    )
+    .map_err(|e| RheoError::io(e, "writing about.typ"))?;
+    fs::write(
+        content_dir.join("references.bib"),
+        rheo_core::init_templates::CONTENT_REFERENCES_BIB,
+    )
+    .map_err(|e| RheoError::io(e, "writing references.bib"))?;
 
-fn copy_template_recursive(src: &Path, dst: &Path) -> Result<()> {
-    for entry in fs::read_dir(src).map_err(|e| RheoError::io(e, "reading template directory"))? {
-        let entry = entry.map_err(|e| RheoError::io(e, "reading directory entry"))?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
+    let img_dir = content_dir.join("img");
+    fs::create_dir_all(&img_dir).map_err(|e| RheoError::io(e, "creating img directory"))?;
+    fs::write(
+        img_dir.join("header.svg"),
+        rheo_core::init_templates::CONTENT_IMG_HEADER_SVG,
+    )
+    .map_err(|e| RheoError::io(e, "writing header.svg"))?;
 
-        if src_path.is_dir() {
-            fs::create_dir_all(&dst_path).map_err(|e| RheoError::io(e, "creating directory"))?;
-            copy_template_recursive(&src_path, &dst_path)?;
-        } else {
-            fs::copy(&src_path, &dst_path).map_err(|e| RheoError::io(e, "copying file"))?;
-        }
-    }
+    info!(path = %target_dir.display(), "initialized rheo project");
     Ok(())
 }
 

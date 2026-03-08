@@ -782,32 +782,27 @@ After squashing, the working commit becomes empty again, and the pattern repeats
 
 For each bd task, follow this sequence:
 
-1. **Name the commit**: Run `jj describe -m "Present tense description"`
-   - Message describes what the app does after this change
-   - Completes the phrase: "when this commit is applied, the app..."
-   - Examples:
-     - "Renders timeline using real-world data"
-     - "Improves coloration of navbar"
-     - "Adds date-based scroll mapping to timeline"
-   - Use present tense, NOT past tense or imperative mood
-   - Focus on user-visible changes, not implementation details
-
-2. **Create working commit**: Run `jj new`
+1. **Create working commit**: Run `jj new`
    - This creates a new empty commit on top where you'll do the work
    - All file changes will go into this commit
 
-3. **Complete the bd task**:
+2. **Complete the bd task**:
    - Implement the changes
    - Test that it works
    - Close all completed issues: `bd close <id1> <id2> ...`
      - Use `bd list --status=open` to find issues to close
      - Close multiple at once (more efficient than one at a time)
 
-4. **Squash the work**: Run `jj squash`
-   - Moves all changes from the working commit (top) into the named commit (below)
-   - Working commit becomes empty again, ready for next task
+3. **Commit the work** (required after closing any beads issue):
+   - `jj squash` — move changes from working commit into the commit below
+   - `jj describe -m "Present tense description"` — name the squashed commit
+     - Message describes what the app does after this change
+     - Completes the phrase: "when this commit is applied, the app..."
+     - Use present tense, NOT past tense or imperative mood
+     - Focus on user-visible changes, not implementation details
+   - `jj new` — create a fresh working commit for the next task
 
-5. **Repeat**: Go to step 1 for the next task
+4. **Repeat**: Go to step 1 for the next task
 
 ### Commit Message Examples
 
