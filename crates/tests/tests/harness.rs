@@ -736,6 +736,82 @@ fn test_warning_formatting() {
         .output();
 }
 
+/// Test that global and per-plugin `copy` patterns in rheo.toml copy files into the build output.
+#[test]
+fn test_copy_patterns() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Source files to copy
+    std::fs::write(project_path.join("readme.txt"), "hello world")
+        .expect("Failed to write readme.txt");
+    std::fs::create_dir_all(project_path.join("assets"))
+        .expect("Failed to create assets dir");
+    std::fs::write(project_path.join("assets/logo.png"), b"\x89PNG\r\n\x1a\n")
+        .expect("Failed to write assets/logo.png");
+
+    // Typst source
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    // rheo.toml: global copies readme.txt; html-only copies assets/logo.png
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        concat!(
+            "version = \"0.1.2\"\n",
+            "formats = [\"html\"]\n",
+            "copy = [\"readme.txt\"]\n",
+            "\n",
+            "[html]\n",
+            "copy = [\"assets/logo.png\"]\n",
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Global pattern: readme.txt should appear in html output dir
+    let html_readme = build_dir.join("html/readme.txt");
+    assert!(
+        html_readme.exists(),
+        "Global copy pattern: readme.txt not found in html output"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&html_readme).unwrap(),
+        "hello world",
+        "Copied readme.txt has wrong content"
+    );
+
+    // Per-plugin pattern: assets/logo.png should appear under html/assets/
+    let html_logo = build_dir.join("html/assets/logo.png");
+    assert!(
+        html_logo.exists(),
+        "Per-plugin copy pattern: assets/logo.png not found in html output"
+    );
+}
+
 /// Test that `rheo init` creates a valid project that compiles successfully
 #[test]
 fn test_rheo_init_and_compile() {
