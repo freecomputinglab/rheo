@@ -37,6 +37,11 @@ pub struct PluginSection {
     /// Universal spine configuration (shared by all plugins).
     pub spine: Option<UniversalSpine>,
 
+    /// Per-plugin glob patterns for files to copy into this plugin's output directory.
+    /// Paths are relative to the project root; directory structure is preserved.
+    #[serde(default)]
+    pub copy: Vec<String>,
+
     /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
     /// `fonts` for HTML; `identifier`, `date` for EPUB).
     #[serde(flatten, default)]
@@ -63,6 +68,10 @@ pub struct RheoConfig {
     /// Empty = fall back to all registered plugins.
     pub formats: Vec<String>,
 
+    /// Global glob patterns for files to copy into every plugin's output directory.
+    /// Paths are relative to the project root; directory structure is preserved.
+    pub copy: Vec<String>,
+
     /// Per-plugin configuration sections, keyed by plugin name.
     /// Built from `[html]`, `[pdf]`, `[epub]` (and any other) table sections.
     pub plugin_sections: HashMap<String, PluginSection>,
@@ -75,6 +84,7 @@ impl Default for RheoConfig {
             content_dir: Some("./".to_string()),
             build_dir: Some("./build".to_string()),
             formats: vec![],
+            copy: vec![],
             plugin_sections: HashMap::new(),
         }
     }
@@ -88,6 +98,8 @@ pub struct RheoConfigRaw {
     build_dir: Option<String>,
     #[serde(default)]
     formats: Vec<String>,
+    #[serde(default)]
+    copy: Vec<String>,
     #[serde(flatten)]
     extra: HashMap<String, toml::Value>,
 }
@@ -109,6 +121,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             content_dir: raw.content_dir,
             build_dir: raw.build_dir,
             formats: raw.formats,
+            copy: raw.copy,
             plugin_sections,
         })
     }
@@ -441,5 +454,44 @@ mod tests {
             Some("urn:uuid:12345")
         );
         assert!(section.extra.get("date").is_some());
+    }
+
+    #[test]
+    fn test_global_copy_parses() {
+        let toml = versioned_toml(r#"copy = ["*.txt", "assets/**/*.png"]"#);
+        let config = parse(&toml);
+        assert_eq!(config.copy, vec!["*.txt", "assets/**/*.png"]);
+    }
+
+    #[test]
+    fn test_global_copy_defaults_empty() {
+        let toml = versioned_toml("");
+        let config = parse(&toml);
+        assert!(config.copy.is_empty());
+    }
+
+    #[test]
+    fn test_plugin_copy_parses() {
+        let toml = versioned_toml("[html]\ncopy = [\"assets/logo.png\", \"fonts/**\"]");
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        assert_eq!(section.copy, vec!["assets/logo.png", "fonts/**"]);
+    }
+
+    #[test]
+    fn test_plugin_copy_not_in_extra() {
+        let toml = versioned_toml("[html]\ncopy = [\"assets/logo.png\"]");
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        // `copy` must be in the dedicated field, not leaked into `extra`
+        assert!(section.extra.get("copy").is_none());
+    }
+
+    #[test]
+    fn test_plugin_copy_defaults_empty() {
+        let toml = versioned_toml("[html]\nstylesheets = [\"style.css\"]");
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        assert!(section.copy.is_empty());
     }
 }

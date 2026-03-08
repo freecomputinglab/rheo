@@ -370,6 +370,43 @@ fn perform_compilation<'a>(
             }
         }
 
+        // Execute copy patterns (global + per-plugin)
+        let plugin_section_for_copy = project.config.plugin_section(plugin.name());
+        for pattern in project
+            .config
+            .copy
+            .iter()
+            .chain(plugin_section_for_copy.copy.iter())
+        {
+            let abs_pattern = project.root.join(pattern).display().to_string();
+            let entries = glob::glob(&abs_pattern).map_err(|e| {
+                RheoError::project_config(format!("invalid copy pattern '{}': {}", pattern, e))
+            })?;
+            let mut matched = false;
+            for entry in entries.filter_map(|e| e.ok()).filter(|p| p.is_file()) {
+                matched = true;
+                let rel = entry
+                    .strip_prefix(&project.root)
+                    .unwrap_or_else(|_| entry.as_path());
+                let dest = plugin_output_dir.join(rel);
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        RheoError::io(e, format!("creating directory for copy of {}", rel.display()))
+                    })?;
+                }
+                std::fs::copy(&entry, &dest).map_err(|e| {
+                    RheoError::io(
+                        e,
+                        format!("copying {} to {}", entry.display(), dest.display()),
+                    )
+                })?;
+                debug!(src = %entry.display(), dest = %dest.display(), "copied file");
+            }
+            if !matched {
+                debug!(pattern = %pattern, "copy pattern matched no files");
+            }
+        }
+
         // Resolve spine options
         let spine_cfg = project.config.spine_for_plugin(plugin.name());
         let spine = SpineOptions {
