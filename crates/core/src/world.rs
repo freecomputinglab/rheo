@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::{Result, RheoError};
+use tracing::warn;
 use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
 use parking_lot::Mutex;
@@ -155,15 +156,29 @@ impl RheoWorld {
         })?;
 
         if !path.exists() {
+            // Fallback 1: Resolve against project root instead of package root.
+            // Handles the case where a file path in the project is incorrectly
+            // specified as a package path, or package resolution fails.
             if let Some(doc_path) = id.vpath().resolve(&self.root)
                 && doc_path.exists()
             {
                 return Ok(doc_path);
             }
 
+            // Fallback 2 (last resort): Look for just the filename at project root.
+            // This strips all directory components and can silently load the wrong
+            // file if the intended file doesn't exist. For example, if importing
+            // `chapters/intro.typ` fails but `intro.typ` exists at root, this will
+            // load the wrong file.
             if let Some(filename) = id.vpath().as_rooted_path().file_name() {
                 let filename_path = self.root.join(filename);
                 if filename_path.exists() {
+                    // Log a warning so this fallback is visible in verbose mode
+                    warn!(
+                        requested = %id.vpath().as_rooted_path().display(),
+                        loaded = %filename_path.display(),
+                        "path resolution fallback: using filename from project root"
+                    );
                     return Ok(filename_path);
                 }
             }
