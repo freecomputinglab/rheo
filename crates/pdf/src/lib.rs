@@ -1,6 +1,6 @@
 use rheo_core::{
-    compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes, FormatPlugin,
-    PluginContext, Result, RheoError, RheoSpine, RheoWorld, UniversalSpine,
+    FormatPlugin, PluginContext, Result, RheoError, RheoSpine, RheoWorld, UniversalSpine,
+    compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes,
 };
 use std::io::Write;
 use std::path::Path;

@@ -8,11 +8,13 @@ use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
 use rheo_core::{
-    compile_document_to_string, compile_html_to_document, eco_format, eco_vec,
-    FormatPlugin, PluginContext, PluginSection, Result, RheoError, RheoSpine,
-    RheoCompileOptions, SpineOptions, UniversalSpine,
+    DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain,
 };
-use rheo_core::{DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain};
+use rheo_core::{
+    FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError, RheoSpine,
+    SpineOptions, UniversalSpine, compile_document_to_string, compile_html_to_document, eco_format,
+    eco_vec,
+};
 use std::{
     fmt::Write as _,
     fs::File,

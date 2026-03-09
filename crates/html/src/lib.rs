@@ -7,9 +7,8 @@ mod server;
 pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
-    compile_document_to_string, compile_html_with_world, FormatPlugin, OpenHandle,
-    PluginContext, PluginSection, Result, RheoCompileOptions, RheoError, RheoWorld,
-    ServerHandle,
+    FormatPlugin, OpenHandle, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
+    RheoWorld, ServerHandle, compile_document_to_string, compile_html_with_world,
 };
 use std::path::Path;
 use tracing::{debug, info, warn};
