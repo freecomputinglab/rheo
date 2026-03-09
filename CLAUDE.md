@@ -160,8 +160,8 @@ Report: list all closed issues.
 **Workflow:**
 1. Understand goal, ask clarifying questions
 2. Decompose into discrete bd issues with type, priority, acceptance criteria
-3. Present proposal to user, wait for explicit approval
-4. Run `bd create` commands (parallel where possible), set up deps with `bd dep add`
-5. List created IDs and stop — do NOT implement
+3. Present proposal to user, ask if they want to create the issues
+4. If yes: run `bd create` commands (parallel where possible), set up deps with `bd dep add`
+5. List created IDs and stop — do NOT implement, do NOT ask if user wants to implement
 
 **Exits** when user says "bd/jj churn", "start implementing", or "go".
