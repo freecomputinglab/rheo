@@ -10,7 +10,9 @@ use rheo_core::{FormatPlugin, PluginContext, Result, RheoError, SpineOptions};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{debug, error, info};
+use rheo_core::watch::{WatchEvent, watch_project};
+use rheo_core::OpenHandle;
+use tracing::{debug, error, info, warn};
 
 // Re-export logging functionality
 pub use rheo_core::logging;
@@ -614,9 +616,7 @@ pub fn run() -> Result<()> {
 
     match matches.subcommand() {
         Some(("compile", sub)) => run_compile(sub),
-        Some(("watch", _sub)) => Err(RheoError::project_config(
-            "watch mode not yet implemented in the new architecture",
-        )),
+        Some(("watch", sub)) => run_watch(sub),
         Some(("clean", sub)) => run_clean(sub),
         Some(("init", sub)) => {
             let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
@@ -624,6 +624,97 @@ pub fn run() -> Result<()> {
         }
         _ => unreachable!("subcommand_required enforced by clap"),
     }
+}
+
+fn run_watch(sub: &ArgMatches) -> Result<()> {
+    let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
+    let config_path = sub.get_one::<String>("config").map(PathBuf::from);
+    let build_dir = sub.get_one::<String>("build-dir").map(PathBuf::from);
+    let open = sub.get_flag("open");
+
+    let all = all_plugins();
+    let enabled = enabled_formats_from_matches(sub, &all);
+
+    let mut ctx = setup_compilation_context(
+        &path,
+        config_path.as_deref(),
+        build_dir.clone(),
+        enabled.clone(),
+    )?;
+
+    // Initial compilation (best-effort; watch continues on failure)
+    if let Err(e) = perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None) {
+        warn!(error = %e, "initial compilation failed");
+    }
+
+    // Open outputs if --open requested; collect server handles for live reload
+    let mut open_handles: Vec<OpenHandle> = Vec::new();
+    if open {
+        for plugin in &ctx.plugins {
+            let out_dir = ctx.output_config.dir_for_plugin(plugin.name());
+            match plugin.open(&out_dir, plugin.name()) {
+                Ok(handle) => open_handles.push(handle),
+                Err(e) => warn!(error = %e, plugin = plugin.name(), "failed to open"),
+            }
+        }
+    }
+
+    let watch_project_cfg = ctx.project.clone();
+    let build_dir_canonical = ctx
+        .output_config
+        .base
+        .canonicalize()
+        .unwrap_or_else(|_| ctx.output_config.base.clone());
+
+    watch_project(
+        &watch_project_cfg,
+        &build_dir_canonical,
+        move |event| {
+            match event {
+                WatchEvent::FilesChanged => {
+                    info!("files changed, recompiling");
+                    if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None)
+                        .is_ok()
+                    {
+                        for handle in &open_handles {
+                            if let OpenHandle::Server(server) = handle {
+                                server.reload();
+                            }
+                        }
+                    }
+                }
+                WatchEvent::ConfigChanged => {
+                    info!("config changed, reloading");
+                    match setup_compilation_context(
+                        &path,
+                        config_path.as_deref(),
+                        build_dir.clone(),
+                        enabled.clone(),
+                    ) {
+                        Ok(new_ctx) => {
+                            ctx = new_ctx;
+                            if perform_compilation(
+                                &ctx.project,
+                                &ctx.output_config,
+                                &ctx.plugins,
+                                None,
+                            )
+                            .is_ok()
+                            {
+                                for handle in &open_handles {
+                                    if let OpenHandle::Server(server) = handle {
+                                        server.reload();
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => warn!(error = %e, "failed to reload config"),
+                    }
+                }
+            }
+            Ok(())
+        },
+    )
 }
 
 fn run_compile(sub: &ArgMatches) -> Result<()> {

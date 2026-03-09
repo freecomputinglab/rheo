@@ -13,7 +13,7 @@ pub enum ProjectMode {
 }
 
 /// Configuration for a Typst project
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProjectConfig {
     /// Project name (derived from folder basename)
     pub name: String,
