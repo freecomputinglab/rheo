@@ -221,11 +221,8 @@ pub fn generate_spine(
                     .filter(|path| path.file_name().is_some())
                     .collect();
 
-                glob_files.sort_by_cached_key(|p| {
-                    p.file_name()
-                        .expect("file_name() checked in filter above")
-                        .to_os_string()
-                });
+                // Sort by full path (lexicographic) for consistent ordering
+                glob_files.sort();
                 typst_files.extend(glob_files);
             }
 
