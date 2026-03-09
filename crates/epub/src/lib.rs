@@ -9,7 +9,7 @@ use rheo_core::config::{PluginSection, UniversalSpine};
 use rheo_core::html_compile::{compile_document_to_string, compile_html_to_document};
 use rheo_core::pdf_utils::DocumentTitle;
 use rheo_core::reticulate::spine::RheoSpine;
-use rheo_core::{FormatPlugin, PluginContext, Result, RheoError};
+use rheo_core::{FormatPlugin, PluginContext, Result, RheoError, SpineOptions};
 
 use anyhow::Result as AnyhowResult;
 use chrono::{DateTime, Utc};
@@ -58,7 +58,7 @@ impl FormatPlugin for EpubPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        compile_epub_new(ctx.options, ctx.config)
+        compile_epub_with_spine(&ctx.spine, &ctx.options, &ctx.config)
     }
 }
 
@@ -279,19 +279,28 @@ fn parse_date(section: &PluginSection) -> Option<DateTime<Utc>> {
         })
 }
 
-fn compile_epub_impl(section: &PluginSection, epub_path: &Path, root: &Path) -> Result<()> {
+fn compile_epub_impl(
+    spine: &SpineOptions,
+    epub_path: &Path,
+    root: &Path,
+    identifier: Option<&str>,
+    date: Option<&DateTime<Utc>>,
+) -> Result<()> {
     let inner = || -> AnyhowResult<()> {
-        // Use the spine from the section, or fall back to an auto-discover spine.
-        let default_spine = UniversalSpine::default();
-        let spine_config = section.spine.as_ref().unwrap_or(&default_spine);
+        // Convert SpineOptions to UniversalSpine for RheoSpine::build
+        let universal_spine = UniversalSpine {
+            title: spine.title.clone().map(|t| t.into()),
+            vertebrae: spine.vertebrae.clone(),
+            merge: Some(spine.merge),
+        };
 
         // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
-        let rheo_spine = RheoSpine::build(root, Some(spine_config), "epub")?;
+        let rheo_spine = RheoSpine::build(root, Some(&universal_spine), "epub")?;
 
         // Get the spine file paths
-        let spine = rheo_core::reticulate::spine::generate_spine(root, Some(spine_config), false)?;
+        let spine_paths = rheo_core::reticulate::spine::generate_spine(root, Some(&universal_spine), false)?;
 
-        let mut items = spine
+        let mut items = spine_paths
             .iter()
             .zip(rheo_spine.source.iter())
             .map(|(path, transformed_source)| {
@@ -299,11 +308,9 @@ fn compile_epub_impl(section: &PluginSection, epub_path: &Path, root: &Path) -> 
             })
             .collect::<AnyhowResult<Vec<_>>>()?;
 
-        let identifier = parse_identifier(section);
-        let date = parse_date(section);
         let nav_xhtml = generate_nav_xhtml(&mut items)?;
         let package_string =
-            generate_package(&items, spine_config, identifier.as_deref(), date.as_ref())?;
+            generate_package(&items, &universal_spine, identifier, date)?;
         zip_epub(epub_path, package_string, nav_xhtml, &items)
     };
 
@@ -316,9 +323,15 @@ fn compile_epub_impl(section: &PluginSection, epub_path: &Path, root: &Path) -> 
     Ok(())
 }
 
-/// Compile Typst documents to EPUB.
-pub fn compile_epub_new(options: RheoCompileOptions, section: PluginSection) -> Result<()> {
-    compile_epub_impl(&section, &options.output, &options.root)
+/// Compile Typst documents to EPUB using resolved spine options.
+fn compile_epub_with_spine(
+    spine: &SpineOptions,
+    options: &RheoCompileOptions<'_>,
+    section: &PluginSection,
+) -> Result<()> {
+    let identifier = parse_identifier(section);
+    let date = parse_date(section);
+    compile_epub_impl(spine, &options.output, &options.root, identifier.as_deref(), date.as_ref())
 }
 
 pub struct EpubItem {

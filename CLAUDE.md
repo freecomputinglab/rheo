@@ -791,31 +791,41 @@ For each bd task, follow this sequence:
      - `jj describe -m "Present tense description"` on that commit
    - If no such commit exists, you'll create it after squashing
 
-3. **Ensure a fresh working commit**: Run `jj new`
+3. **Verify jj identity is configured** (before running `jj new`):
+   - Run `jj config list --user` to check user-level config
+   - If empty or missing `user.name`/`user.email`, configure it:
+     ```bash
+     jj config set --user user.name "Your Name"
+     jj config set --user user.email "your.email@example.com"
+     ```
+   - **Why this matters**: `jj new` creates commits with your configured identity. Without it, commits show "(no email set)" and cannot be pushed to remotes. Git identity is NOT automatically imported for new commits.
+
+4. **Ensure a fresh working commit**: Run `jj new`
    - This creates a new empty commit on top where you'll do the work
    - All file changes will go into this commit
 
-4. **Do the work**:
+5. **Do the work**:
    - Implement the changes
    - Test that it works
    - Run tests as needed
 
-5. **Squash and name**: `jj squash` then `jj describe -m "Present tense description"`
+6. **Squash and name**: `jj squash` then `jj describe -m "Present tense description"`
    - Move changes from working commit into the named commit below
    - The commit message describes what the app does after this change
    - Completes the phrase: "when this commit is applied, the app..."
    - Use present tense, NOT past tense or imperative mood
    - Focus on user-visible changes, not implementation details
 
-6. **Verify the history**: Run `jj log`
+7. **Verify the history**: Run `jj log`
    - Confirm the named commit now contains your changes
    - Confirm the working commit is empty again
+   - Check that both author and committer have proper identity (not "(no email set)")
 
-7. **Close the issue**: `bd close <id> --reason "Done"`
+8. **Close the issue**: `bd close <id> --reason "Done"`
    - Marks the task as complete
    - Use `bd close <id1> <id2> ...` to close multiple at once
 
-8. **Repeat**: Go to step 1 for the next task
+9. **Repeat**: Go to step 1 for the next task
 
 ### Commit Message Examples
 
