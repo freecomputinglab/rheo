@@ -271,7 +271,12 @@ fn get_files_for_plugin(
                 .config
                 .resolve_content_dir(&project.root)
                 .unwrap_or_else(|| project.root.clone());
-            rheo_core::reticulate::spine::generate_spine(&content_dir, Some(spine), false)
+            let spine_options = SpineOptions {
+                title: spine.title.clone(),
+                vertebrae: spine.vertebrae.clone(),
+                merge: spine.merge.unwrap_or(false),
+            };
+            rheo_core::reticulate::spine::generate_spine(&content_dir, Some(&spine_options), false)
         }
     }
 }

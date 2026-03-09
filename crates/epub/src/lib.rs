@@ -134,7 +134,7 @@ fn date_format(dt: &DateTime<Utc>) -> EcoString {
 /// Generates the package.opf XML string from the generated EPUB items.
 pub fn generate_package(
     items: &[EpubItem],
-    spine: &Spine,
+    spine: &SpineOptions,
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
 ) -> Result<String> {
@@ -321,20 +321,13 @@ fn compile_epub_impl(
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
 ) -> Result<()> {
-    // Convert SpineOptions to Spine for BuiltSpine::build
-    let universal_spine = Spine {
-        title: spine.title.clone(),
-        vertebrae: spine.vertebrae.clone(),
-        merge: Some(spine.merge),
-    };
-
     // Build BuiltSpine with AST-transformed sources (.typ links → .xhtml)
     // EPUB handles concatenation itself via create_from_source, so merge=false
-    let rheo_spine = BuiltSpine::build(root, Some(&universal_spine), "epub", false)?;
+    let rheo_spine = BuiltSpine::build(root, Some(spine), "epub", false)?;
 
     // Get the spine file paths
     let spine_paths =
-        rheo_core::reticulate::spine::generate_spine(root, Some(&universal_spine), false)?;
+        rheo_core::reticulate::spine::generate_spine(root, Some(spine), false)?;
 
     let mut items = spine_paths
         .iter()
@@ -345,7 +338,7 @@ fn compile_epub_impl(
         .collect::<Result<Vec<_>>>()?;
 
     let nav_xhtml = generate_nav_xhtml(&mut items)?;
-    let package_string = generate_package(&items, &universal_spine, identifier, date)?;
+    let package_string = generate_package(&items, spine, identifier, date)?;
     zip_epub(epub_path, package_string, nav_xhtml, &items)?;
 
     info!(output = %epub_path.display(), "successfully generated EPUB");

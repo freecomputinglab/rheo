@@ -1,4 +1,4 @@
-use crate::config::Spine;
+use crate::plugins::SpineOptions;
 use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
 use crate::{Result, RheoError, TYP_EXT};
 use std::collections::HashMap;
@@ -32,7 +32,7 @@ impl BuiltSpine {
     /// * `merge` - Whether to merge spine files into a single source (caller decides)
     pub fn build(
         root: &Path,
-        spine_config: Option<&Spine>,
+        spine_config: Option<&SpineOptions>,
         format_name: &str,
         merge: bool,
     ) -> Result<BuiltSpine> {
@@ -193,7 +193,7 @@ fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
 /// Generates a spine (ordered list of .typ files) based on configuration.
 pub fn generate_spine(
     root: &Path,
-    spine_config: Option<&Spine>,
+    spine_config: Option<&SpineOptions>,
     require_spine: bool,
 ) -> Result<Vec<PathBuf>> {
     if require_spine && spine_config.is_none() {
@@ -254,11 +254,11 @@ mod tests {
         temp
     }
 
-    fn spine_with_vertebrae(vertebrae: Vec<String>) -> Spine {
-        Spine {
+    fn spine_with_vertebrae(vertebrae: Vec<String>) -> SpineOptions {
+        SpineOptions {
             title: Some("Test".to_string()),
             vertebrae,
-            merge: None,
+            merge: false,
         }
     }
 
@@ -329,14 +329,14 @@ mod tests {
             "chapters/ch2.typ",
             "appendix.typ",
         ]);
-        let spine = Spine {
+        let spine = SpineOptions {
             title: Some("Book".to_string()),
             vertebrae: vec![
                 "cover.typ".to_string(),
                 "chapters/*.typ".to_string(),
                 "appendix.typ".to_string(),
             ],
-            merge: None,
+            merge: false,
         };
         let result = generate_spine(temp.path(), Some(&spine), true);
         assert!(result.is_ok());

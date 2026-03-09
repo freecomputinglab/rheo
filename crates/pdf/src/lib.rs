@@ -1,5 +1,5 @@
 use rheo_core::{
-    BuiltSpine, FormatPlugin, PluginContext, Result, RheoError, RheoWorld, Spine,
+    BuiltSpine, FormatPlugin, PluginContext, Result, RheoError, RheoWorld, SpineOptions,
     compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes,
 };
 use std::io::Write;
@@ -29,12 +29,7 @@ impl FormatPlugin for PdfPlugin {
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
         if ctx.spine.merge {
-            let spine = Spine {
-                title: ctx.spine.title.clone(),
-                vertebrae: ctx.spine.vertebrae.clone(),
-                merge: Some(true),
-            };
-            compile_pdf_merged_impl(&spine, &ctx.options.output, &ctx.options.root)
+            compile_pdf_merged_impl(&ctx.spine, &ctx.options.output, &ctx.options.root)
         } else {
             let world = ctx.options.world.ok_or_else(|| {
                 RheoError::project_config(
@@ -60,9 +55,9 @@ fn compile_pdf_single_impl(world: &RheoWorld, output: &Path) -> Result<()> {
     Ok(())
 }
 
-fn compile_pdf_merged_impl(spine_config: &Spine, output_path: &Path, root: &Path) -> Result<()> {
+fn compile_pdf_merged_impl(spine_config: &SpineOptions, output_path: &Path, root: &Path) -> Result<()> {
     // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
-    let merge = spine_config.merge.unwrap_or(false);
+    let merge = spine_config.merge;
     let rheo_spine = BuiltSpine::build(root, Some(spine_config), "pdf", merge)?;
 
     debug!(file_count = rheo_spine.source.len(), "built PDF spine");
