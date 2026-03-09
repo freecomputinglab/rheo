@@ -129,12 +129,20 @@ jj config set --user user.email "lachie@ohrg.org"
 3. `jj new` — fresh working commit
 4. Do the work, run tests
 5. `jj squash` then `jj describe -r @- -m "Present tense description"`
-6. `jj log` — verify history and identity
+6. `jj log` — verify history shows correct author on each commit (not empty/unknown)
 7. `bd close <id> --reason "Done"`
 
 ---
 
 ## bd/jj Churn (only when user says "bd/jj churn")
+
+**Before first loop iteration** — verify jj identity (commits without author are broken):
+```bash
+jj config list --user
+# Must show user.name and user.email. If missing:
+jj config set --user user.name "Lachlan Kermode"
+jj config set --user user.email "lachie@ohrg.org"
+```
 
 Loop until no open issues:
 1. `bd ready --json` — pick highest priority (bugs/tasks/features, not epics/chores)
@@ -162,7 +170,7 @@ Report: list all closed issues.
 2. Decompose into discrete bd issues with type, priority, acceptance criteria
 3. Present proposal to user, ask if they want to create the issues
 4. If yes: run `bd create` commands (parallel where possible), set up deps with `bd dep add`
-   - Each issue's `--description` must include full context: background, relevant code locations, and the projected fix/approach so the implementer has everything needed without re-investigating
+   - Each issue's `--description` must be procedural and unambiguous — written as if for an agent with no prior context. Include: background, relevant file paths and line numbers, exact steps to implement, and the expected outcome. The implementer must not need to investigate or infer anything.
 5. List created IDs and stop — do NOT implement, do NOT ask if user wants to implement
 
 **Exits** when user says "bd/jj churn", "start implementing", or "go".
