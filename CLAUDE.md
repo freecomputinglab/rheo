@@ -809,8 +809,9 @@ For each bd task, follow this sequence:
    - Test that it works
    - Run tests as needed
 
-6. **Squash and name**: `jj squash` then `jj describe -m "Present tense description"`
-   - Move changes from working commit into the named commit below
+6. **Squash and name**: `jj squash` then `jj describe -r @- -m "Present tense description"`
+   - Move changes from working commit into the parent commit
+   - **IMPORTANT**: Use `-r @-` to describe the parent commit (which now has your changes), not the working commit
    - The commit message describes what the app does after this change
    - Completes the phrase: "when this commit is applied, the app..."
    - Use present tense, NOT past tense or imperative mood
