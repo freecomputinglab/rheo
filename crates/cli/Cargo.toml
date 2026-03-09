@@ -13,10 +13,10 @@ path = "src/main.rs"
 
 [dependencies]
 # Internal crates
-rheo-core = { path = "../core", version = "0.1.2" }
-rheo-html = { path = "../html", version = "0.1.2" }
-rheo-pdf = { path = "../pdf", version = "0.1.2" }
-rheo-epub = { path = "../epub", version = "0.1.2" }
+rheo-core = { path = "../core", version = "0.2.0" }
+rheo-html = { path = "../html", version = "0.2.0" }
+rheo-pdf = { path = "../pdf", version = "0.2.0" }
+rheo-epub = { path = "../epub", version = "0.2.0" }
 
 # CLI and utilities
 clap = { workspace = true }
