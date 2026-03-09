@@ -55,7 +55,11 @@ fn compile_pdf_single_impl(world: &RheoWorld, output: &Path) -> Result<()> {
     Ok(())
 }
 
-fn compile_pdf_merged_impl(spine_config: &SpineOptions, output_path: &Path, root: &Path) -> Result<()> {
+fn compile_pdf_merged_impl(
+    spine_config: &SpineOptions,
+    output_path: &Path,
+    root: &Path,
+) -> Result<()> {
     // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
     let merge = spine_config.merge;
     let rheo_spine = BuiltSpine::build(root, Some(spine_config), "pdf", merge)?;

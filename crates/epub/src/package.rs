@@ -24,7 +24,7 @@ pub struct Package {
     pub prefix: EcoString,
     pub metadata: Metadata,
     pub manifest: Manifest,
-    pub spine: Spine,
+    pub spine: ReadingOrder,
 }
 
 impl Package {
@@ -185,7 +185,7 @@ impl PackageBuilder {
             items: self.manifest_items,
         };
 
-        let spine = Spine {
+        let spine = ReadingOrder {
             itemref: self.spine_itemrefs,
         };
 
@@ -336,7 +336,7 @@ pub struct Item {
 
 /// https://www.w3.org/TR/epub-33/#sec-pkg-spine
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct Spine {
+pub struct ReadingOrder {
     #[serde(default)]
     pub itemref: Vec<ItemRef>,
 }
