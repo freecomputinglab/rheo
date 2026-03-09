@@ -9,7 +9,7 @@ use walkdir::WalkDir;
 
 /// A spine with relative linking transformations.
 #[derive(Debug, Clone)]
-pub struct RheoSpine {
+pub struct BuiltSpine {
     /// The name of the file or website that the spine will generate.
     pub title: Option<String>,
 
@@ -22,7 +22,7 @@ pub struct RheoSpine {
     pub source: Vec<String>,
 }
 
-impl RheoSpine {
+impl BuiltSpine {
     /// Build a RheoSpine with AST-based link transformation for all output formats.
     ///
     /// # Arguments
@@ -35,7 +35,7 @@ impl RheoSpine {
         spine_config: Option<&Spine>,
         format_name: &str,
         merge: bool,
-    ) -> Result<RheoSpine> {
+    ) -> Result<BuiltSpine> {
         let spine_files = generate_spine(root, spine_config, false)?;
         check_duplicate_filenames(&spine_files)?;
 
@@ -78,7 +78,7 @@ impl RheoSpine {
 
         let title = spine_config.and_then(|s| s.title.clone());
 
-        Ok(RheoSpine {
+        Ok(BuiltSpine {
             title,
             is_merged: should_merge,
             source: final_sources,

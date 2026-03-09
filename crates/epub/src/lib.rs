@@ -8,12 +8,11 @@ use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
 use rheo_core::{
-    DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain,
+    BuiltSpine, FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
+    Spine, SpineOptions, compile_document_to_string, compile_html_to_document, eco_format, eco_vec,
 };
 use rheo_core::{
-    FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError, RheoSpine,
-    SpineOptions, Spine, compile_document_to_string, compile_html_to_document, eco_format,
-    eco_vec,
+    DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain,
 };
 use std::{
     fmt::Write as _,
@@ -322,16 +321,16 @@ fn compile_epub_impl(
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
 ) -> Result<()> {
-    // Convert SpineOptions to Spine for RheoSpine::build
+    // Convert SpineOptions to Spine for BuiltSpine::build
     let universal_spine = Spine {
         title: spine.title.clone(),
         vertebrae: spine.vertebrae.clone(),
         merge: Some(spine.merge),
     };
 
-    // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
+    // Build BuiltSpine with AST-transformed sources (.typ links → .xhtml)
     // EPUB handles concatenation itself via create_from_source, so merge=false
-    let rheo_spine = RheoSpine::build(root, Some(&universal_spine), "epub", false)?;
+    let rheo_spine = BuiltSpine::build(root, Some(&universal_spine), "epub", false)?;
 
     // Get the spine file paths
     let spine_paths =

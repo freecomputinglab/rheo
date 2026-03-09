@@ -1,5 +1,5 @@
 use rheo_core::{
-    FormatPlugin, PluginContext, Result, RheoError, RheoSpine, RheoWorld, Spine,
+    BuiltSpine, FormatPlugin, PluginContext, Result, RheoError, RheoWorld, Spine,
     compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes,
 };
 use std::io::Write;
@@ -60,14 +60,10 @@ fn compile_pdf_single_impl(world: &RheoWorld, output: &Path) -> Result<()> {
     Ok(())
 }
 
-fn compile_pdf_merged_impl(
-    spine_config: &Spine,
-    output_path: &Path,
-    root: &Path,
-) -> Result<()> {
+fn compile_pdf_merged_impl(spine_config: &Spine, output_path: &Path, root: &Path) -> Result<()> {
     // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
     let merge = spine_config.merge.unwrap_or(false);
-    let rheo_spine = RheoSpine::build(root, Some(spine_config), "pdf", merge)?;
+    let rheo_spine = BuiltSpine::build(root, Some(spine_config), "pdf", merge)?;
 
     debug!(file_count = rheo_spine.source.len(), "built PDF spine");
 
