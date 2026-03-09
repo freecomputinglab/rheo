@@ -472,9 +472,16 @@ fn perform_compilation(
                     compile_one_file(existing_world, typ_file, &pfc, &mut results)?;
                 }
             } else {
+                // Collect plugin library code to inject
+                let plugin_library = plugin.typst_library().map(|s| s.to_string());
+
                 for typ_file in &files {
-                    let mut fresh_world =
-                        RheoWorld::new(&project.root, typ_file, Some(plugin.name()))?;
+                    let mut fresh_world = RheoWorld::new(
+                        &project.root,
+                        typ_file,
+                        Some(plugin.name()),
+                        plugin_library.clone(),
+                    )?;
                     compile_one_file(&mut fresh_world, typ_file, &pfc, &mut results)?;
                 }
             }

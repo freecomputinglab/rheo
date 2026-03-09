@@ -39,6 +39,8 @@ pub struct RheoWorld {
     /// Output format name for link transformations and polyfill injection.
     /// None = no transformation.
     format_name: Option<String>,
+    /// Plugin-contributed Typst library code, injected after core prelude.
+    plugin_library: Option<String>,
 }
 
 struct FileSlot {
@@ -53,7 +55,13 @@ impl RheoWorld {
     /// * `root` - The root directory for resolving imports
     /// * `main_file` - The main .typ file to compile
     /// * `format_name` - Plugin name for link transformations (e.g. "pdf", "html", "epub"; None = no transformation)
-    pub fn new(root: &Path, main_file: &Path, format_name: Option<&str>) -> Result<Self> {
+    /// * `plugin_library` - Optional plugin-contributed Typst library code to inject after core prelude
+    pub fn new(
+        root: &Path,
+        main_file: &Path,
+        format_name: Option<&str>,
+        plugin_library: Option<String>,
+    ) -> Result<Self> {
         let root = root.canonicalize().map_err(|e| {
             RheoError::path(
                 root,
@@ -99,6 +107,7 @@ impl RheoWorld {
             slots: Mutex::new(HashMap::new()),
             package_storage,
             format_name: format_name.map(str::to_string),
+            plugin_library,
         })
     }
 
@@ -244,12 +253,13 @@ impl World for RheoWorld {
             ""
         };
 
-        // For the main file, also inject the rheo.typ template.
+        // For the main file, also inject the rheo.typ template and plugin library code.
         if id == self.main {
             let rheo_content = include_str!("typ/rheo.typ");
+            let plugin_lib_content = self.plugin_library.as_deref().unwrap_or("");
             let template_inject = format!(
-                "{}{}\n#show: rheo_template\n\n",
-                target_polyfill, rheo_content
+                "{}{}\n{}\n#show: rheo_template\n\n",
+                target_polyfill, rheo_content, plugin_lib_content
             );
             text = format!("{}{}", template_inject, text);
         } else if !target_polyfill.is_empty() {

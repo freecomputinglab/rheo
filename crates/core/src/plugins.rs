@@ -288,6 +288,52 @@ pub trait FormatPlugin: Send + Sync {
         vec![]
     }
 
+    /// Provide Typst library code to inject into all compiled files.
+    ///
+    /// This method allows plugins to contribute format-specific Typst functions,
+    /// variables, and show rules that are automatically available in all user `.typ` files.
+    ///
+    /// # Return value
+    ///
+    /// - `Some(code)` — Typst code to inject (concatenated with core prelude and other plugin contributions)
+    /// - `None` — no library code contributed (default)
+    ///
+    /// # Injection order
+    ///
+    /// Plugin library code is injected after the core rheo prelude but before user code:
+    ///
+    /// ```text
+    /// 1. Target polyfill (for EPUB)
+    /// 2. Core rheo.typ prelude (rheo-target(), is-rheo-*(), rheo_template)
+    /// 3. Plugin library code (all plugins concatenated, sorted by plugin name)
+    /// 4. User file content
+    /// ```
+    ///
+    /// # Symbol conflicts
+    ///
+    /// Rheo does **not** detect symbol conflicts between plugin libraries. Plugins should use
+    /// prefixed names (e.g., `pdf-lemma()`, `html-toc()`) to avoid collisions.
+    ///
+    /// # When to use this
+    ///
+    /// - **Do**: Provide format-specific show rules, helper functions, or constants
+    /// - **Don't**: Duplicate core functionality (use `is-rheo-*()` helpers instead)
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn typst_library(&self) -> Option<&'static str> {
+    ///     Some(#let pdf-watermark() = [CONFIDENTIAL])
+    /// }
+    /// ```
+    ///
+    /// # Default implementation
+    ///
+    /// Returns `None` (no library code contributed).
+    fn typst_library(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Compile one file (per-file mode) or merged output (merged mode).
     ///
     /// This is the core compilation method. The behavior depends on `ctx.spine.merge`:

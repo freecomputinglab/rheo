@@ -17,6 +17,19 @@ impl FormatPlugin for PdfPlugin {
         "pdf"
     }
 
+    fn typst_library(&self) -> Option<&'static str> {
+        // PDF-specific lemma function for numbered lemmas in academic documents
+        Some(
+            r#"
+#let lemmacount = counter("lemmas")
+#let lemma(it) = block(inset: 8pt, [
+  #lemmacount.step()
+  #strong[Lemma #context lemmacount.display()]: #it
+])
+"#,
+        )
+    }
+
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
         if ctx.spine.merge {
             let spine = UniversalSpine {
@@ -81,7 +94,8 @@ fn compile_pdf_merged_impl(
     debug!(temp_path = %temp_path.display(), "created temporary file");
 
     // output_format=None because links already transformed to labels by RheoSpine
-    let document = compile_pdf_to_document(temp_path, root, None)?;
+    let plugin_library = PdfPlugin.typst_library().map(|s| s.to_string());
+    let document = compile_pdf_to_document(temp_path, root, None, plugin_library)?;
 
     debug!(output = %output_path.display(), "exporting to PDF");
     let pdf_bytes = document_to_pdf_bytes(&document)?;

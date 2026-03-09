@@ -410,7 +410,8 @@ impl EpubItem {
             .map_err(|e| RheoError::io(e, "flushing temp file"))?;
 
         let temp_path = temp_file.path();
-        let document = compile_html_to_document(temp_path, root, "epub")?;
+        let plugin_library = EpubPlugin.typst_library().map(|s| s.to_string());
+        let document = compile_html_to_document(temp_path, root, "epub", plugin_library)?;
 
         let parent = path.parent().ok_or_else(|| {
             RheoError::invalid_data(format!("path has no parent: {}", path.display()))

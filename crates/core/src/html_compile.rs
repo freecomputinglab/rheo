@@ -10,8 +10,9 @@ pub fn compile_html_to_document(
     input: &Path,
     root: &Path,
     format_name: &str,
+    plugin_library: Option<String>,
 ) -> Result<HtmlDocument> {
-    let world = RheoWorld::new(root, input, Some(format_name))?;
+    let world = RheoWorld::new(root, input, Some(format_name), plugin_library)?;
     info!(input = %input.display(), "compiling to HTML");
     let result = typst::compile::<HtmlDocument>(&world);
 

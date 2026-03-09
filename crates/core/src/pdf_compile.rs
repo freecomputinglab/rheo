@@ -19,13 +19,14 @@ use typst::layout::PagedDocument;
 /// * `input` - Path to the .typ file to compile
 /// * `root` - Project root directory for resolving imports
 /// * `format_name` - Output format name for link transformations (e.g., "pdf", None)
+/// * `plugin_library` - Optional plugin-contributed Typst library code to inject
 ///
 /// # Returns
 /// A PagedDocument ready for PDF export
 ///
 /// # Example
 /// ```ignore
-/// let document = compile_pdf_to_document(&input_path, &project_root, Some("pdf"))?;
+/// let document = compile_pdf_to_document(&input_path, &project_root, Some("pdf"), None)?;
 /// let pdf_bytes = document_to_pdf_bytes(&document)?;
 /// std::fs::write("output.pdf", &pdf_bytes)?;
 /// ```
@@ -33,8 +34,9 @@ pub fn compile_pdf_to_document(
     input: &Path,
     root: &Path,
     format_name: Option<&str>,
+    plugin_library: Option<String>,
 ) -> Result<PagedDocument> {
-    let world = RheoWorld::new(root, input, format_name)?;
+    let world = RheoWorld::new(root, input, format_name, plugin_library)?;
     info!(input = %input.display(), "compiling to PDF");
     let result = typst::compile::<PagedDocument>(&world);
     unwrap_compilation_result(Some(&world), result, None::<fn(&_) -> bool>)

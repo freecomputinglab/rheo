@@ -15,12 +15,6 @@
 #let is-rheo-html() = "rheo-target" in sys.inputs and sys.inputs.rheo-target == "html"
 #let is-rheo-pdf() = "rheo-target" in sys.inputs and sys.inputs.rheo-target == "pdf"
 
-#let lemmacount = counter("lemmas")
-#let lemma(it) = block(inset: 8pt, [
-  #lemmacount.step()
-  #strong[Lemma #context lemmacount.display()]: #it
-])
-
 #let rheo_template(doc) = context {
   doc
 }
