@@ -11,7 +11,7 @@
     [Module: EPUB]
   } else if fmt == "html" {
     [Module: HTML]
-  } else if fmt == "pdf" or fmt == "paged" {
+  } else if fmt == "pdf" {
     [Module: PDF]
   } else {
     [Module: Unknown (#fmt)]

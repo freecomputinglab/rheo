@@ -245,8 +245,8 @@ impl World for RheoWorld {
         let path = self.path_for_id(id)?;
         let mut text = fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
 
-        // Inject target() polyfill into ALL .typ files for EPUB compilation.
-        let target_polyfill = if self.format_name.as_deref() == Some("epub") {
+        // Inject target() polyfill for all plugin formats.
+        let target_polyfill = if self.format_name.is_some() {
             "// Polyfill target() to return rheo's output format from sys.inputs\n\
              #let target() = if \"rheo-target\" in sys.inputs { sys.inputs.rheo-target } else { std.target() }\n\n"
         } else {
