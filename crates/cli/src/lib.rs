@@ -1,17 +1,17 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use rheo_core::OpenHandle;
 use rheo_core::compile::RheoCompileOptions;
 use rheo_core::config::PluginSection;
 use rheo_core::manifest_version;
 use rheo_core::output::OutputConfig;
 use rheo_core::project::ProjectConfig;
 use rheo_core::results::CompilationResults;
+use rheo_core::watch::{WatchEvent, watch_project};
 use rheo_core::world::RheoWorld;
 use rheo_core::{FormatPlugin, PluginContext, Result, RheoError, SpineOptions};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use rheo_core::watch::{WatchEvent, watch_project};
-use rheo_core::OpenHandle;
 use tracing::{debug, error, info, warn};
 
 // Re-export logging functionality
@@ -254,25 +254,24 @@ fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
         .ok_or_else(|| RheoError::project_config(format!("invalid .typ filename: {:?}", typ_file)))
 }
 
-fn get_files_for_plugin<'a>(
+fn get_files_for_plugin(
     plugin: &dyn FormatPlugin,
-    project: &'a ProjectConfig,
-) -> Result<Vec<&'a PathBuf>> {
+    project: &ProjectConfig,
+) -> Result<Vec<PathBuf>> {
     match project.config.spine_for_plugin(plugin.name()) {
-        None => Ok(project.typ_files.iter().collect()),
+        None => {
+            // No spine config: return all .typ files sorted lexicographically
+            let mut files = project.typ_files.clone();
+            files.sort();
+            Ok(files)
+        }
         Some(spine) => {
+            // Spine config: return spine files in declared order
             let content_dir = project
                 .config
                 .resolve_content_dir(&project.root)
                 .unwrap_or_else(|| project.root.clone());
-            let spine_files =
-                rheo_core::reticulate::spine::generate_spine(&content_dir, Some(spine), false)?;
-            let spine_set: HashSet<_> = spine_files.iter().collect();
-            Ok(project
-                .typ_files
-                .iter()
-                .filter(|f| spine_set.contains(f))
-                .collect())
+            rheo_core::reticulate::spine::generate_spine(&content_dir, Some(spine), false)
         }
     }
 }
@@ -665,55 +664,45 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         .canonicalize()
         .unwrap_or_else(|_| ctx.output_config.base.clone());
 
-    watch_project(
-        &watch_project_cfg,
-        &build_dir_canonical,
-        move |event| {
-            match event {
-                WatchEvent::FilesChanged => {
-                    info!("files changed, recompiling");
-                    if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None)
-                        .is_ok()
-                    {
-                        for handle in &open_handles {
-                            if let OpenHandle::Server(server) = handle {
-                                server.reload();
-                            }
+    watch_project(&watch_project_cfg, &build_dir_canonical, move |event| {
+        match event {
+            WatchEvent::FilesChanged => {
+                info!("files changed, recompiling");
+                if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None).is_ok()
+                {
+                    for handle in &open_handles {
+                        if let OpenHandle::Server(server) = handle {
+                            server.reload();
                         }
-                    }
-                }
-                WatchEvent::ConfigChanged => {
-                    info!("config changed, reloading");
-                    match setup_compilation_context(
-                        &path,
-                        config_path.as_deref(),
-                        build_dir.clone(),
-                        enabled.clone(),
-                    ) {
-                        Ok(new_ctx) => {
-                            ctx = new_ctx;
-                            if perform_compilation(
-                                &ctx.project,
-                                &ctx.output_config,
-                                &ctx.plugins,
-                                None,
-                            )
-                            .is_ok()
-                            {
-                                for handle in &open_handles {
-                                    if let OpenHandle::Server(server) = handle {
-                                        server.reload();
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => warn!(error = %e, "failed to reload config"),
                     }
                 }
             }
-            Ok(())
-        },
-    )
+            WatchEvent::ConfigChanged => {
+                info!("config changed, reloading");
+                match setup_compilation_context(
+                    &path,
+                    config_path.as_deref(),
+                    build_dir.clone(),
+                    enabled.clone(),
+                ) {
+                    Ok(new_ctx) => {
+                        ctx = new_ctx;
+                        if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None)
+                            .is_ok()
+                        {
+                            for handle in &open_handles {
+                                if let OpenHandle::Server(server) = handle {
+                                    server.reload();
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => warn!(error = %e, "failed to reload config"),
+                }
+            }
+        }
+        Ok(())
+    })
 }
 
 fn run_compile(sub: &ArgMatches) -> Result<()> {

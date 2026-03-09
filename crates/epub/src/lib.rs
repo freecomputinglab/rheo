@@ -289,7 +289,7 @@ fn compile_epub_impl(
     let inner = || -> AnyhowResult<()> {
         // Convert SpineOptions to UniversalSpine for RheoSpine::build
         let universal_spine = UniversalSpine {
-            title: spine.title.clone().map(|t| t.into()),
+            title: spine.title.clone(),
             vertebrae: spine.vertebrae.clone(),
             merge: Some(spine.merge),
         };
@@ -299,7 +299,8 @@ fn compile_epub_impl(
         let rheo_spine = RheoSpine::build(root, Some(&universal_spine), "epub", false)?;
 
         // Get the spine file paths
-        let spine_paths = rheo_core::reticulate::spine::generate_spine(root, Some(&universal_spine), false)?;
+        let spine_paths =
+            rheo_core::reticulate::spine::generate_spine(root, Some(&universal_spine), false)?;
 
         let mut items = spine_paths
             .iter()
@@ -310,8 +311,7 @@ fn compile_epub_impl(
             .collect::<AnyhowResult<Vec<_>>>()?;
 
         let nav_xhtml = generate_nav_xhtml(&mut items)?;
-        let package_string =
-            generate_package(&items, &universal_spine, identifier, date)?;
+        let package_string = generate_package(&items, &universal_spine, identifier, date)?;
         zip_epub(epub_path, package_string, nav_xhtml, &items)
     };
 
@@ -332,7 +332,13 @@ fn compile_epub_with_spine(
 ) -> Result<()> {
     let identifier = parse_identifier(section);
     let date = parse_date(section);
-    compile_epub_impl(spine, &options.output, &options.root, identifier.as_deref(), date.as_ref())
+    compile_epub_impl(
+        spine,
+        &options.output,
+        &options.root,
+        identifier.as_deref(),
+        date.as_ref(),
+    )
 }
 
 pub struct EpubItem {
