@@ -77,7 +77,10 @@ pub trait FormatPlugin: Send + Sync {
     fn apply_defaults(&self, _section: &mut PluginSection, _project_name: &str) {}
 
     /// Open the output for this format in the appropriate viewer.
-    fn open(&self, output_dir: &Path, format_name: &str) -> crate::Result<OpenHandle>;
+    fn open(&self, output_dir: &Path, _format_name: &str) -> crate::Result<OpenHandle> {
+        crate::open_all_files_in_folder(output_dir.to_path_buf(), self.name())?;
+        Ok(OpenHandle::Direct)
+    }
 
     /// Declare additional non-Typst input files this plugin needs.
     fn inputs(&self) -> Vec<PluginInput> {

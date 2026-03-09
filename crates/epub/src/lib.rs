@@ -9,7 +9,7 @@ use rheo_core::config::{PluginSection, UniversalSpine};
 use rheo_core::html_compile::{compile_document_to_string, compile_html_to_document};
 use rheo_core::pdf_utils::DocumentTitle;
 use rheo_core::reticulate::spine::RheoSpine;
-use rheo_core::{FormatPlugin, OpenHandle, PluginContext, Result, RheoError};
+use rheo_core::{FormatPlugin, PluginContext, Result, RheoError};
 
 use anyhow::Result as AnyhowResult;
 use chrono::{DateTime, Utc};
@@ -55,11 +55,6 @@ impl FormatPlugin for EpubPlugin {
         if spine.title.is_none() {
             spine.title = Some(DocumentTitle::to_readable_name(project_name));
         }
-    }
-
-    fn open(&self, output_dir: &Path, _format_name: &str) -> Result<OpenHandle> {
-        rheo_core::open_all_files_in_folder(output_dir.to_path_buf(), "epub")?;
-        Ok(OpenHandle::Direct)
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {

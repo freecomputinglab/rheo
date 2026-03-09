@@ -2,7 +2,7 @@ use rheo_core::config::UniversalSpine;
 use rheo_core::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use rheo_core::reticulate::spine::RheoSpine;
 use rheo_core::world::RheoWorld;
-use rheo_core::{FormatPlugin, OpenHandle, PluginContext, Result, RheoError};
+use rheo_core::{FormatPlugin, PluginContext, Result, RheoError};
 use std::io::Write;
 use std::path::Path;
 use tempfile::NamedTempFile;
@@ -15,11 +15,6 @@ pub struct PdfPlugin;
 impl FormatPlugin for PdfPlugin {
     fn name(&self) -> &'static str {
         "pdf"
-    }
-
-    fn open(&self, output_dir: &Path, _format_name: &str) -> Result<OpenHandle> {
-        rheo_core::open_all_files_in_folder(output_dir.to_path_buf(), "pdf")?;
-        Ok(OpenHandle::Direct)
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
