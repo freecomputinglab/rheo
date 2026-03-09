@@ -361,7 +361,7 @@ fn perform_compilation(
                         ),
                     )
                 })?;
-                resolved_inputs.insert(input.name, src);
+                resolved_inputs.insert(input.name, dest);
             } else if input.required {
                 return Err(RheoError::project_config(format!(
                     "plugin '{}' requires input '{}' at '{}' but it was not found",
