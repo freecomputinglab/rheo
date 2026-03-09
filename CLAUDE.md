@@ -856,3 +856,77 @@ The workflow works for:
 Only skip this workflow when:
 - User explicitly requests a different approach
 - Working on unrelated changes that must be separate commits
+
+---
+
+## The bd/jj churn workflow
+
+**IMPORTANT**: This is an automated workflow for repeatedly implementing bugs from beads. When the user prompts "bd/jj churn", follow this loop until no open bugs remain.
+
+### The Churn Pattern
+
+The churn workflow automates the process of working through all open bugs in beads, using the standard bd/jj workflow for each issue and clearing context between tasks to prevent conversation compaction issues during implementation.
+
+### Churn Loop
+
+For each iteration, follow this sequence:
+
+1. **Pick the highest priority bug**: `bd ready --json`
+   - Sort by priority (0 = highest, 4 = lowest)
+   - If multiple issues share the same priority, pick the one created earliest
+   - Filter to `issue_type: "bug"` only — ignore features, tasks, epics, chores
+
+2. **Implement using the bd/jj workflow**: Follow the standard per-task workflow
+   - Set issue to in_progress
+   - Check and name the bottom commit
+   - Verify jj identity is configured
+   - Ensure a fresh working commit (`jj new`)
+   - Do the work (implement, test, run tests)
+   - Squash and name with present tense
+   - Verify the history
+   - Close the issue
+
+3. **Clear context**: `/clear`
+   - This prevents conversation compaction from interfering with the next implementation
+   - Memory files are preserved, so you retain context across tasks
+
+4. **Check if done**: Run `bd ready --json` after clearing
+   - If there are still open bugs, repeat from step 1
+   - If no open bugs remain, proceed to completion steps
+
+5. **Run CI checks**: After all bugs are fixed, run these once:
+   ```bash
+   cargo fmt
+   cargo clippy --fix --all-targets --all-features --allow-dirty -- -D warnings
+   ```
+   - `cargo fmt` ensures code formatting matches CI requirements
+   - `cargo clippy --fix ...` automatically fixes clippy warnings
+   - These are required for GitHub CI to pass
+
+6. **Commit the formatting fixes**: If either command made changes:
+   - `jj squash` to fold them into the last bug fix commit
+   - Update commit description if needed to include formatting fixes
+
+7. **Report completion**: Summarize the churn session to the user
+
+### Completion Report
+
+When no open bugs remain, summarize the churn session:
+
+```
+bd/jj churn complete: fixed N bugs
+
+Bugs closed:
+- rheo-XXX: bug title
+- rheo-YYY: bug title
+...
+```
+
+### When to Use This Workflow
+
+**ONLY use this workflow when the user explicitly prompts "bd/jj churn"**. This is a batch processing mode for clearing the bug backlog.
+
+Do not use this workflow when:
+- User asks to implement a specific bug or feature
+- User wants to review or discuss an issue
+- User asks for anything other than "bd/jj churn" or similar batch processing requests
