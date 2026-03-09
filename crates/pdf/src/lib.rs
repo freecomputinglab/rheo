@@ -59,7 +59,8 @@ fn compile_pdf_merged_impl(
     root: &Path,
 ) -> Result<()> {
     // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
-    let rheo_spine = RheoSpine::build(root, Some(spine_config), "pdf")?;
+    let merge = spine_config.merge.unwrap_or(false);
+    let rheo_spine = RheoSpine::build(root, Some(spine_config), "pdf", merge)?;
 
     debug!(file_count = rheo_spine.source.len(), "built PDF spine");
 

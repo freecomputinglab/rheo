@@ -295,7 +295,8 @@ fn compile_epub_impl(
         };
 
         // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
-        let rheo_spine = RheoSpine::build(root, Some(&universal_spine), "epub")?;
+        // EPUB handles concatenation itself via create_from_source, so merge=false
+        let rheo_spine = RheoSpine::build(root, Some(&universal_spine), "epub", false)?;
 
         // Get the spine file paths
         let spine_paths = rheo_core::reticulate::spine::generate_spine(root, Some(&universal_spine), false)?;

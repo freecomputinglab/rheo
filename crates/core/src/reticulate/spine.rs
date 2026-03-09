@@ -28,18 +28,19 @@ impl RheoSpine {
     /// * `root` - Project root directory
     /// * `spine_config` - Optional spine configuration (determines spine files)
     /// * `format_name` - Target output format name (e.g. "pdf", "html", "epub")
+    /// * `merge` - Whether to merge spine files into a single source (caller decides)
     pub fn build(
         root: &Path,
         spine_config: Option<&UniversalSpine>,
         format_name: &str,
+        merge: bool,
     ) -> Result<RheoSpine> {
         let spine_files = generate_spine(root, spine_config, false)?;
         check_duplicate_filenames(&spine_files)?;
 
-        // Merge only when format is "pdf" and spine config says merge=true.
-        // Other formats (epub, html) never merge here — they handle it differently.
-        let should_merge =
-            format_name == "pdf" && spine_config.and_then(|s| s.merge).unwrap_or(false);
+        // Merge when caller requests it (typically only PDF merged mode).
+        // Other formats (epub, html) handle concatenation differently.
+        let should_merge = merge;
 
         let mut sources = Vec::new();
 
