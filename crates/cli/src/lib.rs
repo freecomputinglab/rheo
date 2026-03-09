@@ -446,7 +446,6 @@ fn perform_compilation(
             match plugin.compile(ctx) {
                 Ok(_) => {
                     results.record_success(plugin.name());
-                    info!(output = %output_path.display(), "{} generation complete", plugin.name());
                 }
                 Err(e) => {
                     error!(error = %e, "{} generation failed", plugin.name());
