@@ -7,16 +7,12 @@ use xhtml::HtmlInfo;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
-use rheo_core::compile::RheoCompileOptions;
-use rheo_core::config::{PluginSection, UniversalSpine};
-use rheo_core::html_compile::{compile_document_to_string, compile_html_to_document};
-use rheo_core::pdf_utils::DocumentTitle;
-use rheo_core::reticulate::spine::RheoSpine;
-use rheo_core::typst_types::{
-    EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain, eco_format,
-    eco_vec,
+use rheo_core::{
+    compile_document_to_string, compile_html_to_document, eco_format, eco_vec,
+    FormatPlugin, PluginContext, PluginSection, Result, RheoError, RheoSpine,
+    RheoCompileOptions, SpineOptions, UniversalSpine,
 };
-use rheo_core::{FormatPlugin, PluginContext, Result, RheoError, SpineOptions};
+use rheo_core::{DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain};
 use std::{
     fmt::Write as _,
     fs::File,

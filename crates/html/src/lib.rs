@@ -6,12 +6,11 @@ mod server;
 /// Used when the project doesn't provide its own style.css.
 pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
-use rheo_core::compile::RheoCompileOptions;
-use rheo_core::config::PluginSection;
-use rheo_core::html_compile::{compile_document_to_string, compile_html_with_world};
-use rheo_core::world::RheoWorld;
-use rheo_core::{FormatPlugin, OpenHandle, PluginContext, ServerHandle};
-use rheo_core::{Result, RheoError};
+use rheo_core::{
+    compile_document_to_string, compile_html_with_world, FormatPlugin, OpenHandle,
+    PluginContext, PluginSection, Result, RheoCompileOptions, RheoError, RheoWorld,
+    ServerHandle,
+};
 use std::path::Path;
 use tracing::{debug, info, warn};
 

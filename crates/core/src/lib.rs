@@ -11,6 +11,7 @@ pub mod output;
 pub mod path_utils;
 pub mod pdf_compile;
 pub mod pdf_utils;
+pub mod plugins;
 pub mod project;
 pub mod results;
 pub mod reticulate;
@@ -19,18 +20,46 @@ pub mod validation;
 pub mod watch;
 pub mod world;
 
-// Re-export plugins module as separate file (was plugins/mod.rs)
-include!("plugins.rs");
-
 // Note: Cli is now in rheo-cli crate, not exported here
+
+// === Core types (already exported) ===
 pub use config::RheoConfig;
 pub use constants::*;
-
 pub use error::RheoError;
 pub use globset::{Glob, GlobSet, GlobSetBuilder};
 pub use manifest_version::ManifestVersion;
 pub use path_utils::PathExt;
 pub use results::{CompilationResults, FormatResult};
+
+// === Plugin API re-exports ===
+
+// Compile options and context
+pub use compile::RheoCompileOptions;
+
+// Configuration types
+pub use config::{PluginSection, UniversalSpine};
+
+// Plugin trait and context
+pub use plugins::{FormatPlugin, OpenHandle, PluginContext, PluginInput, ServerHandle, SpineOptions};
+
+// HTML compilation functions
+pub use html_compile::{compile_document_to_string, compile_html_to_document, compile_html_with_world};
+
+// PDF compilation functions
+pub use pdf_compile::{compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes};
+
+// World (Typst compilation context)
+pub use world::RheoWorld;
+
+// Re-export reticulate module for spine building
+pub use reticulate::spine::RheoSpine;
+
+// PDF utilities
+pub use pdf_utils::DocumentTitle;
+
+// Typst types (commonly used by plugins)
+pub use typst_types::{eco_format, eco_vec, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain};
+
 use std::path::PathBuf;
 use tracing::{info, warn};
 use walkdir::WalkDir;

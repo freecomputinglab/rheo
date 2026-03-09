@@ -2,7 +2,7 @@ use crate::config::PluginSection;
 use crate::output::OutputConfig;
 use crate::project::ProjectConfig;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Trait for managing a running preview server.
 pub trait ServerHandle: Send + Sync {

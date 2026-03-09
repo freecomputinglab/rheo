@@ -1,10 +1,7 @@
-use rheo_core::config::UniversalSpine;
-use rheo_core::pdf_compile::{
-    compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes,
+use rheo_core::{
+    compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes, FormatPlugin,
+    PluginContext, Result, RheoError, RheoSpine, RheoWorld, UniversalSpine,
 };
-use rheo_core::reticulate::spine::RheoSpine;
-use rheo_core::world::RheoWorld;
-use rheo_core::{FormatPlugin, PluginContext, Result, RheoError};
 use std::io::Write;
 use std::path::Path;
 use tempfile::NamedTempFile;
