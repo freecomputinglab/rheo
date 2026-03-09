@@ -764,7 +764,7 @@ Then use `mcp__beads__*` functions instead of CLI commands.
 
 ---
 
-## The bd/jj workflow 
+## The bd/jj workflow
 
 **IMPORTANT**: ALWAYS use the jj squash workflow when working on bd tasks, even if you're only implementing a single task. This workflow should be your default approach.
 
@@ -782,27 +782,40 @@ After squashing, the working commit becomes empty again, and the pattern repeats
 
 For each bd task, follow this sequence:
 
-1. **Create working commit**: Run `jj new`
+1. **Set issue to in_progress**: `bd update <id> --status in_progress`
+   - Claims the task so you and others know it's being worked on
+
+2. **Check and name the bottom commit**: Run `jj log`
+   - Look at the top of the history
+   - If there's an empty, unnamed commit directly below the working commit, name it appropriately for the work you're about to do:
+     - `jj describe -m "Present tense description"` on that commit
+   - If no such commit exists, you'll create it after squashing
+
+3. **Ensure a fresh working commit**: Run `jj new`
    - This creates a new empty commit on top where you'll do the work
    - All file changes will go into this commit
 
-2. **Complete the bd task**:
+4. **Do the work**:
    - Implement the changes
    - Test that it works
-   - Close all completed issues: `bd close <id1> <id2> ...`
-     - Use `bd list --status=open` to find issues to close
-     - Close multiple at once (more efficient than one at a time)
+   - Run tests as needed
 
-3. **Commit the work** (required after closing any beads issue):
-   - `jj squash` — move changes from working commit into the commit below
-   - `jj describe -m "Present tense description"` — name the squashed commit
-     - Message describes what the app does after this change
-     - Completes the phrase: "when this commit is applied, the app..."
-     - Use present tense, NOT past tense or imperative mood
-     - Focus on user-visible changes, not implementation details
-   - `jj new` — create a fresh working commit for the next task
+5. **Squash and name**: `jj squash` then `jj describe -m "Present tense description"`
+   - Move changes from working commit into the named commit below
+   - The commit message describes what the app does after this change
+   - Completes the phrase: "when this commit is applied, the app..."
+   - Use present tense, NOT past tense or imperative mood
+   - Focus on user-visible changes, not implementation details
 
-4. **Repeat**: Go to step 1 for the next task
+6. **Verify the history**: Run `jj log`
+   - Confirm the named commit now contains your changes
+   - Confirm the working commit is empty again
+
+7. **Close the issue**: `bd close <id> --reason "Done"`
+   - Marks the task as complete
+   - Use `bd close <id1> <id2> ...` to close multiple at once
+
+8. **Repeat**: Go to step 1 for the next task
 
 ### Commit Message Examples
 
@@ -811,12 +824,14 @@ For each bd task, follow this sequence:
 - "Renders year markers in timeline sidebar"
 - "Synchronizes timeline scroll with table position"
 - "Shows data gaps as empty bars in timeline"
+- "Uses ctx.spine for EPUB compilation instead of raw config"
 
 ❌ Bad (wrong tense or too technical):
 - "Added TimelineBar component" (past tense)
 - "Add timeline visualization" (imperative, not present)
 - "Refactors VerticalTimeline.jsx to use new components" (implementation detail)
 - "Created data utilities module" (past tense, not user-visible)
+- "Fixed EPUB plugin spine handling" (past tense)
 
 ### When to Use This Workflow
 
