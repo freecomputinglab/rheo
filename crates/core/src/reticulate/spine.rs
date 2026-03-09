@@ -1,8 +1,8 @@
 use crate::config::UniversalSpine;
 use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
 use crate::{Result, RheoError, TYP_EXT};
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
