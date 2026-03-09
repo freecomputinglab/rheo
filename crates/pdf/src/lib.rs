@@ -26,10 +26,11 @@ impl FormatPlugin for PdfPlugin {
             };
             compile_pdf_merged_impl(&spine, &ctx.options.output, &ctx.options.root)
         } else {
-            let world = ctx
-                .options
-                .world
-                .expect("PDF single-file compile requires a world");
+            let world = ctx.options.world.ok_or_else(|| {
+                RheoError::project_config(
+                    "PDF per-file compile requires a world; this is a rheo bug (internal invariant violation)",
+                )
+            })?;
             compile_pdf_single_impl(world, &ctx.options.output)
         }
     }

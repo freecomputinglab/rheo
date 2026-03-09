@@ -172,8 +172,10 @@ pub fn compile_html_new(
     css_contents: &[String],
     fonts: &[String],
 ) -> Result<()> {
-    let world = options
-        .world
-        .expect("HTML plugin requires a world (never called in merged mode)");
+    let world = options.world.ok_or_else(|| {
+        RheoError::project_config(
+            "HTML per-file compile requires a world; this is a rheo bug (internal invariant violation)",
+        )
+    })?;
     compile_html_impl(world, &options.output, css_contents, fonts)
 }
