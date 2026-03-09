@@ -153,7 +153,7 @@ Report: list all closed issues.
 
 ---
 
-## Plan Mode (activated by "plan mode", "let's plan", "design this")
+## Plan Mode (activated by "plan mode", "let's plan", "design this", or any prompt ending with "BEADS")
 
 **Rules:** No code, no file edits (except `.beads/`). Output is beads issues only.
 
@@ -162,6 +162,7 @@ Report: list all closed issues.
 2. Decompose into discrete bd issues with type, priority, acceptance criteria
 3. Present proposal to user, ask if they want to create the issues
 4. If yes: run `bd create` commands (parallel where possible), set up deps with `bd dep add`
+   - Each issue's `--description` must include full context: background, relevant code locations, and the projected fix/approach so the implementer has everything needed without re-investigating
 5. List created IDs and stop — do NOT implement, do NOT ask if user wants to implement
 
 **Exits** when user says "bd/jj churn", "start implementing", or "go".

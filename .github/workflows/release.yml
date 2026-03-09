@@ -68,7 +68,6 @@ jobs:
           cargo publish -p rheo-pdf
           cargo publish -p rheo-epub
           cargo publish -p rheo-cli
-          cargo publish -p rheo
       - name: Add a tag for the merged commit
         uses: christophebedard/tag-version-commit@v1
         with:
