@@ -882,20 +882,20 @@ Only skip this workflow when:
 
 ## The bd/jj churn workflow
 
-**IMPORTANT**: This is an automated workflow for repeatedly implementing bugs from beads. When the user prompts "bd/jj churn", follow this loop until no open bugs remain.
+**IMPORTANT**: This is an automated workflow for repeatedly implementing issues from beads. When the user prompts "bd/jj churn", follow this loop until no open issues remain.
 
 ### The Churn Pattern
 
-The churn workflow automates the process of working through all open bugs in beads, using the standard bd/jj workflow for each issue and clearing context between tasks to prevent conversation compaction issues during implementation.
+The churn workflow automates the process of working through all open issues in beads (bugs, tasks, and features), using the standard bd/jj workflow for each issue and clearing context between tasks to prevent conversation compaction issues during implementation.
 
 ### Churn Loop
 
 For each iteration, follow this sequence:
 
-1. **Pick the highest priority bug**: `bd ready --json`
+1. **Pick the highest priority issue**: `bd ready --json`
    - Sort by priority (0 = highest, 4 = lowest)
    - If multiple issues share the same priority, pick the one created earliest
-   - Filter to `issue_type: "bug"` only — ignore features, tasks, epics, chores
+   - Include bugs, tasks, and features — ignore epics and chores
 
 2. **Implement using the bd/jj workflow**: Follow the standard per-task workflow
    - Set issue to in_progress
@@ -912,10 +912,10 @@ For each iteration, follow this sequence:
    - Memory files are preserved, so you retain context across tasks
 
 4. **Check if done**: Run `bd ready --json` after clearing
-   - If there are still open bugs, repeat from step 1
-   - If no open bugs remain, proceed to completion steps
+   - If there are still open issues, repeat from step 1
+   - If no open issues remain, proceed to completion steps
 
-5. **Run CI checks**: After all bugs are fixed, run these once:
+5. **Run CI checks**: After all issues are processed, run these once:
    ```bash
    cargo fmt
    cargo clippy --fix --all-targets --all-features --allow-dirty -- -D warnings
@@ -925,27 +925,27 @@ For each iteration, follow this sequence:
    - These are required for GitHub CI to pass
 
 6. **Commit the formatting fixes**: If either command made changes:
-   - `jj squash` to fold them into the last bug fix commit
+   - `jj squash` to fold them into the last issue commit
    - Update commit description if needed to include formatting fixes
 
 7. **Report completion**: Summarize the churn session to the user
 
 ### Completion Report
 
-When no open bugs remain, summarize the churn session:
+When no open issues remain, summarize the churn session:
 
 ```
-bd/jj churn complete: fixed N bugs
+bd/jj churn complete: processed N issues
 
-Bugs closed:
-- rheo-XXX: bug title
-- rheo-YYY: bug title
+Issues closed:
+- rheo-XXX: issue title
+- rheo-YYY: issue title
 ...
 ```
 
 ### When to Use This Workflow
 
-**ONLY use this workflow when the user explicitly prompts "bd/jj churn"**. This is a batch processing mode for clearing the bug backlog.
+**ONLY use this workflow when the user explicitly prompts "bd/jj churn"**. This is a batch processing mode for clearing the issue backlog.
 
 Do not use this workflow when:
 - User asks to implement a specific bug or feature

@@ -10,8 +10,6 @@ use rheo_core::html_compile::{compile_document_to_string, compile_html_to_docume
 use rheo_core::pdf_utils::DocumentTitle;
 use rheo_core::reticulate::spine::RheoSpine;
 use rheo_core::{FormatPlugin, PluginContext, Result, RheoError, SpineOptions};
-
-use anyhow::Result as AnyhowResult;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
@@ -31,7 +29,7 @@ use typst::{
 };
 use typst_html::HtmlDocument;
 use uuid::Uuid;
-use zip::{result::ZipError, write::SimpleFileOptions};
+use zip::write::SimpleFileOptions;
 
 pub struct EpubPlugin;
 
@@ -145,7 +143,7 @@ pub fn generate_package(
     spine: &UniversalSpine,
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
-) -> AnyhowResult<String> {
+) -> Result<String> {
     let info = &items[0].document.info;
     let language = info.locale.unwrap_or_default().rfc_3066();
     let title = spine
@@ -181,7 +179,8 @@ pub fn generate_package(
 
     builder = builder.add_item(Item {
         id: "nav".into(),
-        href: IriRefBuf::new("nav.xhtml".into()).unwrap(),
+        href: IriRefBuf::new("nav.xhtml".into())
+            .map_err(|e| RheoError::invalid_data(format!("invalid nav href: {}", e)))?,
         media_type: XHTML_MEDIATYPE.into(),
         properties: Some("nav".into()),
     });
@@ -213,9 +212,17 @@ pub fn generate_package(
 
     let package = builder
         .build()
-        .map_err(|e| anyhow::anyhow!("Package validation failed: {}", e))?;
+        .map_err(|e| RheoError::EpubGeneration {
+            count: 1,
+            errors: format!("Package validation failed: {}", e),
+        })?;
 
-    Ok(package.to_xml()?)
+    let xml = package.to_xml().map_err(|e| RheoError::EpubGeneration {
+        count: 1,
+        errors: format!("Package XML generation failed: {}", e),
+    })?;
+
+    Ok(xml)
 }
 
 /// Combines all EPUB components into the final .epub (zip) file.
@@ -224,8 +231,8 @@ pub fn zip_epub(
     package_string: String,
     nav_xhtml: String,
     items: &[EpubItem],
-) -> AnyhowResult<()> {
-    let file = File::create(epub_path).map_err(ZipError::Io)?;
+) -> Result<()> {
+    let file = File::create(epub_path).map_err(|e| RheoError::io(e, "creating EPUB file"))?;
     let file = BufWriter::new(file);
     let mut zip = zip::ZipWriter::new(file);
 
@@ -234,28 +241,65 @@ pub fn zip_epub(
     zip.start_file(
         "mimetype",
         opts.compression_method(zip::CompressionMethod::Stored),
-    )?;
-    zip.write_all(EPUB_MEDIATYPE.as_bytes())?;
+    )
+    .map_err(|e| RheoError::EpubGeneration {
+        count: 1,
+        errors: format!("failed to start mimetype file: {}", e),
+    })?;
+    zip.write_all(EPUB_MEDIATYPE.as_bytes())
+        .map_err(|e| RheoError::io(e, "writing mimetype"))?;
 
-    zip.add_directory("META-INF", opts)?;
-    zip.start_file("META-INF/container.xml", opts)?;
-    zip.write_all(CONTAINER_XML.as_bytes())?;
+    zip.add_directory("META-INF", opts)
+        .map_err(|e| RheoError::EpubGeneration {
+            count: 1,
+            errors: format!("failed to add META-INF directory: {}", e),
+        })?;
+    zip.start_file("META-INF/container.xml", opts)
+        .map_err(|e| RheoError::EpubGeneration {
+            count: 1,
+            errors: format!("failed to start container.xml: {}", e),
+        })?;
+    zip.write_all(CONTAINER_XML.as_bytes())
+        .map_err(|e| RheoError::io(e, "writing container.xml"))?;
 
-    zip.add_directory("EPUB", opts)?;
+    zip.add_directory("EPUB", opts)
+        .map_err(|e| RheoError::EpubGeneration {
+            count: 1,
+            errors: format!("failed to add EPUB directory: {}", e),
+        })?;
 
-    zip.start_file("EPUB/package.opf", opts)?;
-    zip.write_all(package_string.as_bytes())?;
+    zip.start_file("EPUB/package.opf", opts)
+        .map_err(|e| RheoError::EpubGeneration {
+            count: 1,
+            errors: format!("failed to start package.opf: {}", e),
+        })?;
+    zip.write_all(package_string.as_bytes())
+        .map_err(|e| RheoError::io(e, "writing package.opf"))?;
 
-    zip.start_file("EPUB/nav.xhtml", opts)?;
-    zip.write_all(nav_xhtml.as_bytes())?;
+    zip.start_file("EPUB/nav.xhtml", opts)
+        .map_err(|e| RheoError::EpubGeneration {
+            count: 1,
+            errors: format!("failed to start nav.xhtml: {}", e),
+        })?;
+    zip.write_all(nav_xhtml.as_bytes())
+        .map_err(|e| RheoError::io(e, "writing nav.xhtml"))?;
 
     for item in items {
         let filename = format!("EPUB/{}", item.href);
-        zip.start_file(&filename, opts)?;
-        zip.write_all(item.xhtml.as_bytes())?;
+        zip.start_file(&filename, opts)
+            .map_err(|e| RheoError::EpubGeneration {
+                count: 1,
+                errors: format!("failed to start file {}: {}", filename, e),
+            })?;
+        zip.write_all(item.xhtml.as_bytes())
+            .map_err(|e| RheoError::io(e, format!("writing {}", filename)))?;
     }
 
-    zip.finish()?;
+    zip.finish()
+        .map_err(|e| RheoError::EpubGeneration {
+            count: 1,
+            errors: format!("failed to finish EPUB zip: {}", e),
+        })?;
     Ok(())
 }
 
@@ -286,39 +330,32 @@ fn compile_epub_impl(
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
 ) -> Result<()> {
-    let inner = || -> AnyhowResult<()> {
-        // Convert SpineOptions to UniversalSpine for RheoSpine::build
-        let universal_spine = UniversalSpine {
-            title: spine.title.clone(),
-            vertebrae: spine.vertebrae.clone(),
-            merge: Some(spine.merge),
-        };
-
-        // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
-        // EPUB handles concatenation itself via create_from_source, so merge=false
-        let rheo_spine = RheoSpine::build(root, Some(&universal_spine), "epub", false)?;
-
-        // Get the spine file paths
-        let spine_paths =
-            rheo_core::reticulate::spine::generate_spine(root, Some(&universal_spine), false)?;
-
-        let mut items = spine_paths
-            .iter()
-            .zip(rheo_spine.source.iter())
-            .map(|(path, transformed_source)| {
-                EpubItem::create_from_source(path.clone(), transformed_source, root)
-            })
-            .collect::<AnyhowResult<Vec<_>>>()?;
-
-        let nav_xhtml = generate_nav_xhtml(&mut items)?;
-        let package_string = generate_package(&items, &universal_spine, identifier, date)?;
-        zip_epub(epub_path, package_string, nav_xhtml, &items)
+    // Convert SpineOptions to UniversalSpine for RheoSpine::build
+    let universal_spine = UniversalSpine {
+        title: spine.title.clone(),
+        vertebrae: spine.vertebrae.clone(),
+        merge: Some(spine.merge),
     };
 
-    inner().map_err(|e| RheoError::EpubGeneration {
-        count: 1,
-        errors: e.to_string(),
-    })?;
+    // Build RheoSpine with AST-transformed sources (.typ links → .xhtml)
+    // EPUB handles concatenation itself via create_from_source, so merge=false
+    let rheo_spine = RheoSpine::build(root, Some(&universal_spine), "epub", false)?;
+
+    // Get the spine file paths
+    let spine_paths =
+        rheo_core::reticulate::spine::generate_spine(root, Some(&universal_spine), false)?;
+
+    let mut items = spine_paths
+        .iter()
+        .zip(rheo_spine.source.iter())
+        .map(|(path, transformed_source)| {
+            EpubItem::create_from_source(path.clone(), transformed_source, root)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let nav_xhtml = generate_nav_xhtml(&mut items)?;
+    let package_string = generate_package(&items, &universal_spine, identifier, date)?;
+    zip_epub(epub_path, package_string, nav_xhtml, &items)?;
 
     info!(output = %epub_path.display(), "successfully generated EPUB");
     Ok(())
@@ -366,21 +403,32 @@ impl EpubItem {
         path: PathBuf,
         transformed_source: &str,
         root: &Path,
-    ) -> AnyhowResult<Self> {
-        use std::io::Write;
-
+    ) -> Result<Self> {
         info!(file = %path.display(), "compiling spine file with transformed source");
 
-        let mut temp_file = tempfile::NamedTempFile::new_in(root)?;
-        temp_file.write_all(transformed_source.as_bytes())?;
-        temp_file.flush()?;
+        let mut temp_file = tempfile::NamedTempFile::new_in(root)
+            .map_err(|e| RheoError::io(e, "creating temp file for EPUB item"))?;
+        temp_file
+            .write_all(transformed_source.as_bytes())
+            .map_err(|e| RheoError::io(e, "writing transformed source to temp file"))?;
+        temp_file
+            .flush()
+            .map_err(|e| RheoError::io(e, "flushing temp file"))?;
 
         let temp_path = temp_file.path();
         let document = compile_html_to_document(temp_path, root, "epub")?;
 
-        let parent = path.parent().unwrap();
-        let bare_file = path.strip_prefix(parent).unwrap();
-        let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())?;
+        let parent = path.parent().ok_or_else(|| {
+            RheoError::invalid_data(format!("path has no parent: {}", path.display()))
+        })?;
+        let bare_file = path
+            .strip_prefix(parent)
+            .map_err(|e| RheoError::invalid_data(format!("invalid path prefix: {}", e)))?;
+        let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())
+            .map_err(|e| RheoError::EpubGeneration {
+                count: 1,
+                errors: format!("invalid href for EPUB item: {}", e),
+            })?;
         let (heading_ids, outline) = Self::outline(&document, &href);
 
         let html_string = compile_document_to_string(&document)?;

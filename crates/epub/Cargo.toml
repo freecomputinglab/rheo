@@ -18,7 +18,6 @@ comemo = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
-anyhow = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
