@@ -1,7 +1,8 @@
 use crate::config::UniversalSpine;
 use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
 use crate::{Result, RheoError, TYP_EXT};
-use std::collections::HashSet;
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -123,25 +124,23 @@ fn extract_label_and_title(source: &str, spine_file: &Path) -> Result<(String, S
 }
 
 fn check_duplicate_filenames(spine_files: &[PathBuf]) -> Result<()> {
-    let mut seen_filenames: HashSet<String> = HashSet::new();
+    let mut seen: HashMap<String, &PathBuf> = HashMap::new();
 
     for spine_file in spine_files {
         if let Some(filename) = spine_file.file_name() {
-            let filename_str = filename.to_string_lossy().to_string();
-
-            if !seen_filenames.insert(filename_str.clone())
-                && let Some(first_occurrence) = spine_files.iter().find(|f| {
-                    f.file_name()
-                        .map(|n| n.to_string_lossy() == filename.to_string_lossy())
-                        .unwrap_or(false)
-                })
-            {
-                return Err(RheoError::project_config(format!(
-                    "duplicate filename in spine: '{}' appears at both '{}' and '{}'",
-                    filename_str,
-                    first_occurrence.display(),
-                    spine_file.display()
-                )));
+            let key = filename.to_string_lossy().into_owned();
+            match seen.entry(key) {
+                Entry::Occupied(e) => {
+                    return Err(RheoError::project_config(format!(
+                        "duplicate filename in spine: '{}' appears at both '{}' and '{}'",
+                        filename.to_string_lossy(),
+                        e.get().display(),
+                        spine_file.display()
+                    )));
+                }
+                Entry::Vacant(e) => {
+                    e.insert(spine_file);
+                }
             }
         }
     }
