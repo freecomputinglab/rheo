@@ -114,10 +114,9 @@ impl ProjectConfig {
             )
         })?;
 
-        let root = file_path
+        let file_parent = file_path
             .parent()
-            .ok_or_else(|| RheoError::path(&file_path, "file has no parent directory"))?
-            .to_path_buf();
+            .ok_or_else(|| RheoError::path(&file_path, "file has no parent directory"))?;
 
         let name = file_path
             .file_stem()
@@ -125,12 +124,47 @@ impl ProjectConfig {
             .ok_or_else(|| RheoError::path(&file_path, "invalid filename"))?
             .to_string();
 
-        let (config, loaded_config_path) = if let Some(custom_path) = config_path {
+        let (config, loaded_config_path, root) = if let Some(custom_path) = config_path {
             debug!(config = %custom_path.display(), "using custom config in single-file mode");
             let config = RheoConfig::load_from_path(custom_path)?;
-            (config, Some(custom_path.to_path_buf()))
+            // Use the directory containing the custom config as project root
+            let config_root = custom_path
+                .parent()
+                .ok_or_else(|| RheoError::path(custom_path, "config path has no parent"))?
+                .to_path_buf();
+            (config, Some(custom_path.to_path_buf()), config_root)
         } else {
-            (RheoConfig::default(), None)
+            // Walk up from file's parent directory looking for rheo.toml
+            let mut current_dir = Some(file_parent);
+            let mut found_config = None;
+
+            // Walk up the directory tree (max 10 levels to avoid infinite loops)
+            for _ in 0..10 {
+                if let Some(dir) = current_dir {
+                    let config_candidate = dir.join("rheo.toml");
+                    if config_candidate.exists() {
+                        debug!(
+                            config = %config_candidate.display(),
+                            "discovered rheo.toml in single-file mode"
+                        );
+                        let config = RheoConfig::load_from_path(&config_candidate)?;
+                        found_config = Some((config, config_candidate.clone(), dir.to_path_buf()));
+                        break;
+                    }
+                    // Move to parent directory
+                    current_dir = dir.parent();
+                } else {
+                    break;
+                }
+            }
+
+            if let Some((config, path, config_root)) = found_config {
+                (config, Some(path), config_root)
+            } else {
+                // No config found - use file's parent as root with defaults
+                debug!("no rheo.toml found in single-file mode, using defaults");
+                (RheoConfig::default(), None, file_parent.to_path_buf())
+            }
         };
 
         let typ_files = vec![file_path.clone()];

@@ -778,6 +778,27 @@ The workflow maintains two commits:
 
 After squashing, the working commit becomes empty again, and the pattern repeats.
 
+### Session Prerequisites
+
+Before any bd/jj workflow, verify your jj identity is configured:
+
+```bash
+jj config list --user
+```
+
+If the output is empty or missing `user.name`/`user.email`, set them immediately:
+
+```bash
+jj config set --user user.name "Lachlan Kermode"
+jj config set --user user.email "lachie@ohrg.org"
+```
+
+**This is mandatory.** Skipping this causes commits to show "(no email set)" and makes them unpushable. If you find existing commits with missing identity, fix them immediately:
+
+```bash
+jj metaedit --update-author -r <change_id>
+```
+
 ### Per-Task Workflow
 
 For each bd task, follow this sequence:
@@ -791,14 +812,14 @@ For each bd task, follow this sequence:
      - `jj describe -m "Present tense description"` on that commit
    - If no such commit exists, you'll create it after squashing
 
-3. **Verify jj identity is configured** (before running `jj new`):
+3. **Verify jj identity is configured** (see Session Prerequisites above):
    - Run `jj config list --user` to check user-level config
-   - If empty or missing `user.name`/`user.email`, configure it:
+   - If empty or missing, set it:
      ```bash
-     jj config set --user user.name "Your Name"
-     jj config set --user user.email "your.email@example.com"
+     jj config set --user user.name "Lachlan Kermode"
+     jj config set --user user.email "lachie@ohrg.org"
      ```
-   - **Why this matters**: `jj new` creates commits with your configured identity. Without it, commits show "(no email set)" and cannot be pushed to remotes. Git identity is NOT automatically imported for new commits.
+   - **Why this matters**: `jj new` creates commits with your configured identity. Without it, commits show "(no email set)" and cannot be pushed to remotes.
 
 4. **Ensure a fresh working commit**: Run `jj new`
    - This creates a new empty commit on top where you'll do the work
