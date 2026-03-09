@@ -2,15 +2,18 @@ mod dom;
 mod html_head;
 mod server;
 
+/// Bundled default HTML stylesheet.
+/// Used when the project doesn't provide its own style.css.
+pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
+
 use rheo_core::compile::RheoCompileOptions;
 use rheo_core::config::PluginSection;
-use rheo_core::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
+use rheo_core::html_compile::{compile_document_to_string, compile_html_with_world};
 use rheo_core::world::RheoWorld;
 use rheo_core::{FormatPlugin, OpenHandle, PluginContext, ServerHandle};
 use rheo_core::{Result, RheoError};
 use std::path::Path;
 use tracing::{debug, info, warn};
-use typst_html::HtmlDocument;
 
 /// Reload callback type - called by watch loop after successful compilation.
 /// Defined here because it's only needed by the HTML plugin's development server.
@@ -70,6 +73,10 @@ impl FormatPlugin for HtmlPlugin {
         "html"
     }
 
+    fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
+        vec![("style.css", include_str!("templates/style.css"))]
+    }
+
     fn open(&self, output_dir: &Path, _format_name: &str) -> Result<OpenHandle> {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| RheoError::io(e, "creating tokio runtime"))?;
@@ -117,7 +124,7 @@ impl FormatPlugin for HtmlPlugin {
             } else if stylesheet_path == "style.css" {
                 // Default name with no file present: inline the bundled stylesheet.
                 debug!("using bundled default style.css");
-                css_contents.push(rheo_core::DEFAULT_HTML_STYLESHEET.to_string());
+                css_contents.push(DEFAULT_STYLESHEET.to_string());
             } else {
                 warn!(path = %full_path.display(), "stylesheet not found, skipping");
             }
@@ -127,27 +134,16 @@ impl FormatPlugin for HtmlPlugin {
     }
 }
 
-pub use rheo_core::html_compile::{compile_document_to_string, compile_html_to_document};
-
 fn compile_html_impl(
     world: &RheoWorld,
     output: &Path,
     css_contents: &[String],
     fonts: &[String],
 ) -> Result<()> {
-    info!("compiling to HTML");
-    let result = typst::compile::<HtmlDocument>(world);
-
-    let html_filter = |w: &typst::diag::SourceDiagnostic| {
-        !w.message
-            .contains("html export is under active development and incomplete")
-    };
-
-    let document = unwrap_compilation_result(Some(world), result, Some(html_filter))?;
+    let document = compile_html_with_world(world)?;
 
     debug!(output = %output.display(), "exporting to HTML");
-    let html_string =
-        typst_html::html(&document).map_err(|e| handle_export_errors(e, ExportErrorType::Html))?;
+    let html_string = compile_document_to_string(&document)?;
 
     // Inject font links first (DOM-based), then inline styles (string-based).
     // Ordering matters: string-based injection must run last to avoid re-parsing

@@ -1,7 +1,4 @@
-<!DOCTYPE html><html><head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>.header {
+.header {
   max-height: 40px;
   display: flex;
   justify-content: center;
@@ -129,13 +126,3 @@ section[role="doc-endnotes"] ol li a[role="doc-backlink"] {
     font-size: 0.9em;
   }
 }
-</style></head>
-  <body>
-    <h2>Target Function in Package</h2>
-    <h3>Using bullseye package</h3>
-    <p>Package sees: <strong>html</strong></p>
-    <h3>Using target()</h3>
-    <p>Main file target: <strong>html</strong></p>
-  
-
-</body></html>

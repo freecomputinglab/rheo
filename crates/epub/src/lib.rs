@@ -4,15 +4,19 @@ mod xhtml;
 use package::{Item, ItemRef, Package};
 use xhtml::HtmlInfo;
 
+use chrono::{DateTime, Utc};
+use iref::{IriRef, IriRefBuf, iri::Fragment};
+use itertools::Itertools;
 use rheo_core::compile::RheoCompileOptions;
 use rheo_core::config::{PluginSection, UniversalSpine};
 use rheo_core::html_compile::{compile_document_to_string, compile_html_to_document};
 use rheo_core::pdf_utils::DocumentTitle;
 use rheo_core::reticulate::spine::RheoSpine;
+use rheo_core::typst_types::{
+    EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain, eco_format,
+    eco_vec,
+};
 use rheo_core::{FormatPlugin, PluginContext, Result, RheoError, SpineOptions};
-use chrono::{DateTime, Utc};
-use iref::{IriRef, IriRefBuf, iri::Fragment};
-use itertools::Itertools;
 use std::{
     fmt::Write as _,
     fs::File,
@@ -21,13 +25,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use tracing::info;
-use typst::{
-    diag::{EcoString, eco_format},
-    ecow::eco_vec,
-    foundations::{NativeElement, StyleChain},
-    model::{HeadingElem, OutlineNode},
-};
-use typst_html::HtmlDocument;
 use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 
@@ -210,12 +207,10 @@ pub fn generate_package(
             });
     }
 
-    let package = builder
-        .build()
-        .map_err(|e| RheoError::EpubGeneration {
-            count: 1,
-            errors: format!("Package validation failed: {}", e),
-        })?;
+    let package = builder.build().map_err(|e| RheoError::EpubGeneration {
+        count: 1,
+        errors: format!("Package validation failed: {}", e),
+    })?;
 
     let xml = package.to_xml().map_err(|e| RheoError::EpubGeneration {
         count: 1,
@@ -295,11 +290,10 @@ pub fn zip_epub(
             .map_err(|e| RheoError::io(e, format!("writing {}", filename)))?;
     }
 
-    zip.finish()
-        .map_err(|e| RheoError::EpubGeneration {
-            count: 1,
-            errors: format!("failed to finish EPUB zip: {}", e),
-        })?;
+    zip.finish().map_err(|e| RheoError::EpubGeneration {
+        count: 1,
+        errors: format!("failed to finish EPUB zip: {}", e),
+    })?;
     Ok(())
 }
 

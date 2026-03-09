@@ -253,6 +253,41 @@ pub trait FormatPlugin: Send + Sync {
         vec![]
     }
 
+    /// Provide template files for `rheo init` to write to new projects.
+    ///
+    /// This method allows plugins to contribute format-specific template files
+    /// (e.g., CSS for HTML, custom Typst includes) when initializing a new rheo project.
+    ///
+    /// # Return value
+    ///
+    /// A vector of `(relative_path, content)` tuples where:
+    /// - `relative_path` is the file path relative to the project root (e.g., `"style.css"`, `"content/example.typ"`)
+    /// - `content` is the file contents as a static string
+    ///
+    /// # Path conflicts
+    ///
+    /// If two plugins claim the same `relative_path`, rheo returns an error at init time.
+    /// Core templates take precedence over plugin templates (plugins can override core paths
+    /// only if the core explicitly provides empty placeholders).
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
+    ///     vec![
+    ///         ("style.css", include_str!("templates/style.css")),
+    ///         ("content/html-example.typ", include_str!("templates/example.typ")),
+    ///     ]
+    /// }
+    /// ```
+    ///
+    /// # Default implementation
+    ///
+    /// Returns an empty vector (no template files contributed).
+    fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
+        vec![]
+    }
+
     /// Compile one file (per-file mode) or merged output (merged mode).
     ///
     /// This is the core compilation method. The behavior depends on `ctx.spine.merge`:

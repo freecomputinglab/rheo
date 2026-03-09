@@ -515,12 +515,6 @@ fn init_project(target_dir: &Path) -> Result<()> {
     fs::write(target_dir.join("rheo.toml"), toml_content)
         .map_err(|e| RheoError::io(e, "writing rheo.toml"))?;
 
-    fs::write(
-        target_dir.join("style.css"),
-        rheo_core::init_templates::STYLE_CSS,
-    )
-    .map_err(|e| RheoError::io(e, "writing style.css"))?;
-
     let content_dir = target_dir.join("content");
     fs::create_dir_all(&content_dir).map_err(|e| RheoError::io(e, "creating content directory"))?;
 
@@ -547,6 +541,35 @@ fn init_project(target_dir: &Path) -> Result<()> {
         rheo_core::init_templates::CONTENT_IMG_HEADER_SVG,
     )
     .map_err(|e| RheoError::io(e, "writing header.svg"))?;
+
+    // Collect template contributions from all plugins
+    let mut plugin_templates: std::collections::HashMap<&str, (&str, &str)> =
+        std::collections::HashMap::new();
+    for plugin in all_plugins() {
+        for (path, content) in plugin.init_templates() {
+            if let Some((existing_plugin, _)) = plugin_templates.get(path) {
+                return Err(RheoError::project_config(format!(
+                    "template path conflict: both '{}' and '{}' plugins want to write '{}'",
+                    existing_plugin,
+                    plugin.name(),
+                    path
+                )));
+            }
+            plugin_templates.insert(path, (plugin.name(), content));
+        }
+    }
+
+    // Write plugin template files
+    for (path, (plugin_name, content)) in plugin_templates {
+        let file_path = target_dir.join(path);
+        if let Some(parent_dir) = file_path.parent() {
+            fs::create_dir_all(parent_dir)
+                .map_err(|e| RheoError::io(e, "creating plugin template directory"))?;
+        }
+        fs::write(&file_path, content)
+            .map_err(|e| RheoError::io(e, format!("writing plugin template file '{}'", path)))?;
+        debug!(plugin = plugin_name, path = %path, "wrote plugin template file");
+    }
 
     info!(path = %target_dir.display(), "initialized rheo project");
     Ok(())

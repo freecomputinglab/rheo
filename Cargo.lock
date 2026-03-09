@@ -3023,6 +3023,7 @@ dependencies = [
  "typst-html",
  "typst-kit",
  "typst-library",
+ "typst-pdf",
  "typst-syntax",
  "walkdir",
 ]
@@ -3032,7 +3033,6 @@ name = "rheo-epub"
 version = "0.1.2"
 dependencies = [
  "chrono",
- "comemo",
  "html5ever",
  "iref",
  "itertools",
@@ -3044,8 +3044,6 @@ dependencies = [
  "thiserror 2.0.17",
  "toml 0.9.10+spec-1.1.0",
  "tracing",
- "typst",
- "typst-html",
  "uuid",
  "zip",
 ]
@@ -3055,7 +3053,6 @@ name = "rheo-html"
 version = "0.1.2"
 dependencies = [
  "axum",
- "comemo",
  "html5ever",
  "markup5ever_rcdom",
  "mime_guess",
@@ -3066,8 +3063,6 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
- "typst",
- "typst-html",
  "webbrowser",
 ]
 
@@ -3075,13 +3070,10 @@ dependencies = [
 name = "rheo-pdf"
 version = "0.1.2"
 dependencies = [
- "comemo",
  "rheo-core",
  "tempfile",
  "thiserror 2.0.17",
  "tracing",
- "typst",
- "typst-pdf",
 ]
 
 [[package]]

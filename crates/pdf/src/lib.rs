@@ -1,5 +1,7 @@
 use rheo_core::config::UniversalSpine;
-use rheo_core::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
+use rheo_core::pdf_compile::{
+    compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes,
+};
 use rheo_core::reticulate::spine::RheoSpine;
 use rheo_core::world::RheoWorld;
 use rheo_core::{FormatPlugin, PluginContext, Result, RheoError};
@@ -7,8 +9,6 @@ use std::io::Write;
 use std::path::Path;
 use tempfile::NamedTempFile;
 use tracing::{debug, info};
-use typst::layout::PagedDocument;
-use typst_pdf::PdfOptions;
 
 pub struct PdfPlugin;
 
@@ -37,13 +37,10 @@ impl FormatPlugin for PdfPlugin {
 }
 
 fn compile_pdf_single_impl(world: &RheoWorld, output: &Path) -> Result<()> {
-    info!("compiling to PDF");
-    let result = typst::compile::<PagedDocument>(world);
-    let document = unwrap_compilation_result(Some(world), result, None::<fn(&_) -> bool>)?;
+    let document = compile_pdf_with_world(world)?;
 
     debug!(output = %output.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default())
-        .map_err(|e| handle_export_errors(e, ExportErrorType::Pdf))?;
+    let pdf_bytes = document_to_pdf_bytes(&document)?;
 
     debug!(size = pdf_bytes.len(), "writing PDF file");
     std::fs::write(output, &pdf_bytes)
@@ -84,15 +81,10 @@ fn compile_pdf_merged_impl(
     debug!(temp_path = %temp_path.display(), "created temporary file");
 
     // output_format=None because links already transformed to labels by RheoSpine
-    let world = RheoWorld::new(root, temp_path, None)?;
-
-    info!(output = %output_path.display(), "compiling merged PDF");
-    let result = typst::compile::<PagedDocument>(&world);
-    let document = unwrap_compilation_result(Some(&world), result, None::<fn(&_) -> bool>)?;
+    let document = compile_pdf_to_document(temp_path, root, None)?;
 
     debug!(output = %output_path.display(), "exporting to PDF");
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default())
-        .map_err(|e| handle_export_errors(e, ExportErrorType::Pdf))?;
+    let pdf_bytes = document_to_pdf_bytes(&document)?;
 
     debug!(size = pdf_bytes.len(), "writing PDF file");
     std::fs::write(output_path, &pdf_bytes)

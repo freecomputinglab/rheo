@@ -2,8 +2,8 @@
 
 use html5ever::{ParseOpts, tendril::TendrilSink};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
+use rheo_core::typst_types::EcoString;
 use std::{fmt::Write, slice};
-use typst::diag::EcoString;
 
 /// Returns true if the given tag name is an HTML void element.
 /// Void elements are self-closing and cannot have children.

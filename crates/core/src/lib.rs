@@ -9,10 +9,12 @@ pub mod logging;
 pub mod manifest_version;
 pub mod output;
 pub mod path_utils;
+pub mod pdf_compile;
 pub mod pdf_utils;
 pub mod project;
 pub mod results;
 pub mod reticulate;
+pub mod typst_types;
 pub mod validation;
 pub mod watch;
 pub mod world;
@@ -24,9 +26,6 @@ include!("plugins.rs");
 pub use config::RheoConfig;
 pub use constants::*;
 
-/// Bundled default HTML stylesheet (from `src/templates/init/style.css`).
-/// HTML plugin uses this when the project doesn't provide its own style.css.
-pub const DEFAULT_HTML_STYLESHEET: &str = include_str!("templates/init/style.css");
 pub use error::RheoError;
 pub use globset::{Glob, GlobSet, GlobSetBuilder};
 pub use manifest_version::ManifestVersion;
