@@ -951,3 +951,60 @@ Do not use this workflow when:
 - User asks to implement a specific bug or feature
 - User wants to review or discuss an issue
 - User asks for anything other than "bd/jj churn" or similar batch processing requests
+
+---
+
+## Plan Mode
+
+**IMPORTANT**: Plan mode is a code-free design workflow. When operating in plan mode, NEVER write, edit, or delete code or files. The only output is beads issues.
+
+### What is Plan Mode?
+
+Plan mode is for designing and decomposing work before implementation begins. It produces a structured set of beads issues that the `bd/jj churn` workflow will later execute.
+
+**Activated by**: The user saying "plan mode", "let's plan", "design this", or similar phrases requesting design-only thinking.
+
+### Plan Mode Rules
+
+1. **No code, ever**: Do not write, edit, suggest, or show code snippets. Do not modify any files except `.beads/`.
+2. **Output is beads issues only**: All proposals must be expressed as `bd create` commands.
+3. **Discuss before creating**: Present your proposed issue breakdown to the user and get approval before running any `bd create` commands.
+4. **One acceptance, one action**: When the user accepts the proposal, execute the `bd create` commands and nothing else.
+
+### Plan Mode Workflow
+
+1. **Understand the goal**: Ask clarifying questions if needed. Do not assume implementation details.
+
+2. **Decompose into issues**: Break the goal into discrete, independently-implementable beads issues. Each issue should:
+   - Have a clear, testable acceptance criterion
+   - Be small enough to implement in one `bd/jj` session
+   - Be typed correctly (`bug`, `feature`, `task`, `chore`)
+   - Have an appropriate priority (0–4)
+
+3. **Present the proposal**: Show the user the planned issues in a readable format before creating anything:
+   ```
+   Proposed issues:
+   - [feature, P2] Add X to Y — does Z
+   - [task, P2]    Write tests for X
+   - [bug, P1]     Fix edge case in Z when W
+   ```
+   Include any dependency relationships (e.g., "Tests depend on feature").
+
+4. **Get explicit approval**: Wait for the user to say "yes", "looks good", "go ahead", or similar before creating issues.
+
+5. **Create issues**: Run the `bd create` commands (in parallel where possible). Set up dependencies with `bd dep add` where needed.
+
+6. **Confirm and stop**: List the created issue IDs and titles. Do not proceed to implementation.
+
+### What Plan Mode Does NOT Do
+
+- ❌ Write code
+- ❌ Edit source files
+- ❌ Run `cargo build`, `cargo test`, or any build/test command
+- ❌ Use the `bd/jj` workflow
+- ❌ Make commits
+- ❌ Start implementation
+
+### Exiting Plan Mode
+
+Plan mode ends when the user explicitly asks to implement work (e.g., "bd/jj churn", "start implementing", "go"). At that point, switch to the `bd/jj churn` workflow to execute the created issues.

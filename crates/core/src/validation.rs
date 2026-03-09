@@ -1,4 +1,4 @@
-use crate::config::UniversalSpine;
+use crate::config::Spine;
 use crate::manifest_version::ManifestVersion;
 use crate::{Result, RheoConfig, RheoError};
 use tracing::warn;
@@ -43,7 +43,7 @@ fn validate_vertebrae(vertebrae: &[String]) -> Result<()> {
     Ok(())
 }
 
-impl ValidateConfig for UniversalSpine {
+impl ValidateConfig for Spine {
     fn validate(&self) -> Result<()> {
         validate_vertebrae(&self.vertebrae)?;
 
@@ -61,11 +61,10 @@ impl ValidateConfig for UniversalSpine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::UniversalSpine;
 
     #[test]
     fn test_universal_spine_validate_empty() {
-        let spine = UniversalSpine {
+        let spine = Spine {
             title: Some("Test".to_string()),
             vertebrae: vec![],
             merge: None,
@@ -75,7 +74,7 @@ mod tests {
 
     #[test]
     fn test_universal_spine_validate_valid_patterns() {
-        let spine = UniversalSpine {
+        let spine = Spine {
             title: Some("Test".to_string()),
             vertebrae: vec!["*.typ".to_string(), "chapters/**/*.typ".to_string()],
             merge: None,
@@ -85,7 +84,7 @@ mod tests {
 
     #[test]
     fn test_universal_spine_validate_invalid_pattern() {
-        let spine = UniversalSpine {
+        let spine = Spine {
             title: Some("Test".to_string()),
             vertebrae: vec!["[invalid".to_string()],
             merge: None,
@@ -98,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_universal_spine_merge_true_requires_title() {
-        let spine = UniversalSpine {
+        let spine = Spine {
             title: None,
             vertebrae: vec!["*.typ".to_string()],
             merge: Some(true),
@@ -111,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_universal_spine_merge_true_with_title_ok() {
-        let spine = UniversalSpine {
+        let spine = Spine {
             title: Some("My Book".to_string()),
             vertebrae: vec!["*.typ".to_string()],
             merge: Some(true),
@@ -121,7 +120,7 @@ mod tests {
 
     #[test]
     fn test_universal_spine_merge_false_no_title_ok() {
-        let spine = UniversalSpine {
+        let spine = Spine {
             title: None,
             vertebrae: vec!["*.typ".to_string()],
             merge: Some(false),

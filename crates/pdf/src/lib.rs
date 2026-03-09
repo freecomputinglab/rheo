@@ -1,5 +1,5 @@
 use rheo_core::{
-    FormatPlugin, PluginContext, Result, RheoError, RheoSpine, RheoWorld, UniversalSpine,
+    FormatPlugin, PluginContext, Result, RheoError, RheoSpine, RheoWorld, Spine,
     compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes,
 };
 use std::io::Write;
@@ -29,7 +29,7 @@ impl FormatPlugin for PdfPlugin {
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
         if ctx.spine.merge {
-            let spine = UniversalSpine {
+            let spine = Spine {
                 title: ctx.spine.title.clone(),
                 vertebrae: ctx.spine.vertebrae.clone(),
                 merge: Some(true),
@@ -61,7 +61,7 @@ fn compile_pdf_single_impl(world: &RheoWorld, output: &Path) -> Result<()> {
 }
 
 fn compile_pdf_merged_impl(
-    spine_config: &UniversalSpine,
+    spine_config: &Spine,
     output_path: &Path,
     root: &Path,
 ) -> Result<()> {

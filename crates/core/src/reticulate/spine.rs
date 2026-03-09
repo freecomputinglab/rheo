@@ -1,4 +1,4 @@
-use crate::config::UniversalSpine;
+use crate::config::Spine;
 use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
 use crate::{Result, RheoError, TYP_EXT};
 use std::collections::HashMap;
@@ -32,7 +32,7 @@ impl RheoSpine {
     /// * `merge` - Whether to merge spine files into a single source (caller decides)
     pub fn build(
         root: &Path,
-        spine_config: Option<&UniversalSpine>,
+        spine_config: Option<&Spine>,
         format_name: &str,
         merge: bool,
     ) -> Result<RheoSpine> {
@@ -193,7 +193,7 @@ fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
 /// Generates a spine (ordered list of .typ files) based on configuration.
 pub fn generate_spine(
     root: &Path,
-    spine_config: Option<&UniversalSpine>,
+    spine_config: Option<&Spine>,
     require_spine: bool,
 ) -> Result<Vec<PathBuf>> {
     if require_spine && spine_config.is_none() {
@@ -239,7 +239,6 @@ pub fn generate_spine(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::UniversalSpine;
     use std::fs;
     use tempfile::TempDir;
 
@@ -255,8 +254,8 @@ mod tests {
         temp
     }
 
-    fn spine_with_vertebrae(vertebrae: Vec<String>) -> UniversalSpine {
-        UniversalSpine {
+    fn spine_with_vertebrae(vertebrae: Vec<String>) -> Spine {
+        Spine {
             title: Some("Test".to_string()),
             vertebrae,
             merge: None,
@@ -330,7 +329,7 @@ mod tests {
             "chapters/ch2.typ",
             "appendix.typ",
         ]);
-        let spine = UniversalSpine {
+        let spine = Spine {
             title: Some("Book".to_string()),
             vertebrae: vec![
                 "cover.typ".to_string(),

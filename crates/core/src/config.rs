@@ -6,12 +6,12 @@ use std::collections::HashMap;
 use std::path::Path;
 use tracing::debug;
 
-/// Universal spine configuration — replaces PdfSpine, EpubSpine, and HtmlSpine.
+/// Spine configuration from `rheo.toml`: glob patterns, title, and optional merge flag.
 ///
-/// All format plugins share this single spine type. Each plugin interprets the
+/// All format plugins share this single config type. Each plugin interprets the
 /// `merge` field according to its own defaults (e.g. EPUB defaults to merge=true).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct UniversalSpine {
+pub struct Spine {
     /// Title for the merged output document (required when merge=true).
     pub title: Option<String>,
 
@@ -34,8 +34,8 @@ pub struct UniversalSpine {
 /// struct.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginSection {
-    /// Universal spine configuration (shared by all plugins).
-    pub spine: Option<UniversalSpine>,
+    /// Spine configuration (shared by all plugins).
+    pub spine: Option<Spine>,
 
     /// Per-plugin glob patterns for files to copy into this plugin's output directory.
     /// Paths are relative to the project root; directory structure is preserved.
@@ -206,7 +206,7 @@ impl RheoConfig {
     }
 
     /// Return the spine config for the named plugin, if any.
-    pub fn spine_for_plugin(&self, name: &str) -> Option<&UniversalSpine> {
+    pub fn spine_for_plugin(&self, name: &str) -> Option<&Spine> {
         self.plugin_sections
             .get(name)
             .and_then(|s| s.spine.as_ref())

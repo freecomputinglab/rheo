@@ -38,7 +38,7 @@ pub use results::{CompilationResults, FormatResult};
 pub use compile::RheoCompileOptions;
 
 // Configuration types
-pub use config::{PluginSection, UniversalSpine};
+pub use config::{PluginSection, Spine};
 
 // Plugin trait and context
 pub use plugins::{

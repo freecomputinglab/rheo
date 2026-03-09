@@ -12,7 +12,7 @@ use rheo_core::{
 };
 use rheo_core::{
     FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError, RheoSpine,
-    SpineOptions, UniversalSpine, compile_document_to_string, compile_html_to_document, eco_format,
+    SpineOptions, Spine, compile_document_to_string, compile_html_to_document, eco_format,
     eco_vec,
 };
 use std::{
@@ -40,7 +40,7 @@ impl FormatPlugin for EpubPlugin {
 
     /// Set EPUB smart defaults: infer spine title from project name when no config exists.
     fn apply_defaults(&self, section: &mut PluginSection, project_name: &str) {
-        let spine = section.spine.get_or_insert_with(|| UniversalSpine {
+        let spine = section.spine.get_or_insert_with(|| Spine {
             title: None,
             vertebrae: vec![],
             merge: None,
@@ -135,7 +135,7 @@ fn date_format(dt: &DateTime<Utc>) -> EcoString {
 /// Generates the package.opf XML string from the generated EPUB items.
 pub fn generate_package(
     items: &[EpubItem],
-    spine: &UniversalSpine,
+    spine: &Spine,
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
 ) -> Result<String> {
@@ -322,8 +322,8 @@ fn compile_epub_impl(
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
 ) -> Result<()> {
-    // Convert SpineOptions to UniversalSpine for RheoSpine::build
-    let universal_spine = UniversalSpine {
+    // Convert SpineOptions to Spine for RheoSpine::build
+    let universal_spine = Spine {
         title: spine.title.clone(),
         vertebrae: spine.vertebrae.clone(),
         merge: Some(spine.merge),
