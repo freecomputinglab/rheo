@@ -1,0 +1,37 @@
+[package]
+name = "rheo-tests"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+test = true
+
+[dependencies]
+# Internal crates
+rheo-core = { workspace = true }
+rheo-html = { workspace = true }
+rheo-pdf = { workspace = true }
+rheo-epub = { workspace = true }
+
+# Workspace dependencies
+tempfile = { workspace = true }
+walkdir = { workspace = true }
+serde = { workspace = true }
+
+# Test-specific dependencies
+ntest = "0.9"
+similar = "2.6"
+serde_json = "1.0"
+
+# PDF metadata extraction
+lopdf = "0.35"
+sha2 = "0.10"
+
+# EPUB handling
+zip = { workspace = true }
+html5ever = { workspace = true }
+markup5ever_rcdom = { workspace = true }
+
+# XML parsing (for EPUB metadata)
+serde-xml-rs = { workspace = true }

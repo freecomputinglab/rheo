@@ -1,0 +1,52 @@
+[package]
+name = "rheo-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Typst dependencies
+typst = { workspace = true }
+typst-html = { workspace = true }
+typst-pdf = { workspace = true }
+typst-library = { workspace = true }
+typst-kit = { workspace = true }
+typst-syntax = { workspace = true }
+comemo = { workspace = true }
+
+# Error handling and diagnostics
+codespan-reporting = { workspace = true }
+thiserror = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+toml = { workspace = true }
+semver = { workspace = true }
+
+# File system and patterns
+walkdir = { workspace = true }
+globset = { workspace = true }
+glob = { workspace = true }
+pathdiff = { workspace = true }
+opener = { workspace = true }
+
+# Date/time
+chrono = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+atty = { workspace = true }
+
+# Concurrency and utilities
+parking_lot = { workspace = true }
+lazy_static = { workspace = true }
+regex = { workspace = true }
+notify = { workspace = true }
+ecow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

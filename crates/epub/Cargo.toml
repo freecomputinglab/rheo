@@ -1,0 +1,37 @@
+[package]
+name = "rheo-epub"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Core
+rheo-core = { path = "../core", version = "0.2.0" }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde-xml-rs = { workspace = true }
+toml = { workspace = true }
+
+# Date/time
+chrono = { workspace = true }
+
+# EPUB-specific
+zip = { workspace = true }
+html5ever = { workspace = true }
+markup5ever_rcdom = { workspace = true }
+iref = { workspace = true }
+uuid = { workspace = true }
+itertools = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# File utilities
+tempfile = { workspace = true }

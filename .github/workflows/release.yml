@@ -34,7 +34,7 @@ jobs:
       - name: Setup
         uses: ./.github/workflows/setup
       - name: Compile binary
-        run: cargo build --locked --release --target ${{ matrix.target }}
+        run: cargo build --locked --release --bin rheo --target ${{ matrix.target }}
       - name: Compress artifacts (Windows)
         if: runner.os == 'Windows'
         run: |
@@ -62,7 +62,12 @@ jobs:
       - name: Login to crates.io
         run: cargo login ${{ secrets.CRATES_IO_TOKEN }}
       - name: Publish crates
-        run: cargo publish --workspace
+        run: |
+          cargo publish -p rheo-core
+          cargo publish -p rheo-html
+          cargo publish -p rheo-pdf
+          cargo publish -p rheo-epub
+          cargo publish -p rheo-cli
       - name: Add a tag for the merged commit
         uses: christophebedard/tag-version-commit@v1
         with:
