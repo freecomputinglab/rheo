@@ -7,7 +7,7 @@ use crate::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilati
 use crate::world::RheoWorld;
 use std::path::Path;
 use tracing::info;
-use typst::layout::PagedDocument;
+use typst_layout::PagedDocument;
 
 /// Compile a Typst source file to a PDF document.
 ///

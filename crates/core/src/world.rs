@@ -9,13 +9,13 @@ use parking_lot::Mutex;
 use tracing::warn;
 use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Datetime, Dict, IntoValue};
-use typst::syntax::{FileId, Lines, Source, VirtualPath};
+use typst::syntax::{FileId, Lines, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
-use typst_kit::download::Downloader;
-use typst_kit::fonts::{FontSlot, Fonts};
-use typst_kit::package::PackageStorage;
+use typst_kit::downloader::SystemDownloader;
+use typst_kit::fonts::FontStore;
+use typst_kit::packages::SystemPackages;
 use typst_library::{Feature, Features};
 
 /// Build sys.inputs Dict for Typst compilation.
@@ -32,10 +32,9 @@ pub struct RheoWorld {
     root: PathBuf,
     main: FileId,
     library: LazyHash<Library>,
-    book: LazyHash<FontBook>,
-    fonts: Vec<FontSlot>,
+    font_store: FontStore,
     slots: Mutex<HashMap<FileId, FileSlot>>,
-    package_storage: PackageStorage,
+    packages: SystemPackages,
     /// Output format name for link transformations and polyfill injection.
     /// None = no transformation.
     format_name: Option<String>,
@@ -75,10 +74,10 @@ impl RheoWorld {
             )
         })?;
 
-        let main_vpath = VirtualPath::within_root(&main_path, &root).ok_or_else(|| {
-            RheoError::path(&main_path, "main file must be within root directory")
-        })?;
-        let main = FileId::new(None, main_vpath);
+        let main_vpath = VirtualPath::virtualize(&root, &main_path)
+            .map_err(|_| RheoError::path(&main_path, "main file must be within root directory"))?;
+        let rooted_path = RootedPath::new(VirtualRoot::Project, main_vpath);
+        let main = rooted_path.intern();
 
         let features: Features = [Feature::Html].into_iter().collect();
         let inputs = build_inputs(format_name);
@@ -87,25 +86,23 @@ impl RheoWorld {
             .with_inputs(inputs)
             .build();
 
+        let mut font_store = FontStore::new();
         let include_system_fonts = std::env::var("TYPST_IGNORE_SYSTEM_FONTS").is_err();
-        let font_search = Fonts::searcher()
-            .include_system_fonts(include_system_fonts)
-            .search();
+        if include_system_fonts {
+            font_store.extend(typst_kit::fonts::system());
+        }
+        font_store.extend(typst_kit::fonts::embedded());
 
-        let package_storage = PackageStorage::new(
-            None,
-            None,
-            Downloader::new(concat!("rheo/", env!("CARGO_PKG_VERSION"))),
-        );
+        let downloader = SystemDownloader::new(concat!("rheo/", env!("CARGO_PKG_VERSION")));
+        let packages = SystemPackages::new(downloader);
 
         Ok(Self {
             root,
             main,
             library: LazyHash::new(library),
-            book: font_search.book.into(),
-            fonts: font_search.fonts,
+            font_store,
             slots: Mutex::new(HashMap::new()),
-            package_storage,
+            packages,
             format_name: format_name.map(str::to_string),
             plugin_library,
         })
@@ -125,11 +122,10 @@ impl RheoWorld {
             )
         })?;
 
-        let main_vpath = VirtualPath::within_root(&main_path, &self.root).ok_or_else(|| {
-            RheoError::path(&main_path, "main file must be within root directory")
-        })?;
-
-        self.main = FileId::new(None, main_vpath);
+        let main_vpath = VirtualPath::virtualize(&self.root, &main_path)
+            .map_err(|_| RheoError::path(&main_path, "main file must be within root directory"))?;
+        let rooted_path = RootedPath::new(VirtualRoot::Project, main_vpath);
+        self.main = rooted_path.intern();
         Ok(())
     }
 
@@ -138,39 +134,43 @@ impl RheoWorld {
         use crate::reticulate::transformer::LinkTransformer;
 
         let transformer = LinkTransformer::new(format_name);
+        let vpath_path = PathBuf::from(id.vpath().get_without_slash());
         transformer
-            .transform_source(text, id.vpath().as_rootless_path(), &self.root)
+            .transform_source(text, &vpath_path, &self.root)
             .map_err(|e| FileError::Other(Some(e.to_string().into())))
     }
 
     fn path_for_id(&self, id: FileId) -> FileResult<PathBuf> {
-        if id.vpath().as_rooted_path().starts_with("<") {
+        if id.vpath().get_with_slash().starts_with('<') {
             return Err(FileError::NotFound(
-                id.vpath().as_rooted_path().display().to_string().into(),
+                id.vpath().get_with_slash().to_string().into(),
             ));
         }
 
-        let mut root = &self.root;
+        let root = &self.root;
 
         let buf;
-        if let Some(spec) = id.package() {
-            buf = self
-                .package_storage
-                .prepare_package(spec, &mut PrintDownload::new(spec))?;
-            root = &buf;
-        }
+        let root = match id.root() {
+            typst::syntax::VirtualRoot::Project => root,
+            typst::syntax::VirtualRoot::Package(spec) => {
+                buf = self
+                    .packages
+                    .obtain(spec)
+                    .map_err(|e| FileError::Other(Some(e.to_string().into())))?
+                    .path()
+                    .to_path_buf();
+                &buf
+            }
+        };
 
-        let path = id.vpath().resolve(root).ok_or_else(|| {
-            FileError::NotFound(id.vpath().as_rooted_path().display().to_string().into())
-        })?;
+        let path = id.vpath().realize(root);
 
         if !path.exists() {
             // Fallback 1: Resolve against project root instead of package root.
             // Handles the case where a file path in the project is incorrectly
             // specified as a package path, or package resolution fails.
-            if let Some(doc_path) = id.vpath().resolve(&self.root)
-                && doc_path.exists()
-            {
+            let doc_path = id.vpath().realize(&self.root);
+            if doc_path.exists() {
                 return Ok(doc_path);
             }
 
@@ -179,12 +179,13 @@ impl RheoWorld {
             // file if the intended file doesn't exist. For example, if importing
             // `chapters/intro.typ` fails but `intro.typ` exists at root, this will
             // load the wrong file.
-            if let Some(filename) = id.vpath().as_rooted_path().file_name() {
+            let vpath_str = id.vpath().get_without_slash();
+            if let Some(filename) = PathBuf::from(vpath_str).file_name() {
                 let filename_path = self.root.join(filename);
                 if filename_path.exists() {
                     // Log a warning so this fallback is visible in verbose mode
                     warn!(
-                        requested = %id.vpath().as_rooted_path().display(),
+                        requested = %id.vpath().get_with_slash(),
                         loaded = %filename_path.display(),
                         "path resolution fallback: using filename from project root"
                     );
@@ -209,9 +210,11 @@ impl RheoWorld {
 
         if let Some(slot) = self.slots.lock().get(&id)
             && let Some(bytes) = &slot.file
-            && let Ok(lines) = Lines::try_from(bytes)
         {
-            return lines;
+            // Convert bytes to string for line tracking
+            if let Ok(text) = std::str::from_utf8(bytes.as_slice()) {
+                return Lines::new(text.to_string());
+            }
         }
 
         Lines::new(String::new())
@@ -228,7 +231,7 @@ impl World for RheoWorld {
     }
 
     fn book(&self) -> &LazyHash<FontBook> {
-        &self.book
+        self.font_store.book()
     }
 
     fn main(&self) -> FileId {
@@ -300,16 +303,20 @@ impl World for RheoWorld {
     }
 
     fn font(&self, index: usize) -> Option<Font> {
-        self.fonts.get(index)?.get()
+        self.font_store.font(index)
     }
 
-    fn today(&self, offset: Option<i64>) -> Option<Datetime> {
+    fn today(&self, offset: Option<typst::foundations::Duration>) -> Option<Datetime> {
         let now = Local::now();
         let with_offset = match offset {
             None => now,
-            Some(hours) => {
-                let offset_duration = chrono::Duration::hours(hours);
-                now + offset_duration
+            Some(duration) => {
+                // Convert typst::foundations::Duration to time::Duration
+                let time_duration: time::Duration = duration.into();
+                // Convert time::Duration to chrono::Duration
+                let chrono_duration = chrono::Duration::seconds(time_duration.whole_seconds())
+                    + chrono::Duration::nanoseconds(time_duration.subsec_nanoseconds() as i64);
+                now + chrono_duration
             }
         };
 
@@ -328,16 +335,20 @@ impl<'a> Files<'a> for RheoWorld {
 
     fn name(&'a self, id: FileId) -> std::result::Result<Self::Name, CodespanError> {
         let vpath = id.vpath();
-        Ok(if let Some(package) = id.package() {
-            format!("{package}{}", vpath.as_rooted_path().display())
-        } else {
-            vpath
-                .resolve(&self.root)
-                .and_then(|abs| pathdiff::diff_paths(abs, &self.root))
-                .as_deref()
-                .unwrap_or_else(|| vpath.as_rootless_path())
-                .to_string_lossy()
-                .into()
+        Ok(match id.root() {
+            typst::syntax::VirtualRoot::Package(spec) => {
+                format!("{spec}{}", vpath.get_with_slash())
+            }
+            typst::syntax::VirtualRoot::Project => {
+                let abs = vpath.realize(&self.root);
+                match pathdiff::diff_paths(abs, &self.root) {
+                    Some(diff) => diff.as_path().to_string_lossy().into(),
+                    None => PathBuf::from(vpath.get_without_slash())
+                        .as_path()
+                        .to_string_lossy()
+                        .into(),
+                }
+            }
         })
     }
 
@@ -367,50 +378,5 @@ impl<'a> Files<'a> for RheoWorld {
                 given,
                 max: source.len_lines(),
             })
-    }
-}
-
-struct PrintDownload {
-    package_name: String,
-}
-
-impl PrintDownload {
-    fn new(spec: &typst::syntax::package::PackageSpec) -> Self {
-        Self {
-            package_name: format!("{}@{}", spec.name, spec.version),
-        }
-    }
-}
-
-impl typst_kit::download::Progress for PrintDownload {
-    fn print_start(&mut self) {
-        tracing::info!("downloading package {}", self.package_name);
-    }
-
-    fn print_progress(&mut self, state: &typst_kit::download::DownloadState) {
-        if let Some(total) = state.content_len {
-            let percent = (state.total_downloaded as f64 / total as f64 * 100.0) as u32;
-            tracing::debug!(
-                "downloading package {} - {}% ({}/{})",
-                self.package_name,
-                percent,
-                state.total_downloaded,
-                total
-            );
-        } else {
-            tracing::debug!(
-                "downloading package {} - {} bytes",
-                self.package_name,
-                state.total_downloaded
-            );
-        }
-    }
-
-    fn print_finish(&mut self, state: &typst_kit::download::DownloadState) {
-        tracing::info!(
-            "downloaded package {} ({} bytes)",
-            self.package_name,
-            state.total_downloaded
-        );
     }
 }

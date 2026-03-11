@@ -22,6 +22,8 @@ use std::{
     path::{Path, PathBuf},
 };
 use tracing::info;
+use typst_library::introspection::Introspector;
+use typst_library::model::Document;
 use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 
@@ -138,7 +140,7 @@ pub fn generate_package(
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
 ) -> Result<String> {
-    let info = &items[0].document.info;
+    let info = items[0].document.info();
     let language = info.locale.unwrap_or_default().rfc_3066();
     let title = spine
         .title
@@ -428,7 +430,7 @@ impl EpubItem {
     }
 
     fn outline(doc: &HtmlDocument, href: &IriRef) -> (Vec<EcoString>, Vec<OutlineNode<EcoString>>) {
-        let elems = doc.introspector.query(&HeadingElem::ELEM.select());
+        let elems = doc.introspector().query(&HeadingElem::ELEM.select());
         let (nodes, heading_ids): (Vec<_>, Vec<_>) = elems
             .iter()
             .map(|elem| {
@@ -457,7 +459,7 @@ impl EpubItem {
     }
 
     fn title(&self) -> EcoString {
-        match &self.document.info.title {
+        match &self.document.info().title {
             Some(title) => title.clone(),
             None => self.href.path().as_str().into(),
         }
