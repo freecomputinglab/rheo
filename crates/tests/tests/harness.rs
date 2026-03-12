@@ -37,6 +37,7 @@ use std::path::PathBuf;
 #[test_case("cases/error_formatting/unknown_function.typ")]
 #[test_case("cases/error_formatting/invalid_method.typ")]
 #[test_case("cases/error_formatting/invalid_field.typ")]
+#[test_case("cases/error_formatting/broken_label_ref.typ")]
 #[test_case("cases/error_formatting/multiple_errors.typ")]
 #[test_case("cases/error_formatting/array_index_error.typ")]
 fn run_test_case(name: &str) {
