@@ -53,7 +53,7 @@ impl BuiltSpine {
     ) -> Result<BuiltSpine> {
         Err(RheoError::project_config(
             "BuiltSpine::build() is deprecated. Use TracedSpine::trace() and generate_bundle_entry() instead. \
-             See issue rheo-4h1 for PDF plugin bundle migration."
+             See issue rheo-4h1 for PDF plugin bundle migration.",
         ))
     }
 }
@@ -89,7 +89,8 @@ pub fn generate_bundle_entry(
 
     // Include only the #let definitions from rheo.typ, skip the #set text(...) rule
     // The #set rule will be added inside each document's content
-    out.push_str(r#"
+    out.push_str(
+        r#"
 // Get the rheo output format, with fallback to Typst's target()
 #let rheo-target() = {
   if "rheo-target" in sys.inputs {
@@ -107,7 +108,8 @@ pub fn generate_bundle_entry(
 #let rheo_template(doc) = context {
   doc
 }
-"#);
+"#,
+    );
 
     if !plugin_library.is_empty() {
         out.push_str(plugin_library);

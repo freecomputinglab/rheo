@@ -1,6 +1,4 @@
 
-formats = ["html", "pdf"]
-
 [pdf.spine]
 merge = true
 title = "Relative Path Test"

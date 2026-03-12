@@ -1,5 +1,5 @@
 use rheo_core::{
-    FormatPlugin, PluginContext, Result, RheoError, RheoWorld,
+    FormatPlugin, PluginContext, Result, RheoError, RheoWorld, diagnostics::print_diagnostics,
 };
 use std::path::Path;
 use tracing::{debug, info};
@@ -27,11 +27,7 @@ impl FormatPlugin for PdfPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        compile_pdf_bundle_impl(
-            ctx.options.world,
-            &ctx.options.output,
-            ctx.spine.merge,
-        )
+        compile_pdf_bundle_impl(ctx.options.world, &ctx.options.output, ctx.spine.merge)
     }
 }
 
@@ -39,11 +35,7 @@ impl FormatPlugin for PdfPlugin {
 ///
 /// Uses typst::compile::<typst_bundle::Bundle>() for multi-file bundle output.
 /// For merged mode, produces a single PDF. For non-merged mode, produces one PDF per document.
-fn compile_pdf_bundle_impl(
-    world: &RheoWorld,
-    output_path: &Path,
-    merge: bool,
-) -> Result<()> {
+fn compile_pdf_bundle_impl(world: &RheoWorld, output_path: &Path, merge: bool) -> Result<()> {
     if merge {
         compile_pdf_merged_bundle(world, output_path)
     } else {
@@ -59,8 +51,21 @@ fn compile_pdf_merged_bundle(world: &RheoWorld, output_path: &Path) -> Result<()
     info!("compiling merged PDF bundle");
 
     // Compile the bundle using the world (which has the synthetic bundle entry as main)
-    let Warned { output, .. } = typst::compile::<typst_bundle::Bundle>(world);
-    let bundle = output.map_err(|e| RheoError::project_config(format!("bundle compilation had errors: {:?}", e)))?;
+    let Warned { output, warnings } = typst::compile::<typst_bundle::Bundle>(world);
+
+    // Print warnings (ignore errors from diagnostic printing)
+    let _ = print_diagnostics(world, &[], &warnings);
+
+    let bundle = output.map_err(|errors| {
+        // Print errors to stderr with proper formatting
+        let _ = print_diagnostics(world, &errors, &[]);
+        // Return error for error handling
+        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+        RheoError::project_config(format!(
+            "bundle compilation had errors: {}",
+            error_messages.join(", ")
+        ))
+    })?;
 
     // Export the bundle to get PDF files
     let bundle_options = typst_bundle::BundleOptions {
@@ -91,15 +96,25 @@ fn compile_pdf_merged_bundle(world: &RheoWorld, output_path: &Path) -> Result<()
 /// Compile multiple PDFs from a bundle (one per document).
 ///
 /// Each #document() in the bundle produces a separate PDF file.
-fn compile_pdf_per_file_bundle(
-    world: &RheoWorld,
-    output_dir: &Path,
-) -> Result<()> {
+fn compile_pdf_per_file_bundle(world: &RheoWorld, output_dir: &Path) -> Result<()> {
     info!("compiling per-file PDF bundle");
 
     // Compile the bundle using the world
-    let Warned { output, .. } = typst::compile::<typst_bundle::Bundle>(world);
-    let bundle = output.map_err(|e| RheoError::project_config(format!("bundle compilation had errors: {:?}", e)))?;
+    let Warned { output, warnings } = typst::compile::<typst_bundle::Bundle>(world);
+
+    // Print warnings (ignore errors from diagnostic printing)
+    let _ = print_diagnostics(world, &[], &warnings);
+
+    let bundle = output.map_err(|errors| {
+        // Print errors to stderr with proper formatting
+        let _ = print_diagnostics(world, &errors, &[]);
+        // Return error for error handling
+        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+        RheoError::project_config(format!(
+            "bundle compilation had errors: {}",
+            error_messages.join(", ")
+        ))
+    })?;
 
     // Export the bundle to get PDF files
     let bundle_options = typst_bundle::BundleOptions {
@@ -122,8 +137,9 @@ fn compile_pdf_per_file_bundle(
 
         // Ensure parent directory exists
         if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| RheoError::io(e, format!("creating output directory {}", parent.display())))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                RheoError::io(e, format!("creating output directory {}", parent.display()))
+            })?;
         }
 
         debug!(output = %out_path.display(), "writing PDF file");

@@ -1,6 +1,4 @@
 
-formats = ["html", "pdf"]
-
 [pdf.spine]
 merge = true
 title = "Path Edge Cases Test"

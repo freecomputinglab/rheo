@@ -6,7 +6,7 @@ use rheo_core::manifest_version;
 use rheo_core::output::OutputConfig;
 use rheo_core::project::{ProjectConfig, ProjectMode};
 use rheo_core::results::CompilationResults;
-use rheo_core::reticulate::{generate_bundle_entry, SpineDocument, TracedSpine};
+use rheo_core::reticulate::{SpineDocument, TracedSpine, generate_bundle_entry};
 use rheo_core::watch::{WatchEvent, watch_project};
 use rheo_core::world::RheoWorld;
 use rheo_core::{FormatPlugin, PluginContext, Result, RheoError};
@@ -460,11 +460,10 @@ fn perform_compilation(
         // Get full plugin section
         let plugin_section = project.config.plugin_section(plugin.name());
 
-        // Bundle compilation (HTML): generate bundle entry, inject into world, compile once
-        // Per-file compilation (PDF non-merge): loop through spine documents
+        // Bundle compilation (HTML and PDF non-merge): generate bundle entry, inject into world, compile once
         // Merged compilation (PDF merge, EPUB): single output from all files
-        if !spine.merge && plugin.name() == "html" {
-            // HTML bundle compilation: generate bundle entry and inject into world
+        if !spine.merge && (plugin.name() == "html" || plugin.name() == "pdf") {
+            // HTML and PDF non-merge bundle compilation: generate bundle entry and inject into world
             let compilation_root = project
                 .config
                 .resolve_content_dir(&project.root)
@@ -473,7 +472,8 @@ fn perform_compilation(
             let plugin_library = plugin.typst_library().map(|s| s.to_string());
             let mut bundle_world = RheoWorld::new(
                 &compilation_root,
-                spine.documents
+                spine
+                    .documents
                     .first()
                     .map(|d| d.path.as_path())
                     .unwrap_or(&compilation_root),
@@ -491,7 +491,8 @@ fn perform_compilation(
 
             // Note: options.root should be project.root for CSS path resolution
             // (stylesheets are typically in project root, not content dir)
-            let options = RheoCompileOptions::new(&plugin_output_dir, &project.root, &mut bundle_world);
+            let options =
+                RheoCompileOptions::new(&plugin_output_dir, &project.root, &mut bundle_world);
 
             let ctx = PluginContext {
                 project,
@@ -543,7 +544,8 @@ fn perform_compilation(
             );
             bundle_world.inject_bundle_entry(bundle_entry_source);
 
-            let options = RheoCompileOptions::new(&output_path, &compilation_root, &mut bundle_world);
+            let options =
+                RheoCompileOptions::new(&output_path, &compilation_root, &mut bundle_world);
 
             let ctx = PluginContext {
                 project,
@@ -589,11 +591,8 @@ fn perform_compilation(
                 let plugin_library = plugin.typst_library().map(|s| s.to_string());
 
                 for typ_file in &files {
-                    let mut fresh_world = RheoWorld::new(
-                        &content_dir,
-                        typ_file,
-                        plugin_library.clone(),
-                    )?;
+                    let mut fresh_world =
+                        RheoWorld::new(&content_dir, typ_file, plugin_library.clone())?;
                     compile_one_file(&mut fresh_world, typ_file, &pfc, &mut results)?;
                 }
             }

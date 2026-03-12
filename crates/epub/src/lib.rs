@@ -11,11 +11,11 @@ use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
 use rheo_core::reticulate::TracedSpine;
 use rheo_core::{
-    FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
-    Spine, compile_document_to_string, compile_html_to_document, eco_format, eco_vec,
+    DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain,
 };
 use rheo_core::{
-    DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain,
+    FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError, Spine,
+    compile_document_to_string, compile_html_to_document, eco_format, eco_vec,
 };
 use std::{
     fmt::Write as _,
@@ -336,8 +336,9 @@ fn compile_epub_impl(
         .iter()
         .map(|doc| {
             let doc_path = &doc.path;
-            let source = fs::read_to_string(doc_path)
-                .map_err(|e| RheoError::io(e, format!("reading spine file '{}'", doc_path.display())))?;
+            let source = fs::read_to_string(doc_path).map_err(|e| {
+                RheoError::io(e, format!("reading spine file '{}'", doc_path.display()))
+            })?;
 
             // Transform .typ links to .xhtml links for EPUB
             let transformed_source = transformer.transform_source(&source, doc_path, root)?;

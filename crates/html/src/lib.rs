@@ -8,7 +8,7 @@ pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
     FormatPlugin, OpenHandle, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
-    ServerHandle,
+    ServerHandle, diagnostics::print_diagnostics,
 };
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -122,8 +122,21 @@ fn compile_html_bundle(options: RheoCompileOptions, config: &PluginSection) -> R
     info!("compiling HTML bundle");
 
     // Compile the bundle using the world (which has the synthetic bundle entry as main)
-    let Warned { output, .. } = typst::compile::<typst_bundle::Bundle>(options.world);
-    let bundle = output.map_err(|e| RheoError::project_config(format!("bundle compilation had errors: {:?}", e)))?;
+    let Warned { output, warnings } = typst::compile::<typst_bundle::Bundle>(options.world);
+
+    // Print warnings (ignore errors from diagnostic printing)
+    let _ = print_diagnostics(options.world, &[], &warnings);
+
+    let bundle = output.map_err(|errors| {
+        // Print errors to stderr with proper formatting
+        let _ = print_diagnostics(options.world, &errors, &[]);
+        // Return error for error handling
+        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
+        RheoError::project_config(format!(
+            "bundle compilation had errors: {}",
+            error_messages.join(", ")
+        ))
+    })?;
 
     // Export the bundle to get HTML files
     let bundle_options = typst_bundle::BundleOptions {
@@ -140,17 +153,20 @@ fn compile_html_bundle(options: RheoCompileOptions, config: &PluginSection) -> R
     for (vpath, bytes) in &fs {
         let out_path = options.output.join(vpath.get_without_slash());
         if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| RheoError::io(e, format!("creating output directory {}", parent.display())))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                RheoError::io(e, format!("creating output directory {}", parent.display()))
+            })?;
         }
 
         // For HTML files, inject CSS and fonts
-        if out_path.extension().map_or(false, |e| e == "html") {
-            let html_string = String::from_utf8(bytes.to_vec())
-                .map_err(|e| RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e)))?;
+        if out_path.extension().is_some_and(|e| e == "html") {
+            let html_string = String::from_utf8(bytes.to_vec()).map_err(|e| {
+                RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e))
+            })?;
 
             // Load CSS contents if configured, falling back to default stylesheet
-            let css_contents: Vec<String> = html_config.stylesheets
+            let css_contents: Vec<String> = html_config
+                .stylesheets
                 .iter()
                 .map(|path| {
                     let full_path = options.root.join(path);
@@ -171,8 +187,9 @@ fn compile_html_bundle(options: RheoCompileOptions, config: &PluginSection) -> R
             let css_refs: Vec<&str> = css_contents.iter().map(|s| s.as_str()).collect();
             let html_string = html_head::inject_inline_styles(&html_string, &css_refs)?;
 
-            std::fs::write(&out_path, html_string)
-                .map_err(|e| RheoError::io(e, format!("writing HTML file to {}", out_path.display())))?;
+            std::fs::write(&out_path, html_string).map_err(|e| {
+                RheoError::io(e, format!("writing HTML file to {}", out_path.display()))
+            })?;
         } else {
             // For non-HTML files (assets), write directly
             std::fs::write(&out_path, bytes)

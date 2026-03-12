@@ -32,9 +32,8 @@ impl LinkTransformer {
         use regex::Regex;
 
         // Match #link("...typ") where ... is any path string
-        let re = Regex::new(r#"#link\("([^"]+\.typ)"\)"#).map_err(|e| {
-            rheo_core::RheoError::invalid_data(format!("invalid regex: {}", e))
-        })?;
+        let re = Regex::new(r#"#link\("([^"]+\.typ)"\)"#)
+            .map_err(|e| rheo_core::RheoError::invalid_data(format!("invalid regex: {}", e)))?;
 
         let transformed = re.replace_all(source, |caps: &regex::Captures| {
             let path = &caps[1];

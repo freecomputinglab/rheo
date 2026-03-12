@@ -42,11 +42,7 @@ impl RheoWorld {
     /// * `root` - The root directory for resolving imports
     /// * `main_file` - The main .typ file to compile
     /// * `plugin_library` - Optional plugin-contributed Typst library code to inject after core prelude
-    pub fn new(
-        root: &Path,
-        main_file: &Path,
-        plugin_library: Option<String>,
-    ) -> Result<Self> {
+    pub fn new(root: &Path, main_file: &Path, plugin_library: Option<String>) -> Result<Self> {
         let root = root.canonicalize().map_err(|e| {
             RheoError::path(
                 root,
@@ -66,9 +62,7 @@ impl RheoWorld {
         let main = rooted_path.intern();
 
         let features: Features = [Feature::Html, Feature::Bundle].into_iter().collect();
-        let library = Library::builder()
-            .with_features(features)
-            .build();
+        let library = Library::builder().with_features(features).build();
 
         let mut font_store = FontStore::new();
         let include_system_fonts = std::env::var("TYPST_IGNORE_SYSTEM_FONTS").is_err();
@@ -247,8 +241,9 @@ impl World for RheoWorld {
         // and the current file hasn't been loaded yet.
         // Bundle entries have synthetic names like "__bundle_entry.typ" and are pre-populated in slots.
         let main_vpath = self.main.vpath().get_without_slash();
-        let main_is_not_typ = !PathBuf::from(main_vpath).extension().map_or(false, |e| e == "typ");
-        let is_epub_mode = path.extension().map_or(false, |e| e == "typ")
+        let main_is_not_typ = PathBuf::from(main_vpath)
+            .extension().is_none_or(|e| e != "typ");
+        let is_epub_mode = path.extension().is_some_and(|e| e == "typ")
             && main_is_not_typ
             && !self.slots.lock().contains_key(&id);
         let epub_polyfill = if is_epub_mode {

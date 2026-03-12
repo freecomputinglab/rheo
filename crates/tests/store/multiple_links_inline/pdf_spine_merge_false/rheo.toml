@@ -1,8 +1,0 @@
-version = "0.2.0"
-
-[pdf.spine]
-title = "Individual PDFs"
-vertebrae = ["file*.typ"]
-merge = false
-[html.spine]
-vertebrae = ["*.typ"]

@@ -1,8 +1,0 @@
-version = "0.2.0"
-formats = ["html", "epub"]
-
-[epub.spine]
-title = "Target Function in Package"
-vertebrae = ["main.typ"]
-[html.spine]
-vertebrae = ["*.typ"]

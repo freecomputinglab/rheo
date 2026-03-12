@@ -1,6 +1,0 @@
-version = "0.2.0"
-
-# Test PDF transformation
-formats = ["pdf"]
-[html.spine]
-vertebrae = ["*.typ"]

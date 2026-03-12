@@ -1,5 +1,8 @@
 
-# Test PDF transformation
-formats = ["pdf"]
+[pdf.spine]
+merge = true
+title = "Code Blocks with Links Test"
+vertebrae = ["code_examples.typ"]
+
 [html.spine]
 vertebrae = ["*.typ"]

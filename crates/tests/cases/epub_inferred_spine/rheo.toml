@@ -1,0 +1,7 @@
+
+[epub.spine]
+title = "EPUB Inferred Spine Test"
+vertebrae = ["*.typ"]
+
+[html.spine]
+vertebrae = ["*.typ"]
