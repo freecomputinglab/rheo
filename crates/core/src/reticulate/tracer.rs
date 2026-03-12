@@ -1,0 +1,429 @@
+//! Spine tracer: discovers documents and assets via static analysis.
+//!
+//! The `TracedSpine` struct is populated from two sources:
+//! 1. rheo.toml spine configuration (vertebrae glob patterns)
+//! 2. Static AST analysis of .typ files for #document() and #asset() calls
+
+use crate::config::Spine;
+use crate::{Result, RheoError, TYP_EXT};
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use typst_syntax::ast::{Expr, FuncCall};
+use typst_syntax::{SyntaxKind, parse};
+
+/// A single document in the traced spine.
+#[derive(Debug, Clone)]
+pub struct SpineDocument {
+    /// Path to the .typ file (relative to content_dir).
+    pub path: PathBuf,
+
+    /// true if file contains top-level #document() or #asset() calls.
+    /// Such files are passed through as-is in the bundle entry (not wrapped).
+    pub is_bundle_entry: bool,
+}
+
+/// Result of tracing a project's spine configuration.
+///
+/// Contains all documents and assets needed for bundle compilation,
+/// populated from both rheo.toml config and static analysis.
+#[derive(Debug, Clone)]
+pub struct TracedSpine {
+    /// Title from spine configuration.
+    pub title: Option<String>,
+
+    /// Ordered list of spine documents.
+    pub documents: Vec<SpineDocument>,
+
+    /// All asset files (from rheo.toml assets + #asset() calls).
+    pub assets: Vec<PathBuf>,
+
+    /// Whether to merge outputs (PDF merged mode).
+    pub merge: bool,
+}
+
+impl TracedSpine {
+    /// Trace the project spine from configuration and static analysis.
+    ///
+    /// # Arguments
+    ///
+    /// * `root` - Project root directory
+    /// * `content_dir` - Content directory (where .typ files live)
+    /// * `spine_config` - Optional spine configuration from rheo.toml
+    /// * `assets_config` - Asset glob patterns (global + per-plugin)
+    pub fn trace(
+        root: &Path,
+        content_dir: &Path,
+        spine_config: Option<&Spine>,
+        assets_config: &[String],
+    ) -> Result<TracedSpine> {
+        // Discover documents from vertebrae config or auto-discovery
+        let vertebrae_paths = discover_documents(root, content_dir, spine_config)?;
+
+        // Static analysis: read each .typ file and check for bundle syntax
+        let mut documents = Vec::new();
+        let mut assets_from_source = Vec::new();
+
+        for path in &vertebrae_paths {
+            let source = fs::read_to_string(path).map_err(|e| {
+                RheoError::project_config(format!(
+                    "failed to read spine file '{}': {}",
+                    path.display(),
+                    e
+                ))
+            })?;
+
+            let is_entry = is_bundle_entry(&source);
+
+            // Extract assets from #asset() calls
+            extract_assets(&source, path, &mut assets_from_source);
+
+            documents.push(SpineDocument {
+                path: path.clone(),
+                is_bundle_entry: is_entry,
+            });
+        }
+
+        // Expand asset glob patterns from config
+        let assets_from_config = expand_asset_globs(root, content_dir, assets_config)?;
+
+        // Merge assets: config assets first, then source assets, deduplicated
+        let mut assets = Vec::new();
+        let mut seen = HashSet::new();
+
+        // Add config assets first (preserve order)
+        for asset in assets_from_config {
+            if let Ok(canonical) = asset.canonicalize()
+                && seen.insert(canonical.clone())
+            {
+                assets.push(asset);
+            }
+        }
+
+        // Add source assets
+        for asset in assets_from_source {
+            if let Ok(canonical) = asset.canonicalize()
+                && seen.insert(canonical.clone())
+            {
+                assets.push(asset);
+            }
+        }
+
+        // Determine title and merge flag
+        let title = spine_config.and_then(|s| s.title.clone());
+        let merge = spine_config.and_then(|s| s.merge).unwrap_or(false);
+
+        Ok(TracedSpine {
+            title,
+            documents,
+            assets,
+            merge,
+        })
+    }
+}
+
+/// Check if source contains top-level #document() or #asset() calls.
+///
+/// Only checks TOP-LEVEL AST children (root.children()), not nested scopes.
+/// This is intentional: bundle-syntax must be at top level, not inside functions.
+fn is_bundle_entry(source: &str) -> bool {
+    let root = parse(source);
+    for node in root.children() {
+        if node.kind() == SyntaxKind::FuncCall
+            && let Some(call) = node.cast::<FuncCall>()
+            && let Expr::Ident(ident) = call.callee()
+        {
+            let name = ident.get();
+            if name == "document" || name == "asset" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Extract asset paths from #asset() calls in source.
+///
+/// This is a simple heuristic: find string arguments to #asset() calls.
+/// A full implementation would use proper AST traversal with argument extraction.
+fn extract_assets(_source: &str, _source_path: &Path, _assets: &mut [PathBuf]) {
+    // TODO: Implement asset extraction from #asset() calls
+    // This requires traversing AST and extracting the first argument (path)
+    // For now, assets only come from config patterns
+}
+
+/// Discover spine documents from vertebrae config or auto-discovery.
+fn discover_documents(
+    _root: &Path,
+    content_dir: &Path,
+    spine_config: Option<&Spine>,
+) -> Result<Vec<PathBuf>> {
+    match spine_config {
+        None => {
+            // No spine config: single file mode
+            collect_one_typst_file(content_dir)
+        }
+        Some(spine) if spine.vertebrae.is_empty() => {
+            // Empty vertebrae: auto-discover all .typ files
+            collect_all_typst_files(content_dir)
+        }
+        Some(spine) => {
+            // Expand vertebrae glob patterns
+            let mut typst_files = Vec::new();
+            for pattern in &spine.vertebrae {
+                let glob_pattern = if Path::new(pattern).is_absolute() {
+                    pattern.clone()
+                } else {
+                    content_dir.join(pattern).display().to_string()
+                };
+
+                let glob = glob::glob(&glob_pattern).map_err(|e| {
+                    RheoError::project_config(format!("invalid glob pattern '{}': {}", pattern, e))
+                })?;
+
+                let mut glob_files: Vec<PathBuf> = glob
+                    .filter_map(|entry| entry.ok())
+                    .filter(|path| path.is_file())
+                    .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("typ"))
+                    .filter(|path| path.file_name().is_some())
+                    .collect();
+
+                // Sort by full path (lexicographic) for consistent ordering
+                glob_files.sort();
+                typst_files.extend(glob_files);
+            }
+
+            if typst_files.is_empty() {
+                return Err(RheoError::project_config("spine matched no .typ files"));
+            }
+
+            Ok(typst_files)
+        }
+    }
+}
+
+/// Expand asset glob patterns relative to content_dir.
+fn expand_asset_globs(
+    root: &Path,
+    _content_dir: &Path,
+    patterns: &[String],
+) -> Result<Vec<PathBuf>> {
+    let mut assets = Vec::new();
+
+    for pattern in patterns {
+        let glob_pattern = if Path::new(pattern).is_absolute() {
+            pattern.clone()
+        } else {
+            root.join(pattern).display().to_string()
+        };
+
+        let glob = glob::glob(&glob_pattern).map_err(|e| {
+            RheoError::project_config(format!("invalid asset glob pattern '{}': {}", pattern, e))
+        })?;
+
+        let matched: Vec<PathBuf> = glob
+            .filter_map(|entry| entry.ok())
+            .filter(|path| path.is_file())
+            .collect();
+
+        assets.extend(matched);
+    }
+
+    // Sort for consistent ordering
+    assets.sort();
+    Ok(assets)
+}
+
+/// Single file discovery: require exactly one .typ file.
+fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
+    use walkdir::WalkDir;
+
+    let typst_files: Vec<PathBuf> = WalkDir::new(root)
+        .into_iter()
+        .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
+        .filter(|entry| {
+            entry
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext == &TYP_EXT[1..])
+                .unwrap_or(false)
+        })
+        .collect();
+
+    match typst_files.len() {
+        0 => Err(RheoError::project_config("need at least one .typ file")),
+        1 => Ok(typst_files),
+        _ => Err(RheoError::project_config(
+            "multiple .typ files found, specify spine configuration",
+        )),
+    }
+}
+
+/// All .typ files discovery.
+fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
+    use walkdir::WalkDir;
+
+    let mut typst_files: Vec<PathBuf> = WalkDir::new(root)
+        .into_iter()
+        .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext == &TYP_EXT[1..])
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if typst_files.is_empty() {
+        return Err(RheoError::project_config("need at least one .typ file"));
+    }
+
+    typst_files.sort();
+    Ok(typst_files)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn create_test_dir_with_files(files: &[&str]) -> TempDir {
+        let temp = TempDir::new().unwrap();
+        for file in files {
+            let path = temp.path().join(file);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(&path, "").unwrap();
+        }
+        temp
+    }
+
+    #[test]
+    fn test_is_bundle_entry_plain_file() {
+        let source = r#"
+            #set page(width: 210pt, height: 297pt)
+
+            = Hello
+            This is a plain file.
+        "#;
+        assert!(!is_bundle_entry(source));
+    }
+
+    #[test]
+    fn test_is_bundle_entry_with_document() {
+        let source = r#"
+            #document("index.html", title: "Home")[
+              = Home
+              Welcome!
+            ]
+        "#;
+        assert!(is_bundle_entry(source));
+    }
+
+    #[test]
+    fn test_is_bundle_entry_with_asset() {
+        let source = r#"
+            #asset("styles.css", read("styles.css", encoding: none))
+
+            = Hello
+        "#;
+        assert!(is_bundle_entry(source));
+    }
+
+    #[test]
+    fn test_is_bundle_entry_nested_not_counted() {
+        // Nested #document() inside a function should NOT count
+        let source = r#"
+            #let myfunc() = {
+              #document("nested.html")[Nested]
+            }
+
+            = Hello
+        "#;
+        // root.children() only checks top-level, so nested is not found
+        assert!(!is_bundle_entry(source));
+    }
+
+    #[test]
+    fn test_is_bundle_entry_multiple_calls() {
+        let source = r#"
+            #document("a.html")[A]
+            #document("b.html")[B]
+        "#;
+        assert!(is_bundle_entry(source));
+    }
+
+    #[test]
+    fn test_collect_one_typst_file_single() {
+        let temp = create_test_dir_with_files(&["test.typ"]);
+        let result = collect_one_typst_file(temp.path());
+        assert!(result.is_ok());
+        let files = result.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file_name().unwrap(), "test.typ");
+    }
+
+    #[test]
+    fn test_collect_one_typst_file_multiple_error() {
+        let temp = create_test_dir_with_files(&["first.typ", "second.typ"]);
+        let result = collect_one_typst_file(temp.path());
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("multiple .typ files found")
+        );
+    }
+
+    #[test]
+    fn test_collect_one_typst_file_no_files_error() {
+        let temp = create_test_dir_with_files(&["readme.md"]);
+        let result = collect_one_typst_file(temp.path());
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("need at least one .typ file")
+        );
+    }
+
+    #[test]
+    fn test_collect_all_typst_files() {
+        let temp = create_test_dir_with_files(&["a.typ", "b.typ", "c.typ"]);
+        let result = collect_all_typst_files(temp.path());
+        assert!(result.is_ok());
+        let files = result.unwrap();
+        assert_eq!(files.len(), 3);
+    }
+
+    #[test]
+    fn test_collect_all_typst_files_sorted() {
+        let temp = create_test_dir_with_files(&["c.typ", "a.typ", "b.typ"]);
+        let result = collect_all_typst_files(temp.path());
+        assert!(result.is_ok());
+        let files = result.unwrap();
+        assert_eq!(files.len(), 3);
+        // Should be sorted lexicographically
+        assert!(files[0].file_name().unwrap() < files[1].file_name().unwrap());
+        assert!(files[1].file_name().unwrap() < files[2].file_name().unwrap());
+    }
+
+    #[test]
+    fn test_discover_documents_with_vertebrae() {
+        let temp =
+            create_test_dir_with_files(&["cover.typ", "chapters/ch1.typ", "chapters/ch2.typ"]);
+        let spine = Spine {
+            title: Some("Test".to_string()),
+            vertebrae: vec!["cover.typ".to_string(), "chapters/*.typ".to_string()],
+            merge: Some(false),
+        };
+        let result = discover_documents(temp.path(), temp.path(), Some(&spine));
+        assert!(result.is_ok());
+        let files = result.unwrap();
+        assert_eq!(files.len(), 3);
+    }
+}
