@@ -8,7 +8,7 @@ use codespan_reporting::files::{Error as CodespanError, Files};
 use parking_lot::Mutex;
 use tracing::warn;
 use typst::diag::{FileError, FileResult};
-use typst::foundations::{Bytes, Datetime, Dict, IntoValue};
+use typst::foundations::{Bytes, Datetime};
 use typst::syntax::{FileId, Lines, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
@@ -18,15 +18,6 @@ use typst_kit::fonts::FontStore;
 use typst_kit::packages::SystemPackages;
 use typst_library::{Feature, Features};
 
-/// Build sys.inputs Dict for Typst compilation.
-fn build_inputs(format_name: Option<&str>) -> Dict {
-    let mut dict = Dict::new();
-    if let Some(name) = format_name {
-        dict.insert("rheo-target".into(), name.into_value());
-    }
-    dict
-}
-
 /// A simple World implementation for rheo compilation.
 pub struct RheoWorld {
     root: PathBuf,
@@ -35,9 +26,6 @@ pub struct RheoWorld {
     font_store: FontStore,
     slots: Mutex<HashMap<FileId, FileSlot>>,
     packages: SystemPackages,
-    /// Output format name for link transformations and polyfill injection.
-    /// None = no transformation.
-    format_name: Option<String>,
     /// Plugin-contributed Typst library code, injected after core prelude.
     plugin_library: Option<String>,
 }
@@ -53,12 +41,10 @@ impl RheoWorld {
     /// # Arguments
     /// * `root` - The root directory for resolving imports
     /// * `main_file` - The main .typ file to compile
-    /// * `format_name` - Plugin name for link transformations (e.g. "pdf", "html", "epub"; None = no transformation)
     /// * `plugin_library` - Optional plugin-contributed Typst library code to inject after core prelude
     pub fn new(
         root: &Path,
         main_file: &Path,
-        format_name: Option<&str>,
         plugin_library: Option<String>,
     ) -> Result<Self> {
         let root = root.canonicalize().map_err(|e| {
@@ -79,11 +65,9 @@ impl RheoWorld {
         let rooted_path = RootedPath::new(VirtualRoot::Project, main_vpath);
         let main = rooted_path.intern();
 
-        let features: Features = [Feature::Html].into_iter().collect();
-        let inputs = build_inputs(format_name);
+        let features: Features = [Feature::Html, Feature::Bundle].into_iter().collect();
         let library = Library::builder()
             .with_features(features)
-            .with_inputs(inputs)
             .build();
 
         let mut font_store = FontStore::new();
@@ -103,7 +87,6 @@ impl RheoWorld {
             font_store,
             slots: Mutex::new(HashMap::new()),
             packages,
-            format_name: format_name.map(str::to_string),
             plugin_library,
         })
     }
@@ -148,17 +131,6 @@ impl RheoWorld {
         );
         self.main = virtual_id;
         virtual_id
-    }
-
-    /// Transform links in source text based on output format name.
-    fn transform_links(&self, text: &str, id: FileId, format_name: &str) -> FileResult<String> {
-        use crate::reticulate::transformer::LinkTransformer;
-
-        let transformer = LinkTransformer::new(format_name);
-        let vpath_path = PathBuf::from(id.vpath().get_without_slash());
-        transformer
-            .transform_source(text, &vpath_path, &self.root)
-            .map_err(|e| FileError::Other(Some(e.to_string().into())))
     }
 
     fn path_for_id(&self, id: FileId) -> FileResult<PathBuf> {
@@ -269,30 +241,15 @@ impl World for RheoWorld {
         let path = self.path_for_id(id)?;
         let mut text = fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
 
-        // Inject target() polyfill for all plugin formats.
-        let target_polyfill = if self.format_name.is_some() {
-            "// Polyfill target() to return rheo's output format from sys.inputs\n\
-             #let target() = if \"rheo-target\" in sys.inputs { sys.inputs.rheo-target } else { std.target() }\n\n"
-        } else {
-            ""
-        };
-
-        // For the main file, also inject the rheo.typ template and plugin library code.
+        // For the main file, inject the rheo.typ template and plugin library code.
         if id == self.main {
             let rheo_content = include_str!("typ/rheo.typ");
             let plugin_lib_content = self.plugin_library.as_deref().unwrap_or("");
             let template_inject = format!(
-                "{}{}\n{}\n#show: rheo_template\n\n",
-                target_polyfill, rheo_content, plugin_lib_content
+                "{}{}\n#show: rheo_template\n\n",
+                rheo_content, plugin_lib_content
             );
             text = format!("{}{}", template_inject, text);
-        } else if !target_polyfill.is_empty() {
-            text = format!("{}{}", target_polyfill, text);
-        }
-
-        // Apply link transformations for ALL .typ files if output format is set.
-        if let Some(ref name) = self.format_name {
-            text = self.transform_links(&text, id, name)?;
         }
 
         let source = Source::new(id, text);

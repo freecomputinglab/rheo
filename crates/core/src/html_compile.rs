@@ -9,10 +9,10 @@ use typst_html::HtmlDocument;
 pub fn compile_html_to_document(
     input: &Path,
     root: &Path,
-    format_name: &str,
+    _format_name: &str,
     plugin_library: Option<String>,
 ) -> Result<HtmlDocument> {
-    let world = RheoWorld::new(root, input, Some(format_name), plugin_library)?;
+    let world = RheoWorld::new(root, input, plugin_library)?;
     info!(input = %input.display(), "compiling to HTML");
     let result = typst::compile::<HtmlDocument>(&world);
 

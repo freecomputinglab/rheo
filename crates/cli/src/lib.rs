@@ -486,7 +486,6 @@ fn perform_compilation(
                         .first()
                         .map(|d| d.path.as_path())
                         .unwrap_or(&compilation_root),
-                    Some(plugin.name()),
                     plugin_library,
                 )?);
                 temp_world_storage.as_mut().unwrap()
@@ -542,7 +541,6 @@ fn perform_compilation(
                     let mut fresh_world = RheoWorld::new(
                         &content_dir,
                         typ_file,
-                        Some(plugin.name()),
                         plugin_library.clone(),
                     )?;
                     compile_one_file(&mut fresh_world, typ_file, &pfc, &mut results)?;
