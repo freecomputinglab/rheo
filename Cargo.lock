@@ -3094,6 +3094,9 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tracing",
+ "typst",
+ "typst-bundle",
+ "typst-pdf",
 ]
 
 [[package]]

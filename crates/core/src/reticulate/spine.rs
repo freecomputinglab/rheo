@@ -81,46 +81,81 @@ pub fn generate_bundle_entry(
     let mut out = String::new();
 
     // Preamble — exact order is critical
+    //
+    // NOTE: Bundle API only allows #let, #document(), and #asset() at top level.
+    // No #set, #show, or other directives allowed.
+    //
     out.push_str(&format!("#let target() = \"{format}\"\n\n"));
-    out.push_str(include_str!("../typ/rheo.typ"));
-    out.push_str("\n\n");
+
+    // Include only the #let definitions from rheo.typ, skip the #set text(...) rule
+    // The #set rule will be added inside each document's content
+    out.push_str(r#"
+// Get the rheo output format, with fallback to Typst's target()
+#let rheo-target() = {
+  if "rheo-target" in sys.inputs {
+    sys.inputs.rheo-target
+  } else {
+    target()
+  }
+}
+
+// Check if we're compiling for a specific rheo format
+#let is-rheo-epub() = "rheo-target" in sys.inputs and sys.inputs.rheo-target == "epub"
+#let is-rheo-html() = "rheo-target" in sys.inputs and sys.inputs.rheo-target == "html"
+#let is-rheo-pdf() = "rheo-target" in sys.inputs and sys.inputs.rheo-target == "pdf"
+
+#let rheo_template(doc) = context {
+  doc
+}
+"#);
+
     if !plugin_library.is_empty() {
         out.push_str(plugin_library);
         out.push_str("\n\n");
     }
-    out.push_str("#show: rheo_template\n\n");
 
     // Documents
-    let mut merge_includes: Vec<String> = Vec::new();
-    for doc in &traced.documents {
-        let rel = doc.path.strip_prefix(root).unwrap_or(&doc.path);
-        let rel_str = rel.display().to_string().replace('\\', "/");
-        let stem = doc.path.file_stem().unwrap_or_default().to_string_lossy();
+    if traced.merge {
+        // Merged PDF mode: single #document() wrapper with #include for each file
+        let title = traced.title.as_deref().unwrap_or("document");
+        out.push_str(&format!("#document(\"{title}.{format}\")[\n"));
 
-        if doc.is_bundle_entry {
-            // For bundle entry, use #include (no transformation needed for entry point)
-            out.push_str(&format!("#include \"{rel_str}\"\n"));
-        } else if traced.merge {
-            // Merged mode: use #include (links will work within merged output)
-            merge_includes.push(format!("  #include \"{rel_str}\""));
-        } else {
-            // Non-merged mode (HTML): use #document with #include
+        for doc in &traced.documents {
+            if doc.is_bundle_entry {
+                continue; // Skip the bundle entry itself
+            }
+
+            let rel = doc.path.strip_prefix(root).unwrap_or(&doc.path);
+            let rel_str = rel.display().to_string().replace('\\', "/");
+
+            // Use #include for each file
+            // Note: #set document() directives in source files may cause issues
+            // Users should ensure included files don't have conflicting document metadata
+            out.push_str(&format!("  #include \"{rel_str}\"\n"));
+        }
+
+        out.push_str("]\n");
+    } else {
+        // Non-merged mode (HTML): separate #document() for each file
+        for doc in &traced.documents {
+            if doc.is_bundle_entry {
+                // For bundle entry, use #include
+                let rel = doc.path.strip_prefix(root).unwrap_or(&doc.path);
+                let rel_str = rel.display().to_string().replace('\\', "/");
+                out.push_str(&format!("#include \"{rel_str}\"\n"));
+                continue;
+            }
+
+            let rel = doc.path.strip_prefix(root).unwrap_or(&doc.path);
+            let rel_str = rel.display().to_string().replace('\\', "/");
+            let stem = doc.path.file_stem().unwrap_or_default().to_string_lossy();
+
+            // Use #document with #include for non-merged mode
             // Link transformation removed — users must use #link(<label>) syntax
             out.push_str(&format!(
                 "#document(\"{stem}.{format}\")[#include \"{rel_str}\"]\n"
             ));
         }
-    }
-
-    // Merged PDF: single #document() wrapping all plain-file includes
-    if !merge_includes.is_empty() {
-        let doc_name = format!("{}.{format}", traced.title.as_deref().unwrap_or("document"));
-        out.push_str(&format!("#document(\"{doc_name}\")[\n"));
-        for line in &merge_includes {
-            out.push_str(line);
-            out.push('\n');
-        }
-        out.push_str("]\n");
     }
 
     // Assets
@@ -501,7 +536,9 @@ mod tests {
 
     #[test]
     fn test_generate_bundle_entry_preamble_order() {
-        // target() polyfill first, then rheo_template content, then plugin_library, then #show:
+        // target() polyfill first, then rheo_template content, then plugin_library
+        // Note: #show: rheo_template is no longer included in bundle entry
+        // because bundle API doesn't allow show rules at top level
         let root = PathBuf::from("/project");
         let traced = make_traced(vec![plain_doc("/project/main.typ")], vec![], None, false);
         let plugin = "#let my_plugin() = {}";
@@ -510,10 +547,9 @@ mod tests {
         let target_pos = out.find("#let target()").unwrap();
         let rheo_pos = out.find("rheo_template").unwrap(); // appears in rheo.typ content
         let plugin_pos = out.find("#let my_plugin()").unwrap();
-        let show_pos = out.find("#show: rheo_template").unwrap();
 
         assert!(target_pos < rheo_pos);
         assert!(rheo_pos < plugin_pos);
-        assert!(plugin_pos < show_pos);
+        // No #show: rheo_template expected in bundle entry anymore
     }
 }

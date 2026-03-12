@@ -521,30 +521,29 @@ fn perform_compilation(
                 .join(&project.name)
                 .with_extension(plugin.name());
 
-            // Get mutable reference to world for merged compilation
-            // TODO: In proper bundle mode, the world should be created upfront and passed in.
-            // For now, create a temporary world if None (PDF merge doesn't use it anyway).
-            let mut temp_world_storage = None;
-            let world_mut = if let Some(w) = world.as_mut() {
-                w
-            } else {
-                // Create a dummy world - PDF merged compilation doesn't use it
-                // (it creates its own world via compile_pdf_to_document)
-                let plugin_library = plugin.typst_library().map(|s| s.to_string());
-                temp_world_storage = Some(RheoWorld::new(
-                    &compilation_root,
-                    spine
-                        .documents
-                        .first()
-                        .map(|d| d.path.as_path())
-                        .unwrap_or(&compilation_root),
-                    plugin_library,
-                )?);
-                temp_world_storage.as_mut().unwrap()
-            };
-            let _ = temp_world_storage; // Suppress unused warning when world is Some
+            // Create world for bundle compilation
+            // For PDF merge mode, we generate a bundle entry and inject it into the world
+            let plugin_library = plugin.typst_library().map(|s| s.to_string());
+            let mut bundle_world = RheoWorld::new(
+                &compilation_root,
+                spine
+                    .documents
+                    .first()
+                    .map(|d| d.path.as_path())
+                    .unwrap_or(&compilation_root),
+                plugin_library,
+            )?;
 
-            let options = RheoCompileOptions::new(&output_path, &compilation_root, world_mut);
+            // Generate and inject bundle entry for PDF merge mode
+            let bundle_entry_source = generate_bundle_entry(
+                &spine,
+                &compilation_root,
+                plugin.name(),
+                plugin.typst_library().unwrap_or_default(),
+            );
+            bundle_world.inject_bundle_entry(bundle_entry_source);
+
+            let options = RheoCompileOptions::new(&output_path, &compilation_root, &mut bundle_world);
 
             let ctx = PluginContext {
                 project,
