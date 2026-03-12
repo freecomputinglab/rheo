@@ -1,0 +1,6 @@
+version = "0.1.2"
+
+[pdf.spine]
+title = "My Book"
+merge = true
+vertebrae = ["content/ch1.typ", "content/ch2.typ"]

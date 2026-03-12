@@ -242,7 +242,8 @@ impl World for RheoWorld {
         // Bundle entries have synthetic names like "__bundle_entry.typ" and are pre-populated in slots.
         let main_vpath = self.main.vpath().get_without_slash();
         let main_is_not_typ = PathBuf::from(main_vpath)
-            .extension().is_none_or(|e| e != "typ");
+            .extension()
+            .is_none_or(|e| e != "typ");
         let is_epub_mode = path.extension().is_some_and(|e| e == "typ")
             && main_is_not_typ
             && !self.slots.lock().contains_key(&id);
