@@ -1,2 +1,4 @@
 
 formats = ["pdf"]
+[html.spine]
+vertebrae = ["*.typ"]

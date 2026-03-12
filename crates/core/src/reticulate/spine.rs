@@ -1,11 +1,19 @@
 use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
-use crate::plugins::SpineOptions;
 use crate::{Result, RheoError, TYP_EXT};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+/// Deprecated: Use TracedSpine from reticulate::tracer instead.
+/// This type is kept temporarily for backward compatibility with BuiltSpine.
+#[derive(Debug, Clone)]
+pub struct SpineOptions {
+    pub title: Option<String>,
+    pub vertebrae: Vec<String>,
+    pub merge: bool,
+}
 
 /// A spine with relative linking transformations.
 #[derive(Debug, Clone)]

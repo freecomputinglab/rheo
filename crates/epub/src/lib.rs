@@ -7,9 +7,10 @@ use xhtml::HtmlInfo;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
+use rheo_core::reticulate::spine::SpineOptions;
 use rheo_core::{
     BuiltSpine, FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
-    Spine, SpineOptions, compile_document_to_string, compile_html_to_document, eco_format, eco_vec,
+    Spine, compile_document_to_string, compile_html_to_document, eco_format, eco_vec,
 };
 use rheo_core::{
     DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain,
@@ -52,7 +53,19 @@ impl FormatPlugin for EpubPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        compile_epub_with_spine(&ctx.spine, &ctx.options, &ctx.config)
+        // Convert TracedSpine to SpineOptions for internal EPUB compilation
+        // TODO: Replace this with bundle entry generation in rheo-18j
+        let spine_options = SpineOptions {
+            title: ctx.spine.title.clone(),
+            vertebrae: ctx
+                .spine
+                .documents
+                .iter()
+                .map(|d| d.path.to_string_lossy().to_string())
+                .collect(),
+            merge: ctx.spine.merge,
+        };
+        compile_epub_with_spine(&spine_options, &ctx.options, &ctx.config)
     }
 }
 

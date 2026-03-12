@@ -41,9 +41,10 @@ pub use compile::RheoCompileOptions;
 pub use config::{PluginSection, Spine};
 
 // Plugin trait and context
-pub use plugins::{
-    FormatPlugin, OpenHandle, PluginContext, PluginInput, ServerHandle, SpineOptions,
-};
+pub use plugins::{FormatPlugin, OpenHandle, PluginContext, PluginInput, ServerHandle};
+
+// Re-export TracedSpine for use in bundle compilation
+pub use reticulate::{SpineDocument, TracedSpine};
 
 // HTML compilation functions
 pub use html_compile::{

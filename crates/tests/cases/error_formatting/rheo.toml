@@ -4,3 +4,5 @@ formats = ["pdf"]
 
 [pdf]
 # Don't merge - test single file errors
+[html.spine]
+vertebrae = ["*.typ"]

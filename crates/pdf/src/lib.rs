@@ -1,5 +1,6 @@
+use rheo_core::reticulate::spine::SpineOptions;
 use rheo_core::{
-    BuiltSpine, FormatPlugin, PluginContext, Result, RheoError, RheoWorld, SpineOptions,
+    BuiltSpine, FormatPlugin, PluginContext, Result, RheoError, RheoWorld, TracedSpine,
     compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes,
 };
 use std::io::Write;
@@ -31,12 +32,8 @@ impl FormatPlugin for PdfPlugin {
         if ctx.spine.merge {
             compile_pdf_merged_impl(&ctx.spine, &ctx.options.output, &ctx.options.root)
         } else {
-            let world = ctx.options.world.ok_or_else(|| {
-                RheoError::project_config(
-                    "PDF per-file compile requires a world; this is a rheo bug (internal invariant violation)",
-                )
-            })?;
-            compile_pdf_single_impl(world, &ctx.options.output)
+            // In bundle mode, world is always present
+            compile_pdf_single_impl(ctx.options.world, &ctx.options.output)
         }
     }
 }
@@ -55,14 +52,21 @@ fn compile_pdf_single_impl(world: &RheoWorld, output: &Path) -> Result<()> {
     Ok(())
 }
 
-fn compile_pdf_merged_impl(
-    spine_config: &SpineOptions,
-    output_path: &Path,
-    root: &Path,
-) -> Result<()> {
-    // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
-    let merge = spine_config.merge;
-    let rheo_spine = BuiltSpine::build(root, Some(spine_config), "pdf", merge)?;
+fn compile_pdf_merged_impl(spine: &TracedSpine, output_path: &Path, root: &Path) -> Result<()> {
+    // Convert TracedSpine to SpineOptions temporarily for BuiltSpine::build()
+    // TODO: Replace this with bundle entry generation in rheo-18j
+    let spine_options = SpineOptions {
+        title: spine.title.clone(),
+        vertebrae: spine
+            .documents
+            .iter()
+            .map(|d| d.path.to_string_lossy().to_string())
+            .collect(),
+        merge: spine.merge,
+    };
+
+    let merge = spine_options.merge;
+    let rheo_spine = BuiltSpine::build(root, Some(&spine_options), "pdf", merge)?;
 
     debug!(file_count = rheo_spine.source.len(), "built PDF spine");
 

@@ -51,11 +51,13 @@ impl TracedSpine {
     /// * `content_dir` - Content directory (where .typ files live)
     /// * `spine_config` - Optional spine configuration from rheo.toml
     /// * `assets_config` - Asset glob patterns (global + per-plugin)
+    /// * `default_merge` - Plugin's default merge behavior (when config doesn't specify)
     pub fn trace(
         root: &Path,
         content_dir: &Path,
         spine_config: Option<&Spine>,
         assets_config: &[String],
+        default_merge: bool,
     ) -> Result<TracedSpine> {
         // Discover documents from vertebrae config or auto-discovery
         let vertebrae_paths = discover_documents(root, content_dir, spine_config)?;
@@ -111,7 +113,7 @@ impl TracedSpine {
 
         // Determine title and merge flag
         let title = spine_config.and_then(|s| s.title.clone());
-        let merge = spine_config.and_then(|s| s.merge).unwrap_or(false);
+        let merge = spine_config.and_then(|s| s.merge).unwrap_or(default_merge);
 
         Ok(TracedSpine {
             title,
@@ -455,7 +457,7 @@ mod tests {
     fn test_traced_spine_auto_discovery_single_file() {
         // Test TracedSpine::trace() with no spine config (single .typ file mode)
         let temp = create_test_dir_with_files(&["main.typ"]);
-        let result = TracedSpine::trace(temp.path(), temp.path(), None, &[]);
+        let result = TracedSpine::trace(temp.path(), temp.path(), None, &[], false);
         assert!(result.is_ok());
         let traced = result.unwrap();
         assert_eq!(traced.documents.len(), 1);
@@ -469,7 +471,7 @@ mod tests {
     fn test_traced_spine_auto_discovery_multiple_files_error() {
         // Test that auto-discovery with multiple .typ files returns an error
         let temp = create_test_dir_with_files(&["first.typ", "second.typ"]);
-        let result = TracedSpine::trace(temp.path(), temp.path(), None, &[]);
+        let result = TracedSpine::trace(temp.path(), temp.path(), None, &[], false);
         assert!(result.is_err());
         assert!(
             result
@@ -488,7 +490,7 @@ mod tests {
             vertebrae: vec![],
             merge: Some(false),
         };
-        let result = TracedSpine::trace(temp.path(), temp.path(), Some(&spine), &[]);
+        let result = TracedSpine::trace(temp.path(), temp.path(), Some(&spine), &[], false);
         assert!(result.is_ok());
         let traced = result.unwrap();
         assert_eq!(traced.documents.len(), 3);
@@ -507,7 +509,7 @@ mod tests {
             vertebrae: vec![],
             merge: Some(false),
         };
-        let result = TracedSpine::trace(temp.path(), temp.path(), Some(&spine), &[]);
+        let result = TracedSpine::trace(temp.path(), temp.path(), Some(&spine), &[], false);
         assert!(result.is_ok());
         let traced = result.unwrap();
         // Only .typ files should be discovered
@@ -542,6 +544,7 @@ mod tests {
             temp.path(),
             Some(&spine),
             &["style.css".to_string()],
+            false,
         );
         assert!(result.is_ok());
         let traced = result.unwrap();
@@ -563,7 +566,7 @@ mod tests {
             vertebrae: vec![],
             merge: Some(true),
         };
-        let result = TracedSpine::trace(temp.path(), temp.path(), Some(&spine), &[]);
+        let result = TracedSpine::trace(temp.path(), temp.path(), Some(&spine), &[], false);
         assert!(result.is_ok());
         let traced = result.unwrap();
         assert!(traced.merge);
@@ -583,7 +586,7 @@ mod tests {
             ],
             merge: Some(false),
         };
-        let result = TracedSpine::trace(temp.path(), temp.path(), Some(&spine), &[]);
+        let result = TracedSpine::trace(temp.path(), temp.path(), Some(&spine), &[], false);
         assert!(result.is_ok());
         let traced = result.unwrap();
         assert_eq!(traced.documents.len(), 3);
