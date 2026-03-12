@@ -1,13 +1,15 @@
 pub mod package;
+mod transformer;
 mod xhtml;
 
 use package::{Item, ItemRef, Package};
+use transformer::LinkTransformer;
 use xhtml::HtmlInfo;
 
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
-use rheo_core::reticulate::{LinkTransformer, TracedSpine};
+use rheo_core::reticulate::TracedSpine;
 use rheo_core::{
     FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
     Spine, compile_document_to_string, compile_html_to_document, eco_format, eco_vec,
@@ -327,7 +329,7 @@ fn compile_epub_impl(
     use std::fs;
 
     // Create link transformer for EPUB (.typ → .xhtml)
-    let transformer = LinkTransformer::new("epub");
+    let transformer = LinkTransformer::new();
 
     let mut items = spine
         .documents

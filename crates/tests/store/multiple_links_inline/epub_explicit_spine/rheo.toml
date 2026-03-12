@@ -1,0 +1,7 @@
+version = "0.2.0"
+
+[epub.spine]
+title = "My EPUB Book"
+vertebrae = ["intro.typ", "chapter.typ"]
+[html.spine]
+vertebrae = ["*.typ"]

@@ -10,7 +10,9 @@ repository.workspace = true
 [dependencies]
 # Core
 rheo-core = { path = "../core", version = "0.2.0" }
+typst = { workspace = true }
 typst-library = { workspace = true }
+regex = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

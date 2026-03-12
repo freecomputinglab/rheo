@@ -1,8 +1,4 @@
-use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
 use crate::{Result, RheoError, TYP_EXT};
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
-use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -35,64 +31,30 @@ pub struct BuiltSpine {
 impl BuiltSpine {
     /// Build a RheoSpine with AST-based link transformation for all output formats.
     ///
+    /// # DEPRECATED
+    ///
+    /// This method is deprecated and no longer functional. The link transformer
+    /// has been removed as part of the bundle compilation migration.
+    ///
+    /// Use `TracedSpine::trace()` instead, then call `generate_bundle_entry()`
+    /// for bundle compilation. For the PDF plugin, see issue rheo-4h1 for the
+    /// bundle migration path.
+    ///
     /// # Arguments
     /// * `root` - Project root directory
     /// * `spine_config` - Optional spine configuration (determines spine files)
     /// * `format_name` - Target output format name (e.g. "pdf", "html", "epub")
     /// * `merge` - Whether to merge spine files into a single source (caller decides)
     pub fn build(
-        root: &Path,
-        spine_config: Option<&SpineOptions>,
-        format_name: &str,
-        merge: bool,
+        _root: &Path,
+        _spine_config: Option<&SpineOptions>,
+        _format_name: &str,
+        _merge: bool,
     ) -> Result<BuiltSpine> {
-        let spine_files = generate_spine(root, spine_config, false)?;
-        check_duplicate_filenames(&spine_files)?;
-
-        // Merge when caller requests it (typically only PDF merged mode).
-        // Other formats (epub, html) handle concatenation differently.
-        let should_merge = merge;
-
-        let mut sources = Vec::new();
-
-        for spine_file in &spine_files {
-            let source = fs::read_to_string(spine_file).map_err(|e| {
-                RheoError::project_config(format!(
-                    "failed to read spine file '{}': {}",
-                    spine_file.display(),
-                    e
-                ))
-            })?;
-
-            let transformed_source =
-                transform_source(&source, spine_file, &spine_files, format_name, root)?;
-
-            let final_source = if should_merge {
-                let (label, doc_title) = extract_label_and_title(&source, spine_file)?;
-                format!(
-                    "#metadata(\"{}\") <{}>\n{}\n\n",
-                    doc_title, label, transformed_source
-                )
-            } else {
-                transformed_source
-            };
-
-            sources.push(final_source);
-        }
-
-        let final_sources = if should_merge {
-            vec![sources.join("\n\n")]
-        } else {
-            sources
-        };
-
-        let title = spine_config.and_then(|s| s.title.clone());
-
-        Ok(BuiltSpine {
-            title,
-            is_merged: should_merge,
-            source: final_sources,
-        })
+        Err(RheoError::project_config(
+            "BuiltSpine::build() is deprecated. Use TracedSpine::trace() and generate_bundle_entry() instead. \
+             See issue rheo-4h1 for PDF plugin bundle migration."
+        ))
     }
 }
 
@@ -101,9 +63,9 @@ impl BuiltSpine {
 /// Produces a complete Typst source string that uses `#document()` and `#asset()`
 /// elements, letting Typst's bundle API handle multi-file output natively.
 ///
-/// For non-merge compilation (HTML), this function transforms links in the source
-/// files using LinkTransformer before inlining them. This ensures that links to
-/// other .typ files are rewritten to point to the correct output format (e.g., .html).
+/// Cross-document links use native Typst label syntax (#link(<label>)) instead of
+/// the old Rheo-specific #link("./file.typ") syntax. Link transformation has been
+/// removed — users must update their .typ files to use explicit labels.
 ///
 /// # Arguments
 /// * `traced` - Traced spine with documents and assets
@@ -116,9 +78,6 @@ pub fn generate_bundle_entry(
     format: &str,
     plugin_library: &str,
 ) -> String {
-    use crate::reticulate::transformer::LinkTransformer;
-    use std::fs;
-
     let mut out = String::new();
 
     // Preamble — exact order is critical
@@ -130,9 +89,6 @@ pub fn generate_bundle_entry(
         out.push_str("\n\n");
     }
     out.push_str("#show: rheo_template\n\n");
-
-    // Create link transformer for this format
-    let transformer = LinkTransformer::new(format);
 
     // Documents
     let mut merge_includes: Vec<String> = Vec::new();
@@ -148,31 +104,11 @@ pub fn generate_bundle_entry(
             // Merged mode: use #include (links will work within merged output)
             merge_includes.push(format!("  #include \"{rel_str}\""));
         } else {
-            // Non-merged mode (HTML): read, transform links, and inline the source
-            let source = fs::read_to_string(&doc.path)
-                .unwrap_or_else(|e| {
-                    // Fallback to #include if reading fails
-                    eprintln!("Warning: failed to read {}: {}, using #include", doc.path.display(), e);
-                    out.push_str(&format!(
-                        "#document(\"{stem}.{format}\")[#include \"{rel_str}\"]\n"
-                    ));
-                    String::new()
-                });
-
-            if !source.is_empty() {
-                // Transform links in the source
-                let transformed = transformer
-                    .transform_source(&source, &doc.path, root)
-                    .unwrap_or_else(|e| {
-                        eprintln!("Warning: failed to transform links in {}: {}, using original", doc.path.display(), e);
-                        source
-                    });
-
-                // Inline the transformed source with proper escaping
-                out.push_str(&format!("#document(\"{stem}.{format}\")[\n"));
-                out.push_str(&transformed);
-                out.push_str("\n]\n");
-            }
+            // Non-merged mode (HTML): use #document with #include
+            // Link transformation removed — users must use #link(<label>) syntax
+            out.push_str(&format!(
+                "#document(\"{stem}.{format}\")[#include \"{rel_str}\"]\n"
+            ));
         }
     }
 
@@ -201,68 +137,6 @@ pub fn generate_bundle_entry(
     }
 
     out
-}
-
-/// Transform source using AST-based link transformation.
-fn transform_source(
-    source: &str,
-    spine_file: &Path,
-    spine_files: &[PathBuf],
-    format_name: &str,
-    project_root: &Path,
-) -> Result<String> {
-    use crate::reticulate::transformer::LinkTransformer;
-
-    let transformer = if format_name == "pdf" && spine_files.len() > 1 {
-        // Merged PDF: pass spine for label references
-        LinkTransformer::new(format_name).with_spine(spine_files.to_vec())
-    } else {
-        // Single-file PDF, HTML, EPUB, and all other formats
-        LinkTransformer::new(format_name)
-    };
-
-    transformer.transform_source(source, spine_file, project_root)
-}
-
-fn extract_label_and_title(source: &str, spine_file: &Path) -> Result<(String, String)> {
-    let filename = spine_file.file_name().ok_or_else(|| {
-        RheoError::project_config(format!(
-            "invalid filename in spine: '{}'",
-            spine_file.display()
-        ))
-    })?;
-
-    let filename_str = filename.to_string_lossy();
-    let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
-    let label = sanitize_label_name(stem);
-    let title = DocumentTitle::from_source(source, stem).extract();
-
-    Ok((label, title))
-}
-
-fn check_duplicate_filenames(spine_files: &[PathBuf]) -> Result<()> {
-    let mut seen: HashMap<String, &PathBuf> = HashMap::new();
-
-    for spine_file in spine_files {
-        if let Some(filename) = spine_file.file_name() {
-            let key = filename.to_string_lossy().into_owned();
-            match seen.entry(key) {
-                Entry::Occupied(e) => {
-                    return Err(RheoError::project_config(format!(
-                        "duplicate filename in spine: '{}' appears at both '{}' and '{}'",
-                        filename.to_string_lossy(),
-                        e.get().display(),
-                        spine_file.display()
-                    )));
-                }
-                Entry::Vacant(e) => {
-                    e.insert(spine_file);
-                }
-            }
-        }
-    }
-
-    Ok(())
 }
 
 fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {

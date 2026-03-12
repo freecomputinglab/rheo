@@ -1,0 +1,8 @@
+version = "0.2.0"
+
+[pdf.spine]
+merge = true
+vertebrae = ["intro.typ", "chapter*.typ", "conclusion.typ"]
+title = "Test Merged Document"
+[html.spine]
+vertebrae = ["*.typ"]
