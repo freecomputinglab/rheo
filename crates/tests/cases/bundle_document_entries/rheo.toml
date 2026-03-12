@@ -1,0 +1,5 @@
+version = "0.1.2"
+
+[html.spine]
+title = "Bundle Document Entries Test"
+vertebrae = ["content/intro.typ", "content/advanced.typ"]
