@@ -426,4 +426,170 @@ mod tests {
         let files = result.unwrap();
         assert_eq!(files.len(), 3);
     }
+
+    #[test]
+    fn test_discover_documents_recursive_glob() {
+        // Test recursive glob pattern `**/*.typ` for nested directories
+        let temp = create_test_dir_with_files(&[
+            "cover.typ",
+            "chapters/ch1.typ",
+            "chapters/nested/ch2.typ",
+            "appendix/notes/a.typ",
+        ]);
+        let spine = Spine {
+            title: Some("Test".to_string()),
+            vertebrae: vec!["**/*.typ".to_string()],
+            merge: Some(false),
+        };
+        let result = discover_documents(temp.path(), temp.path(), Some(&spine));
+        assert!(result.is_ok());
+        let files = result.unwrap();
+        assert_eq!(files.len(), 4);
+        // Verify lexicographic ordering within the glob pattern
+        assert!(files[0].file_name().unwrap() < files[1].file_name().unwrap());
+        assert!(files[1].file_name().unwrap() < files[2].file_name().unwrap());
+        assert!(files[2].file_name().unwrap() < files[3].file_name().unwrap());
+    }
+
+    #[test]
+    fn test_traced_spine_auto_discovery_single_file() {
+        // Test TracedSpine::trace() with no spine config (single .typ file mode)
+        let temp = create_test_dir_with_files(&["main.typ"]);
+        let result = TracedSpine::trace(temp.path(), temp.path(), None, &[]);
+        assert!(result.is_ok());
+        let traced = result.unwrap();
+        assert_eq!(traced.documents.len(), 1);
+        assert_eq!(traced.documents[0].path.file_name().unwrap(), "main.typ");
+        assert!(!traced.documents[0].is_bundle_entry); // plain file, no #document() calls
+        assert!(traced.title.is_none());
+        assert!(!traced.merge);
+    }
+
+    #[test]
+    fn test_traced_spine_auto_discovery_multiple_files_error() {
+        // Test that auto-discovery with multiple .typ files returns an error
+        let temp = create_test_dir_with_files(&["first.typ", "second.typ"]);
+        let result = TracedSpine::trace(temp.path(), temp.path(), None, &[]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("multiple .typ files found")
+        );
+    }
+
+    #[test]
+    fn test_traced_spine_empty_vertebrae_discovers_all() {
+        // Test that empty vertebrae list auto-discovers all .typ files
+        let temp = create_test_dir_with_files(&["a.typ", "b.typ", "c.typ"]);
+        let spine = Spine {
+            title: Some("All Files".to_string()),
+            vertebrae: vec![],
+            merge: Some(false),
+        };
+        let result = TracedSpine::trace(temp.path(), temp.path(), Some(&spine), &[]);
+        assert!(result.is_ok());
+        let traced = result.unwrap();
+        assert_eq!(traced.documents.len(), 3);
+        // Verify lexicographic ordering
+        assert!(traced.documents[0].path < traced.documents[1].path);
+        assert!(traced.documents[1].path < traced.documents[2].path);
+        assert_eq!(traced.title.as_ref().unwrap(), "All Files");
+    }
+
+    #[test]
+    fn test_traced_spine_filters_non_typ_files() {
+        // Test that .md and other files are filtered out
+        let temp = create_test_dir_with_files(&["README.md", "a.typ", "b.typ", "script.sh"]);
+        let spine = Spine {
+            title: None,
+            vertebrae: vec![],
+            merge: Some(false),
+        };
+        let result = TracedSpine::trace(temp.path(), temp.path(), Some(&spine), &[]);
+        assert!(result.is_ok());
+        let traced = result.unwrap();
+        // Only .typ files should be discovered
+        assert_eq!(traced.documents.len(), 2);
+        assert!(traced.documents[0].path.ends_with("a.typ"));
+        assert!(traced.documents[1].path.ends_with("b.typ"));
+    }
+
+    #[test]
+    fn test_traced_spine_asset_deduplication() {
+        // Test that duplicate assets (from config + source) are deduplicated
+        let temp = TempDir::new().unwrap();
+
+        // Create an asset file
+        let asset_path = temp.path().join("style.css");
+        fs::write(&asset_path, "body { color: red; }").unwrap();
+
+        // Create a .typ file
+        let typ_path = temp.path().join("main.typ");
+        fs::write(&typ_path, "= Hello").unwrap();
+
+        // Trace with asset config that includes the same file
+        // (In reality, assets from #asset() calls would also be included,
+        // but that's not yet implemented - extract_assets is a stub)
+        let spine = Spine {
+            title: None,
+            vertebrae: vec![],
+            merge: Some(false),
+        };
+        let result = TracedSpine::trace(
+            temp.path(),
+            temp.path(),
+            Some(&spine),
+            &["style.css".to_string()],
+        );
+        assert!(result.is_ok());
+        let traced = result.unwrap();
+
+        // Asset should appear only once
+        let css_count = traced
+            .assets
+            .iter()
+            .filter(|p| p.ends_with("style.css"))
+            .count();
+        assert_eq!(css_count, 1);
+    }
+
+    #[test]
+    fn test_traced_spine_merge_flag_from_config() {
+        let temp = create_test_dir_with_files(&["a.typ"]);
+        let spine = Spine {
+            title: None,
+            vertebrae: vec![],
+            merge: Some(true),
+        };
+        let result = TracedSpine::trace(temp.path(), temp.path(), Some(&spine), &[]);
+        assert!(result.is_ok());
+        let traced = result.unwrap();
+        assert!(traced.merge);
+    }
+
+    #[test]
+    fn test_traced_spine_vertebrae_order_preserved() {
+        // Test that vertebrae order from config is preserved
+        let temp = create_test_dir_with_files(&["z.typ", "a.typ", "m.typ"]);
+        let spine = Spine {
+            title: None,
+            // Reverse alphabetical order
+            vertebrae: vec![
+                "z.typ".to_string(),
+                "m.typ".to_string(),
+                "a.typ".to_string(),
+            ],
+            merge: Some(false),
+        };
+        let result = TracedSpine::trace(temp.path(), temp.path(), Some(&spine), &[]);
+        assert!(result.is_ok());
+        let traced = result.unwrap();
+        assert_eq!(traced.documents.len(), 3);
+        // Order should match config order, not lexicographic
+        assert_eq!(traced.documents[0].path.file_name().unwrap(), "z.typ");
+        assert_eq!(traced.documents[1].path.file_name().unwrap(), "m.typ");
+        assert_eq!(traced.documents[2].path.file_name().unwrap(), "a.typ");
+    }
 }
