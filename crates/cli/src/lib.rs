@@ -351,12 +351,12 @@ fn perform_compilation(
         }
 
         // Execute copy patterns (global + per-plugin)
-        let plugin_section_for_copy = project.config.plugin_section(plugin.name());
+        let plugin_section_for_assets = project.config.plugin_section(plugin.name());
         for pattern in project
             .config
-            .copy
+            .assets
             .iter()
-            .chain(plugin_section_for_copy.copy.iter())
+            .chain(plugin_section_for_assets.assets.iter())
         {
             let abs_pattern = project.root.join(pattern).display().to_string();
             let entries = glob::glob(&abs_pattern).map_err(|e| {
@@ -424,13 +424,13 @@ fn perform_compilation(
                 .resolve_content_dir(&project.root)
                 .unwrap_or_else(|| project.root.clone());
 
-            // Get global and per-plugin copy patterns for assets
+            // Get global and per-plugin asset patterns for assets
             let plugin_section_for_assets = project.config.plugin_section(plugin.name());
             let assets_config: Vec<String> = project
                 .config
-                .copy
+                .assets
                 .iter()
-                .chain(plugin_section_for_assets.copy.iter())
+                .chain(plugin_section_for_assets.assets.iter())
                 .cloned()
                 .collect();
 

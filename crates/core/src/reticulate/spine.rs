@@ -512,12 +512,7 @@ mod tests {
     fn test_generate_bundle_entry_is_bundle_entry() {
         // is_bundle_entry=true → bare #include, no #document() wrapper
         let root = PathBuf::from("/project");
-        let traced = make_traced(
-            vec![entry_doc("/project/index.typ")],
-            vec![],
-            None,
-            false,
-        );
+        let traced = make_traced(vec![entry_doc("/project/index.typ")], vec![], None, false);
         let out = generate_bundle_entry(&traced, &root, "html", "");
         assert!(out.contains("#include \"index.typ\""));
         assert!(!out.contains("#document("));
@@ -527,12 +522,7 @@ mod tests {
     fn test_generate_bundle_entry_plain_no_merge() {
         // is_bundle_entry=false, merge=false → #document("{stem}.html")[#include ...]
         let root = PathBuf::from("/project");
-        let traced = make_traced(
-            vec![plain_doc("/project/chapter.typ")],
-            vec![],
-            None,
-            false,
-        );
+        let traced = make_traced(vec![plain_doc("/project/chapter.typ")], vec![], None, false);
         let out = generate_bundle_entry(&traced, &root, "html", "");
         assert!(out.contains("#document(\"chapter.html\")[#include \"chapter.typ\"]"));
     }
@@ -542,10 +532,7 @@ mod tests {
         // merge=true with title → single #document("My Book.pdf")[...] around all includes
         let root = PathBuf::from("/project");
         let traced = make_traced(
-            vec![
-                plain_doc("/project/ch1.typ"),
-                plain_doc("/project/ch2.typ"),
-            ],
+            vec![plain_doc("/project/ch1.typ"), plain_doc("/project/ch2.typ")],
             vec![],
             Some("My Book"),
             true,
@@ -561,12 +548,7 @@ mod tests {
     fn test_generate_bundle_entry_merge_no_title_fallback() {
         // merge=true, no title → "document.pdf" fallback
         let root = PathBuf::from("/project");
-        let traced = make_traced(
-            vec![plain_doc("/project/ch1.typ")],
-            vec![],
-            None,
-            true,
-        );
+        let traced = make_traced(vec![plain_doc("/project/ch1.typ")], vec![], None, true);
         let out = generate_bundle_entry(&traced, &root, "pdf", "");
         assert!(out.contains("#document(\"document.pdf\")[\n"));
     }
