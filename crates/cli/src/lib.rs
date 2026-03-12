@@ -6,7 +6,7 @@ use rheo_core::manifest_version;
 use rheo_core::output::OutputConfig;
 use rheo_core::project::{ProjectConfig, ProjectMode};
 use rheo_core::results::CompilationResults;
-use rheo_core::reticulate::{SpineDocument, TracedSpine};
+use rheo_core::reticulate::{generate_bundle_entry, SpineDocument, TracedSpine};
 use rheo_core::watch::{WatchEvent, watch_project};
 use rheo_core::world::RheoWorld;
 use rheo_core::{FormatPlugin, PluginContext, Result, RheoError};
@@ -460,7 +460,59 @@ fn perform_compilation(
         // Get full plugin section
         let plugin_section = project.config.plugin_section(plugin.name());
 
-        if spine.merge {
+        // Bundle compilation (HTML): generate bundle entry, inject into world, compile once
+        // Per-file compilation (PDF non-merge): loop through spine documents
+        // Merged compilation (PDF merge, EPUB): single output from all files
+        if !spine.merge && plugin.name() == "html" {
+            // HTML bundle compilation: generate bundle entry and inject into world
+            let compilation_root = project
+                .config
+                .resolve_content_dir(&project.root)
+                .unwrap_or_else(|| project.root.clone());
+
+            let plugin_library = plugin.typst_library().map(|s| s.to_string());
+            let mut bundle_world = RheoWorld::new(
+                &compilation_root,
+                spine.documents
+                    .first()
+                    .map(|d| d.path.as_path())
+                    .unwrap_or(&compilation_root),
+                plugin_library,
+            )?;
+
+            // Generate and inject bundle entry
+            let bundle_entry_source = generate_bundle_entry(
+                &spine,
+                &compilation_root,
+                plugin.name(),
+                plugin.typst_library().unwrap_or_default(),
+            );
+            bundle_world.inject_bundle_entry(bundle_entry_source);
+
+            // Note: options.root should be project.root for CSS path resolution
+            // (stylesheets are typically in project root, not content dir)
+            let options = RheoCompileOptions::new(&plugin_output_dir, &project.root, &mut bundle_world);
+
+            let ctx = PluginContext {
+                project,
+                output_config,
+                options,
+                spine,
+                config: plugin_section,
+                inputs: resolved_inputs,
+            };
+
+            match plugin.compile(ctx) {
+                Ok(_) => {
+                    results.record_success(plugin.name());
+                }
+                Err(e) => {
+                    error!(error = %e, "{} compilation failed", plugin.name());
+                    results.record_failure(plugin.name());
+                }
+            }
+        } else if spine.merge {
+            // Merged compilation (PDF merge, EPUB): single output from all files
             let compilation_root = project
                 .config
                 .resolve_content_dir(&project.root)
@@ -513,7 +565,7 @@ fn perform_compilation(
                 }
             }
         } else {
-            // Get file paths from traced spine documents
+            // Per-file compilation (PDF non-merge): loop through spine documents
             let files: Vec<PathBuf> = spine.documents.iter().map(|d| d.path.clone()).collect();
 
             let pfc = PerFileCtx {

@@ -101,6 +101,10 @@ impl BuiltSpine {
 /// Produces a complete Typst source string that uses `#document()` and `#asset()`
 /// elements, letting Typst's bundle API handle multi-file output natively.
 ///
+/// For non-merge compilation (HTML), this function transforms links in the source
+/// files using LinkTransformer before inlining them. This ensures that links to
+/// other .typ files are rewritten to point to the correct output format (e.g., .html).
+///
 /// # Arguments
 /// * `traced` - Traced spine with documents and assets
 /// * `root` - Project root directory (for computing root-relative include paths)
@@ -112,6 +116,9 @@ pub fn generate_bundle_entry(
     format: &str,
     plugin_library: &str,
 ) -> String {
+    use crate::reticulate::transformer::LinkTransformer;
+    use std::fs;
+
     let mut out = String::new();
 
     // Preamble — exact order is critical
@@ -124,6 +131,9 @@ pub fn generate_bundle_entry(
     }
     out.push_str("#show: rheo_template\n\n");
 
+    // Create link transformer for this format
+    let transformer = LinkTransformer::new(format);
+
     // Documents
     let mut merge_includes: Vec<String> = Vec::new();
     for doc in &traced.documents {
@@ -132,13 +142,37 @@ pub fn generate_bundle_entry(
         let stem = doc.path.file_stem().unwrap_or_default().to_string_lossy();
 
         if doc.is_bundle_entry {
+            // For bundle entry, use #include (no transformation needed for entry point)
             out.push_str(&format!("#include \"{rel_str}\"\n"));
         } else if traced.merge {
+            // Merged mode: use #include (links will work within merged output)
             merge_includes.push(format!("  #include \"{rel_str}\""));
         } else {
-            out.push_str(&format!(
-                "#document(\"{stem}.{format}\")[#include \"{rel_str}\"]\n"
-            ));
+            // Non-merged mode (HTML): read, transform links, and inline the source
+            let source = fs::read_to_string(&doc.path)
+                .unwrap_or_else(|e| {
+                    // Fallback to #include if reading fails
+                    eprintln!("Warning: failed to read {}: {}, using #include", doc.path.display(), e);
+                    out.push_str(&format!(
+                        "#document(\"{stem}.{format}\")[#include \"{rel_str}\"]\n"
+                    ));
+                    String::new()
+                });
+
+            if !source.is_empty() {
+                // Transform links in the source
+                let transformed = transformer
+                    .transform_source(&source, &doc.path, root)
+                    .unwrap_or_else(|e| {
+                        eprintln!("Warning: failed to transform links in {}: {}, using original", doc.path.display(), e);
+                        source
+                    });
+
+                // Inline the transformed source with proper escaping
+                out.push_str(&format!("#document(\"{stem}.{format}\")[\n"));
+                out.push_str(&transformed);
+                out.push_str("\n]\n");
+            }
         }
     }
 

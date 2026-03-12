@@ -241,6 +241,22 @@ impl World for RheoWorld {
         let path = self.path_for_id(id)?;
         let mut text = fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
 
+        // EPUB polyfill: for non-bundle compilation (EPUB doesn't use bundle mode),
+        // inject target() polyfill into all .typ files.
+        // This is detected by checking if the main file is NOT a .typ file (EPUB uses temp files)
+        // and the current file hasn't been loaded yet.
+        // Bundle entries have synthetic names like "__bundle_entry.typ" and are pre-populated in slots.
+        let main_vpath = self.main.vpath().get_without_slash();
+        let main_is_not_typ = !PathBuf::from(main_vpath).extension().map_or(false, |e| e == "typ");
+        let is_epub_mode = path.extension().map_or(false, |e| e == "typ")
+            && main_is_not_typ
+            && !self.slots.lock().contains_key(&id);
+        let epub_polyfill = if is_epub_mode {
+            "#let target() = \"epub\"\n\n"
+        } else {
+            ""
+        };
+
         // For the main file, inject the rheo.typ template and plugin library code.
         if id == self.main {
             let rheo_content = include_str!("typ/rheo.typ");
@@ -250,6 +266,8 @@ impl World for RheoWorld {
                 rheo_content, plugin_lib_content
             );
             text = format!("{}{}", template_inject, text);
+        } else if !epub_polyfill.is_empty() {
+            text = format!("{}{}", epub_polyfill, text);
         }
 
         let source = Source::new(id, text);

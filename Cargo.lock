@@ -778,7 +778,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2612,6 +2612,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
+name = "pixglyph"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c1106193bc18a4b840eb075ff6664c8a0b0270f0531bb12a7e9c803e53b55c5"
+dependencies = [
+ "ttf-parser",
+]
+
+[[package]]
 name = "pkg-config"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3069,6 +3078,9 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "typst",
+ "typst-bundle",
+ "typst-pdf",
  "webbrowser",
 ]
 
@@ -4139,6 +4151,29 @@ version = "0.14.2"
 source = "git+https://github.com/typst/typst-assets?rev=57a38ca#57a38ca98236748ad83c806a48096b281686a7de"
 
 [[package]]
+name = "typst-bundle"
+version = "0.14.2"
+source = "git+https://github.com/typst/typst?branch=main#8626c05abceea8514cbbb4eabcf1a77cf70bad19"
+dependencies = [
+ "comemo",
+ "ecow",
+ "either",
+ "indexmap",
+ "rayon",
+ "rustc-hash",
+ "typst-html",
+ "typst-layout",
+ "typst-library",
+ "typst-macros",
+ "typst-pdf",
+ "typst-render",
+ "typst-svg",
+ "typst-syntax",
+ "typst-timing",
+ "typst-utils",
+]
+
+[[package]]
 name = "typst-eval"
 version = "0.14.2"
 source = "git+https://github.com/typst/typst?branch=main#c93830cd42d63b07ec6474c156065f99f0203805"
@@ -4360,6 +4395,27 @@ dependencies = [
  "typst-syntax",
  "typst-timing",
  "typst-utils",
+]
+
+[[package]]
+name = "typst-render"
+version = "0.14.2"
+source = "git+https://github.com/typst/typst?branch=main#8626c05abceea8514cbbb4eabcf1a77cf70bad19"
+dependencies = [
+ "bytemuck",
+ "comemo",
+ "hayro",
+ "image",
+ "libm",
+ "pixglyph",
+ "resvg",
+ "tiny-skia",
+ "ttf-parser",
+ "typst-assets",
+ "typst-layout",
+ "typst-library",
+ "typst-macros",
+ "typst-timing",
 ]
 
 [[package]]
@@ -5434,8 +5490,3 @@ checksum = "dc6fb7703e32e9a07fb3f757360338b3a567a5054f21b5f52a666752e333d58e"
 dependencies = [
  "zune-core 0.5.0",
 ]
-
-[[patch.unused]]
-name = "typst-bundle"
-version = "0.14.2"
-source = "git+https://github.com/typst/typst?branch=main#8626c05abceea8514cbbb4eabcf1a77cf70bad19"

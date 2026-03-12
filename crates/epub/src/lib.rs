@@ -7,9 +7,9 @@ use xhtml::HtmlInfo;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
-use rheo_core::reticulate::spine::SpineOptions;
+use rheo_core::reticulate::{LinkTransformer, TracedSpine};
 use rheo_core::{
-    BuiltSpine, FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
+    FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
     Spine, compile_document_to_string, compile_html_to_document, eco_format, eco_vec,
 };
 use rheo_core::{
@@ -53,19 +53,7 @@ impl FormatPlugin for EpubPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        // Convert TracedSpine to SpineOptions for internal EPUB compilation
-        // TODO: Replace this with bundle entry generation in rheo-18j
-        let spine_options = SpineOptions {
-            title: ctx.spine.title.clone(),
-            vertebrae: ctx
-                .spine
-                .documents
-                .iter()
-                .map(|d| d.path.to_string_lossy().to_string())
-                .collect(),
-            merge: ctx.spine.merge,
-        };
-        compile_epub_with_spine(&spine_options, &ctx.options, &ctx.config)
+        compile_epub_with_spine(&ctx.spine, &ctx.options, &ctx.config)
     }
 }
 
@@ -149,7 +137,7 @@ fn date_format(dt: &DateTime<Utc>) -> EcoString {
 /// Generates the package.opf XML string from the generated EPUB items.
 pub fn generate_package(
     items: &[EpubItem],
-    spine: &SpineOptions,
+    spine: &TracedSpine,
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
 ) -> Result<String> {
@@ -157,8 +145,8 @@ pub fn generate_package(
     let language = info.locale.unwrap_or_default().rfc_3066();
     let title = spine
         .title
-        .as_deref()
-        .map(EcoString::from)
+        .as_ref()
+        .map(|s| EcoString::from(s.as_str()))
         .unwrap_or_else(|| items[0].title());
 
     const INTERNAL_UNIQUE_ID: &str = "uid";
@@ -330,24 +318,29 @@ fn parse_date(section: &PluginSection) -> Option<DateTime<Utc>> {
 }
 
 fn compile_epub_impl(
-    spine: &SpineOptions,
+    spine: &TracedSpine,
     epub_path: &Path,
     root: &Path,
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
 ) -> Result<()> {
-    // Build BuiltSpine with AST-transformed sources (.typ links → .xhtml)
-    // EPUB handles concatenation itself via create_from_source, so merge=false
-    let rheo_spine = BuiltSpine::build(root, Some(spine), "epub", false)?;
+    use std::fs;
 
-    // Get the spine file paths
-    let spine_paths = rheo_core::reticulate::spine::generate_spine(root, Some(spine), false)?;
+    // Create link transformer for EPUB (.typ → .xhtml)
+    let transformer = LinkTransformer::new("epub");
 
-    let mut items = spine_paths
+    let mut items = spine
+        .documents
         .iter()
-        .zip(rheo_spine.source.iter())
-        .map(|(path, transformed_source)| {
-            EpubItem::create_from_source(path.clone(), transformed_source, root)
+        .map(|doc| {
+            let doc_path = &doc.path;
+            let source = fs::read_to_string(doc_path)
+                .map_err(|e| RheoError::io(e, format!("reading spine file '{}'", doc_path.display())))?;
+
+            // Transform .typ links to .xhtml links for EPUB
+            let transformed_source = transformer.transform_source(&source, doc_path, root)?;
+
+            EpubItem::create_from_source(doc_path.clone(), &transformed_source, root)
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -359,9 +352,9 @@ fn compile_epub_impl(
     Ok(())
 }
 
-/// Compile Typst documents to EPUB using resolved spine options.
+/// Compile Typst documents to EPUB using traced spine.
 fn compile_epub_with_spine(
-    spine: &SpineOptions,
+    spine: &TracedSpine,
     options: &RheoCompileOptions<'_>,
     section: &PluginSection,
 ) -> Result<()> {
@@ -404,10 +397,14 @@ impl EpubItem {
     ) -> Result<Self> {
         info!(file = %path.display(), "compiling spine file with transformed source");
 
+        // Prepend target() polyfill for EPUB (format_name was removed from RheoWorld)
+        let polyfill = "#let target() = \"epub\"\n\n";
+        let source_with_polyfill = format!("{}{}", polyfill, transformed_source);
+
         let mut temp_file = tempfile::NamedTempFile::new_in(root)
             .map_err(|e| RheoError::io(e, "creating temp file for EPUB item"))?;
         temp_file
-            .write_all(transformed_source.as_bytes())
+            .write_all(source_with_polyfill.as_bytes())
             .map_err(|e| RheoError::io(e, "writing transformed source to temp file"))?;
         temp_file
             .flush()

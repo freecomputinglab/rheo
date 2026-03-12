@@ -8,10 +8,12 @@ pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
     FormatPlugin, OpenHandle, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
-    RheoWorld, ServerHandle, compile_document_to_string, compile_html_with_world,
+    ServerHandle,
 };
 use std::path::Path;
 use tracing::{debug, info, warn};
+use typst::diag::Warned;
+use typst_pdf::PdfOptions;
 
 /// Reload callback type - called by watch loop after successful compilation.
 /// Defined here because it's only needed by the HTML plugin's development server.
@@ -106,65 +108,80 @@ impl FormatPlugin for HtmlPlugin {
             ));
         }
 
-        let html_config = parse_html_config(&ctx.config);
-
-        // Resolve and read each stylesheet, collecting raw CSS content for inlining.
-        let mut css_contents: Vec<String> = Vec::new();
-        for stylesheet_path in &html_config.stylesheets {
-            let full_path = ctx.project.root.join(stylesheet_path);
-            if full_path.exists() {
-                match std::fs::read_to_string(&full_path) {
-                    Ok(content) => css_contents.push(content),
-                    Err(e) => {
-                        warn!(path = %full_path.display(), error = %e, "failed to read stylesheet, skipping")
-                    }
-                }
-            } else if stylesheet_path == "style.css" {
-                // Default name with no file present: inline the bundled stylesheet.
-                debug!("using bundled default style.css");
-                css_contents.push(DEFAULT_STYLESHEET.to_string());
-            } else {
-                warn!(path = %full_path.display(), "stylesheet not found, skipping");
-            }
-        }
-
-        compile_html_new(ctx.options, &css_contents, &html_config.fonts)
+        compile_html_bundle(ctx.options, &ctx.config)
     }
 }
 
-fn compile_html_impl(
-    world: &RheoWorld,
-    output: &Path,
-    css_contents: &[String],
-    fonts: &[String],
-) -> Result<()> {
-    let document = compile_html_with_world(world)?;
+/// Compile HTML using bundle API.
+///
+/// Uses typst::compile::<Bundle>() for multi-file bundle output and writes
+/// each HTML file to the output directory with injected CSS and fonts.
+fn compile_html_bundle(options: RheoCompileOptions, config: &PluginSection) -> Result<()> {
+    let html_config = parse_html_config(config);
 
-    debug!(output = %output.display(), "exporting to HTML");
-    let html_string = compile_document_to_string(&document)?;
+    info!("compiling HTML bundle");
 
-    // Inject font links first (DOM-based), then inline styles (string-based).
-    // Ordering matters: string-based injection must run last to avoid re-parsing
-    // and HTML-escaping CSS content (e.g., `>` in selectors).
-    let font_refs: Vec<&str> = fonts.iter().map(|s| s.as_str()).collect();
-    let html_string = html_head::inject_head_links(&html_string, &[], &font_refs)?;
+    // Compile the bundle using the world (which has the synthetic bundle entry as main)
+    let Warned { output, .. } = typst::compile::<typst_bundle::Bundle>(options.world);
+    let bundle = output.map_err(|e| RheoError::project_config(format!("bundle compilation had errors: {:?}", e)))?;
 
-    let css_refs: Vec<&str> = css_contents.iter().map(|s| s.as_str()).collect();
-    let html_string = html_head::inject_inline_styles(&html_string, &css_refs)?;
+    // Export the bundle to get HTML files
+    let bundle_options = typst_bundle::BundleOptions {
+        pixel_per_pt: 144.0,
+        pdf: PdfOptions::default(),
+    };
 
-    debug!(size = html_string.len(), "writing HTML file");
-    std::fs::write(output, &html_string)
-        .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
+    let fs = typst_bundle::export(&bundle, &bundle_options)
+        .map_err(|e| RheoError::project_config(format!("bundle export failed: {:?}", e)))?;
 
-    info!(output = %output.display(), "successfully compiled to HTML");
+    debug!(file_count = fs.len(), "exported HTML bundle");
+
+    // Write each HTML file to the output directory
+    for (vpath, bytes) in &fs {
+        let out_path = options.output.join(vpath.get_without_slash());
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| RheoError::io(e, format!("creating output directory {}", parent.display())))?;
+        }
+
+        // For HTML files, inject CSS and fonts
+        if out_path.extension().map_or(false, |e| e == "html") {
+            let html_string = String::from_utf8(bytes.to_vec())
+                .map_err(|e| RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e)))?;
+
+            // Load CSS contents if configured, falling back to default stylesheet
+            let css_contents: Vec<String> = html_config.stylesheets
+                .iter()
+                .map(|path| {
+                    let full_path = options.root.join(path);
+                    match std::fs::read_to_string(&full_path) {
+                        Ok(css) => css,
+                        Err(_) => {
+                            warn!(path = %path, "stylesheet not found, using default");
+                            DEFAULT_STYLESHEET.to_string()
+                        }
+                    }
+                })
+                .collect();
+
+            // Inject font links first (DOM-based), then inline styles (string-based)
+            let font_refs: Vec<&str> = html_config.fonts.iter().map(|s| s.as_str()).collect();
+            let html_string = html_head::inject_head_links(&html_string, &[], &font_refs)?;
+
+            let css_refs: Vec<&str> = css_contents.iter().map(|s| s.as_str()).collect();
+            let html_string = html_head::inject_inline_styles(&html_string, &css_refs)?;
+
+            std::fs::write(&out_path, html_string)
+                .map_err(|e| RheoError::io(e, format!("writing HTML file to {}", out_path.display())))?;
+        } else {
+            // For non-HTML files (assets), write directly
+            std::fs::write(&out_path, bytes)
+                .map_err(|e| RheoError::io(e, format!("writing file to {}", out_path.display())))?;
+        }
+
+        debug!(output = %out_path.display(), "wrote bundle file");
+    }
+
+    info!(output = %options.output.display(), "successfully compiled HTML bundle");
     Ok(())
-}
-
-/// Compile Typst document to HTML using an engine-provided World.
-pub fn compile_html_new(
-    options: RheoCompileOptions,
-    css_contents: &[String],
-    fonts: &[String],
-) -> Result<()> {
-    compile_html_impl(options.world, &options.output, css_contents, fonts)
 }

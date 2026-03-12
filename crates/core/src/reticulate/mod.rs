@@ -8,3 +8,4 @@ pub mod validator;
 
 pub use spine::generate_bundle_entry;
 pub use tracer::{SpineDocument, TracedSpine};
+pub use transformer::LinkTransformer;
