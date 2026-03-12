@@ -66,6 +66,7 @@ pub use world::RheoWorld;
 
 // Re-export reticulate module for spine building
 pub use reticulate::spine::BuiltSpine;
+pub use reticulate::spine::generate_bundle_entry;
 
 // PDF utilities
 pub use pdf_utils::DocumentTitle;

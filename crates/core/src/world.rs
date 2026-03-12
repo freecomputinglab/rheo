@@ -129,6 +129,27 @@ impl RheoWorld {
         Ok(())
     }
 
+    /// Inject a generated bundle entry as a virtual main file.
+    ///
+    /// Pre-populates `self.slots` so `World::source()` returns the provided source
+    /// immediately (bypassing template injection — preamble is already baked in).
+    /// Sets `self.main` to the virtual FileId.
+    pub fn inject_bundle_entry(&mut self, source: String) -> FileId {
+        let vpath = VirtualPath::new("__rheo_bundle_entry__.typ")
+            .expect("static bundle entry path is valid");
+        let virtual_id = RootedPath::new(VirtualRoot::Project, vpath).intern();
+        let typst_source = Source::new(virtual_id, source);
+        self.slots.lock().insert(
+            virtual_id,
+            FileSlot {
+                source: Some(typst_source),
+                file: None,
+            },
+        );
+        self.main = virtual_id;
+        virtual_id
+    }
+
     /// Transform links in source text based on output format name.
     fn transform_links(&self, text: &str, id: FileId, format_name: &str) -> FileResult<String> {
         use crate::reticulate::transformer::LinkTransformer;
