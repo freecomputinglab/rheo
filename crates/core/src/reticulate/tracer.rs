@@ -5,7 +5,8 @@
 //! 2. Static AST analysis of .typ files for #document() and #asset() calls
 
 use crate::config::Spine;
-use crate::{Result, RheoError, TYP_EXT_BARE};
+use crate::{Result, RheoError};
+use crate::path_utils::{collect_all_typst_files, collect_one_typst_file};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -264,54 +265,6 @@ fn expand_asset_globs(
     // Sort for consistent ordering
     assets.sort();
     Ok(assets)
-}
-
-/// Single file discovery: require exactly one .typ file.
-fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
-    use walkdir::WalkDir;
-
-    let typst_files: Vec<PathBuf> = WalkDir::new(root)
-        .into_iter()
-        .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
-        .filter(|entry| {
-            entry
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext == TYP_EXT_BARE)
-                .unwrap_or(false)
-        })
-        .collect();
-
-    match typst_files.len() {
-        0 => Err(RheoError::project_config("need at least one .typ file")),
-        1 => Ok(typst_files),
-        _ => Err(RheoError::project_config(
-            "multiple .typ files found, specify spine configuration",
-        )),
-    }
-}
-
-/// All .typ files discovery.
-fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
-    use walkdir::WalkDir;
-
-    let mut typst_files: Vec<PathBuf> = WalkDir::new(root)
-        .into_iter()
-        .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
-        .filter(|path| {
-            path.extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext == TYP_EXT_BARE)
-                .unwrap_or(false)
-        })
-        .collect();
-
-    if typst_files.is_empty() {
-        return Err(RheoError::project_config("need at least one .typ file"));
-    }
-
-    typst_files.sort();
-    Ok(typst_files)
 }
 
 #[cfg(test)]
