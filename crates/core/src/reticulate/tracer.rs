@@ -146,12 +146,29 @@ fn is_bundle_entry(source: &str) -> bool {
 
 /// Extract asset paths from #asset() calls in source.
 ///
-/// This is a simple heuristic: find string arguments to #asset() calls.
-/// A full implementation would use proper AST traversal with argument extraction.
-fn extract_assets(_source: &str, _source_path: &Path, _assets: &mut [PathBuf]) {
-    // TODO: Implement asset extraction from #asset() calls
-    // This requires traversing AST and extracting the first argument (path)
-    // For now, assets only come from config patterns
+/// Only extracts from TOP-LEVEL AST children (root.children()), not nested scopes.
+/// Returns the asset path as the first string argument to #asset() calls.
+fn extract_assets(source: &str, source_path: &Path, assets: &mut Vec<PathBuf>) {
+    let root = parse(source);
+    for node in root.children() {
+        if node.kind() == SyntaxKind::FuncCall
+            && let Some(call) = node.cast::<FuncCall>()
+            && let Expr::Ident(ident) = call.callee()
+            && ident.get() == "asset"
+        {
+            // Extract the first positional argument (the asset path string)
+            for arg in call.args().items() {
+                if let typst_syntax::ast::Arg::Pos(Expr::Str(s)) = arg {
+                    let asset_path = source_path
+                        .parent()
+                        .map(|p| p.join(s.get().as_str()))
+                        .unwrap_or_else(|| PathBuf::from(s.get().as_str()));
+                    assets.push(asset_path);
+                    break; // Only take the first argument
+                }
+            }
+        }
+    }
 }
 
 /// Discover spine documents from vertebrae config or auto-discovery.
@@ -527,13 +544,17 @@ mod tests {
         let asset_path = temp.path().join("style.css");
         fs::write(&asset_path, "body { color: red; }").unwrap();
 
-        // Create a .typ file
+        // Create a .typ file with an #asset() call for the same CSS file
         let typ_path = temp.path().join("main.typ");
-        fs::write(&typ_path, "= Hello").unwrap();
+        fs::write(
+            &typ_path,
+            r#"#asset("style.css", read("style.css", encoding: none))
+
+= Hello"#,
+        )
+        .unwrap();
 
         // Trace with asset config that includes the same file
-        // (In reality, assets from #asset() calls would also be included,
-        // but that's not yet implemented - extract_assets is a stub)
         let spine = Spine {
             title: None,
             vertebrae: vec![],
@@ -549,7 +570,7 @@ mod tests {
         assert!(result.is_ok());
         let traced = result.unwrap();
 
-        // Asset should appear only once
+        // Asset should appear only once (deduplicated)
         let css_count = traced
             .assets
             .iter()
@@ -570,6 +591,52 @@ mod tests {
         assert!(result.is_ok());
         let traced = result.unwrap();
         assert!(traced.merge);
+    }
+
+    #[test]
+    fn test_extract_assets_from_typst() {
+        // Test extracting asset paths from #asset() calls
+        let source = r#"
+            #asset("style.css", read("style.css", encoding: none))
+            #asset("images/logo.png")
+        "#;
+        let source_path = Path::new("/project/content/main.typ");
+        let mut assets = Vec::new();
+
+        extract_assets(source, source_path, &mut assets);
+
+        assert_eq!(assets.len(), 2);
+        assert_eq!(assets[0], PathBuf::from("/project/content/style.css"));
+        assert_eq!(assets[1], PathBuf::from("/project/content/images/logo.png"));
+    }
+
+    #[test]
+    fn test_extract_assets_nested_not_extracted() {
+        // Test that nested #asset() calls are NOT extracted (top-level only)
+        let source = r#"
+            #let myfunc() = {
+              #asset("nested.css")
+            }
+        "#;
+        let source_path = Path::new("/project/content/main.typ");
+        let mut assets = Vec::new();
+
+        extract_assets(source, source_path, &mut assets);
+
+        // No assets should be extracted since #asset() is nested
+        assert_eq!(assets.len(), 0);
+    }
+
+    #[test]
+    fn test_extract_assets_empty() {
+        // Test source with no #asset() calls
+        let source = "= Hello World\nNo assets here.";
+        let source_path = Path::new("/project/content/main.typ");
+        let mut assets = Vec::new();
+
+        extract_assets(source, source_path, &mut assets);
+
+        assert_eq!(assets.len(), 0);
     }
 
     #[test]
