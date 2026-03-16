@@ -15,7 +15,7 @@ use rheo_core::{
 };
 use rheo_core::{
     FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError, Spine,
-    compile_document_to_string, compile_html_to_document, eco_format, eco_vec,
+    compile_document_to_string, compile_html_to_document_with_polyfill, eco_format, eco_vec,
 };
 use std::{
     fmt::Write as _,
@@ -400,14 +400,10 @@ impl EpubItem {
     ) -> Result<Self> {
         info!(file = %path.display(), "compiling spine file with transformed source");
 
-        // Prepend target() polyfill for EPUB (format_name was removed from RheoWorld)
-        let polyfill = "#let target() = \"epub\"\n\n";
-        let source_with_polyfill = format!("{}{}", polyfill, transformed_source);
-
         let mut temp_file = tempfile::NamedTempFile::new_in(root)
             .map_err(|e| RheoError::io(e, "creating temp file for EPUB item"))?;
         temp_file
-            .write_all(source_with_polyfill.as_bytes())
+            .write_all(transformed_source.as_bytes())
             .map_err(|e| RheoError::io(e, "writing transformed source to temp file"))?;
         temp_file
             .flush()
@@ -415,7 +411,8 @@ impl EpubItem {
 
         let temp_path = temp_file.path();
         let plugin_library = EpubPlugin.typst_library().map(|s| s.to_string());
-        let document = compile_html_to_document(temp_path, root, "epub", plugin_library)?;
+        // Compile with EPUB polyfill mode enabled (injects target() = "epub" into all .typ files)
+        let document = compile_html_to_document_with_polyfill(temp_path, root, plugin_library, true)?;
 
         let parent = path.parent().ok_or_else(|| {
             RheoError::invalid_data(format!("path has no parent: {}", path.display()))

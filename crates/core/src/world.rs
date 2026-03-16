@@ -28,6 +28,9 @@ pub struct RheoWorld {
     packages: SystemPackages,
     /// Plugin-contributed Typst library code, injected after core prelude.
     plugin_library: Option<String>,
+    /// When true, inject `#let target() = "epub"` polyfill into all .typ files.
+    /// Set by the EPUB plugin before compilation.
+    pub epub_polyfill_mode: bool,
 }
 
 struct FileSlot {
@@ -85,6 +88,7 @@ impl RheoWorld {
             slots: Mutex::new(HashMap::new()),
             packages,
             plugin_library,
+            epub_polyfill_mode: false,
         })
     }
 
@@ -238,19 +242,9 @@ impl World for RheoWorld {
         let path = self.path_for_id(id)?;
         let mut text = fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
 
-        // EPUB polyfill: for non-bundle compilation (EPUB doesn't use bundle mode),
-        // inject target() polyfill into all .typ files.
-        // This is detected by checking if the main file is NOT a .typ file (EPUB uses temp files)
-        // and the current file hasn't been loaded yet.
-        // Bundle entries have synthetic names like "__bundle_entry.typ" and are pre-populated in slots.
-        let main_vpath = self.main.vpath().get_without_slash();
-        let main_is_not_typ = PathBuf::from(main_vpath)
-            .extension()
-            .is_none_or(|e| e != "typ");
-        let is_epub_mode = path.extension().is_some_and(|e| e == "typ")
-            && main_is_not_typ
-            && !self.slots.lock().contains_key(&id);
-        let epub_polyfill = if is_epub_mode {
+        // EPUB polyfill: inject target() polyfill into all .typ files when epub_polyfill_mode is set.
+        // The EPUB plugin sets this flag before compilation to enable polyfill injection.
+        let epub_polyfill = if self.epub_polyfill_mode {
             "#let target() = \"epub\"\n\n"
         } else {
             ""
