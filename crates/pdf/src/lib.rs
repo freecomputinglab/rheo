@@ -6,6 +6,9 @@ use tracing::{debug, info};
 use typst::diag::Warned;
 use typst_pdf::PdfOptions;
 
+/// PDF pixel-per-point ratio: 2x the standard 72 DPI for quality printing.
+const PDF_PIXEL_PER_PT: f32 = 144.0;
+
 pub struct PdfPlugin;
 
 impl FormatPlugin for PdfPlugin {
@@ -69,7 +72,7 @@ fn compile_pdf_merged_bundle(world: &RheoWorld, output_path: &Path) -> Result<()
 
     // Export the bundle to get PDF files
     let bundle_options = typst_bundle::BundleOptions {
-        pixel_per_pt: 144.0,
+        pixel_per_pt: PDF_PIXEL_PER_PT,
         pdf: PdfOptions::default(),
     };
 
@@ -118,7 +121,7 @@ fn compile_pdf_per_file_bundle(world: &RheoWorld, output_dir: &Path) -> Result<(
 
     // Export the bundle to get PDF files
     let bundle_options = typst_bundle::BundleOptions {
-        pixel_per_pt: 144.0,
+        pixel_per_pt: PDF_PIXEL_PER_PT,
         pdf: PdfOptions::default(),
     };
 
