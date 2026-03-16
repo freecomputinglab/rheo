@@ -157,6 +157,10 @@ fn is_bundle_entry(source: &str) -> bool {
 ///
 /// Only extracts from TOP-LEVEL AST children (root.children()), not nested scopes.
 /// Returns the asset path as the first string argument to #asset() calls.
+///
+/// # Note
+/// Only positional arguments are supported. Named arguments like `#asset(path: "img.png")`
+/// are silently ignored. Use positional syntax: `#asset("img.png")`.
 fn extract_assets(source: &str, source_path: &Path, assets: &mut Vec<PathBuf>) {
     let root = parse(source);
     for node in root.children() {
