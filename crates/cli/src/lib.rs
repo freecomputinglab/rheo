@@ -301,6 +301,171 @@ fn compile_one_file(
     Ok(())
 }
 
+/// Bundle compilation: generate bundle entry, inject into world, compile once.
+/// Used by plugins that use the bundle API (HTML, PDF non-merge).
+#[allow(clippy::too_many_arguments)]
+fn compile_bundle(
+    plugin: &dyn FormatPlugin,
+    plugin_output_dir: &Path,
+    project: &ProjectConfig,
+    output_config: &OutputConfig,
+    spine: &TracedSpine,
+    plugin_section: &PluginSection,
+    resolved_inputs: HashMap<&'static str, PathBuf>,
+    results: &mut CompilationResults,
+) -> Result<()> {
+    let compilation_root = project
+        .config
+        .resolve_content_dir(&project.root)
+        .unwrap_or_else(|| project.root.clone());
+
+    let plugin_library = plugin.typst_library().map(|s| s.to_string());
+    let mut bundle_world = RheoWorld::new(
+        &compilation_root,
+        spine.documents
+            .first()
+            .map(|d| d.path.as_path())
+            .unwrap_or(&compilation_root),
+        plugin_library,
+    )?;
+
+    let bundle_entry_source = generate_bundle_entry(
+        spine,
+        &compilation_root,
+        plugin.name(),
+        plugin.typst_library().unwrap_or_default(),
+    );
+    bundle_world.inject_bundle_entry(bundle_entry_source);
+
+    let options = RheoCompileOptions::new(plugin_output_dir, &project.root, &mut bundle_world);
+
+    let ctx = PluginContext {
+        project,
+        output_config,
+        options,
+        spine: spine.clone(),
+        config: plugin_section.clone(),
+        inputs: resolved_inputs,
+    };
+
+    match plugin.compile(ctx) {
+        Ok(_) => {
+            results.record_success(plugin.name());
+        }
+        Err(e) => {
+            error!(error = %e, "{} compilation failed", plugin.name());
+            results.record_failure(plugin.name());
+        }
+    }
+    Ok(())
+}
+
+/// Merged compilation: single output from all spine documents.
+/// Used by PDF merge mode and EPUB.
+#[allow(clippy::too_many_arguments)]
+fn compile_merged(
+    plugin: &dyn FormatPlugin,
+    plugin_output_dir: &Path,
+    project: &ProjectConfig,
+    output_config: &OutputConfig,
+    spine: &TracedSpine,
+    plugin_section: &PluginSection,
+    resolved_inputs: HashMap<&'static str, PathBuf>,
+    results: &mut CompilationResults,
+) -> Result<()> {
+    let compilation_root = project
+        .config
+        .resolve_content_dir(&project.root)
+        .unwrap_or_else(|| project.root.clone());
+    let output_path = plugin_output_dir
+        .join(&project.name)
+        .with_extension(plugin.name());
+
+    let plugin_library = plugin.typst_library().map(|s| s.to_string());
+    let mut bundle_world = RheoWorld::new(
+        &compilation_root,
+        spine.documents
+            .first()
+            .map(|d| d.path.as_path())
+            .unwrap_or(&compilation_root),
+        plugin_library,
+    )?;
+
+    let bundle_entry_source = generate_bundle_entry(
+        spine,
+        &compilation_root,
+        plugin.name(),
+        plugin.typst_library().unwrap_or_default(),
+    );
+    bundle_world.inject_bundle_entry(bundle_entry_source);
+
+    let options = RheoCompileOptions::new(&output_path, &compilation_root, &mut bundle_world);
+
+    let ctx = PluginContext {
+        project,
+        output_config,
+        options,
+        spine: spine.clone(),
+        config: plugin_section.clone(),
+        inputs: resolved_inputs,
+    };
+
+    match plugin.compile(ctx) {
+        Ok(_) => {
+            results.record_success(plugin.name());
+        }
+        Err(e) => {
+            error!(error = %e, "{} generation failed", plugin.name());
+            results.record_failure(plugin.name());
+        }
+    }
+    Ok(())
+}
+
+/// Per-file compilation: loop through spine documents, compile each individually.
+/// Used by PDF non-merge mode.
+#[allow(clippy::too_many_arguments)]
+fn compile_per_file(
+    plugin: &dyn FormatPlugin,
+    plugin_output_dir: &Path,
+    project: &ProjectConfig,
+    output_config: &OutputConfig,
+    spine: &TracedSpine,
+    plugin_section: &PluginSection,
+    resolved_inputs: &HashMap<&'static str, PathBuf>,
+    content_dir: &Path,
+    world: &mut Option<&mut RheoWorld>,
+    results: &mut CompilationResults,
+) -> Result<()> {
+    let files: Vec<PathBuf> = spine.documents.iter().map(|d| d.path.clone()).collect();
+
+    let pfc = PerFileCtx {
+        plugin,
+        plugin_output_dir,
+        project,
+        output_config,
+        spine,
+        plugin_section,
+        resolved_inputs,
+        content_dir,
+    };
+
+    if let Some(ref mut existing_world) = *world {
+        for typ_file in &files {
+            existing_world.set_main(typ_file)?;
+            existing_world.reset();
+            compile_one_file(existing_world, typ_file, &pfc, results)?;
+        }
+    } else {
+        let plugin_library = plugin.typst_library().map(|s| s.to_string());
+        for typ_file in &files {
+            let mut fresh_world = RheoWorld::new(content_dir, typ_file, plugin_library.clone())?;
+            compile_one_file(&mut fresh_world, typ_file, &pfc, results)?;
+        }
+    }
+    Ok(())
+}
+
 fn perform_compilation(
     project: &ProjectConfig,
     output_config: &OutputConfig,
@@ -460,142 +625,42 @@ fn perform_compilation(
         // Get full plugin section
         let plugin_section = project.config.plugin_section(plugin.name());
 
-        // Bundle compilation (plugins using bundle API): generate bundle entry, inject into world, compile once
-        // Merged compilation (PDF merge, EPUB): single output from all files
+        // Dispatch to appropriate compilation path
         if !spine.merge && plugin.uses_bundle_api() {
-            // Plugin bundle compilation: generate bundle entry and inject into world
-            let compilation_root = project
-                .config
-                .resolve_content_dir(&project.root)
-                .unwrap_or_else(|| project.root.clone());
-
-            let plugin_library = plugin.typst_library().map(|s| s.to_string());
-            let mut bundle_world = RheoWorld::new(
-                &compilation_root,
-                spine
-                    .documents
-                    .first()
-                    .map(|d| d.path.as_path())
-                    .unwrap_or(&compilation_root),
-                plugin_library,
-            )?;
-
-            // Generate and inject bundle entry
-            let bundle_entry_source = generate_bundle_entry(
-                &spine,
-                &compilation_root,
-                plugin.name(),
-                plugin.typst_library().unwrap_or_default(),
-            );
-            bundle_world.inject_bundle_entry(bundle_entry_source);
-
-            // Note: options.root should be project.root for CSS path resolution
-            // (stylesheets are typically in project root, not content dir)
-            let options =
-                RheoCompileOptions::new(&plugin_output_dir, &project.root, &mut bundle_world);
-
-            let ctx = PluginContext {
+            compile_bundle(
+                plugin.as_ref(),
+                &plugin_output_dir,
                 project,
                 output_config,
-                options,
-                spine,
-                config: plugin_section,
-                inputs: resolved_inputs,
-            };
-
-            match plugin.compile(ctx) {
-                Ok(_) => {
-                    results.record_success(plugin.name());
-                }
-                Err(e) => {
-                    error!(error = %e, "{} compilation failed", plugin.name());
-                    results.record_failure(plugin.name());
-                }
-            }
+                &spine,
+                &plugin_section,
+                resolved_inputs,
+                &mut results,
+            )?;
         } else if spine.merge {
-            // Merged compilation (PDF merge, EPUB): single output from all files
-            let compilation_root = project
-                .config
-                .resolve_content_dir(&project.root)
-                .unwrap_or_else(|| project.root.clone());
-            let output_path = plugin_output_dir
-                .join(&project.name)
-                .with_extension(plugin.name());
-
-            // Create world for bundle compilation
-            // For PDF merge mode, we generate a bundle entry and inject it into the world
-            let plugin_library = plugin.typst_library().map(|s| s.to_string());
-            let mut bundle_world = RheoWorld::new(
-                &compilation_root,
-                spine
-                    .documents
-                    .first()
-                    .map(|d| d.path.as_path())
-                    .unwrap_or(&compilation_root),
-                plugin_library,
-            )?;
-
-            // Generate and inject bundle entry for PDF merge mode
-            let bundle_entry_source = generate_bundle_entry(
+            compile_merged(
+                plugin.as_ref(),
+                &plugin_output_dir,
+                project,
+                output_config,
                 &spine,
-                &compilation_root,
-                plugin.name(),
-                plugin.typst_library().unwrap_or_default(),
-            );
-            bundle_world.inject_bundle_entry(bundle_entry_source);
-
-            let options =
-                RheoCompileOptions::new(&output_path, &compilation_root, &mut bundle_world);
-
-            let ctx = PluginContext {
-                project,
-                output_config,
-                options,
-                spine,
-                config: plugin_section,
-                inputs: resolved_inputs,
-            };
-
-            match plugin.compile(ctx) {
-                Ok(_) => {
-                    results.record_success(plugin.name());
-                }
-                Err(e) => {
-                    error!(error = %e, "{} generation failed", plugin.name());
-                    results.record_failure(plugin.name());
-                }
-            }
+                &plugin_section,
+                resolved_inputs,
+                &mut results,
+            )?;
         } else {
-            // Per-file compilation (PDF non-merge): loop through spine documents
-            let files: Vec<PathBuf> = spine.documents.iter().map(|d| d.path.clone()).collect();
-
-            let pfc = PerFileCtx {
-                plugin: plugin.as_ref(),
-                plugin_output_dir: &plugin_output_dir,
+            compile_per_file(
+                plugin.as_ref(),
+                &plugin_output_dir,
                 project,
                 output_config,
-                spine: &spine,
-                plugin_section: &plugin_section,
-                resolved_inputs: &resolved_inputs,
-                content_dir: &content_dir,
-            };
-
-            if let Some(ref mut existing_world) = world {
-                for typ_file in &files {
-                    existing_world.set_main(typ_file)?;
-                    existing_world.reset();
-                    compile_one_file(existing_world, typ_file, &pfc, &mut results)?;
-                }
-            } else {
-                // Collect plugin library code to inject
-                let plugin_library = plugin.typst_library().map(|s| s.to_string());
-
-                for typ_file in &files {
-                    let mut fresh_world =
-                        RheoWorld::new(&content_dir, typ_file, plugin_library.clone())?;
-                    compile_one_file(&mut fresh_world, typ_file, &pfc, &mut results)?;
-                }
-            }
+                &spine,
+                &plugin_section,
+                &resolved_inputs,
+                &content_dir,
+                &mut world,
+                &mut results,
+            )?;
         }
     }
 
