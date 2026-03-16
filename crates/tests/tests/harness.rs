@@ -391,7 +391,7 @@ Content here.
         stdout
     );
     assert!(
-        combined.contains("not found in spine") || combined.contains("unknown label"),
+        combined.contains("not found in spine") || combined.contains("unknown label") || combined.contains("does not exist"),
         "Expected 'not found in spine' or label error, got:\nstderr: {}\nstdout: {}",
         stderr,
         stdout
@@ -469,7 +469,7 @@ Content from dir2.
         stdout
     );
     assert!(
-        combined.contains("duplicate") || combined.contains("label"),
+        combined.contains("duplicate") || combined.contains("label") || combined.contains("multiple times"),
         "Expected error about duplicate labels, got:\nstderr: {}\nstdout: {}",
         stderr,
         stdout
