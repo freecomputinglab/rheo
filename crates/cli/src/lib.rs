@@ -313,25 +313,22 @@ fn compile_bundle(
     plugin_section: &PluginSection,
     resolved_inputs: HashMap<&'static str, PathBuf>,
     results: &mut CompilationResults,
+    compilation_root: &Path,
 ) -> Result<()> {
-    let compilation_root = project
-        .config
-        .resolve_content_dir(&project.root)
-        .unwrap_or_else(|| project.root.clone());
-
     let plugin_library = plugin.typst_library().map(|s| s.to_string());
     let mut bundle_world = RheoWorld::new(
-        &compilation_root,
-        spine.documents
+        compilation_root,
+        spine
+            .documents
             .first()
             .map(|d| d.path.as_path())
-            .unwrap_or(&compilation_root),
+            .unwrap_or(compilation_root),
         plugin_library,
     )?;
 
     let bundle_entry_source = generate_bundle_entry(
         spine,
-        &compilation_root,
+        compilation_root,
         plugin.name(),
         plugin.typst_library().unwrap_or_default(),
     );
@@ -372,34 +369,32 @@ fn compile_merged(
     plugin_section: &PluginSection,
     resolved_inputs: HashMap<&'static str, PathBuf>,
     results: &mut CompilationResults,
+    compilation_root: &Path,
 ) -> Result<()> {
-    let compilation_root = project
-        .config
-        .resolve_content_dir(&project.root)
-        .unwrap_or_else(|| project.root.clone());
     let output_path = plugin_output_dir
         .join(&project.name)
         .with_extension(plugin.name());
 
     let plugin_library = plugin.typst_library().map(|s| s.to_string());
     let mut bundle_world = RheoWorld::new(
-        &compilation_root,
-        spine.documents
+        compilation_root,
+        spine
+            .documents
             .first()
             .map(|d| d.path.as_path())
-            .unwrap_or(&compilation_root),
+            .unwrap_or(compilation_root),
         plugin_library,
     )?;
 
     let bundle_entry_source = generate_bundle_entry(
         spine,
-        &compilation_root,
+        compilation_root,
         plugin.name(),
         plugin.typst_library().unwrap_or_default(),
     );
     bundle_world.inject_bundle_entry(bundle_entry_source);
 
-    let options = RheoCompileOptions::new(&output_path, &compilation_root, &mut bundle_world);
+    let options = RheoCompileOptions::new(&output_path, compilation_root, &mut bundle_world);
 
     let ctx = PluginContext {
         project,
@@ -553,6 +548,12 @@ fn perform_compilation(
             }
         }
 
+        // Compute compilation root once (content_dir from config or project root)
+        let compilation_root = project
+            .config
+            .resolve_content_dir(&project.root)
+            .unwrap_or_else(|| project.root.clone());
+
         // Resolve spine config and trace
         let spine = if project.mode == ProjectMode::SingleFile {
             // For single file mode, create a spine with just the single file
@@ -584,10 +585,6 @@ fn perform_compilation(
                 };
                 spine_cfg = Some(&default_spine);
             }
-            let content_dir = project
-                .config
-                .resolve_content_dir(&project.root)
-                .unwrap_or_else(|| project.root.clone());
 
             // Get global and per-plugin asset patterns for assets
             let plugin_section_for_assets = project.config.plugin_section(plugin.name());
@@ -601,14 +598,14 @@ fn perform_compilation(
 
             TracedSpine::trace(
                 &project.root,
-                &content_dir,
+                &compilation_root,
                 spine_cfg,
                 &assets_config,
                 plugin.default_merge(),
             )?
         };
 
-        // For non-single-file mode, compute content_dir for world root
+        // For non-single-file mode, use compilation_root; for single file mode, use file's parent
         let content_dir = if project.mode == ProjectMode::SingleFile {
             // For single file mode, use the file's parent directory
             project.typ_files[0]
@@ -616,10 +613,7 @@ fn perform_compilation(
                 .unwrap_or(&project.root)
                 .to_path_buf()
         } else {
-            project
-                .config
-                .resolve_content_dir(&project.root)
-                .unwrap_or_else(|| project.root.clone())
+            compilation_root.clone()
         };
 
         // Get full plugin section
@@ -636,6 +630,7 @@ fn perform_compilation(
                 &plugin_section,
                 resolved_inputs,
                 &mut results,
+                &compilation_root,
             )?;
         } else if spine.merge {
             compile_merged(
@@ -647,6 +642,7 @@ fn perform_compilation(
                 &plugin_section,
                 resolved_inputs,
                 &mut results,
+                &compilation_root,
             )?;
         } else {
             compile_per_file(

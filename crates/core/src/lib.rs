@@ -48,7 +48,8 @@ pub use reticulate::{SpineDocument, TracedSpine};
 
 // HTML compilation functions
 pub use html_compile::{
-    compile_document_to_string, compile_html_to_document, compile_html_to_document_with_polyfill, compile_html_with_world,
+    compile_document_to_string, compile_html_to_document, compile_html_to_document_with_polyfill,
+    compile_html_with_world,
 };
 
 // PDF compilation functions

@@ -1,5 +1,5 @@
-use crate::{Result, RheoError};
 use crate::path_utils::{collect_all_typst_files, collect_one_typst_file};
+use crate::{Result, RheoError};
 use std::path::{Path, PathBuf};
 
 use super::tracer::TracedSpine;

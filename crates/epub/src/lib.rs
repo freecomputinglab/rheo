@@ -412,7 +412,8 @@ impl EpubItem {
         let temp_path = temp_file.path();
         let plugin_library = EpubPlugin.typst_library().map(|s| s.to_string());
         // Compile with EPUB polyfill mode enabled (injects target() = "epub" into all .typ files)
-        let document = compile_html_to_document_with_polyfill(temp_path, root, plugin_library, true)?;
+        let document =
+            compile_html_to_document_with_polyfill(temp_path, root, plugin_library, true)?;
 
         let parent = path.parent().ok_or_else(|| {
             RheoError::invalid_data(format!("path has no parent: {}", path.display()))
