@@ -13,51 +13,6 @@ pub struct SpineOptions {
     pub merge: bool,
 }
 
-/// A spine with relative linking transformations.
-#[derive(Debug, Clone)]
-pub struct BuiltSpine {
-    /// The name of the file or website that the spine will generate.
-    pub title: Option<String>,
-
-    /// Whether or not the source has been merged into a single file.
-    /// This is only true for PDF merged mode.
-    pub is_merged: bool,
-
-    /// Reticulated (relative link transformed) source files.
-    /// Always length 1 if `is_merged`.
-    pub source: Vec<String>,
-}
-
-impl BuiltSpine {
-    /// Build a RheoSpine with AST-based link transformation for all output formats.
-    ///
-    /// # DEPRECATED
-    ///
-    /// This method is deprecated and no longer functional. The link transformer
-    /// has been removed as part of the bundle compilation migration.
-    ///
-    /// Use `TracedSpine::trace()` instead, then call `generate_bundle_entry()`
-    /// for bundle compilation. For the PDF plugin, see issue rheo-4h1 for the
-    /// bundle migration path.
-    ///
-    /// # Arguments
-    /// * `root` - Project root directory
-    /// * `spine_config` - Optional spine configuration (determines spine files)
-    /// * `format_name` - Target output format name (e.g. "pdf", "html", "epub")
-    /// * `merge` - Whether to merge spine files into a single source (caller decides)
-    pub fn build(
-        _root: &Path,
-        _spine_config: Option<&SpineOptions>,
-        _format_name: &str,
-        _merge: bool,
-    ) -> Result<BuiltSpine> {
-        Err(RheoError::project_config(
-            "BuiltSpine::build() is deprecated. Use TracedSpine::trace() and generate_bundle_entry() instead. \
-             See issue rheo-4h1 for PDF plugin bundle migration.",
-        ))
-    }
-}
-
 /// Generate a synthetic bundle entry `.typ` file for the Typst bundle API.
 ///
 /// Produces a complete Typst source string that uses `#document()` and `#asset()`
