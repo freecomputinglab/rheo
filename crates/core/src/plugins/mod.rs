@@ -115,6 +115,23 @@ pub trait FormatPlugin: Send + Sync {
     /// ```
     fn name(&self) -> &'static str;
 
+    /// Output file extension for generated files.
+    ///
+    /// Returns the file extension used for output files (without the leading dot).
+    /// By default, this returns `self.name()`, but plugins can override this if their
+    /// output files use a different extension than their format name.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn output_extension(&self) -> &str {
+    ///     "xhtml"  // Produces .xhtml files even though format name is "html"
+    /// }
+    /// ```
+    fn output_extension(&self) -> &str {
+        self.name()
+    }
+
     /// Whether this plugin merges files by default.
     ///
     /// Override to return `true` for formats that always produce a single merged output

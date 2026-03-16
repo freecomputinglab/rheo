@@ -281,7 +281,7 @@ fn compile_one_file(
     let output_path = pfc
         .plugin_output_dir
         .join(&filename)
-        .with_extension(pfc.plugin.name());
+        .with_extension(pfc.plugin.output_extension());
     let options = RheoCompileOptions::new(&output_path, pfc.content_dir, world);
     let ctx = PluginContext {
         project: pfc.project,
@@ -373,7 +373,7 @@ fn compile_merged(
 ) -> Result<()> {
     let output_path = plugin_output_dir
         .join(&project.name)
-        .with_extension(plugin.name());
+        .with_extension(plugin.output_extension());
 
     let plugin_library = plugin.typst_library().map(|s| s.to_string());
     let mut bundle_world = RheoWorld::new(
