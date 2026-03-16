@@ -61,6 +61,9 @@ impl RheoWorld {
         let rooted_path = RootedPath::new(VirtualRoot::Project, main_vpath);
         let main = rooted_path.intern();
 
+        // Feature::Bundle enables the bundle API for PDF and HTML compilation.
+        // EPUB does not use bundle compilation; it compiles each spine file separately
+        // and merges them into a single .epub, which is a different architectural approach.
         let features: Features = [Feature::Html, Feature::Bundle].into_iter().collect();
         let library = Library::builder().with_features(features).build();
 
