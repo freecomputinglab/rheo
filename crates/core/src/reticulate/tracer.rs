@@ -9,6 +9,7 @@ use crate::{Result, RheoError, TYP_EXT};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 use typst_syntax::ast::{Expr, FuncCall};
 use typst_syntax::{SyntaxKind, parse};
 
@@ -95,19 +96,27 @@ impl TracedSpine {
 
         // Add config assets first (preserve order)
         for asset in assets_from_config {
-            if let Ok(canonical) = asset.canonicalize()
-                && seen.insert(canonical.clone())
-            {
-                assets.push(asset);
+            match asset.canonicalize() {
+                Ok(canonical) if seen.insert(canonical.clone()) => {
+                    assets.push(asset);
+                }
+                Err(e) => {
+                    warn!("Failed to canonicalize asset {:?}: {}", asset, e);
+                }
+                _ => {}
             }
         }
 
         // Add source assets
         for asset in assets_from_source {
-            if let Ok(canonical) = asset.canonicalize()
-                && seen.insert(canonical.clone())
-            {
-                assets.push(asset);
+            match asset.canonicalize() {
+                Ok(canonical) if seen.insert(canonical.clone()) => {
+                    assets.push(asset);
+                }
+                Err(e) => {
+                    warn!("Failed to canonicalize asset {:?}: {}", asset, e);
+                }
+                _ => {}
             }
         }
 
