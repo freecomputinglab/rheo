@@ -192,17 +192,24 @@ impl RheoWorld {
     }
 
     pub fn lookup(&self, id: FileId) -> Lines<String> {
-        if let Some(slot) = self.slots.lock().get(&id)
-            && let Some(source) = &slot.source
+        // First lock: check for cached source
         {
-            return source.lines().clone();
+            let slots = self.slots.lock();
+            if let Some(slot) = slots.get(&id)
+                && let Some(source) = &slot.source
+            {
+                return source.lines().clone();
+            }
         }
 
+        // Drop lock before calling World::source (may acquire its own locks)
         if let Ok(source) = World::source(self, id) {
             return source.lines().clone();
         }
 
-        if let Some(slot) = self.slots.lock().get(&id)
+        // Second lock: check for cached file
+        let slots = self.slots.lock();
+        if let Some(slot) = slots.get(&id)
             && let Some(bytes) = &slot.file
         {
             // Convert bytes to string for line tracking
