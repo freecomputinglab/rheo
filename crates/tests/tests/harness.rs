@@ -329,16 +329,17 @@ fn test_pdf_merge() {
 /// Test error case: link to file not in spine
 #[test]
 fn test_pdf_merge_link_not_in_spine() {
-    // Create a test case with a file that links to a non-spine file
-    let test_dir = PathBuf::from("tests/cases/pdf_merge_error_nonspine");
-    std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let test_dir = dir.path();
 
     // Create rheo.toml with only intro.typ in spine
     std::fs::write(
         test_dir.join("rheo.toml"),
-        r#"[pdf.merge]
-spine = ["intro.typ"]
+        r#"version = "0.1.2"
+
+[pdf.spine]
 title = "Test Error Case"
+vertebrae = ["intro.typ"]
 "#,
     )
     .expect("Failed to write rheo.toml");
@@ -365,7 +366,15 @@ Content here.
 
     // Try to compile - should fail or warn
     let output = std::process::Command::new("cargo")
-        .args(["run", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "compile",
+            test_dir.to_str().unwrap(),
+            "--pdf",
+        ])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
@@ -389,16 +398,13 @@ Content here.
         stderr,
         stdout
     );
-
-    // Clean up
-    std::fs::remove_dir_all(&test_dir).ok();
 }
 
 /// Test error case: duplicate filenames in spine
 #[test]
 fn test_pdf_merge_duplicate_filenames() {
-    // Create a test case with duplicate filenames in different directories
-    let test_dir = PathBuf::from("tests/cases/pdf_merge_error_duplicate");
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let test_dir = dir.path();
     let dir1 = test_dir.join("dir1");
     let dir2 = test_dir.join("dir2");
     std::fs::create_dir_all(&dir1).expect("Failed to create dir1");
@@ -407,9 +413,11 @@ fn test_pdf_merge_duplicate_filenames() {
     // Create rheo.toml with both files in spine
     std::fs::write(
         test_dir.join("rheo.toml"),
-        r#"[pdf.merge]
-spine = ["dir1/chapter.typ", "dir2/chapter.typ"]
+        r#"version = "0.1.2"
+
+[pdf.spine]
 title = "Test Duplicate Error"
+vertebrae = ["dir1/chapter.typ", "dir2/chapter.typ"]
 "#,
     )
     .expect("Failed to write rheo.toml");
@@ -436,7 +444,15 @@ Content from dir2.
 
     // Try to compile - should fail with duplicate label error
     let output = std::process::Command::new("cargo")
-        .args(["run", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "compile",
+            test_dir.to_str().unwrap(),
+            "--pdf",
+        ])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
@@ -460,9 +476,6 @@ Content from dir2.
         stderr,
         stdout
     );
-
-    // Clean up
-    std::fs::remove_dir_all(&test_dir).ok();
 }
 
 /// Test HTML post-processing: CSS link injection
