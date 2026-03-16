@@ -482,28 +482,15 @@ Content from dir2.
 #[test]
 fn test_html_css_link_injection() {
     let test_case = TestCase::new("../../examples/blog_site");
-    let project_path = test_case.project_path();
+    let original_project_path = test_case.project_path();
 
-    // Clean and compile
-    let clean_output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "rheo-cli",
-            "--",
-            "clean",
-            project_path.to_str().unwrap(),
-        ])
-        .output()
-        .expect("Failed to run rheo clean");
+    // Copy to temporary directory for isolation
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    copy_project_to_test_store(&original_project_path, temp_dir.path())
+        .expect("Failed to copy project to test store");
+    let project_path = temp_dir.path();
 
-    if !clean_output.status.success() {
-        eprintln!(
-            "Warning: Clean failed: {}",
-            String::from_utf8_lossy(&clean_output.stderr)
-        );
-    }
-
+    // Compile
     let output = std::process::Command::new("cargo")
         .args([
             "run",
@@ -573,18 +560,7 @@ fn test_html_css_link_injection() {
         "Should preserve viewport meta tag"
     );
 
-    // Clean up
-    let clean_output = std::process::Command::new("cargo")
-        .args(["run", "--", "clean", project_path.to_str().unwrap()])
-        .output()
-        .expect("Failed to run rheo clean");
-
-    if !clean_output.status.success() {
-        eprintln!(
-            "Warning: Clean failed: {}",
-            String::from_utf8_lossy(&clean_output.stderr)
-        );
-    }
+    // temp_dir auto-cleans on drop
 }
 
 /// Test that a custom stylesheet named in rheo.toml is read and inlined into HTML output.
