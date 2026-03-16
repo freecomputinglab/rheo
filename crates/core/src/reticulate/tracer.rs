@@ -62,7 +62,7 @@ impl TracedSpine {
         default_merge: bool,
     ) -> Result<TracedSpine> {
         // Discover documents from vertebrae config or auto-discovery
-        let vertebrae_paths = discover_documents(root, content_dir, spine_config)?;
+        let vertebrae_paths = discover_documents(content_dir, spine_config)?;
 
         // Static analysis: read each .typ file and check for bundle syntax
         let mut documents = Vec::new();
@@ -89,7 +89,7 @@ impl TracedSpine {
         }
 
         // Expand asset glob patterns from config
-        let assets_from_config = expand_asset_globs(root, content_dir, assets_config)?;
+        let assets_from_config = expand_asset_globs(root, assets_config)?;
 
         // Merge assets: config assets first, then source assets, deduplicated
         let mut assets = Vec::new();
@@ -186,11 +186,7 @@ fn extract_assets(source: &str, source_path: &Path, assets: &mut Vec<PathBuf>) {
 }
 
 /// Discover spine documents from vertebrae config or auto-discovery.
-fn discover_documents(
-    _root: &Path, // Unused: content_dir is used for all path resolution. Kept for API symmetry.
-    content_dir: &Path,
-    spine_config: Option<&Spine>,
-) -> Result<Vec<PathBuf>> {
+fn discover_documents(content_dir: &Path, spine_config: Option<&Spine>) -> Result<Vec<PathBuf>> {
     match spine_config {
         None => {
             // No spine config: single file mode
@@ -235,12 +231,8 @@ fn discover_documents(
     }
 }
 
-/// Expand asset glob patterns relative to content_dir.
-fn expand_asset_globs(
-    root: &Path,
-    _content_dir: &Path, // Unused: root is used for path resolution. Kept for API symmetry.
-    patterns: &[String],
-) -> Result<Vec<PathBuf>> {
+/// Expand asset glob patterns relative to root.
+fn expand_asset_globs(root: &Path, patterns: &[String]) -> Result<Vec<PathBuf>> {
     let mut assets = Vec::new();
 
     for pattern in patterns {
@@ -406,7 +398,7 @@ mod tests {
             vertebrae: vec!["cover.typ".to_string(), "chapters/*.typ".to_string()],
             merge: Some(false),
         };
-        let result = discover_documents(temp.path(), temp.path(), Some(&spine));
+        let result = discover_documents(temp.path(), Some(&spine));
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 3);
@@ -426,7 +418,7 @@ mod tests {
             vertebrae: vec!["**/*.typ".to_string()],
             merge: Some(false),
         };
-        let result = discover_documents(temp.path(), temp.path(), Some(&spine));
+        let result = discover_documents(temp.path(), Some(&spine));
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 4);
