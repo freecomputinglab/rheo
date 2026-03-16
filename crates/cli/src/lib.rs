@@ -460,10 +460,10 @@ fn perform_compilation(
         // Get full plugin section
         let plugin_section = project.config.plugin_section(plugin.name());
 
-        // Bundle compilation (HTML and PDF non-merge): generate bundle entry, inject into world, compile once
+        // Bundle compilation (plugins using bundle API): generate bundle entry, inject into world, compile once
         // Merged compilation (PDF merge, EPUB): single output from all files
-        if !spine.merge && (plugin.name() == "html" || plugin.name() == "pdf") {
-            // HTML and PDF non-merge bundle compilation: generate bundle entry and inject into world
+        if !spine.merge && plugin.uses_bundle_api() {
+            // Plugin bundle compilation: generate bundle entry and inject into world
             let compilation_root = project
                 .config
                 .resolve_content_dir(&project.root)

@@ -134,6 +134,23 @@ pub trait FormatPlugin: Send + Sync {
         false
     }
 
+    /// Whether this plugin uses the Typst bundle API for compilation.
+    ///
+    /// Override to return `true` for formats that use `typst::compile::<Bundle>()`.
+    /// When `true`, the CLI generates a bundle entry and injects it into the world
+    /// before compilation. When `false`, the plugin uses per-file compilation.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn uses_bundle_api(&self) -> bool {
+    ///     true  // HTML and PDF use bundle compilation
+    /// }
+    /// ```
+    fn uses_bundle_api(&self) -> bool {
+        false
+    }
+
     /// Set plugin-specific smart defaults when no rheo.toml section exists.
     ///
     /// Called by the CLI after loading a project when the plugin's section is not

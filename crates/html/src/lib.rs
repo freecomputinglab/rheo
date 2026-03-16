@@ -73,6 +73,10 @@ impl FormatPlugin for HtmlPlugin {
         "html"
     }
 
+    fn uses_bundle_api(&self) -> bool {
+        true
+    }
+
     fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
         vec![("style.css", include_str!("templates/style.css"))]
     }
