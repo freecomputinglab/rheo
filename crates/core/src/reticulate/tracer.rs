@@ -186,7 +186,7 @@ fn extract_assets(source: &str, source_path: &Path, assets: &mut Vec<PathBuf>) {
 
 /// Discover spine documents from vertebrae config or auto-discovery.
 fn discover_documents(
-    _root: &Path,
+    _root: &Path, // Unused: content_dir is used for all path resolution. Kept for API symmetry.
     content_dir: &Path,
     spine_config: Option<&Spine>,
 ) -> Result<Vec<PathBuf>> {
@@ -237,7 +237,7 @@ fn discover_documents(
 /// Expand asset glob patterns relative to content_dir.
 fn expand_asset_globs(
     root: &Path,
-    _content_dir: &Path,
+    _content_dir: &Path, // Unused: root is used for path resolution. Kept for API symmetry.
     patterns: &[String],
 ) -> Result<Vec<PathBuf>> {
     let mut assets = Vec::new();
