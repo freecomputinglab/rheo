@@ -370,9 +370,6 @@ Content here.
         .output()
         .expect("Failed to run rheo compile");
 
-    // Clean up
-    std::fs::remove_dir_all(&test_dir).ok();
-
     // Check if compilation failed with link error
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -381,11 +378,20 @@ Content here.
     // The compilation should fail because chapter1.typ is not in the spine
     // The transform_typ_links_to_labels function should detect this and return an error
     assert!(
-        !output.status.success() || combined.contains("not found in spine"),
-        "Expected error about link target not in spine, got:\nstderr: {}\nstdout: {}",
+        !output.status.success(),
+        "Expected compilation to fail when link target not in spine, but it succeeded. Output:\nstderr: {}\nstdout: {}",
         stderr,
         stdout
     );
+    assert!(
+        combined.contains("not found in spine") || combined.contains("unknown label"),
+        "Expected 'not found in spine' or label error, got:\nstderr: {}\nstdout: {}",
+        stderr,
+        stdout
+    );
+
+    // Clean up
+    std::fs::remove_dir_all(&test_dir).ok();
 }
 
 /// Test error case: duplicate filenames in spine
@@ -435,9 +441,6 @@ Content from dir2.
         .output()
         .expect("Failed to run rheo compile");
 
-    // Clean up
-    std::fs::remove_dir_all(&test_dir).ok();
-
     // Typst will detect duplicate labels and fail
     // Check for error in output
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -446,11 +449,20 @@ Content from dir2.
 
     // Typst should report duplicate label error
     assert!(
-        !output.status.success() || combined.contains("duplicate") || combined.contains("label"),
+        !output.status.success(),
+        "Expected compilation to fail with duplicate labels, but it succeeded. Output:\nstderr: {}\nstdout: {}",
+        stderr,
+        stdout
+    );
+    assert!(
+        combined.contains("duplicate") || combined.contains("label"),
         "Expected error about duplicate labels, got:\nstderr: {}\nstdout: {}",
         stderr,
         stdout
     );
+
+    // Clean up
+    std::fs::remove_dir_all(&test_dir).ok();
 }
 
 /// Test HTML post-processing: CSS link injection
