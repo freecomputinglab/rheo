@@ -1,16 +1,24 @@
 use crate::helpers::comparison::{BinaryFileMetadata, extract_pdf_metadata};
 use crate::helpers::is_single_file_test;
-use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-/// Compute a short hash of a file path for reference directory naming
+/// Compute a short hash of a file path for reference directory naming.
+///
+/// Uses FNV-1a 64-bit hash for stability across Rust versions.
+/// FNV-1a is chosen because it's:
+/// - Fast and simple to implement inline (no external dependency)
+/// - Stable and well-defined (same input always produces same output)
+/// - Widely used for hash table applications
 fn compute_file_hash(path: &Path) -> String {
-    let mut hasher = DefaultHasher::new();
-    path.to_string_lossy().hash(&mut hasher);
-    format!("{:08x}", hasher.finish())
+    let s = path.to_string_lossy();
+    let mut hash: u64 = 14695981039346656037; // FNV-1a 64-bit offset basis
+    for byte in s.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(1099511628211); // FNV-1a 64-bit prime
+    }
+    format!("{:08x}", hash)
 }
 
 /// Update HTML reference files from test output
