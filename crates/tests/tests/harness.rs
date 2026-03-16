@@ -197,8 +197,6 @@ fn run_test_case(name: &str) {
         );
     }
 
-    // let run_epub = env::var("RUN_EPUB_TESTS").is_ok() || env::var("RUN_EPUB_TESTS").is_err();
-
     // Test HTML output
     if run_html {
         let html_output = build_dir.join("html");
