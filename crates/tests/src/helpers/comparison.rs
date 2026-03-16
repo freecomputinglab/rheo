@@ -9,8 +9,8 @@ use walkdir::WalkDir;
 
 use super::is_single_file_test;
 
-pub fn verify_html_output(test_name: &str, actual_dir: &Path) {
-    let ref_dir = get_reference_dir(actual_dir, test_name, "html");
+pub fn verify_html_output(test_name: &str, actual_dir: &Path, original_project_path: &Path) {
+    let ref_dir = get_reference_dir(actual_dir, original_project_path, test_name, "html");
     ensure_reference_exists(&ref_dir, test_name, "HTML");
 
     validate_html_assets(&ref_dir, actual_dir).expect("HTML asset validation failed");
@@ -22,8 +22,8 @@ pub fn verify_html_output(test_name: &str, actual_dir: &Path) {
     });
 }
 
-pub fn verify_pdf_output(test_name: &str, actual_dir: &Path) {
-    let ref_dir = get_reference_dir(actual_dir, test_name, "pdf");
+pub fn verify_pdf_output(test_name: &str, actual_dir: &Path, original_project_path: &Path) {
+    let ref_dir = get_reference_dir(actual_dir, original_project_path, test_name, "pdf");
     ensure_reference_exists(&ref_dir, test_name, "PDF");
 
     validate_pdf_assets(&ref_dir, actual_dir).expect("PDF asset validation failed");
@@ -60,7 +60,12 @@ fn compute_file_hash(path: &Path) -> String {
     format!("{:08x}", hasher.finish())
 }
 
-fn get_reference_dir(actual_dir: &Path, test_name: &str, output_type: &str) -> PathBuf {
+fn get_reference_dir(
+    _actual_dir: &Path,
+    original_project_path: &Path,
+    test_name: &str,
+    output_type: &str,
+) -> PathBuf {
     // Check if this is a single-file test (test name contains file path components)
     if test_name.contains("_slash")
         && (test_name.contains("_full_stop") || test_name.ends_with("typ"))
@@ -90,9 +95,13 @@ fn get_reference_dir(actual_dir: &Path, test_name: &str, output_type: &str) -> P
     }
 
     // Default: project-based references
-    let ref_base = if actual_dir.starts_with("examples/") {
+    let ref_base = if original_project_path.starts_with("examples/")
+        || original_project_path.starts_with("../../examples/")
+    {
         PathBuf::from("ref/examples")
-    } else if actual_dir.starts_with("tests/cases/") {
+    } else if original_project_path.starts_with("cases/")
+        || original_project_path.starts_with("tests/cases/")
+    {
         PathBuf::from("ref/cases")
     } else {
         PathBuf::from("ref/examples")
@@ -885,8 +894,8 @@ fn validate_epub_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), S
     }
 }
 
-pub fn verify_epub_output(test_name: &str, actual_dir: &Path) {
-    let ref_dir = get_reference_dir(actual_dir, test_name, "epub");
+pub fn verify_epub_output(test_name: &str, actual_dir: &Path, original_project_path: &Path) {
+    let ref_dir = get_reference_dir(actual_dir, original_project_path, test_name, "epub");
     ensure_reference_exists(&ref_dir, test_name, "EPUB");
 
     validate_epub_assets(&ref_dir, actual_dir).expect("EPUB asset validation failed");

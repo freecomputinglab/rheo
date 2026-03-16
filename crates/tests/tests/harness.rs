@@ -204,10 +204,15 @@ fn run_test_case(name: &str) {
         let html_output = build_dir.join("html");
         if html_output.exists() {
             if update_mode {
-                update_html_references(test_name, &html_output, &project_path)
-                    .expect("Failed to update HTML references");
+                update_html_references(
+                    test_name,
+                    &html_output,
+                    &project_path,
+                    &original_project_path,
+                )
+                .expect("Failed to update HTML references");
             } else {
-                verify_html_output(test_name, &html_output);
+                verify_html_output(test_name, &html_output, &original_project_path);
             }
         }
     }
@@ -217,10 +222,10 @@ fn run_test_case(name: &str) {
         let pdf_output = build_dir.join("pdf");
         if pdf_output.exists() {
             if update_mode {
-                update_pdf_references(test_name, &pdf_output)
+                update_pdf_references(test_name, &pdf_output, &original_project_path)
                     .expect("Failed to update PDF references");
             } else {
-                verify_pdf_output(test_name, &pdf_output);
+                verify_pdf_output(test_name, &pdf_output, &original_project_path);
             }
         }
     }
@@ -230,10 +235,10 @@ fn run_test_case(name: &str) {
         let epub_output = build_dir.join("epub");
         if epub_output.exists() {
             if update_mode {
-                update_epub_references(test_name, &epub_output)
+                update_epub_references(test_name, &epub_output, &original_project_path)
                     .expect("Failed to update EPUB references");
             } else {
-                verify_epub_output(test_name, &epub_output);
+                verify_epub_output(test_name, &epub_output, &original_project_path);
             }
         }
     }

@@ -18,6 +18,7 @@ pub fn update_html_references(
     test_name: &str,
     actual_dir: &Path,
     project_path: &Path,
+    original_project_path: &Path,
 ) -> Result<(), String> {
     // Determine if this is a single-file test
     let ref_dir = if test_name.contains("_slash")
@@ -44,11 +45,11 @@ pub fn update_html_references(
                 .join("html")
         } else {
             // Fallback to project-based path
-            get_project_ref_dir(project_path, test_name, "html")
+            get_project_ref_dir(project_path, original_project_path, test_name, "html")
         }
     } else {
         // Project-based test
-        get_project_ref_dir(project_path, test_name, "html")
+        get_project_ref_dir(project_path, original_project_path, test_name, "html")
     };
 
     // Remove existing references
@@ -69,10 +70,19 @@ pub fn update_html_references(
 }
 
 /// Get project-based reference directory
-fn get_project_ref_dir(project_path: &Path, test_name: &str, output_type: &str) -> PathBuf {
-    let ref_base = if project_path.starts_with("examples/") {
+fn get_project_ref_dir(
+    _project_path: &Path,
+    original_project_path: &Path,
+    test_name: &str,
+    output_type: &str,
+) -> PathBuf {
+    let ref_base = if original_project_path.starts_with("examples/")
+        || original_project_path.starts_with("../../examples/")
+    {
         PathBuf::from("ref/examples")
-    } else if project_path.starts_with("tests/cases/") {
+    } else if original_project_path.starts_with("cases/")
+        || original_project_path.starts_with("tests/cases/")
+    {
         PathBuf::from("ref/cases")
     } else {
         PathBuf::from("ref/examples") // fallback
@@ -81,7 +91,11 @@ fn get_project_ref_dir(project_path: &Path, test_name: &str, output_type: &str) 
 }
 
 /// Update PDF metadata references from test output
-pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), String> {
+pub fn update_pdf_references(
+    test_name: &str,
+    actual_dir: &Path,
+    original_project_path: &Path,
+) -> Result<(), String> {
     // Determine if this is a single-file test
     let ref_dir = if test_name.contains("_slash")
         && (test_name.contains("_full_stop") || test_name.ends_with("typ"))
@@ -107,9 +121,13 @@ pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), S
                 .join("pdf")
         } else {
             // Fallback to project-based path
-            let ref_base = if actual_dir.starts_with("examples/") {
+            let ref_base = if original_project_path.starts_with("examples/")
+                || original_project_path.starts_with("../../examples/")
+            {
                 PathBuf::from("ref/examples")
-            } else if actual_dir.starts_with("tests/cases/") {
+            } else if original_project_path.starts_with("cases/")
+                || original_project_path.starts_with("tests/cases/")
+            {
                 PathBuf::from("ref/cases")
             } else {
                 PathBuf::from("ref/examples")
@@ -118,9 +136,13 @@ pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), S
         }
     } else {
         // Project-based test
-        let ref_base = if actual_dir.starts_with("examples/") {
+        let ref_base = if original_project_path.starts_with("examples/")
+            || original_project_path.starts_with("../../examples/")
+        {
             PathBuf::from("ref/examples")
-        } else if actual_dir.starts_with("tests/cases/") {
+        } else if original_project_path.starts_with("cases/")
+            || original_project_path.starts_with("tests/cases/")
+        {
             PathBuf::from("ref/cases")
         } else {
             PathBuf::from("ref/examples")
@@ -174,7 +196,11 @@ pub fn update_pdf_references(test_name: &str, actual_dir: &Path) -> Result<(), S
 }
 
 /// Update EPUB metadata references from test output
-pub fn update_epub_references(test_name: &str, actual_dir: &Path) -> Result<(), String> {
+pub fn update_epub_references(
+    test_name: &str,
+    actual_dir: &Path,
+    original_project_path: &Path,
+) -> Result<(), String> {
     use crate::helpers::comparison::{extract_epub_metadata, extract_epub_xhtml};
 
     // Determine if this is a single-file test
@@ -202,9 +228,13 @@ pub fn update_epub_references(test_name: &str, actual_dir: &Path) -> Result<(), 
                 .join("epub")
         } else {
             // Fallback to project-based path
-            let ref_base = if actual_dir.starts_with("examples/") {
+            let ref_base = if original_project_path.starts_with("examples/")
+                || original_project_path.starts_with("../../examples/")
+            {
                 PathBuf::from("ref/examples")
-            } else if actual_dir.starts_with("tests/cases/") {
+            } else if original_project_path.starts_with("cases/")
+                || original_project_path.starts_with("tests/cases/")
+            {
                 PathBuf::from("ref/cases")
             } else {
                 PathBuf::from("ref/examples")
@@ -213,9 +243,13 @@ pub fn update_epub_references(test_name: &str, actual_dir: &Path) -> Result<(), 
         }
     } else {
         // Project-based test
-        let ref_base = if actual_dir.starts_with("examples/") {
+        let ref_base = if original_project_path.starts_with("examples/")
+            || original_project_path.starts_with("../../examples/")
+        {
             PathBuf::from("ref/examples")
-        } else if actual_dir.starts_with("tests/cases/") {
+        } else if original_project_path.starts_with("cases/")
+            || original_project_path.starts_with("tests/cases/")
+        {
             PathBuf::from("ref/cases")
         } else {
             PathBuf::from("ref/examples")
