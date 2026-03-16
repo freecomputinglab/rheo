@@ -95,21 +95,8 @@ impl TracedSpine {
         let mut assets = Vec::new();
         let mut seen = HashSet::new();
 
-        // Add config assets first (preserve order)
-        for asset in assets_from_config {
-            match asset.canonicalize() {
-                Ok(canonical) if seen.insert(canonical.clone()) => {
-                    assets.push(asset);
-                }
-                Err(e) => {
-                    warn!("Failed to canonicalize asset {:?}: {}", asset, e);
-                }
-                _ => {}
-            }
-        }
-
-        // Add source assets
-        for asset in assets_from_source {
+        // Add all assets, deduplicating by canonical path
+        for asset in assets_from_config.into_iter().chain(assets_from_source) {
             match asset.canonicalize() {
                 Ok(canonical) if seen.insert(canonical.clone()) => {
                     assets.push(asset);
