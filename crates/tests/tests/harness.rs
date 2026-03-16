@@ -206,11 +206,11 @@ fn run_test_case(name: &str) {
                     test_name,
                     &html_output,
                     &project_path,
-                    &original_project_path,
+                    original_project_path,
                 )
                 .expect("Failed to update HTML references");
             } else {
-                verify_html_output(test_name, &html_output, &original_project_path);
+                verify_html_output(test_name, &html_output, original_project_path);
             }
         }
     }
@@ -220,10 +220,10 @@ fn run_test_case(name: &str) {
         let pdf_output = build_dir.join("pdf");
         if pdf_output.exists() {
             if update_mode {
-                update_pdf_references(test_name, &pdf_output, &original_project_path)
+                update_pdf_references(test_name, &pdf_output, original_project_path)
                     .expect("Failed to update PDF references");
             } else {
-                verify_pdf_output(test_name, &pdf_output, &original_project_path);
+                verify_pdf_output(test_name, &pdf_output, original_project_path);
             }
         }
     }
@@ -233,10 +233,10 @@ fn run_test_case(name: &str) {
         let epub_output = build_dir.join("epub");
         if epub_output.exists() {
             if update_mode {
-                update_epub_references(test_name, &epub_output, &original_project_path)
+                update_epub_references(test_name, &epub_output, original_project_path)
                     .expect("Failed to update EPUB references");
             } else {
-                verify_epub_output(test_name, &epub_output, &original_project_path);
+                verify_epub_output(test_name, &epub_output, original_project_path);
             }
         }
     }
@@ -484,7 +484,7 @@ fn test_html_css_link_injection() {
 
     // Copy to temporary directory for isolation
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
-    copy_project_to_test_store(&original_project_path, temp_dir.path())
+    copy_project_to_test_store(original_project_path, temp_dir.path())
         .expect("Failed to copy project to test store");
     let project_path = temp_dir.path();
 
