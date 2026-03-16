@@ -5,7 +5,7 @@
 //! 2. Static AST analysis of .typ files for #document() and #asset() calls
 
 use crate::config::Spine;
-use crate::{Result, RheoError, TYP_EXT};
+use crate::{Result, RheoError, TYP_EXT_BARE};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -277,7 +277,7 @@ fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
             entry
                 .extension()
                 .and_then(|ext| ext.to_str())
-                .map(|ext| ext == &TYP_EXT[1..])
+                .map(|ext| ext == TYP_EXT_BARE)
                 .unwrap_or(false)
         })
         .collect();
@@ -301,7 +301,7 @@ fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
         .filter(|path| {
             path.extension()
                 .and_then(|ext| ext.to_str())
-                .map(|ext| ext == &TYP_EXT[1..])
+                .map(|ext| ext == TYP_EXT_BARE)
                 .unwrap_or(false)
         })
         .collect();
