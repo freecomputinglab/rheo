@@ -178,7 +178,7 @@ pub fn generate_package(
 
     builder = builder.add_item(Item {
         id: "nav".into(),
-        href: IriRefBuf::new("nav.xhtml".into())
+        href: IriRefBuf::new("nav.xhtml".to_owned())
             .map_err(|e| RheoError::invalid_data(format!("invalid nav href: {}", e)))?,
         media_type: XHTML_MEDIATYPE.into(),
         properties: Some("nav".into()),
@@ -460,7 +460,7 @@ impl EpubItem {
                 };
                 let mut anchored_href = href.to_owned();
                 anchored_href.set_fragment(Some(
-                    Fragment::new(&id).expect("heading ID should be a valid IRI fragment"),
+                    Fragment::new(id.as_bytes()).expect("heading ID should be a valid IRI fragment"),
                 ));
                 let link = eco_format!(r#"<a href="{anchored_href}">{entry}</a>"#);
                 ((link, level, true), id)
