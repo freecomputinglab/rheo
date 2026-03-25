@@ -1,0 +1,15 @@
+version = "0.2.0"
+content_dir = "content"
+formats = ["html", "pdf", "epub"]
+
+[html.spine]
+title = "All Features"
+vertebrae = ["index.typ"]
+
+[pdf.spine]
+title = "All Features"
+vertebrae = ["index.typ"]
+
+[epub.spine]
+title = "All Features"
+vertebrae = ["about.typ"]

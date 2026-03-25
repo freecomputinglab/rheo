@@ -153,9 +153,14 @@ fn compile_html_bundle(options: RheoCompileOptions, config: &PluginSection) -> R
 
     debug!(file_count = fs.len(), "exported HTML bundle");
 
-    // Write each HTML file to the output directory
+    // Write each HTML file and web asset to the output directory.
+    // Skip .pdf files: those belong to the PDF plugin's output directory.
     for (vpath, bytes) in &fs {
-        let out_path = options.output.join(vpath.get_without_slash());
+        let filename = vpath.get_without_slash();
+        if filename.ends_with(".pdf") {
+            continue;
+        }
+        let out_path = options.output.join(filename);
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 RheoError::io(e, format!("creating output directory {}", parent.display()))
@@ -163,7 +168,7 @@ fn compile_html_bundle(options: RheoCompileOptions, config: &PluginSection) -> R
         }
 
         // For HTML files, inject CSS and fonts
-        if out_path.extension().is_some_and(|e| e == "html") {
+        if out_path.extension().is_some_and(|ext| ext == "html") {
             let html_string = String::from_utf8(bytes.to_vec()).map_err(|e| {
                 RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e))
             })?;

@@ -134,12 +134,16 @@ fn compile_pdf_per_file_bundle(world: &RheoWorld, output_dir: &Path) -> Result<(
 
     debug!(file_count = fs.len(), "exported PDF bundle");
 
-    // Each document in the bundle produces a separate PDF
+    // Each document in the bundle produces a separate PDF.
+    // Filter to .pdf files only: bundles that also target HTML will include HTML files
+    // and assets in the export; writing those to the PDF output dir would corrupt it.
     let mut file_count = 0;
-    for (vpath, pdf_bytes) in fs {
-        file_count += 1;
-        // Get the filename from the virtual path
+    for (vpath, bytes) in fs {
         let filename = vpath.get_without_slash();
+        if !filename.ends_with(".pdf") {
+            continue;
+        }
+        file_count += 1;
         let out_path = output_dir.join(filename);
 
         // Ensure parent directory exists
@@ -150,7 +154,7 @@ fn compile_pdf_per_file_bundle(world: &RheoWorld, output_dir: &Path) -> Result<(
         }
 
         debug!(output = %out_path.display(), "writing PDF file");
-        std::fs::write(&out_path, &pdf_bytes)
+        std::fs::write(&out_path, &bytes)
             .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", out_path)))?;
     }
 
