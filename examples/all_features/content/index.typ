@@ -39,3 +39,5 @@
 #document("about.html", title: "About")[
   #include "about.typ"
 ]
+
+#asset("favicon.svg", read("img/favicon.svg", encoding: none))
