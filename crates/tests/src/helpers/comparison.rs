@@ -1,16 +1,14 @@
 use similar::{ChangeTag, TextDiff};
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
 use std::env;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use super::is_single_file_test;
 
-pub fn verify_html_output(test_name: &str, actual_dir: &Path) {
-    let ref_dir = get_reference_dir(actual_dir, test_name, "html");
+pub fn verify_html_output(test_name: &str, actual_dir: &Path, original_project_path: &Path) {
+    let ref_dir = get_reference_dir(actual_dir, original_project_path, test_name, "html");
     ensure_reference_exists(&ref_dir, test_name, "HTML");
 
     validate_html_assets(&ref_dir, actual_dir).expect("HTML asset validation failed");
@@ -22,8 +20,8 @@ pub fn verify_html_output(test_name: &str, actual_dir: &Path) {
     });
 }
 
-pub fn verify_pdf_output(test_name: &str, actual_dir: &Path) {
-    let ref_dir = get_reference_dir(actual_dir, test_name, "pdf");
+pub fn verify_pdf_output(test_name: &str, actual_dir: &Path, original_project_path: &Path) {
+    let ref_dir = get_reference_dir(actual_dir, original_project_path, test_name, "pdf");
     ensure_reference_exists(&ref_dir, test_name, "PDF");
 
     validate_pdf_assets(&ref_dir, actual_dir).expect("PDF asset validation failed");
@@ -53,14 +51,29 @@ pub fn verify_pdf_output(test_name: &str, actual_dir: &Path) {
     });
 }
 
-/// Compute a short hash of a file path for reference directory naming
+/// Compute a short hash of a file path for reference directory naming.
+///
+/// Uses FNV-1a 64-bit hash for stability across Rust versions.
+/// FNV-1a is chosen because it's:
+/// - Fast and simple to implement inline (no external dependency)
+/// - Stable and well-defined (same input always produces same output)
+/// - Widely used for hash table applications
 fn compute_file_hash(path: &Path) -> String {
-    let mut hasher = DefaultHasher::new();
-    path.to_string_lossy().hash(&mut hasher);
-    format!("{:08x}", hasher.finish())
+    let s = path.to_string_lossy();
+    let mut hash: u64 = 14695981039346656037; // FNV-1a 64-bit offset basis
+    for byte in s.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(1099511628211); // FNV-1a 64-bit prime
+    }
+    format!("{:08x}", hash)
 }
 
-fn get_reference_dir(actual_dir: &Path, test_name: &str, output_type: &str) -> PathBuf {
+fn get_reference_dir(
+    _actual_dir: &Path,
+    original_project_path: &Path,
+    test_name: &str,
+    output_type: &str,
+) -> PathBuf {
     // Check if this is a single-file test (test name contains file path components)
     if test_name.contains("_slash")
         && (test_name.contains("_full_stop") || test_name.ends_with("typ"))
@@ -90,9 +103,13 @@ fn get_reference_dir(actual_dir: &Path, test_name: &str, output_type: &str) -> P
     }
 
     // Default: project-based references
-    let ref_base = if actual_dir.starts_with("examples/") {
+    let ref_base = if original_project_path.starts_with("examples/")
+        || original_project_path.starts_with("../../examples/")
+    {
         PathBuf::from("ref/examples")
-    } else if actual_dir.starts_with("tests/cases/") {
+    } else if original_project_path.starts_with("cases/")
+        || original_project_path.starts_with("tests/cases/")
+    {
         PathBuf::from("ref/cases")
     } else {
         PathBuf::from("ref/examples")
@@ -885,8 +902,8 @@ fn validate_epub_assets(reference_dir: &Path, actual_dir: &Path) -> Result<(), S
     }
 }
 
-pub fn verify_epub_output(test_name: &str, actual_dir: &Path) {
-    let ref_dir = get_reference_dir(actual_dir, test_name, "epub");
+pub fn verify_epub_output(test_name: &str, actual_dir: &Path, original_project_path: &Path) {
+    let ref_dir = get_reference_dir(actual_dir, original_project_path, test_name, "epub");
     ensure_reference_exists(&ref_dir, test_name, "EPUB");
 
     validate_epub_assets(&ref_dir, actual_dir).expect("EPUB asset validation failed");

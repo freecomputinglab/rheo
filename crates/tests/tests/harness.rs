@@ -11,10 +11,13 @@ use std::path::PathBuf;
 
 #[test_case("../../examples/blog_site")]
 #[test_case("../../examples/blog_post")]
+#[test_case("../../examples/all_features")]
 #[test_case("../../examples/cover-letter.typ")]
 #[test_case("../../examples/blog_site/content/index.typ")]
 #[test_case("../../examples/blog_site/content/severance-ep-1.typ")]
 #[test_case("../../examples/blog_post/portable_epubs.typ")]
+#[test_case("cases/bundle_cross_doc_labels")]
+#[test_case("cases/bundle_document_entries")]
 #[test_case("cases/code_blocks_with_links")]
 #[test_case("cases/cross_directory_links")]
 #[test_case("cases/epub_inferred_spine")]
@@ -22,6 +25,7 @@ use std::path::PathBuf;
 #[test_case("cases/link_transformation")]
 #[test_case("cases/links_with_fragments")]
 #[test_case("cases/multiple_links_inline.typ")]
+#[test_case("cases/pdf_bundle_merge")]
 #[test_case("cases/pdf_individual")]
 #[test_case("cases/pdf_merge_false")]
 #[test_case("cases/relative_path_links")]
@@ -36,6 +40,7 @@ use std::path::PathBuf;
 #[test_case("cases/error_formatting/unknown_function.typ")]
 #[test_case("cases/error_formatting/invalid_method.typ")]
 #[test_case("cases/error_formatting/invalid_field.typ")]
+#[test_case("cases/error_formatting/broken_label_ref.typ")]
 #[test_case("cases/error_formatting/multiple_errors.typ")]
 #[test_case("cases/error_formatting/array_index_error.typ")]
 fn run_test_case(name: &str) {
@@ -193,17 +198,20 @@ fn run_test_case(name: &str) {
         );
     }
 
-    // let run_epub = env::var("RUN_EPUB_TESTS").is_ok() || env::var("RUN_EPUB_TESTS").is_err();
-
     // Test HTML output
     if run_html {
         let html_output = build_dir.join("html");
         if html_output.exists() {
             if update_mode {
-                update_html_references(test_name, &html_output, &project_path)
-                    .expect("Failed to update HTML references");
+                update_html_references(
+                    test_name,
+                    &html_output,
+                    &project_path,
+                    original_project_path,
+                )
+                .expect("Failed to update HTML references");
             } else {
-                verify_html_output(test_name, &html_output);
+                verify_html_output(test_name, &html_output, original_project_path);
             }
         }
     }
@@ -213,10 +221,10 @@ fn run_test_case(name: &str) {
         let pdf_output = build_dir.join("pdf");
         if pdf_output.exists() {
             if update_mode {
-                update_pdf_references(test_name, &pdf_output)
+                update_pdf_references(test_name, &pdf_output, original_project_path)
                     .expect("Failed to update PDF references");
             } else {
-                verify_pdf_output(test_name, &pdf_output);
+                verify_pdf_output(test_name, &pdf_output, original_project_path);
             }
         }
     }
@@ -226,10 +234,10 @@ fn run_test_case(name: &str) {
         let epub_output = build_dir.join("epub");
         if epub_output.exists() {
             if update_mode {
-                update_epub_references(test_name, &epub_output)
+                update_epub_references(test_name, &epub_output, original_project_path)
                     .expect("Failed to update EPUB references");
             } else {
-                verify_epub_output(test_name, &epub_output);
+                verify_epub_output(test_name, &epub_output, original_project_path);
             }
         }
     }
@@ -320,16 +328,17 @@ fn test_pdf_merge() {
 /// Test error case: link to file not in spine
 #[test]
 fn test_pdf_merge_link_not_in_spine() {
-    // Create a test case with a file that links to a non-spine file
-    let test_dir = PathBuf::from("tests/cases/pdf_merge_error_nonspine");
-    std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let test_dir = dir.path();
 
     // Create rheo.toml with only intro.typ in spine
     std::fs::write(
         test_dir.join("rheo.toml"),
-        r#"[pdf.merge]
-spine = ["intro.typ"]
+        r#"version = "0.1.2"
+
+[pdf.spine]
 title = "Test Error Case"
+vertebrae = ["intro.typ"]
 "#,
     )
     .expect("Failed to write rheo.toml");
@@ -356,13 +365,18 @@ Content here.
 
     // Try to compile - should fail or warn
     let output = std::process::Command::new("cargo")
-        .args(["run", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "compile",
+            test_dir.to_str().unwrap(),
+            "--pdf",
+        ])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
-
-    // Clean up
-    std::fs::remove_dir_all(&test_dir).ok();
 
     // Check if compilation failed with link error
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -372,8 +386,16 @@ Content here.
     // The compilation should fail because chapter1.typ is not in the spine
     // The transform_typ_links_to_labels function should detect this and return an error
     assert!(
-        !output.status.success() || combined.contains("not found in spine"),
-        "Expected error about link target not in spine, got:\nstderr: {}\nstdout: {}",
+        !output.status.success(),
+        "Expected compilation to fail when link target not in spine, but it succeeded. Output:\nstderr: {}\nstdout: {}",
+        stderr,
+        stdout
+    );
+    assert!(
+        combined.contains("not found in spine")
+            || combined.contains("unknown label")
+            || combined.contains("does not exist"),
+        "Expected 'not found in spine' or label error, got:\nstderr: {}\nstdout: {}",
         stderr,
         stdout
     );
@@ -382,8 +404,8 @@ Content here.
 /// Test error case: duplicate filenames in spine
 #[test]
 fn test_pdf_merge_duplicate_filenames() {
-    // Create a test case with duplicate filenames in different directories
-    let test_dir = PathBuf::from("tests/cases/pdf_merge_error_duplicate");
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let test_dir = dir.path();
     let dir1 = test_dir.join("dir1");
     let dir2 = test_dir.join("dir2");
     std::fs::create_dir_all(&dir1).expect("Failed to create dir1");
@@ -392,9 +414,11 @@ fn test_pdf_merge_duplicate_filenames() {
     // Create rheo.toml with both files in spine
     std::fs::write(
         test_dir.join("rheo.toml"),
-        r#"[pdf.merge]
-spine = ["dir1/chapter.typ", "dir2/chapter.typ"]
+        r#"version = "0.1.2"
+
+[pdf.spine]
 title = "Test Duplicate Error"
+vertebrae = ["dir1/chapter.typ", "dir2/chapter.typ"]
 "#,
     )
     .expect("Failed to write rheo.toml");
@@ -421,13 +445,18 @@ Content from dir2.
 
     // Try to compile - should fail with duplicate label error
     let output = std::process::Command::new("cargo")
-        .args(["run", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "compile",
+            test_dir.to_str().unwrap(),
+            "--pdf",
+        ])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
-
-    // Clean up
-    std::fs::remove_dir_all(&test_dir).ok();
 
     // Typst will detect duplicate labels and fail
     // Check for error in output
@@ -437,7 +466,15 @@ Content from dir2.
 
     // Typst should report duplicate label error
     assert!(
-        !output.status.success() || combined.contains("duplicate") || combined.contains("label"),
+        !output.status.success(),
+        "Expected compilation to fail with duplicate labels, but it succeeded. Output:\nstderr: {}\nstdout: {}",
+        stderr,
+        stdout
+    );
+    assert!(
+        combined.contains("duplicate")
+            || combined.contains("label")
+            || combined.contains("multiple times"),
         "Expected error about duplicate labels, got:\nstderr: {}\nstdout: {}",
         stderr,
         stdout
@@ -448,28 +485,15 @@ Content from dir2.
 #[test]
 fn test_html_css_link_injection() {
     let test_case = TestCase::new("../../examples/blog_site");
-    let project_path = test_case.project_path();
+    let original_project_path = test_case.project_path();
 
-    // Clean and compile
-    let clean_output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "rheo-cli",
-            "--",
-            "clean",
-            project_path.to_str().unwrap(),
-        ])
-        .output()
-        .expect("Failed to run rheo clean");
+    // Copy to temporary directory for isolation
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    copy_project_to_test_store(original_project_path, temp_dir.path())
+        .expect("Failed to copy project to test store");
+    let project_path = temp_dir.path();
 
-    if !clean_output.status.success() {
-        eprintln!(
-            "Warning: Clean failed: {}",
-            String::from_utf8_lossy(&clean_output.stderr)
-        );
-    }
-
+    // Compile
     let output = std::process::Command::new("cargo")
         .args([
             "run",
@@ -539,18 +563,7 @@ fn test_html_css_link_injection() {
         "Should preserve viewport meta tag"
     );
 
-    // Clean up
-    let clean_output = std::process::Command::new("cargo")
-        .args(["run", "--", "clean", project_path.to_str().unwrap()])
-        .output()
-        .expect("Failed to run rheo clean");
-
-    if !clean_output.status.success() {
-        eprintln!(
-            "Warning: Clean failed: {}",
-            String::from_utf8_lossy(&clean_output.stderr)
-        );
-    }
+    // temp_dir auto-cleans on drop
 }
 
 /// Test that a custom stylesheet named in rheo.toml is read and inlined into HTML output.

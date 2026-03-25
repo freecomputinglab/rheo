@@ -1,5 +1,6 @@
 
-formats = ["html", "pdf"]
+[html.spine]
+vertebrae = ["intro.typ", "chapters/ch1.typ", "chapters/ch2.typ", "appendix/notes.typ"]
 
 [pdf.spine]
 merge = true

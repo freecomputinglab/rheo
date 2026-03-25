@@ -1,6 +1,9 @@
 version = "{{VERSION}}"
 content_dir = "content"
 
+[html.spine]
+vertebrae = ["*.typ"]
+
 [pdf.spine]
 title = "rheo_project"
 vertebrae = ["index.typ"]

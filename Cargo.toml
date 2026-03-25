@@ -23,11 +23,13 @@ typst = "0.14.2"
 typst-library = "0.14.2"
 typst-pdf = "0.14.2"
 typst-html = "0.14.2"
-typst-kit = "0.14.2"
+typst-bundle = "0.14.2"
+typst-kit = { version = "0.14.2", features = ["embedded-fonts", "scan-fonts", "system-files", "system-packages", "universe-packages", "system-downloader"] }
 typst-syntax = "0.14.2"
-comemo = "0.5"
+typst-layout = "0.14.2"
 
 # Error handling and diagnostics
+comemo = "0.5.1"
 codespan-reporting = "0.13"
 thiserror = "2.0"
 anyhow = "1.0.100"
@@ -53,6 +55,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"]
 
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
+time = "0.3"
 
 # File system and patterns
 globset = "0.4"
@@ -80,6 +83,21 @@ ecow = "0.2"
 regex = "1.10"
 lazy_static = "1.4"
 serde-xml-rs = "0.8.2"
+
+# Development override: tracks typst git main.
+# REMOVE THIS SECTION before releasing to crates.io.
+# See CLAUDE.md for the release workflow.
+[patch.crates-io]
+typst          = { git = "https://github.com/typst/typst", branch = "main" }
+typst-library  = { git = "https://github.com/typst/typst", branch = "main" }
+typst-pdf      = { git = "https://github.com/typst/typst", branch = "main" }
+typst-html     = { git = "https://github.com/typst/typst", branch = "main" }
+typst-bundle   = { git = "https://github.com/typst/typst", branch = "main" }
+typst-kit      = { git = "https://github.com/typst/typst", branch = "main" }
+typst-syntax   = { git = "https://github.com/typst/typst", branch = "main" }
+typst-layout   = { git = "https://github.com/typst/typst", branch = "main" }
+typst-assets   = { git = "https://github.com/typst/typst-assets", rev = "57a38ca" }
+typst-timing   = { git = "https://github.com/typst/typst", branch = "main" }
 
 [profile.release]
 opt-level = 1

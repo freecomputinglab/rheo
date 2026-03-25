@@ -1,6 +1,8 @@
+use crate::compile::RheoCompileOptions;
 use crate::config::PluginSection;
 use crate::output::OutputConfig;
 use crate::project::ProjectConfig;
+use crate::reticulate::TracedSpine;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -20,17 +22,6 @@ pub enum OpenHandle {
     None,
 }
 
-use crate::compile::RheoCompileOptions;
-
-/// Standardized spine options resolved by rheo core before calling compile().
-#[derive(Debug, Clone)]
-pub struct SpineOptions {
-    pub title: Option<String>,
-    pub vertebrae: Vec<String>,
-    /// true = merged output, false = per-file output
-    pub merge: bool,
-}
-
 /// Declares an additional non-Typst input file needed from the project directory.
 pub struct PluginInput {
     /// Key used to retrieve this input from PluginContext::inputs
@@ -46,8 +37,8 @@ pub struct PluginContext<'a> {
     pub project: &'a ProjectConfig,
     pub output_config: &'a OutputConfig,
     pub options: RheoCompileOptions<'a>,
-    /// Resolved spine options (title, vertebrae, merge flag).
-    pub spine: SpineOptions,
+    /// Traced spine with documents, assets, title, and merge flag.
+    pub spine: TracedSpine,
     /// Full parsed plugin section from rheo.toml (or default if not configured).
     ///
     /// # Reading format-specific configuration
@@ -124,6 +115,23 @@ pub trait FormatPlugin: Send + Sync {
     /// ```
     fn name(&self) -> &'static str;
 
+    /// Output file extension for generated files.
+    ///
+    /// Returns the file extension used for output files (without the leading dot).
+    /// By default, this returns `self.name()`, but plugins can override this if their
+    /// output files use a different extension than their format name.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn output_extension(&self) -> &str {
+    ///     "xhtml"  // Produces .xhtml files even though format name is "html"
+    /// }
+    /// ```
+    fn output_extension(&self) -> &str {
+        self.name()
+    }
+
     /// Whether this plugin merges files by default.
     ///
     /// Override to return `true` for formats that always produce a single merged output
@@ -140,6 +148,23 @@ pub trait FormatPlugin: Send + Sync {
     /// }
     /// ```
     fn default_merge(&self) -> bool {
+        false
+    }
+
+    /// Whether this plugin uses the Typst bundle API for compilation.
+    ///
+    /// Override to return `true` for formats that use `typst::compile::<Bundle>()`.
+    /// When `true`, the CLI generates a bundle entry and injects it into the world
+    /// before compilation. When `false`, the plugin uses per-file compilation.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn uses_bundle_api(&self) -> bool {
+    ///     true  // HTML and PDF use bundle compilation
+    /// }
+    /// ```
+    fn uses_bundle_api(&self) -> bool {
         false
     }
 
@@ -336,38 +361,30 @@ pub trait FormatPlugin: Send + Sync {
 
     /// Compile one file (per-file mode) or merged output (merged mode).
     ///
-    /// This is the core compilation method. The behavior depends on `ctx.spine.merge`:
+    /// This is the core compilation method. In bundle mode, every plugin receives:
     ///
-    /// ## Per-file mode (`merge == false`)
+    /// - `ctx.options.world`: &mut RheoWorld configured with the bundle entry as main
+    /// - `ctx.spine`: TracedSpine with documents, assets, and merge flag
+    /// - `ctx.options.root`: project root for resolving relative paths
+    /// - `ctx.options.output`: output file/directory path
     ///
-    /// Called once per `.typ` file in the project. Use `ctx.options.world` to compile:
+    /// ## HTML and PDF plugins
     ///
-    /// ```ignore
-    /// let world = ctx.options.world.ok_or_else(|| {
-    ///     RheoError::project_config("plugin requires a world in per-file mode")
-    /// })?;
-    /// let result = typst::compile::<HtmlDocument>(world)?;
-    /// ```
-    ///
-    /// ## Merged mode (`merge == true`)
-    ///
-    /// Called once with all files concatenated. The plugin must build its own worlds:
+    /// Call `typst::compile::<Bundle>(&world)` for multi-file bundle output.
     ///
     /// ```ignore
-    /// // ctx.options.world is None — build your own from ctx.options.root
-    /// let world = RheoWorld::new(ctx.options.root, &concatenated_file, Some("pdf"))?;
-    /// let result = typst::compile::<PagedDocument>(&world)?;
+    /// let world = ctx.options.world; // &mut RheoWorld
+    /// let result = typst::compile::<Bundle>(world)?;
     /// ```
     ///
-    /// # The merge ↔ world contract
+    /// ## EPUB exception
     ///
-    /// | Mode | `ctx.spine.merge` | `ctx.options.world` | `ctx.options.input` |
-    /// |------|-------------------|---------------------|---------------------|
-    /// | Per-file | `false` | `Some(world)` | `Some(path)` |
-    /// | Merged | `true` | `None` | `None` |
-    ///
-    /// Plugins in per-file mode must use the pre-configured world; plugins in merged
-    /// mode must create their own worlds using `ctx.options.root` as the content root.
+    /// EPUB is out of scope for bundle compilation (typst-bundle has no EPUB variant).
+    /// The EPUB plugin ignores `ctx.options.world` entirely and creates its own
+    /// per-file RheoWorld instances internally. The CLI always constructs a bundle
+    /// world and passes it in `ctx.options.world` regardless of plugin type — this
+    /// is cheap because world construction does not trigger compilation. EPUB simply
+    /// does not call `typst::compile::<Bundle>(&world)` and ignores the field.
     ///
     /// # Error handling
     ///
