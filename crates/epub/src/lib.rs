@@ -460,7 +460,8 @@ impl EpubItem {
                 };
                 let mut anchored_href = href.to_owned();
                 anchored_href.set_fragment(Some(
-                    Fragment::new(id.as_bytes()).expect("heading ID should be a valid IRI fragment"),
+                    Fragment::new(id.as_bytes())
+                        .expect("heading ID should be a valid IRI fragment"),
                 ));
                 let link = eco_format!(r#"<a href="{anchored_href}">{entry}</a>"#);
                 ((link, level, true), id)
