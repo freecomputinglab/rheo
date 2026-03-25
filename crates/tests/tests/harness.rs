@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 #[test_case("../../examples/blog_site")]
 #[test_case("../../examples/blog_post")]
+#[test_case("../../examples/all_features")]
 #[test_case("../../examples/cover-letter.typ")]
 #[test_case("../../examples/blog_site/content/index.typ")]
 #[test_case("../../examples/blog_site/content/severance-ep-1.typ")]
