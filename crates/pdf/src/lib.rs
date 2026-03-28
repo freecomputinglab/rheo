@@ -1,6 +1,4 @@
-use rheo_core::{
-    export_typst_bundle, FormatPlugin, PluginContext, Result, RheoError, RheoWorld,
-};
+use rheo_core::{FormatPlugin, PluginContext, Result, RheoError, RheoWorld, export_typst_bundle};
 use std::path::Path;
 use tracing::{debug, info};
 

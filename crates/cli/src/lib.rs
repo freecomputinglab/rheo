@@ -684,8 +684,7 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         match event {
             WatchEvent::FilesChanged => {
                 info!("files changed, recompiling");
-                if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins).is_ok()
-                {
+                if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins).is_ok() {
                     for handle in &open_handles {
                         if let OpenHandle::Server(server) = handle {
                             server.reload();
