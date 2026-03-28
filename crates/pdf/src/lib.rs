@@ -11,10 +11,6 @@ impl FormatPlugin for PdfPlugin {
         "pdf"
     }
 
-    fn uses_bundle_api(&self) -> bool {
-        true
-    }
-
     fn typst_library(&self) -> Option<&'static str> {
         // PDF-specific lemma function for numbered lemmas in academic documents
         Some(

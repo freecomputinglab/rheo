@@ -620,7 +620,7 @@ fn perform_compilation(
         let plugin_section = project.config.plugin_section(plugin.name());
 
         // Dispatch to appropriate compilation path
-        if !spine.merge && plugin.uses_bundle_api() {
+        if !spine.merge {
             compile_bundle(
                 plugin.as_ref(),
                 &plugin_output_dir,
