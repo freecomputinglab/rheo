@@ -1,13 +1,8 @@
 use rheo_core::{
-    FormatPlugin, PluginContext, Result, RheoError, RheoWorld, diagnostics::print_diagnostics,
+    export_typst_bundle, FormatPlugin, PluginContext, Result, RheoError, RheoWorld,
 };
 use std::path::Path;
 use tracing::{debug, info};
-use typst::diag::Warned;
-use typst_pdf::PdfOptions;
-
-/// PDF pixel-per-point ratio: 2x the standard 72 DPI for quality printing.
-const PDF_PIXEL_PER_PT: f32 = 144.0;
 
 pub struct PdfPlugin;
 
@@ -57,37 +52,14 @@ fn compile_pdf_bundle_impl(world: &RheoWorld, output_path: &Path, merge: bool) -
 fn compile_pdf_merged_bundle(world: &RheoWorld, output_path: &Path) -> Result<()> {
     info!("compiling merged PDF bundle");
 
-    // Compile the bundle using the world (which has the synthetic bundle entry as main)
-    let Warned { output, warnings } = typst::compile::<typst_bundle::Bundle>(world);
-
-    // Print warnings (ignore errors from diagnostic printing)
-    let _ = print_diagnostics(world, &[], &warnings);
-
-    let bundle = output.map_err(|errors| {
-        // Print errors to stderr with proper formatting
-        let _ = print_diagnostics(world, &errors, &[]);
-        // Return error for error handling
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::project_config(format!(
-            "bundle compilation had errors: {}",
-            error_messages.join(", ")
-        ))
-    })?;
-
-    // Export the bundle to get PDF files
-    let bundle_options = typst_bundle::BundleOptions {
-        pixel_per_pt: PDF_PIXEL_PER_PT,
-        pdf: PdfOptions::default(),
-    };
-
-    let fs = typst_bundle::export(&bundle, &bundle_options)
-        .map_err(|e| RheoError::project_config(format!("bundle export failed: {:?}", e)))?;
+    // Compile and export the bundle using the core helper
+    let fs = export_typst_bundle(world)?;
 
     debug!(file_count = fs.len(), "exported PDF bundle");
 
     // For merged PDF, the bundle produces a single PDF file
     // Export it and write to the output path
-    let (_vpath, pdf_bytes) = fs
+    let (_filename, pdf_bytes) = fs
         .into_iter()
         .next()
         .ok_or_else(|| RheoError::invalid_data("bundle produced no output"))?;
@@ -106,31 +78,8 @@ fn compile_pdf_merged_bundle(world: &RheoWorld, output_path: &Path) -> Result<()
 fn compile_pdf_per_file_bundle(world: &RheoWorld, output_dir: &Path) -> Result<()> {
     info!("compiling per-file PDF bundle");
 
-    // Compile the bundle using the world
-    let Warned { output, warnings } = typst::compile::<typst_bundle::Bundle>(world);
-
-    // Print warnings (ignore errors from diagnostic printing)
-    let _ = print_diagnostics(world, &[], &warnings);
-
-    let bundle = output.map_err(|errors| {
-        // Print errors to stderr with proper formatting
-        let _ = print_diagnostics(world, &errors, &[]);
-        // Return error for error handling
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::project_config(format!(
-            "bundle compilation had errors: {}",
-            error_messages.join(", ")
-        ))
-    })?;
-
-    // Export the bundle to get PDF files
-    let bundle_options = typst_bundle::BundleOptions {
-        pixel_per_pt: PDF_PIXEL_PER_PT,
-        pdf: PdfOptions::default(),
-    };
-
-    let fs = typst_bundle::export(&bundle, &bundle_options)
-        .map_err(|e| RheoError::project_config(format!("bundle export failed: {:?}", e)))?;
+    // Compile and export the bundle using the core helper
+    let fs = export_typst_bundle(world)?;
 
     debug!(file_count = fs.len(), "exported PDF bundle");
 
@@ -138,8 +87,7 @@ fn compile_pdf_per_file_bundle(world: &RheoWorld, output_dir: &Path) -> Result<(
     // Filter to .pdf files only: bundles that also target HTML will include HTML files
     // and assets in the export; writing those to the PDF output dir would corrupt it.
     let mut file_count = 0;
-    for (vpath, bytes) in fs {
-        let filename = vpath.get_without_slash();
+    for (filename, bytes) in fs {
         if !filename.ends_with(".pdf") {
             continue;
         }
