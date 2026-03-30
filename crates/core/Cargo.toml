@@ -46,7 +46,6 @@ atty = { workspace = true }
 
 # Concurrency and utilities
 parking_lot = { workspace = true }
-lazy_static = { workspace = true }
 regex = { workspace = true }
 notify = { workspace = true }
 ecow = { workspace = true }

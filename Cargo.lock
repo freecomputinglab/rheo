@@ -2900,7 +2900,6 @@ dependencies = [
  "ecow",
  "glob",
  "globset",
- "lazy_static",
  "notify",
  "opener",
  "parking_lot",
