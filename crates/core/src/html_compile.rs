@@ -35,23 +35,6 @@ pub fn compile_html_to_document_with_polyfill(
     unwrap_compilation_result(Some(&world), result, Some(html_filter))
 }
 
-/// Compile using an existing RheoWorld to an HTML document.
-///
-/// This function uses a pre-configured RheoWorld (with main file already set)
-/// and compiles it to an HtmlDocument. Useful for per-file compilation where
-/// the world is shared across multiple files.
-pub fn compile_html_with_world(world: &RheoWorld) -> Result<HtmlDocument> {
-    info!("compiling to HTML");
-    let result = typst::compile::<HtmlDocument>(world);
-
-    let html_filter = |w: &SourceDiagnostic| {
-        !w.message
-            .contains("html export is under active development and incomplete")
-    };
-
-    unwrap_compilation_result(Some(world), result, Some(html_filter))
-}
-
 pub fn compile_document_to_string(document: &HtmlDocument) -> Result<String> {
     typst_html::html(document).map_err(|e| handle_export_errors(e, ExportErrorType::Html))
 }

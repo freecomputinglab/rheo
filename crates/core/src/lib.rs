@@ -1,4 +1,3 @@
-pub mod bundle_compile;
 pub mod compile;
 pub mod config;
 pub mod constants;
@@ -49,11 +48,10 @@ pub use reticulate::{SpineDocument, TracedSpine};
 // HTML compilation functions
 pub use html_compile::{
     compile_document_to_string, compile_html_to_document, compile_html_to_document_with_polyfill,
-    compile_html_with_world,
 };
 
 // PDF compilation functions
-pub use pdf_compile::{compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes};
+pub use pdf_compile::{compile_pdf_to_document, document_to_pdf_bytes};
 
 // World (Typst compilation context)
 pub use world::RheoWorld;
@@ -63,9 +61,6 @@ pub use reticulate::spine::generate_bundle_entry;
 
 // PDF utilities
 pub use pdf_utils::DocumentTitle;
-
-// Bundle compilation helper
-pub use bundle_compile::export_typst_bundle;
 
 // Typst types (commonly used by plugins)
 pub use typst_types::{

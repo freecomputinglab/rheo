@@ -42,30 +42,6 @@ pub fn compile_pdf_to_document(
     unwrap_compilation_result(Some(&world), result, None::<fn(&_) -> bool>)
 }
 
-/// Compile using an existing RheoWorld to a PDF document.
-///
-/// This function uses a pre-configured RheoWorld (with main file already set)
-/// and compiles it to a PagedDocument. Useful for per-file compilation where
-/// the world is shared across multiple files.
-///
-/// # Arguments
-/// * `world` - A configured RheoWorld with the main file set
-///
-/// # Returns
-/// A PagedDocument ready for PDF export
-///
-/// # Example
-/// ```ignore
-/// let document = compile_pdf_with_world(&world)?;
-/// let pdf_bytes = document_to_pdf_bytes(&document)?;
-/// std::fs::write("output.pdf", &pdf_bytes)?;
-/// ```
-pub fn compile_pdf_with_world(world: &RheoWorld) -> Result<PagedDocument> {
-    info!("compiling to PDF");
-    let result = typst::compile::<PagedDocument>(world);
-    unwrap_compilation_result(Some(world), result, None::<fn(&_) -> bool>)
-}
-
 /// Export a PagedDocument to PDF bytes.
 ///
 /// Converts a compiled PagedDocument into its PDF representation as bytes.
