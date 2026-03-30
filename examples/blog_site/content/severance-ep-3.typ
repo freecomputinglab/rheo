@@ -194,4 +194,6 @@ The second, and the closing scene of the epsiode, is Petey's psychotic demise at
 Ravaged by the failure of his complete quantification inside Lumon, Petey seems no longer to have a firm footing in either his innie's or outie's reality. 
 Mark looks on from a distance as he collapses outside the store, escorted by police, attempting (it seems) to account for his disintegration.
 
-#bibliography("./references.bib", style: "chicago-author-date")
+#context if target() != "paged" {
+  bibliography("./references.bib", style: "chicago-author-date")
+}

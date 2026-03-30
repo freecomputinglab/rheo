@@ -124,7 +124,10 @@ impl FormatPlugin for HtmlPlugin {
                 debug!("using bundled default style.css");
                 css_contents.push(DEFAULT_STYLESHEET.to_string());
             } else {
-                warn!(path = %full_path.display(), "stylesheet not found, skipping");
+                // For non-HTML files (assets), write directly
+                std::fs::write(&out_path, bytes).map_err(|e| {
+                    RheoError::io(e, format!("writing file to {}", out_path.display()))
+                })?;
             }
         }
 
