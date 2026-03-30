@@ -8,7 +8,7 @@ pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
     FormatPlugin, OpenHandle, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
-    ServerHandle, diagnostics::print_diagnostics,
+    ServerHandle, diagnostics::print_diagnostics, reticulate::AssetRef,
 };
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -112,7 +112,12 @@ impl FormatPlugin for HtmlPlugin {
             ));
         }
 
-        compile_html_bundle(ctx.options, &ctx.config)
+        compile_html_bundle(
+            ctx.options,
+            &ctx.config,
+            &ctx.spine.images,
+            &ctx.spine.user_assets,
+        )
     }
 }
 
@@ -120,7 +125,13 @@ impl FormatPlugin for HtmlPlugin {
 ///
 /// Uses typst::compile::<Bundle>() for multi-file bundle output and writes
 /// each HTML file to the output directory with injected CSS and fonts.
-fn compile_html_bundle(options: RheoCompileOptions, config: &PluginSection) -> Result<()> {
+/// Copies discovered images and user assets to an assets/ subdirectory.
+fn compile_html_bundle(
+    options: RheoCompileOptions,
+    config: &PluginSection,
+    images: &[AssetRef],
+    user_assets: &[AssetRef],
+) -> Result<()> {
     let html_config = parse_html_config(config);
 
     info!("compiling HTML bundle");
@@ -206,6 +217,32 @@ fn compile_html_bundle(options: RheoCompileOptions, config: &PluginSection) -> R
         }
 
         debug!(output = %out_path.display(), "wrote bundle file");
+    }
+
+    // Copy discovered images and user assets to assets/ subdirectory
+    let all_assets: Vec<&AssetRef> = images.iter().chain(user_assets.iter()).collect();
+    if !all_assets.is_empty() {
+        let assets_dir = options.output.join("assets");
+        for asset in &all_assets {
+            let out_path = assets_dir.join(&asset.rel_path);
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    RheoError::io(e, format!("creating asset directory {}", parent.display()))
+                })?;
+            }
+            std::fs::copy(&asset.abs_path, &out_path).map_err(|e| {
+                RheoError::io(
+                    e,
+                    format!(
+                        "copying asset {} to {}",
+                        asset.abs_path.display(),
+                        out_path.display()
+                    ),
+                )
+            })?;
+            debug!(src = %asset.abs_path.display(), dst = %out_path.display(), "copied asset");
+        }
+        info!(count = all_assets.len(), "copied assets to output");
     }
 
     info!(output = %options.output.display(), "successfully compiled HTML bundle");

@@ -60,6 +60,30 @@ pub fn generate_bundle_entry(
         out.push_str("\n\n");
     }
 
+    // User-facing #asset-path() function — always a passthrough.
+    // Assets are copied preserving their relative path from the content root,
+    // so the source path is already correct relative to the output directory.
+    out.push_str("#let asset-path(path) = path\n\n");
+
+    // Image show rule — emitted at top level of the bundle entry.
+    // Intercepts #image() elements and emits html.elem("img") with external src paths.
+    // Forwards alt text to the <img> tag when present.
+    // Uses the source path directly — assets are copied preserving their relative
+    // path from the content root, so no remapping is needed.
+    if format == "html" {
+        out.push_str(concat!(
+            "#show image: it => {\n",
+            "  if target() == \"html\" and type(it.source) == str {\n",
+            "    let img-attrs = (src: it.source)\n",
+            "    if it.alt != none { img-attrs.insert(\"alt\", it.alt) }\n",
+            "    html.elem(\"img\", attrs: img-attrs)\n",
+            "  } else {\n",
+            "    it\n",
+            "  }\n",
+            "}\n\n",
+        ));
+    }
+
     // Documents
     if traced.merge {
         // Merged PDF mode: single #document() wrapper with #include for each file
@@ -96,8 +120,6 @@ pub fn generate_bundle_entry(
             let rel_str = rel.display().to_string().replace('\\', "/");
             let stem = doc.path.file_stem().unwrap_or_default().to_string_lossy();
 
-            // Use #document with #include for non-merged mode
-            // Link transformation removed — users must use #link(<label>) syntax
             out.push_str(&format!(
                 "#document(\"{stem}.{format}\")[#include \"{rel_str}\"]\n"
             ));
@@ -120,6 +142,23 @@ pub fn generate_bundle_entry(
     out
 }
 
+/// Generate a per-file preamble containing the `#asset-path()` function.
+///
+/// This preamble is injected into every `#include`d `.typ` file via `RheoWorld`'s
+/// `per_file_preamble` field, making `#asset-path()` visible in user files that
+/// would otherwise not have access to bundle-entry-scoped definitions.
+///
+/// Returns `None` if no preamble is needed (non-HTML format).
+pub fn generate_per_file_preamble(_traced: &TracedSpine, _format: &str) -> Option<String> {
+    let mut out = String::new();
+
+    // asset-path() is always a passthrough — assets are copied preserving
+    // their relative path from the content root, so no remapping is needed.
+    out.push_str("#let asset-path(path) = path\n\n");
+
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +176,8 @@ mod tests {
             documents,
             assets,
             merge,
+            images: vec![],
+            user_assets: vec![],
         }
     }
 

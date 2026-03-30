@@ -28,6 +28,9 @@ pub struct RheoWorld {
     packages: SystemPackages,
     /// Plugin-contributed Typst library code, injected after core prelude.
     plugin_library: Option<String>,
+    /// Code injected into every .typ file (main and non-main).
+    /// Used to make bundle-entry definitions (like `#asset-path()`) visible in `#include`d files.
+    per_file_preamble: Option<String>,
     /// When true, inject `#let target() = "epub"` polyfill into all .typ files.
     /// Set by the EPUB plugin before compilation.
     pub epub_polyfill_mode: bool,
@@ -45,7 +48,13 @@ impl RheoWorld {
     /// * `root` - The root directory for resolving imports
     /// * `main_file` - The main .typ file to compile
     /// * `plugin_library` - Optional plugin-contributed Typst library code to inject after core prelude
-    pub fn new(root: &Path, main_file: &Path, plugin_library: Option<String>) -> Result<Self> {
+    /// * `per_file_preamble` - Optional code injected into every .typ file (not just main)
+    pub fn new(
+        root: &Path,
+        main_file: &Path,
+        plugin_library: Option<String>,
+        per_file_preamble: Option<String>,
+    ) -> Result<Self> {
         let root = root.canonicalize().map_err(|e| {
             RheoError::path(
                 root,
@@ -88,6 +97,7 @@ impl RheoWorld {
             slots: Mutex::new(HashMap::new()),
             packages,
             plugin_library,
+            per_file_preamble,
             epub_polyfill_mode: false,
         })
     }
@@ -261,13 +271,26 @@ impl World for RheoWorld {
         if id == self.main {
             let rheo_content = include_str!("typ/rheo.typ");
             let plugin_lib_content = self.plugin_library.as_deref().unwrap_or("");
+            let per_file = self.per_file_preamble.as_deref().unwrap_or("");
             let template_inject = format!(
-                "{}{}\n#show: rheo_template\n\n",
-                rheo_content, plugin_lib_content
+                "{}{}{}\n#show: rheo_template\n\n",
+                rheo_content, plugin_lib_content, per_file
             );
             text = format!("{}{}", template_inject, text);
-        } else if !epub_polyfill.is_empty() {
-            text = format!("{}{}", epub_polyfill, text);
+        } else {
+            // Non-main files get epub polyfill and per-file preamble
+            let per_file = self.per_file_preamble.as_deref().unwrap_or("");
+            let mut preamble = String::new();
+            if !epub_polyfill.is_empty() {
+                preamble.push_str(epub_polyfill);
+            }
+            if !per_file.is_empty() {
+                preamble.push_str(per_file);
+                preamble.push('\n');
+            }
+            if !preamble.is_empty() {
+                text = format!("{}{}", preamble, text);
+            }
         }
 
         let source = Source::new(id, text);

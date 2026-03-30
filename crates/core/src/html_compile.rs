@@ -22,7 +22,13 @@ pub fn compile_html_to_document_with_polyfill(
     plugin_library: Option<String>,
     epub_polyfill_mode: bool,
 ) -> Result<HtmlDocument> {
-    let mut world = RheoWorld::new(root, input, plugin_library)?;
+    let mut world = RheoWorld::new(
+        root,
+        input,
+        plugin_library,
+        // Always provide a passthrough #asset-path() so user files compile without errors.
+        Some("#let asset-path(path) = path\n\n".to_string()),
+    )?;
     world.epub_polyfill_mode = epub_polyfill_mode;
     info!(input = %input.display(), "compiling to HTML");
     let result = typst::compile::<HtmlDocument>(&world);

@@ -804,11 +804,11 @@ fn test_copy_patterns() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Global pattern: readme.txt should appear in html output dir
+    // Global pattern: readme.txt should appear in html/ output dir (preserving relative path)
     let html_readme = build_dir.join("html/readme.txt");
     assert!(
         html_readme.exists(),
-        "Global copy pattern: readme.txt not found in html output"
+        "Global copy pattern: readme.txt not found in html/"
     );
     assert_eq!(
         std::fs::read_to_string(&html_readme).unwrap(),
@@ -816,11 +816,11 @@ fn test_copy_patterns() {
         "Copied readme.txt has wrong content"
     );
 
-    // Per-plugin pattern: assets/logo.png should appear under html/assets/
+    // Per-plugin pattern: assets/logo.png preserves its relative path under html/
     let html_logo = build_dir.join("html/assets/logo.png");
     assert!(
         html_logo.exists(),
-        "Per-plugin copy pattern: assets/logo.png not found in html output"
+        "Per-plugin copy pattern: assets/logo.png not found in html/assets/"
     );
 }
 

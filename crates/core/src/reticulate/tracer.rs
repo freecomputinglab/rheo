@@ -25,6 +25,15 @@ pub struct SpineDocument {
     pub is_bundle_entry: bool,
 }
 
+/// A file reference discovered in a .typ source file via #image() or #asset().
+#[derive(Debug, Clone)]
+pub struct AssetRef {
+    /// The path string as written in source (e.g., "img/photo.png").
+    pub rel_path: String,
+    /// The resolved absolute path to the file on disk.
+    pub abs_path: PathBuf,
+}
+
 /// Result of tracing a project's spine configuration.
 ///
 /// Contains all documents and assets needed for bundle compilation,
@@ -42,6 +51,15 @@ pub struct TracedSpine {
 
     /// Whether to merge outputs (PDF merged mode).
     pub merge: bool,
+
+    /// Image references discovered from #image() calls in source files.
+    /// Used by the HTML plugin to emit external asset links instead of base64.
+    pub images: Vec<AssetRef>,
+
+    /// User asset references discovered from #asset("path") calls in source files.
+    /// In HTML output, these are copied to assets/ and the #asset() call is replaced
+    /// with the string path to the copied file.
+    pub user_assets: Vec<AssetRef>,
 }
 
 impl TracedSpine {
@@ -112,11 +130,29 @@ impl TracedSpine {
         let title = spine_config.and_then(|s| s.title.clone());
         let merge = spine_config.and_then(|s| s.merge).unwrap_or(default_merge);
 
+        // Discover image and user asset references from source files,
+        // recursively following #include and #import directives.
+        let mut images = Vec::new();
+        let mut user_assets = Vec::new();
+        let mut seen_refs = HashSet::new();
+        let mut visited_files = HashSet::new();
+        for doc in &documents {
+            extract_refs_recursive(
+                &doc.path,
+                &mut images,
+                &mut user_assets,
+                &mut seen_refs,
+                &mut visited_files,
+            );
+        }
+
         Ok(TracedSpine {
             title,
             documents,
             assets,
             merge,
+            images,
+            user_assets,
         })
     }
 }
@@ -169,6 +205,126 @@ fn extract_assets(source: &str, source_path: &Path, assets: &mut Vec<PathBuf>) {
                 }
             }
         }
+    }
+}
+
+/// Recursively extract #image() and #asset() references from a .typ file,
+/// following #include and #import directives to discover all transitive references.
+fn extract_refs_recursive(
+    file_path: &Path,
+    images: &mut Vec<AssetRef>,
+    user_assets: &mut Vec<AssetRef>,
+    seen_refs: &mut HashSet<PathBuf>,
+    visited_files: &mut HashSet<PathBuf>,
+) {
+    let canonical = match file_path.canonicalize() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    if !visited_files.insert(canonical) {
+        return; // Already processed this file, avoid cycles
+    }
+
+    let source = match fs::read_to_string(file_path) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    let root = parse(&source);
+    let dir = file_path.parent();
+
+    // Walk the full AST to find #image(), #rheo-asset(), #include, and #import calls
+    walk_ast_for_refs(&root, dir, images, user_assets, seen_refs, visited_files);
+}
+
+fn walk_ast_for_refs(
+    node: &typst_syntax::SyntaxNode,
+    dir: Option<&Path>,
+    images: &mut Vec<AssetRef>,
+    user_assets: &mut Vec<AssetRef>,
+    seen_refs: &mut HashSet<PathBuf>,
+    visited_files: &mut HashSet<PathBuf>,
+) {
+    if node.kind() == SyntaxKind::FuncCall
+        && let Some(call) = node.cast::<FuncCall>()
+        && let Expr::Ident(ident) = call.callee()
+    {
+        let name = ident.get();
+        match name.as_str() {
+            "image" => {
+                if let Some(rel) = first_str_arg(&call) {
+                    collect_asset_ref(&rel, dir, images, seen_refs);
+                }
+            }
+            "asset-path" => {
+                // User-facing #asset-path("path") — returns the output path for the asset.
+                if let Some(rel) = first_str_arg(&call) {
+                    collect_asset_ref(&rel, dir, user_assets, seen_refs);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Handle #include "file.typ" — follow the included file
+    if node.kind() == SyntaxKind::ModuleInclude
+        && let Some(include) = node.cast::<typst_syntax::ast::ModuleInclude>()
+        && let Expr::Str(s) = include.source()
+    {
+        let rel = s.get().to_string();
+        let abs = dir
+            .map(|d| d.join(&rel))
+            .unwrap_or_else(|| PathBuf::from(&rel));
+        extract_refs_recursive(&abs, images, user_assets, seen_refs, visited_files);
+    }
+
+    // Handle #import "file.typ": name — follow the imported file
+    if node.kind() == SyntaxKind::ModuleImport
+        && let Some(import) = node.cast::<typst_syntax::ast::ModuleImport>()
+        && let Expr::Str(s) = import.source()
+    {
+        let rel = s.get().to_string();
+        // Skip package imports (e.g., @preview/foo:1.0.0)
+        if !rel.starts_with('@') {
+            let abs = dir
+                .map(|d| d.join(&rel))
+                .unwrap_or_else(|| PathBuf::from(&rel));
+            extract_refs_recursive(&abs, images, user_assets, seen_refs, visited_files);
+        }
+    }
+
+    for child in node.children() {
+        walk_ast_for_refs(child, dir, images, user_assets, seen_refs, visited_files);
+    }
+}
+
+/// Extract the first positional string argument from a function call.
+fn first_str_arg(call: &FuncCall) -> Option<String> {
+    for arg in call.args().items() {
+        if let typst_syntax::ast::Arg::Pos(Expr::Str(s)) = arg {
+            return Some(s.get().to_string());
+        }
+    }
+    None
+}
+
+/// Resolve a relative path and add it to the asset list if the file exists.
+fn collect_asset_ref(
+    rel: &str,
+    dir: Option<&Path>,
+    assets: &mut Vec<AssetRef>,
+    seen: &mut HashSet<PathBuf>,
+) {
+    let abs = dir
+        .map(|d| d.join(rel))
+        .unwrap_or_else(|| PathBuf::from(rel));
+    if let Ok(canonical) = abs.canonicalize()
+        && seen.insert(canonical)
+    {
+        assets.push(AssetRef {
+            rel_path: rel.to_string(),
+            abs_path: abs,
+        });
     }
 }
 

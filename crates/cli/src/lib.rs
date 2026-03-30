@@ -6,11 +6,13 @@ use rheo_core::manifest_version;
 use rheo_core::output::OutputConfig;
 use rheo_core::project::{ProjectConfig, ProjectMode};
 use rheo_core::results::CompilationResults;
-use rheo_core::reticulate::{SpineDocument, TracedSpine, generate_bundle_entry};
+use rheo_core::reticulate::{
+    SpineDocument, TracedSpine, generate_bundle_entry, generate_per_file_preamble,
+};
 use rheo_core::watch::{WatchEvent, watch_project};
 use rheo_core::world::RheoWorld;
 use rheo_core::{FormatPlugin, PluginContext, Result, RheoError};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, warn};
@@ -316,6 +318,7 @@ fn compile_bundle(
     compilation_root: &Path,
 ) -> Result<()> {
     let plugin_library = plugin.typst_library().map(|s| s.to_string());
+    let per_file_preamble = generate_per_file_preamble(spine, plugin.name());
     let mut bundle_world = RheoWorld::new(
         compilation_root,
         spine
@@ -324,6 +327,7 @@ fn compile_bundle(
             .map(|d| d.path.as_path())
             .unwrap_or(compilation_root),
         plugin_library,
+        per_file_preamble,
     )?;
 
     let bundle_entry_source = generate_bundle_entry(
@@ -376,6 +380,7 @@ fn compile_merged(
         .with_extension(plugin.output_extension());
 
     let plugin_library = plugin.typst_library().map(|s| s.to_string());
+    let per_file_preamble = generate_per_file_preamble(spine, plugin.name());
     let mut bundle_world = RheoWorld::new(
         compilation_root,
         spine
@@ -384,6 +389,7 @@ fn compile_merged(
             .map(|d| d.path.as_path())
             .unwrap_or(compilation_root),
         plugin_library,
+        per_file_preamble,
     )?;
 
     let bundle_entry_source = generate_bundle_entry(
@@ -453,8 +459,14 @@ fn compile_per_file(
         }
     } else {
         let plugin_library = plugin.typst_library().map(|s| s.to_string());
+        let per_file_preamble = Some("#let asset-path(path) = path\n\n".to_string());
         for typ_file in &files {
-            let mut fresh_world = RheoWorld::new(content_dir, typ_file, plugin_library.clone())?;
+            let mut fresh_world = RheoWorld::new(
+                content_dir,
+                typ_file,
+                plugin_library.clone(),
+                per_file_preamble.clone(),
+            )?;
             compile_one_file(&mut fresh_world, typ_file, &pfc, results)?;
         }
     }
@@ -510,22 +522,33 @@ fn perform_compilation(
             }
         }
 
-        // Execute copy patterns (global + per-plugin)
+        // Execute copy patterns (global + per-plugin) into output directory.
+        // Patterns are resolved relative to content_dir (compilation root).
+        // Files are copied preserving their relative path structure.
+        // Track copied files so traced asset copying can skip duplicates.
+        let mut config_copied_assets: HashSet<PathBuf> = HashSet::new();
         let plugin_section_for_assets = project.config.plugin_section(plugin.name());
+
+        // Compute compilation root early so asset globs resolve from content dir
+        let compilation_root = project
+            .config
+            .resolve_content_dir(&project.root)
+            .unwrap_or_else(|| project.root.clone());
+
         for pattern in project
             .config
             .assets
             .iter()
             .chain(plugin_section_for_assets.assets.iter())
         {
-            let abs_pattern = project.root.join(pattern).display().to_string();
+            let abs_pattern = compilation_root.join(pattern).display().to_string();
             let entries = glob::glob(&abs_pattern).map_err(|e| {
                 RheoError::project_config(format!("invalid copy pattern '{}': {}", pattern, e))
             })?;
             let mut matched = false;
             for entry in entries.filter_map(|e| e.ok()).filter(|p| p.is_file()) {
                 matched = true;
-                let rel = entry.strip_prefix(&project.root).unwrap_or(entry.as_path());
+                let rel = entry.strip_prefix(&compilation_root).unwrap_or(entry.as_path());
                 let dest = plugin_output_dir.join(rel);
                 if let Some(parent) = dest.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| {
@@ -541,21 +564,16 @@ fn perform_compilation(
                         format!("copying {} to {}", entry.display(), dest.display()),
                     )
                 })?;
-                debug!(src = %entry.display(), dest = %dest.display(), "copied file");
+                config_copied_assets.insert(rel.to_path_buf());
+                debug!(src = %entry.display(), dest = %dest.display(), "copied asset file");
             }
             if !matched {
                 debug!(pattern = %pattern, "copy pattern matched no files");
             }
         }
 
-        // Compute compilation root once (content_dir from config or project root)
-        let compilation_root = project
-            .config
-            .resolve_content_dir(&project.root)
-            .unwrap_or_else(|| project.root.clone());
-
         // Resolve spine config and trace
-        let spine = if project.mode == ProjectMode::SingleFile {
+        let mut spine = if project.mode == ProjectMode::SingleFile {
             // For single file mode, create a spine with just the single file
             // Ignore spine config from rheo.toml
             let file = &project.typ_files[0];
@@ -567,6 +585,8 @@ fn perform_compilation(
                 }],
                 assets: vec![],
                 merge: false,
+                images: vec![],
+                user_assets: vec![],
             }
         } else {
             // For directory mode, use spine config from rheo.toml, or create default
@@ -615,6 +635,17 @@ fn perform_compilation(
         } else {
             compilation_root.clone()
         };
+
+        // Filter out traced assets that were already copied by config asset globs,
+        // so the HTML plugin doesn't try to copy them again.
+        if !config_copied_assets.is_empty() {
+            spine
+                .images
+                .retain(|a| !config_copied_assets.contains(Path::new(&a.rel_path)));
+            spine
+                .user_assets
+                .retain(|a| !config_copied_assets.contains(Path::new(&a.rel_path)));
+        }
 
         // Get full plugin section
         let plugin_section = project.config.plugin_section(plugin.name());

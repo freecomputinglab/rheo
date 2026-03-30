@@ -36,7 +36,13 @@ pub fn compile_pdf_to_document(
     _format_name: Option<&str>,
     plugin_library: Option<String>,
 ) -> Result<PagedDocument> {
-    let world = RheoWorld::new(root, input, plugin_library)?;
+    let world = RheoWorld::new(
+        root,
+        input,
+        plugin_library,
+        // Always provide a passthrough #asset-path() so user files compile without errors.
+        Some("#let asset-path(path) = path\n\n".to_string()),
+    )?;
     info!(input = %input.display(), "compiling to PDF");
     let result = typst::compile::<PagedDocument>(&world);
     unwrap_compilation_result(Some(&world), result, None::<fn(&_) -> bool>)
