@@ -3,13 +3,11 @@ pub mod config;
 pub mod constants;
 pub mod diagnostics;
 pub mod error;
-pub mod html_compile;
 pub mod init_templates;
 pub mod logging;
 pub mod manifest_version;
 pub mod output;
 pub mod path_utils;
-pub mod pdf_compile;
 pub mod pdf_utils;
 pub mod plugins;
 pub mod project;
@@ -45,13 +43,11 @@ pub use plugins::{FormatPlugin, OpenHandle, PluginContext, PluginInput, ServerHa
 // Re-export TracedSpine for use in bundle compilation
 pub use reticulate::{SpineDocument, TracedSpine};
 
-// HTML compilation functions
-pub use html_compile::{
+// HTML and PDF compilation functions
+pub use compile::{
     compile_document_to_string, compile_html_to_document, compile_html_to_document_with_polyfill,
+    compile_pdf_to_document, document_to_pdf_bytes,
 };
-
-// PDF compilation functions
-pub use pdf_compile::{compile_pdf_to_document, document_to_pdf_bytes};
 
 // World (Typst compilation context)
 pub use world::RheoWorld;
