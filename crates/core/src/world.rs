@@ -8,16 +8,16 @@ use codespan_reporting::files::{Error as CodespanError, Files};
 use parking_lot::Mutex;
 use tracing::warn;
 use typst::diag::{FileError, FileResult, Warned};
-use typst_html::HtmlDocument;
-use typst_layout::PagedDocument;
 use typst::foundations::{Bytes, Datetime};
 use typst::syntax::{FileId, Lines, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
+use typst_html::HtmlDocument;
 use typst_kit::downloader::SystemDownloader;
 use typst_kit::fonts::FontStore;
 use typst_kit::packages::SystemPackages;
+use typst_layout::PagedDocument;
 use typst_library::{Feature, Features};
 
 /// A simple World implementation for rheo compilation.
@@ -244,8 +244,9 @@ impl RheoWorld {
             pixel_per_pt: 144.0,
             pdf: typst_pdf::PdfOptions::default(),
         };
-        let fs = typst_bundle::export(&bundle, &bundle_options)
-            .map_err(|e| crate::RheoError::project_config(format!("bundle export failed: {:?}", e)))?;
+        let fs = typst_bundle::export(&bundle, &bundle_options).map_err(|e| {
+            crate::RheoError::project_config(format!("bundle export failed: {:?}", e))
+        })?;
         Ok(fs
             .into_iter()
             .map(|(p, b)| (p.get_without_slash().to_string(), b.to_vec()))

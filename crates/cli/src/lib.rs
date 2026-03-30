@@ -101,12 +101,8 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         match event {
             WatchEvent::FilesChanged => {
                 info!("files changed, recompiling");
-                if orchestrate::perform_compilation(
-                    &ctx.project,
-                    &ctx.output_config,
-                    &ctx.plugins,
-                )
-                .is_ok()
+                if orchestrate::perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins)
+                    .is_ok()
                 {
                     for handle in &open_handles {
                         if let OpenHandle::Server(server) = handle {
@@ -156,8 +152,13 @@ fn run_compile(sub: &ArgMatches) -> Result<()> {
     let all = all_plugins();
     let enabled = args::enabled_formats_from_matches(sub, &all);
 
-    let ctx =
-        orchestrate::setup_compilation_context(&path, config.as_deref(), build_dir, enabled, all_plugins)?;
+    let ctx = orchestrate::setup_compilation_context(
+        &path,
+        config.as_deref(),
+        build_dir,
+        enabled,
+        all_plugins,
+    )?;
 
     orchestrate::perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins)
 }

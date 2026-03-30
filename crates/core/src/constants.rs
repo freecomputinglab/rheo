@@ -13,9 +13,9 @@ pub const EPUB_EXT: &str = ".epub";
 // Regex patterns
 
 /// Pattern for Typst #link() syntax: #link("url")(body) or #link("url", body)
-pub static TYPST_LINK_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"#link\("([^"]+)"\)(\[[^\]]+\]|,\s*[^)]+)"#)
-        .expect("invalid TYPST_LINK_PATTERN"));
+pub static TYPST_LINK_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"#link\("([^"]+)"\)(\[[^\]]+\]|,\s*[^)]+)"#).expect("invalid TYPST_LINK_PATTERN")
+});
 
 /// Pattern for HTML href attributes: href="url"
 pub static HTML_HREF_PATTERN: LazyLock<Regex> =

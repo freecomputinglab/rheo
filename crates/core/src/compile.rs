@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::world::RheoWorld;
-use crate::Result;
 use std::path::{Path, PathBuf};
 use tracing::info;
 use typst::diag::SourceDiagnostic;
