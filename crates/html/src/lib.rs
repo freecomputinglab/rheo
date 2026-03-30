@@ -8,12 +8,10 @@ pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
     FormatPlugin, OpenHandle, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
-    ServerHandle, diagnostics::print_diagnostics,
+    ServerHandle, export_typst_bundle,
 };
 use std::path::Path;
 use tracing::{debug, info, warn};
-use typst::diag::Warned;
-use typst_pdf::PdfOptions;
 
 /// Reload callback type - called by watch loop after successful compilation.
 /// Defined here because it's only needed by the HTML plugin's development server.
@@ -73,10 +71,6 @@ impl FormatPlugin for HtmlPlugin {
         "html"
     }
 
-    fn uses_bundle_api(&self) -> bool {
-        true
-    }
-
     fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
         vec![("style.css", include_str!("templates/style.css"))]
     }
@@ -125,38 +119,14 @@ fn compile_html_bundle(options: RheoCompileOptions, config: &PluginSection) -> R
 
     info!("compiling HTML bundle");
 
-    // Compile the bundle using the world (which has the synthetic bundle entry as main)
-    let Warned { output, warnings } = typst::compile::<typst_bundle::Bundle>(options.world);
-
-    // Print warnings (ignore errors from diagnostic printing)
-    let _ = print_diagnostics(options.world, &[], &warnings);
-
-    let bundle = output.map_err(|errors| {
-        // Print errors to stderr with proper formatting
-        let _ = print_diagnostics(options.world, &errors, &[]);
-        // Return error for error handling
-        let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-        RheoError::project_config(format!(
-            "bundle compilation had errors: {}",
-            error_messages.join(", ")
-        ))
-    })?;
-
-    // Export the bundle to get HTML files
-    let bundle_options = typst_bundle::BundleOptions {
-        pixel_per_pt: 144.0,
-        pdf: PdfOptions::default(),
-    };
-
-    let fs = typst_bundle::export(&bundle, &bundle_options)
-        .map_err(|e| RheoError::project_config(format!("bundle export failed: {:?}", e)))?;
+    // Compile and export the bundle using the core helper
+    let fs = export_typst_bundle(options.world)?;
 
     debug!(file_count = fs.len(), "exported HTML bundle");
 
     // Write each HTML file and web asset to the output directory.
     // Skip .pdf files: those belong to the PDF plugin's output directory.
-    for (vpath, bytes) in &fs {
-        let filename = vpath.get_without_slash();
+    for (filename, bytes) in &fs {
         if filename.ends_with(".pdf") {
             continue;
         }

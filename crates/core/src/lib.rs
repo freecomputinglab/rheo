@@ -1,3 +1,4 @@
+pub mod bundle_compile;
 pub mod compile;
 pub mod config;
 pub mod constants;
@@ -70,6 +71,9 @@ pub use reticulate::spine::generate_bundle_entry;
 
 // PDF utilities
 pub use pdf_utils::DocumentTitle;
+
+// Bundle compilation helper
+pub use bundle_compile::export_typst_bundle;
 
 // Typst types (commonly used by plugins)
 pub use typst_types::{
