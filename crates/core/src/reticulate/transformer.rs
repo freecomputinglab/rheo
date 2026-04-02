@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 /// Link transformer that converts Typst links to format-specific targets.
 pub struct LinkTransformer {
+    // TODO: whether or not we build labels shouldn't be done based on a format name, but based on
+    // a flag set in the FormatPlugin indicating whether `merge = true` produces a PDF...
     format_name: String,
     spine: Option<Vec<PathBuf>>,
 }

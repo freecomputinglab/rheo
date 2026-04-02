@@ -424,9 +424,13 @@ fn perform_compilation(
                 .unwrap_or(plugin.default_merge()),
         };
 
+        // TODO: BuiltSpine here
+
         // Get full plugin section
         let plugin_section = project.config.plugin_section(plugin.name());
 
+        // TODO: this is where it happens.
+        // `spine.merge = true` is the simple case, as plugin.compile is just called once.
         if spine.merge {
             let compilation_root = project
                 .config

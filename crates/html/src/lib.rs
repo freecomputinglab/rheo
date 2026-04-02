@@ -102,6 +102,9 @@ impl FormatPlugin for HtmlPlugin {
         Ok(OpenHandle::Server(Box::new(handle)))
     }
 
+    // TODO: because the case here is that compile is called for EVERY source file, we need a
+    // `precompile` entrypoint that can do things like asset copying.
+
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
         if ctx.spine.merge {
             return Err(RheoError::project_config(

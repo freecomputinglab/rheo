@@ -54,6 +54,9 @@ impl BuiltSpine {
                 ))
             })?;
 
+            // TODO: this source needs to be transformed according to what the plugin specifies,
+            // i.e. whether relative linking makes sense. For PDF, it doesn't, whereas for HTML and
+            // EPUB, it does.
             let transformed_source =
                 transform_source(&source, spine_file, &spine_files, format_name, root)?;
 

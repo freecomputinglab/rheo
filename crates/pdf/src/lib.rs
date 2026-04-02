@@ -36,23 +36,20 @@ impl FormatPlugin for PdfPlugin {
                     "PDF per-file compile requires a world; this is a rheo bug (internal invariant violation)",
                 )
             })?;
-            compile_pdf_single_impl(world, &ctx.options.output)
+            let document = compile_pdf_with_world(world)?;
+            let output = &ctx.options.output;
+
+            debug!(output = %output.display(), "exporting to PDF");
+            let pdf_bytes = document_to_pdf_bytes(&document)?;
+
+            debug!(size = pdf_bytes.len(), "writing PDF file");
+            std::fs::write(output, &pdf_bytes)
+                .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output)))?;
+
+            info!(output = %output.display(), "successfully compiled to PDF");
+            Ok(())
         }
     }
-}
-
-fn compile_pdf_single_impl(world: &RheoWorld, output: &Path) -> Result<()> {
-    let document = compile_pdf_with_world(world)?;
-
-    debug!(output = %output.display(), "exporting to PDF");
-    let pdf_bytes = document_to_pdf_bytes(&document)?;
-
-    debug!(size = pdf_bytes.len(), "writing PDF file");
-    std::fs::write(output, &pdf_bytes)
-        .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output)))?;
-
-    info!(output = %output.display(), "successfully compiled to PDF");
-    Ok(())
 }
 
 fn compile_pdf_merged_impl(

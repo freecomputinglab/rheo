@@ -249,6 +249,7 @@ pub trait FormatPlugin: Send + Sync {
     ///     Ok(())
     /// }
     /// ```
+    /// TODO: this should be 'assets'
     fn inputs(&self) -> Vec<PluginInput> {
         vec![]
     }
@@ -330,6 +331,7 @@ pub trait FormatPlugin: Send + Sync {
     /// # Default implementation
     ///
     /// Returns `None` (no library code contributed).
+    /// TODO: make this nicer, i.e. as a Typst file
     fn typst_library(&self) -> Option<&'static str> {
         None
     }
