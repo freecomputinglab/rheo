@@ -3084,6 +3084,7 @@ dependencies = [
  "lopdf",
  "markup5ever_rcdom",
  "ntest",
+ "paste",
  "rheo-core",
  "rheo-epub",
  "rheo-html",

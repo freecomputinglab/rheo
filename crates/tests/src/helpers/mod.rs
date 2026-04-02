@@ -2,6 +2,7 @@ pub mod comparison;
 pub mod fixtures;
 pub mod markers;
 pub mod reference;
+pub mod remote;
 pub mod test_store;
 
 /// Determines if a test path represents a single .typ file
