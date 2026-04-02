@@ -84,7 +84,8 @@ pub fn patch_rheo_version(project_path: &Path) {
 }
 
 /// Clone the repo, patch its version, run `rheo compile <project_path>`,
-/// and panic with full stdout+stderr if exit code is non-zero.
+/// and panic with full stdout+stderr if exit code is non-zero or if errors
+/// are present in the output.
 pub fn run_compat(url: &str, name: &str) {
     let cloned_path = clone_repo(url, name);
     patch_rheo_version(&cloned_path);
@@ -102,13 +103,20 @@ pub fn run_compat(url: &str, name: &str) {
         .output()
         .unwrap_or_else(|e| panic!("Failed to run rheo compile: {}", e));
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{}\n{}", stdout, stderr);
+
+    // Check exit code
     if !output.status.success() {
+        panic!("rheo compile failed for {} ({}):\n{}", name, url, combined);
+    }
+
+    // Check for ERROR strings in output
+    if combined.contains("ERROR") || combined.contains("error:") {
         panic!(
-            "rheo compile failed for {} ({}):\nstdout: {}\nstderr: {}",
-            name,
-            url,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+            "rheo compile for {} ({}) produced errors despite success exit code:\n{}",
+            name, url, combined
         );
     }
 }
