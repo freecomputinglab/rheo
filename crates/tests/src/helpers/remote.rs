@@ -11,16 +11,18 @@ use std::process::Command;
 /// Returns the path to the cloned directory.
 pub fn clone_repo(url: &str, name: &str) -> PathBuf {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let dest = PathBuf::from(manifest_dir)
-        .join("store/compat")
-        .join(name);
+    let dest = PathBuf::from(manifest_dir).join("store/compat").join(name);
 
     if dest.exists() {
         return dest;
     }
 
     fs::create_dir_all(&dest).unwrap_or_else(|e| {
-        panic!("Failed to create compat store directory {}: {}", dest.display(), e)
+        panic!(
+            "Failed to create compat store directory {}: {}",
+            dest.display(),
+            e
+        )
     });
 
     let output = Command::new("git")
@@ -52,9 +54,8 @@ pub fn patch_rheo_version(project_path: &Path) {
         return;
     }
 
-    let content = fs::read_to_string(&toml_path).unwrap_or_else(|e| {
-        panic!("Failed to read {}: {}", toml_path.display(), e)
-    });
+    let content = fs::read_to_string(&toml_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", toml_path.display(), e));
 
     let version = env!("CARGO_PKG_VERSION");
     let had_trailing_newline = content.ends_with('\n');
@@ -62,12 +63,7 @@ pub fn patch_rheo_version(project_path: &Path) {
     let patched: String = content
         .lines()
         .map(|line| {
-            let key = line
-                .trim_start()
-                .splitn(2, '=')
-                .next()
-                .unwrap_or("")
-                .trim();
+            let key = line.trim_start().split('=').next().unwrap_or("").trim();
             if key == "version" {
                 format!("version = \"{}\"", version)
             } else {
@@ -83,9 +79,8 @@ pub fn patch_rheo_version(project_path: &Path) {
         patched
     };
 
-    fs::write(&toml_path, patched).unwrap_or_else(|e| {
-        panic!("Failed to write {}: {}", toml_path.display(), e)
-    });
+    fs::write(&toml_path, patched)
+        .unwrap_or_else(|e| panic!("Failed to write {}: {}", toml_path.display(), e));
 }
 
 /// Clone the repo, patch its version, run `rheo compile <project_path>`,

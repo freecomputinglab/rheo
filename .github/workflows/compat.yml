@@ -1,0 +1,26 @@
+name: Compat
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 2am UTC, off-peak
+  workflow_dispatch:
+
+jobs:
+  compat:
+    name: Compatibility tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run compatibility tests
+        run: cargo test --test compat
+        env:
+          RUN_COMPAT_TESTS: "1"
+          TYPST_IGNORE_SYSTEM_FONTS: "1"
