@@ -18,5 +18,10 @@ macro_rules! smoke_tests {
     };
 }
 
-// Repos are registered in rheo-3cr
-smoke_tests! {}
+smoke_tests! {
+    (maths_ohrg_org,            "https://github.com/freecomputinglab/maths.ohrg.org"),
+    (rheo_ohrg_org,             "https://github.com/freecomputinglab/rheo.ohrg.org"),
+    (freecomputinglab_ohrg_org, "https://github.com/freecomputinglab/freecomputinglab.ohrg.org"),
+    (lolm_ohrg_org,             "https://github.com/freecomputinglab/lolm.ohrg.org"),
+    (digitaltheory_dot_org,     "https://github.com/digitaltheorylab/digitaltheory-dot-org"),
+}
