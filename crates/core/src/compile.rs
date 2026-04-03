@@ -4,42 +4,42 @@ use std::path::PathBuf;
 /// Common compilation options used across all output formats.
 ///
 /// This struct encapsulates the core parameters needed for any compilation:
+/// - Input file (the .typ file to compile, or `None` for merged/spine compilation)
 /// - Output file (where to write the result)
 /// - Root directory (for resolving imports)
-/// - RheoWorld (always present for bundle mode)
+/// - RheoWorld (`Some` in single-file mode, `None` in merged/spine mode)
 ///
-/// # Bundle mode contract
-///
-/// In bundle mode, the bundle entry is a virtual file pre-populated in
-/// `world.slots` (not a real path on disk). Every plugin receives a world
-/// configured with the bundle entry as main. HTML and PDF plugins call
-/// `typst::compile::<Bundle>(&world)` for multi-file output.
-///
-/// EPUB is out of scope for bundle compilation (typst-bundle has no EPUB
-/// variant). The EPUB plugin creates its own per-file RheoWorld instances
-/// internally and ignores `ctx.options.world`.
+/// # Merged mode contract
+/// For merged plugins (e.g. PDF spine, EPUB), `input` is `None` and `world` is
+/// `None`. Use `ctx.spine` to locate the files to compile; the plugin creates
+/// its own worlds per spine file.
 pub struct RheoCompileOptions<'a> {
+    /// The input .typ file to compile, or `None` in merged/spine mode.
+    pub input: Option<PathBuf>,
     /// The output file path
     pub output: PathBuf,
     /// Root directory for resolving imports
     pub root: PathBuf,
-    /// RheoWorld for compilation. Always present in bundle mode.
-    pub world: &'a mut RheoWorld,
+    /// RheoWorld for compilation. `Some` in single-file mode; `None` in merged/spine mode.
+    pub world: Option<&'a mut RheoWorld>,
 }
 
 impl<'a> RheoCompileOptions<'a> {
     /// Create compilation options.
     ///
     /// # Arguments
+    /// * `input` - The input .typ file, or `None` for merged/spine compilation
     /// * `output` - The output file path
     /// * `root` - Root directory for resolving imports
-    /// * `world` - The RheoWorld with bundle entry pre-configured
+    /// * `world` - `Some` with the RheoWorld in single-file mode, `None` in merged/spine mode
     pub fn new(
+        input: Option<impl Into<PathBuf>>,
         output: impl Into<PathBuf>,
         root: impl Into<PathBuf>,
-        world: &'a mut RheoWorld,
+        world: Option<&'a mut RheoWorld>,
     ) -> Self {
         Self {
+            input: input.map(Into::into),
             output: output.into(),
             root: root.into(),
             world,

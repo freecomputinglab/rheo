@@ -7,8 +7,8 @@ use crate::Result;
 use std::path::Path;
 
 // Re-export output types for convenience
+pub use typst::layout::PagedDocument;
 pub use typst_html::HtmlDocument;
-pub use typst_layout::PagedDocument;
 
 // Output type aliases for clarity
 pub type HtmlString = String;

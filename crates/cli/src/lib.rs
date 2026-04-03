@@ -4,12 +4,11 @@ use rheo_core::compile::RheoCompileOptions;
 use rheo_core::config::PluginSection;
 use rheo_core::manifest_version;
 use rheo_core::output::OutputConfig;
-use rheo_core::project::{ProjectConfig, ProjectMode};
+use rheo_core::project::ProjectConfig;
 use rheo_core::results::CompilationResults;
-use rheo_core::reticulate::{SpineDocument, TracedSpine, generate_bundle_entry};
 use rheo_core::watch::{WatchEvent, watch_project};
 use rheo_core::world::RheoWorld;
-use rheo_core::{FormatPlugin, PluginContext, Result, RheoError};
+use rheo_core::{FormatPlugin, PluginContext, Result, RheoError, SpineOptions};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -255,16 +254,42 @@ fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
         .ok_or_else(|| RheoError::project_config(format!("invalid .typ filename: {:?}", typ_file)))
 }
 
+fn get_files_for_plugin(
+    plugin: &dyn FormatPlugin,
+    project: &ProjectConfig,
+) -> Result<Vec<PathBuf>> {
+    match project.config.spine_for_plugin(plugin.name()) {
+        None => {
+            // No spine config: return all .typ files sorted lexicographically
+            let mut files = project.typ_files.clone();
+            files.sort();
+            Ok(files)
+        }
+        Some(spine) => {
+            // Spine config: return spine files in declared order
+            let content_dir = project
+                .config
+                .resolve_content_dir(&project.root)
+                .unwrap_or_else(|| project.root.clone());
+            let spine_options = SpineOptions {
+                title: spine.title.clone(),
+                vertebrae: spine.vertebrae.clone(),
+                merge: spine.merge.unwrap_or(false),
+            };
+            rheo_core::reticulate::spine::generate_spine(&content_dir, Some(&spine_options), false)
+        }
+    }
+}
+
 /// Per-plugin invariants shared across all files in a single-plugin compilation pass.
 struct PerFileCtx<'a> {
     plugin: &'a dyn FormatPlugin,
     plugin_output_dir: &'a Path,
     project: &'a ProjectConfig,
     output_config: &'a OutputConfig,
-    spine: &'a TracedSpine,
+    spine: &'a SpineOptions,
     plugin_section: &'a PluginSection,
     resolved_inputs: &'a HashMap<&'static str, PathBuf>,
-    content_dir: &'a Path,
 }
 
 /// Compile one file with the given world, recording success/failure in `results`.
@@ -281,8 +306,9 @@ fn compile_one_file(
     let output_path = pfc
         .plugin_output_dir
         .join(&filename)
-        .with_extension(pfc.plugin.output_extension());
-    let options = RheoCompileOptions::new(&output_path, pfc.content_dir, world);
+        .with_extension(pfc.plugin.name());
+    let options =
+        RheoCompileOptions::new(Some(typ_file), &output_path, &pfc.project.root, Some(world));
     let ctx = PluginContext {
         project: pfc.project,
         output_config: pfc.output_config,
@@ -296,166 +322,6 @@ fn compile_one_file(
         Err(e) => {
             error!(file = %typ_file.display(), error = %e, "{} compilation failed", pfc.plugin.name());
             results.record_failure(pfc.plugin.name());
-        }
-    }
-    Ok(())
-}
-
-/// Bundle compilation: generate bundle entry, inject into world, compile once.
-/// Used by plugins that use the bundle API (HTML, PDF non-merge).
-#[allow(clippy::too_many_arguments)]
-fn compile_bundle(
-    plugin: &dyn FormatPlugin,
-    plugin_output_dir: &Path,
-    project: &ProjectConfig,
-    output_config: &OutputConfig,
-    spine: &TracedSpine,
-    plugin_section: &PluginSection,
-    resolved_inputs: HashMap<&'static str, PathBuf>,
-    results: &mut CompilationResults,
-    compilation_root: &Path,
-) -> Result<()> {
-    let plugin_library = plugin.typst_library().map(|s| s.to_string());
-    let mut bundle_world = RheoWorld::new(
-        compilation_root,
-        spine
-            .documents
-            .first()
-            .map(|d| d.path.as_path())
-            .unwrap_or(compilation_root),
-        plugin_library,
-    )?;
-
-    let bundle_entry_source = generate_bundle_entry(
-        spine,
-        compilation_root,
-        plugin.name(),
-        plugin.typst_library().unwrap_or_default(),
-    );
-    bundle_world.inject_bundle_entry(bundle_entry_source);
-
-    let options = RheoCompileOptions::new(plugin_output_dir, &project.root, &mut bundle_world);
-
-    let ctx = PluginContext {
-        project,
-        output_config,
-        options,
-        spine: spine.clone(),
-        config: plugin_section.clone(),
-        inputs: resolved_inputs,
-    };
-
-    match plugin.compile(ctx) {
-        Ok(_) => {
-            results.record_success(plugin.name());
-        }
-        Err(e) => {
-            error!(error = %e, "{} compilation failed", plugin.name());
-            results.record_failure(plugin.name());
-        }
-    }
-    Ok(())
-}
-
-/// Merged compilation: single output from all spine documents.
-/// Used by PDF merge mode and EPUB.
-#[allow(clippy::too_many_arguments)]
-fn compile_merged(
-    plugin: &dyn FormatPlugin,
-    plugin_output_dir: &Path,
-    project: &ProjectConfig,
-    output_config: &OutputConfig,
-    spine: &TracedSpine,
-    plugin_section: &PluginSection,
-    resolved_inputs: HashMap<&'static str, PathBuf>,
-    results: &mut CompilationResults,
-    compilation_root: &Path,
-) -> Result<()> {
-    let output_path = plugin_output_dir
-        .join(&project.name)
-        .with_extension(plugin.output_extension());
-
-    let plugin_library = plugin.typst_library().map(|s| s.to_string());
-    let mut bundle_world = RheoWorld::new(
-        compilation_root,
-        spine
-            .documents
-            .first()
-            .map(|d| d.path.as_path())
-            .unwrap_or(compilation_root),
-        plugin_library,
-    )?;
-
-    let bundle_entry_source = generate_bundle_entry(
-        spine,
-        compilation_root,
-        plugin.name(),
-        plugin.typst_library().unwrap_or_default(),
-    );
-    bundle_world.inject_bundle_entry(bundle_entry_source);
-
-    let options = RheoCompileOptions::new(&output_path, compilation_root, &mut bundle_world);
-
-    let ctx = PluginContext {
-        project,
-        output_config,
-        options,
-        spine: spine.clone(),
-        config: plugin_section.clone(),
-        inputs: resolved_inputs,
-    };
-
-    match plugin.compile(ctx) {
-        Ok(_) => {
-            results.record_success(plugin.name());
-        }
-        Err(e) => {
-            error!(error = %e, "{} generation failed", plugin.name());
-            results.record_failure(plugin.name());
-        }
-    }
-    Ok(())
-}
-
-/// Per-file compilation: loop through spine documents, compile each individually.
-/// Used by PDF non-merge mode.
-#[allow(clippy::too_many_arguments)]
-fn compile_per_file(
-    plugin: &dyn FormatPlugin,
-    plugin_output_dir: &Path,
-    project: &ProjectConfig,
-    output_config: &OutputConfig,
-    spine: &TracedSpine,
-    plugin_section: &PluginSection,
-    resolved_inputs: &HashMap<&'static str, PathBuf>,
-    content_dir: &Path,
-    world: &mut Option<&mut RheoWorld>,
-    results: &mut CompilationResults,
-) -> Result<()> {
-    let files: Vec<PathBuf> = spine.documents.iter().map(|d| d.path.clone()).collect();
-
-    let pfc = PerFileCtx {
-        plugin,
-        plugin_output_dir,
-        project,
-        output_config,
-        spine,
-        plugin_section,
-        resolved_inputs,
-        content_dir,
-    };
-
-    if let Some(ref mut existing_world) = *world {
-        for typ_file in &files {
-            existing_world.set_main(typ_file)?;
-            existing_world.reset();
-            compile_one_file(existing_world, typ_file, &pfc, results)?;
-        }
-    } else {
-        let plugin_library = plugin.typst_library().map(|s| s.to_string());
-        for typ_file in &files {
-            let mut fresh_world = RheoWorld::new(content_dir, typ_file, plugin_library.clone())?;
-            compile_one_file(&mut fresh_world, typ_file, &pfc, results)?;
         }
     }
     Ok(())
@@ -511,12 +377,12 @@ fn perform_compilation(
         }
 
         // Execute copy patterns (global + per-plugin)
-        let plugin_section_for_assets = project.config.plugin_section(plugin.name());
+        let plugin_section_for_copy = project.config.plugin_section(plugin.name());
         for pattern in project
             .config
-            .assets
+            .copy
             .iter()
-            .chain(plugin_section_for_assets.assets.iter())
+            .chain(plugin_section_for_copy.copy.iter())
         {
             let abs_pattern = project.root.join(pattern).display().to_string();
             let entries = glob::glob(&abs_pattern).map_err(|e| {
@@ -548,115 +414,81 @@ fn perform_compilation(
             }
         }
 
-        // Compute compilation root once (content_dir from config or project root)
-        let compilation_root = project
-            .config
-            .resolve_content_dir(&project.root)
-            .unwrap_or_else(|| project.root.clone());
-
-        // Resolve spine config and trace
-        let spine = if project.mode == ProjectMode::SingleFile {
-            // For single file mode, create a spine with just the single file
-            // Ignore spine config from rheo.toml
-            let file = &project.typ_files[0];
-            TracedSpine {
-                title: None,
-                documents: vec![SpineDocument {
-                    path: file.clone(),
-                    is_bundle_entry: false,
-                }],
-                assets: vec![],
-                merge: false,
-            }
-        } else {
-            // For directory mode, use spine config from rheo.toml, or create default
-            let mut spine_cfg = project.config.spine_for_plugin(plugin.name());
-
-            // If no spine config exists, create a default one for auto-discovery
-            // This allows projects without rheo.toml to work with multiple .typ files
-            let default_spine;
-            if spine_cfg.is_none() {
-                use rheo_core::DocumentTitle;
-                use rheo_core::config::Spine;
-                default_spine = Spine {
-                    title: Some(DocumentTitle::to_readable_name(&project.name)),
-                    vertebrae: vec![],
-                    merge: Some(plugin.default_merge()),
-                };
-                spine_cfg = Some(&default_spine);
-            }
-
-            // Get global and per-plugin asset patterns for assets
-            let plugin_section_for_assets = project.config.plugin_section(plugin.name());
-            let assets_config: Vec<String> = project
-                .config
-                .assets
-                .iter()
-                .chain(plugin_section_for_assets.assets.iter())
-                .cloned()
-                .collect();
-
-            TracedSpine::trace(
-                &project.root,
-                &compilation_root,
-                spine_cfg,
-                &assets_config,
-                plugin.default_merge(),
-            )?
-        };
-
-        // For non-single-file mode, use compilation_root; for single file mode, use file's parent
-        let content_dir = if project.mode == ProjectMode::SingleFile {
-            // For single file mode, use the file's parent directory
-            project.typ_files[0]
-                .parent()
-                .unwrap_or(&project.root)
-                .to_path_buf()
-        } else {
-            compilation_root.clone()
+        // Resolve spine options
+        let spine_cfg = project.config.spine_for_plugin(plugin.name());
+        let spine = SpineOptions {
+            title: spine_cfg.and_then(|s| s.title.clone()),
+            vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
+            merge: spine_cfg
+                .and_then(|s| s.merge)
+                .unwrap_or(plugin.default_merge()),
         };
 
         // Get full plugin section
         let plugin_section = project.config.plugin_section(plugin.name());
 
-        // Dispatch to appropriate compilation path
-        if !spine.merge && plugin.uses_bundle_api() {
-            compile_bundle(
-                plugin.as_ref(),
-                &plugin_output_dir,
+        if spine.merge {
+            let compilation_root = project
+                .config
+                .resolve_content_dir(&project.root)
+                .unwrap_or_else(|| project.root.clone());
+            let output_path = plugin_output_dir
+                .join(&project.name)
+                .with_extension(plugin.name());
+
+            let options =
+                RheoCompileOptions::new(None::<PathBuf>, &output_path, &compilation_root, None);
+
+            let ctx = PluginContext {
                 project,
                 output_config,
-                &spine,
-                &plugin_section,
-                resolved_inputs,
-                &mut results,
-                &compilation_root,
-            )?;
-        } else if spine.merge {
-            compile_merged(
-                plugin.as_ref(),
-                &plugin_output_dir,
-                project,
-                output_config,
-                &spine,
-                &plugin_section,
-                resolved_inputs,
-                &mut results,
-                &compilation_root,
-            )?;
+                options,
+                spine,
+                config: plugin_section,
+                inputs: resolved_inputs,
+            };
+
+            match plugin.compile(ctx) {
+                Ok(_) => {
+                    results.record_success(plugin.name());
+                }
+                Err(e) => {
+                    error!(error = %e, "{} generation failed", plugin.name());
+                    results.record_failure(plugin.name());
+                }
+            }
         } else {
-            compile_per_file(
-                plugin.as_ref(),
-                &plugin_output_dir,
+            let files = get_files_for_plugin(plugin.as_ref(), project)?;
+            let pfc = PerFileCtx {
+                plugin: plugin.as_ref(),
+                plugin_output_dir: &plugin_output_dir,
                 project,
                 output_config,
-                &spine,
-                &plugin_section,
-                &resolved_inputs,
-                &content_dir,
-                &mut world,
-                &mut results,
-            )?;
+                spine: &spine,
+                plugin_section: &plugin_section,
+                resolved_inputs: &resolved_inputs,
+            };
+
+            if let Some(ref mut existing_world) = world {
+                for typ_file in &files {
+                    existing_world.set_main(typ_file)?;
+                    existing_world.reset();
+                    compile_one_file(existing_world, typ_file, &pfc, &mut results)?;
+                }
+            } else {
+                // Collect plugin library code to inject
+                let plugin_library = plugin.typst_library().map(|s| s.to_string());
+
+                for typ_file in &files {
+                    let mut fresh_world = RheoWorld::new(
+                        &project.root,
+                        typ_file,
+                        Some(plugin.name()),
+                        plugin_library.clone(),
+                    )?;
+                    compile_one_file(&mut fresh_world, typ_file, &pfc, &mut results)?;
+                }
+            }
         }
     }
 
@@ -707,9 +539,6 @@ fn init_project(target_dir: &Path) -> Result<()> {
         rheo_core::init_templates::CONTENT_ABOUT_TYP,
     )
     .map_err(|e| RheoError::io(e, "writing about.typ"))?;
-
-    // Write references.bib to content directory
-    // Typst resolves bibliography paths relative to the file being compiled
     fs::write(
         content_dir.join("references.bib"),
         rheo_core::init_templates::CONTENT_REFERENCES_BIB,

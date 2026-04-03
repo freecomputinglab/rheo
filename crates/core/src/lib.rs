@@ -41,15 +41,13 @@ pub use compile::RheoCompileOptions;
 pub use config::{PluginSection, Spine};
 
 // Plugin trait and context
-pub use plugins::{FormatPlugin, OpenHandle, PluginContext, PluginInput, ServerHandle};
-
-// Re-export TracedSpine for use in bundle compilation
-pub use reticulate::{SpineDocument, TracedSpine};
+pub use plugins::{
+    FormatPlugin, OpenHandle, PluginContext, PluginInput, ServerHandle, SpineOptions,
+};
 
 // HTML compilation functions
 pub use html_compile::{
-    compile_document_to_string, compile_html_to_document, compile_html_to_document_with_polyfill,
-    compile_html_with_world,
+    compile_document_to_string, compile_html_to_document, compile_html_with_world,
 };
 
 // PDF compilation functions
@@ -66,7 +64,7 @@ pub use unified_compile::{
 pub use world::RheoWorld;
 
 // Re-export reticulate module for spine building
-pub use reticulate::spine::generate_bundle_entry;
+pub use reticulate::spine::BuiltSpine;
 
 // PDF utilities
 pub use pdf_utils::DocumentTitle;

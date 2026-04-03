@@ -9,21 +9,10 @@ use typst_html::HtmlDocument;
 pub fn compile_html_to_document(
     input: &Path,
     root: &Path,
-    _format_name: &str,
+    format_name: &str,
     plugin_library: Option<String>,
 ) -> Result<HtmlDocument> {
-    compile_html_to_document_with_polyfill(input, root, plugin_library, false)
-}
-
-/// Compile to HTML document with optional EPUB polyfill mode.
-pub fn compile_html_to_document_with_polyfill(
-    input: &Path,
-    root: &Path,
-    plugin_library: Option<String>,
-    epub_polyfill_mode: bool,
-) -> Result<HtmlDocument> {
-    let mut world = RheoWorld::new(root, input, plugin_library)?;
-    world.epub_polyfill_mode = epub_polyfill_mode;
+    let world = RheoWorld::new(root, input, Some(format_name), plugin_library)?;
     info!(input = %input.display(), "compiling to HTML");
     let result = typst::compile::<HtmlDocument>(&world);
 

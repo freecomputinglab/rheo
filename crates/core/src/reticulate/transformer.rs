@@ -15,7 +15,7 @@ pub struct LinkTransformer {
 
 impl LinkTransformer {
     /// Create a new LinkTransformer for the specified output format name.
-    pub fn new(format_name: &str) -> Self {
+    pub(crate) fn new(format_name: &str) -> Self {
         Self {
             format_name: format_name.to_string(),
             spine: None,

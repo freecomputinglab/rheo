@@ -7,7 +7,7 @@ use crate::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilati
 use crate::world::RheoWorld;
 use std::path::Path;
 use tracing::info;
-use typst_layout::PagedDocument;
+use typst::layout::PagedDocument;
 
 /// Compile a Typst source file to a PDF document.
 ///
@@ -33,10 +33,10 @@ use typst_layout::PagedDocument;
 pub fn compile_pdf_to_document(
     input: &Path,
     root: &Path,
-    _format_name: Option<&str>,
+    format_name: Option<&str>,
     plugin_library: Option<String>,
 ) -> Result<PagedDocument> {
-    let world = RheoWorld::new(root, input, plugin_library)?;
+    let world = RheoWorld::new(root, input, format_name, plugin_library)?;
     info!(input = %input.display(), "compiling to PDF");
     let result = typst::compile::<PagedDocument>(&world);
     unwrap_compilation_result(Some(&world), result, None::<fn(&_) -> bool>)

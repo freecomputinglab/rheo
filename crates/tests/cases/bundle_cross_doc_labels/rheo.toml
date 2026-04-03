@@ -1,5 +1,0 @@
-version = "0.1.2"
-
-[html.spine]
-title = "Bundle Cross-Document Label Test"
-vertebrae = ["content/intro.typ", "content/reference.typ"]
