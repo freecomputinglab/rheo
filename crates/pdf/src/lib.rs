@@ -1,5 +1,10 @@
-use rheo_core::{FormatPlugin, PluginContext, Result, RheoError, RheoWorld};
+use rheo_core::{
+    BuiltSpine, FormatPlugin, PluginContext, Result, RheoError, RheoWorld, SpineOptions,
+    compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes,
+};
+use std::io::Write;
 use std::path::Path;
+use tempfile::NamedTempFile;
 use tracing::{debug, info};
 
 pub struct PdfPlugin;
@@ -23,84 +28,75 @@ impl FormatPlugin for PdfPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        compile_pdf_bundle_impl(ctx.options.world, &ctx.options.output, ctx.spine.merge)
+        if ctx.spine.merge {
+            compile_pdf_merged_impl(&ctx.spine, &ctx.options.output, &ctx.options.root)
+        } else {
+            let world = ctx.options.world.ok_or_else(|| {
+                RheoError::project_config(
+                    "PDF per-file compile requires a world; this is a rheo bug (internal invariant violation)",
+                )
+            })?;
+            compile_pdf_single_impl(world, &ctx.options.output)
+        }
     }
 }
 
-/// Compile PDF using bundle API.
-///
-/// Uses typst::compile::<typst_bundle::Bundle>() for multi-file bundle output.
-/// For merged mode, produces a single PDF. For non-merged mode, produces one PDF per document.
-fn compile_pdf_bundle_impl(world: &RheoWorld, output_path: &Path, merge: bool) -> Result<()> {
-    if merge {
-        compile_pdf_merged_bundle(world, output_path)
-    } else {
-        compile_pdf_per_file_bundle(world, output_path)
-    }
+fn compile_pdf_single_impl(world: &RheoWorld, output: &Path) -> Result<()> {
+    let document = compile_pdf_with_world(world)?;
+
+    debug!(output = %output.display(), "exporting to PDF");
+    let pdf_bytes = document_to_pdf_bytes(&document)?;
+
+    debug!(size = pdf_bytes.len(), "writing PDF file");
+    std::fs::write(output, &pdf_bytes)
+        .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output)))?;
+
+    info!(output = %output.display(), "successfully compiled to PDF");
+    Ok(())
 }
 
-/// Compile a single merged PDF from a bundle.
-///
-/// The bundle entry produces a single #document() call that wraps all spine files,
-/// resulting in one combined PDF output.
-fn compile_pdf_merged_bundle(world: &RheoWorld, output_path: &Path) -> Result<()> {
-    info!("compiling merged PDF bundle");
+fn compile_pdf_merged_impl(
+    spine_config: &SpineOptions,
+    output_path: &Path,
+    root: &Path,
+) -> Result<()> {
+    // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
+    let merge = spine_config.merge;
+    let rheo_spine = BuiltSpine::build(root, Some(spine_config), "pdf", merge)?;
 
-    // Compile and export the bundle using the core helper
-    let fs = world.export_bundle()?;
+    debug!(file_count = rheo_spine.source.len(), "built PDF spine");
 
-    debug!(file_count = fs.len(), "exported PDF bundle");
+    let concatenated_source = &rheo_spine.source[0];
+    debug!(
+        source_length = concatenated_source.len(),
+        "concatenated sources"
+    );
 
-    // For merged PDF, the bundle produces a single PDF file
-    // Export it and write to the output path
-    let (_filename, pdf_bytes) = fs
-        .into_iter()
-        .next()
-        .ok_or_else(|| RheoError::invalid_data("bundle produced no output"))?;
+    // Create temporary file with concatenated source in root directory
+    let mut temp_file = NamedTempFile::new_in(root)
+        .map_err(|e| RheoError::io(e, "creating temporary file for merged PDF"))?;
+    temp_file
+        .write_all(concatenated_source.as_bytes())
+        .map_err(|e| RheoError::io(e, "writing concatenated source to temporary file"))?;
+    temp_file
+        .flush()
+        .map_err(|e| RheoError::io(e, "flushing temporary file"))?;
 
-    debug!(output = %output_path.display(), "writing merged PDF");
+    let temp_path = temp_file.path();
+    debug!(temp_path = %temp_path.display(), "created temporary file");
+
+    // output_format=None because links already transformed to labels by RheoSpine
+    let plugin_library = PdfPlugin.typst_library().map(|s| s.to_string());
+    let document = compile_pdf_to_document(temp_path, root, None, plugin_library)?;
+
+    debug!(output = %output_path.display(), "exporting to PDF");
+    let pdf_bytes = document_to_pdf_bytes(&document)?;
+
+    debug!(size = pdf_bytes.len(), "writing PDF file");
     std::fs::write(output_path, &pdf_bytes)
         .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output_path)))?;
 
     info!(output = %output_path.display(), "successfully compiled merged PDF");
-    Ok(())
-}
-
-/// Compile multiple PDFs from a bundle (one per document).
-///
-/// Each #document() in the bundle produces a separate PDF file.
-fn compile_pdf_per_file_bundle(world: &RheoWorld, output_dir: &Path) -> Result<()> {
-    info!("compiling per-file PDF bundle");
-
-    // Compile and export the bundle using the core helper
-    let fs = world.export_bundle()?;
-
-    debug!(file_count = fs.len(), "exported PDF bundle");
-
-    // Each document in the bundle produces a separate PDF.
-    // Filter to .pdf files only: bundles that also target HTML will include HTML files
-    // and assets in the export; writing those to the PDF output dir would corrupt it.
-    let mut file_count = 0;
-    for (filename, bytes) in fs {
-        if !filename.ends_with(".pdf") {
-            continue;
-        }
-        file_count += 1;
-        let out_path = output_dir.join(filename);
-
-        // Ensure parent directory exists
-        if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                RheoError::io(e, format!("creating output directory {}", parent.display()))
-            })?;
-        }
-
-        debug!(output = %out_path.display(), "writing PDF file");
-        std::fs::write(&out_path, &bytes)
-            .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", out_path)))?;
-    }
-
-    info!(output = %output_dir.display(), file_count = file_count, "successfully compiled per-file PDFs");
     Ok(())
 }
 

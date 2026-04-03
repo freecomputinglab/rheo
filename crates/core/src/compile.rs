@@ -1,46 +1,45 @@
-use crate::Result;
-use crate::diagnostics::{ExportErrorType, handle_export_errors, unwrap_compilation_result};
 use crate::world::RheoWorld;
-use std::path::{Path, PathBuf};
-use tracing::info;
-use typst::diag::SourceDiagnostic;
-use typst_html::HtmlDocument;
-use typst_layout::PagedDocument;
+use std::path::PathBuf;
 
 /// Common compilation options used across all output formats.
 ///
 /// This struct encapsulates the core parameters needed for any compilation:
+/// - Input file (the .typ file to compile, or `None` for merged/spine compilation)
 /// - Output file (where to write the result)
 /// - Root directory (for resolving imports)
-/// - RheoWorld (always present for bundle mode)
+/// - RheoWorld (`Some` in single-file mode, `None` in merged/spine mode)
 ///
-/// # Bundle mode contract
-///
-/// In bundle mode, the bundle entry is a virtual file pre-populated in
-/// `world.slots` (not a real path on disk). Every plugin receives a world
-/// configured with the bundle entry as main. HTML and PDF plugins call
-/// `typst::compile::<Bundle>(&world)` for multi-file output.
-///
-/// EPUB is out of scope for bundle compilation (typst-bundle has no EPUB
-/// variant). The EPUB plugin creates its own per-file RheoWorld instances
-/// internally and ignores `ctx.options.world`.
+/// # Merged mode contract
+/// For merged plugins (e.g. PDF spine, EPUB), `input` is `None` and `world` is
+/// `None`. Use `ctx.spine` to locate the files to compile; the plugin creates
+/// its own worlds per spine file.
 pub struct RheoCompileOptions<'a> {
+    /// The input .typ file to compile, or `None` in merged/spine mode.
+    pub input: Option<PathBuf>,
     /// The output file path
     pub output: PathBuf,
     /// Root directory for resolving imports
     pub root: PathBuf,
-    /// RheoWorld for compilation. Always present in bundle mode.
-    pub world: &'a mut RheoWorld,
+    /// RheoWorld for compilation. `Some` in single-file mode; `None` in merged/spine mode.
+    pub world: Option<&'a mut RheoWorld>,
 }
 
 impl<'a> RheoCompileOptions<'a> {
     /// Create compilation options.
+    ///
+    /// # Arguments
+    /// * `input` - The input .typ file, or `None` for merged/spine compilation
+    /// * `output` - The output file path
+    /// * `root` - Root directory for resolving imports
+    /// * `world` - `Some` with the RheoWorld in single-file mode, `None` in merged/spine mode
     pub fn new(
+        input: Option<impl Into<PathBuf>>,
         output: impl Into<PathBuf>,
         root: impl Into<PathBuf>,
-        world: &'a mut RheoWorld,
+        world: Option<&'a mut RheoWorld>,
     ) -> Self {
         Self {
+            input: input.map(Into::into),
             output: output.into(),
             root: root.into(),
             world,
@@ -48,53 +47,83 @@ impl<'a> RheoCompileOptions<'a> {
     }
 }
 
-pub fn compile_html_to_document(
-    input: &Path,
-    root: &Path,
-    _format_name: &str,
-    plugin_library: Option<String>,
-) -> Result<HtmlDocument> {
-    compile_html_to_document_with_polyfill(input, root, plugin_library, false)
-}
+#[cfg(test)]
+mod tests {
+    use crate::pdf_utils;
 
-/// Compile to HTML document with optional EPUB polyfill mode.
-pub fn compile_html_to_document_with_polyfill(
-    input: &Path,
-    root: &Path,
-    plugin_library: Option<String>,
-    epub_polyfill_mode: bool,
-) -> Result<HtmlDocument> {
-    let mut world = RheoWorld::new(root, input, plugin_library)?;
-    world.epub_polyfill_mode = epub_polyfill_mode;
-    info!(input = %input.display(), "compiling to HTML");
-    let result = typst::compile::<HtmlDocument>(&world);
+    #[test]
+    fn test_filename_to_title() {
+        assert_eq!(
+            pdf_utils::DocumentTitle::to_readable_name("severance-ep-1"),
+            "Severance Ep 1"
+        );
+        assert_eq!(
+            pdf_utils::DocumentTitle::to_readable_name("my_document"),
+            "My Document"
+        );
+        assert_eq!(
+            pdf_utils::DocumentTitle::to_readable_name("chapter-01"),
+            "Chapter 01"
+        );
+        assert_eq!(
+            pdf_utils::DocumentTitle::to_readable_name("hello_world"),
+            "Hello World"
+        );
+        assert_eq!(
+            pdf_utils::DocumentTitle::to_readable_name("single"),
+            "Single"
+        );
+    }
 
-    let html_filter = |w: &SourceDiagnostic| {
-        !w.message
-            .contains("html export is under active development and incomplete")
-    };
+    #[test]
+    fn test_extract_document_title_from_metadata() {
+        let source = r#"#set document(title: [My Great Title])
 
-    unwrap_compilation_result(Some(&world), result, Some(html_filter))
-}
+= Chapter 1
+Content here."#;
 
-pub fn compile_document_to_string(document: &HtmlDocument) -> Result<String> {
-    typst_html::html(document).map_err(|e| handle_export_errors(e, ExportErrorType::Html))
-}
+        let title = pdf_utils::DocumentTitle::from_source(source, "fallback").extract();
+        assert_eq!(title, "My Great Title");
+    }
 
-pub fn compile_pdf_to_document(
-    input: &Path,
-    root: &Path,
-    _format_name: Option<&str>,
-    plugin_library: Option<String>,
-) -> Result<PagedDocument> {
-    let world = RheoWorld::new(root, input, plugin_library)?;
-    info!(input = %input.display(), "compiling to PDF");
-    let result = typst::compile::<PagedDocument>(&world);
-    unwrap_compilation_result(Some(&world), result, None::<fn(&_) -> bool>)
-}
+    #[test]
+    fn test_extract_document_title_fallback() {
+        let source = r#"= Chapter 1
+Content here."#;
 
-pub fn document_to_pdf_bytes(document: &PagedDocument) -> Result<Vec<u8>> {
-    use typst_pdf::PdfOptions;
-    typst_pdf::pdf(document, &PdfOptions::default())
-        .map_err(|e| handle_export_errors(e, ExportErrorType::Pdf))
+        let title = pdf_utils::DocumentTitle::from_source(source, "my-chapter").extract();
+        assert_eq!(title, "My Chapter");
+    }
+
+    #[test]
+    fn test_extract_document_title_with_markup() {
+        let source = r#"#set document(title: [Good news about hell - #emph[Severance]])"#;
+
+        let title = pdf_utils::DocumentTitle::from_source(source, "fallback").extract();
+        // Should strip #emph and underscores
+        // Note: complex nested bracket handling is limited by regex
+        assert!(title.contains("Good news"));
+        assert!(title.contains("Severance"));
+    }
+
+    #[test]
+    fn test_extract_document_title_empty() {
+        let source = r#"#set document(title: [])
+
+Content"#;
+
+        let title = pdf_utils::DocumentTitle::from_source(source, "default-name").extract();
+        // Empty title should fall back to filename
+        assert_eq!(title, "Default Name");
+    }
+
+    #[test]
+    fn test_extract_document_title_complex() {
+        let source = r#"#set document(title: [Half Loop - _Severance_ [s1/e2]], author: [Test])"#;
+
+        let title = pdf_utils::DocumentTitle::from_source(source, "fallback").extract();
+        // Should extract title and strip markup
+        assert!(title.contains("Half Loop"));
+        assert!(title.contains("Severance"));
+    }
 }

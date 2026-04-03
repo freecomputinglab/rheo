@@ -4,9 +4,8 @@
 //! otherwise require chained `unwrap()` calls. It ensures consistent error handling
 //! for path-related operations throughout the codebase.
 
-use crate::{Result, RheoError, TYP_EXT_BARE};
-use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
+use crate::{Result, RheoError};
+use std::path::Path;
 
 /// Extension trait for Path to provide safe operations that return Result instead of Option
 pub trait PathExt {
@@ -56,50 +55,6 @@ impl PathExt for Path {
             .to_str()
             .ok_or_else(|| RheoError::path(self, "extension contains invalid UTF-8"))
     }
-}
-
-/// Single file discovery: require exactly one .typ file.
-pub(crate) fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
-    let typst_files: Vec<PathBuf> = WalkDir::new(root)
-        .into_iter()
-        .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
-        .filter(|entry| {
-            entry
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext == TYP_EXT_BARE)
-                .unwrap_or(false)
-        })
-        .collect();
-
-    match typst_files.len() {
-        0 => Err(RheoError::project_config("need at least one .typ file")),
-        1 => Ok(typst_files),
-        _ => Err(RheoError::project_config(
-            "multiple .typ files found, specify spine configuration",
-        )),
-    }
-}
-
-/// All .typ files discovery.
-pub(crate) fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut typst_files: Vec<PathBuf> = WalkDir::new(root)
-        .into_iter()
-        .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
-        .filter(|path| {
-            path.extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext == TYP_EXT_BARE)
-                .unwrap_or(false)
-        })
-        .collect();
-
-    if typst_files.is_empty() {
-        return Err(RheoError::project_config("need at least one .typ file"));
-    }
-
-    typst_files.sort();
-    Ok(typst_files)
 }
 
 #[cfg(test)]

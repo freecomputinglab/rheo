@@ -3,5 +3,3 @@
 title = "Individual PDFs"
 vertebrae = ["file*.typ"]
 merge = false
-[html.spine]
-vertebrae = ["*.typ"]

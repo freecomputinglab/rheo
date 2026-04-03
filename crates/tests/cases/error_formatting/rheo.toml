@@ -1,9 +1,6 @@
 
 # Test project for error formatting validation
+formats = ["pdf"]
 
-[pdf.spine]
+[pdf]
 # Don't merge - test single file errors
-vertebrae = ["*.typ"]
-
-[html.spine]
-vertebrae = ["*.typ"]

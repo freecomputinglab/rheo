@@ -3,17 +3,20 @@ pub mod config;
 pub mod constants;
 pub mod diagnostics;
 pub mod error;
+pub mod html_compile;
 pub mod init_templates;
 pub mod logging;
 pub mod manifest_version;
 pub mod output;
 pub mod path_utils;
+pub mod pdf_compile;
 pub mod pdf_utils;
 pub mod plugins;
 pub mod project;
 pub mod results;
 pub mod reticulate;
 pub mod typst_types;
+pub mod unified_compile;
 pub mod validation;
 pub mod watch;
 pub mod world;
@@ -38,22 +41,30 @@ pub use compile::RheoCompileOptions;
 pub use config::{PluginSection, Spine};
 
 // Plugin trait and context
-pub use plugins::{FormatPlugin, OpenHandle, PluginContext, PluginInput, ServerHandle};
+pub use plugins::{
+    FormatPlugin, OpenHandle, PluginContext, PluginInput, ServerHandle, SpineOptions,
+};
 
-// Re-export TracedSpine for use in bundle compilation
-pub use reticulate::{SpineDocument, TracedSpine};
+// HTML compilation functions
+pub use html_compile::{
+    compile_document_to_string, compile_html_to_document, compile_html_with_world,
+};
 
-// HTML and PDF compilation functions
-pub use compile::{
-    compile_document_to_string, compile_html_to_document, compile_html_to_document_with_polyfill,
-    compile_pdf_to_document, document_to_pdf_bytes,
+// PDF compilation functions
+pub use pdf_compile::{compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes};
+
+// Unified compilation API (consistent naming pattern)
+pub use unified_compile::{
+    HtmlDocument as HtmlDoc, HtmlString, PagedDocument as PdfDoc, PdfBytes,
+    compile_to_html_document, compile_to_html_document_with_world, compile_to_html_string,
+    compile_to_pdf_bytes, compile_to_pdf_document, compile_to_pdf_document_with_world,
 };
 
 // World (Typst compilation context)
 pub use world::RheoWorld;
 
 // Re-export reticulate module for spine building
-pub use reticulate::spine::generate_bundle_entry;
+pub use reticulate::spine::BuiltSpine;
 
 // PDF utilities
 pub use pdf_utils::DocumentTitle;

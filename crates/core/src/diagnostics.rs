@@ -42,7 +42,7 @@ pub fn print_diagnostics(
             diagnostic
                 .hints
                 .iter()
-                .map(|s| (eco_format!("hint: {}", s.v)).into())
+                .map(|s| (eco_format!("hint: {}", s)).into())
                 .collect(),
         )
         .with_labels(label(world, diagnostic.span).into_iter().collect());

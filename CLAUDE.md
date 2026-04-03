@@ -66,32 +66,8 @@ Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title 
 ## Release
 
 1. Update version in `Cargo.toml`
-2. **IMPORTANT:** Remove `[patch.crates-io]` section before release (crates.io publishes require no git patches)
-3. PR title = version tag (e.g. `v0.2.0`) + `release` label
-4. Merge triggers automated build, crates.io publish, GitHub Release
-
-### Typst Version Management
-
-**During development**, rheo tracks typst git main via `[patch.crates-io]` in `Cargo.toml`:
-
-```toml
-[patch.crates-io]
-typst          = { git = "https://github.com/typst/typst", branch = "main" }
-typst-library  = { git = "https://github.com/typst/typst", branch = "main" }
-typst-pdf      = { git = "https://github.com/typst/typst", branch = "main" }
-typst-html     = { git = "https://github.com/typst/typst", branch = "main" }
-typst-kit      = { git = "https://github.com/typst/typst", branch = "main" }
-typst-syntax   = { git = "https://github.com/typst/typst", branch = "main" }
-typst-layout   = { git = "https://github.com/typst/typst", branch = "main" }
-typst-assets   = { git = "https://github.com/typst/typst-assets", rev = "57a38ca" }
-typst-timing   = { git = "https://github.com/typst/typst", branch = "main" }
-```
-
-This allows development against latest typst features and catching breaking API changes early.
-
-**Before crates.io release:** Delete the entire `[patch.crates-io]` section to use published versions instead of git patches.
-
-**Updating typst:** After a typst release, bump workspace dependencies in `Cargo.toml` (e.g., `typst = "0.15.0"`) and remove the `[patch.crates-io]` section.
+2. PR title = version tag (e.g. `v0.2.0`) + `release` label
+3. Merge triggers automated build, crates.io publish, GitHub Release
 
 ---
 

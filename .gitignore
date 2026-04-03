@@ -16,4 +16,4 @@ result-*
 .rustfmt.toml
 
 # Test store (generated test outputs)
-crates/tests/store/
+/tests/store/

@@ -1,10 +1,2 @@
 
-[pdf.spine]
-vertebrae = ["*.typ"]
-
-[epub.spine]
-title = "Target Function Test"
-vertebrae = ["main.typ"]
-
-[html.spine]
-vertebrae = ["*.typ"]
+formats = ["html", "pdf", "epub"]

@@ -15,8 +15,6 @@ typst-pdf = { workspace = true }
 typst-library = { workspace = true }
 typst-kit = { workspace = true }
 typst-syntax = { workspace = true }
-typst-layout = { workspace = true }
-typst-bundle = { workspace = true }
 comemo = { workspace = true }
 
 # Error handling and diagnostics
@@ -37,7 +35,6 @@ opener = { workspace = true }
 
 # Date/time
 chrono = { workspace = true }
-time = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
@@ -46,6 +43,7 @@ atty = { workspace = true }
 
 # Concurrency and utilities
 parking_lot = { workspace = true }
+lazy_static = { workspace = true }
 regex = { workspace = true }
 notify = { workspace = true }
 ecow = { workspace = true }

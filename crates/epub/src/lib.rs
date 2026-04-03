@@ -1,21 +1,18 @@
 pub mod package;
-mod transformer;
 mod xhtml;
 
 use package::{Item, ItemRef, Package};
-use transformer::LinkTransformer;
 use xhtml::HtmlInfo;
 
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
-use rheo_core::reticulate::TracedSpine;
 use rheo_core::{
-    DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain,
+    BuiltSpine, FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
+    Spine, SpineOptions, compile_document_to_string, compile_html_to_document, eco_format, eco_vec,
 };
 use rheo_core::{
-    FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError, Spine,
-    compile_document_to_string, compile_html_to_document_with_polyfill, eco_format, eco_vec,
+    DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain,
 };
 use std::{
     fmt::Write as _,
@@ -25,8 +22,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use tracing::info;
-use typst_library::introspection::Introspector;
-use typst_library::model::Document;
 use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 
@@ -139,16 +134,16 @@ fn date_format(dt: &DateTime<Utc>) -> EcoString {
 /// Generates the package.opf XML string from the generated EPUB items.
 pub fn generate_package(
     items: &[EpubItem],
-    spine: &TracedSpine,
+    spine: &SpineOptions,
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
 ) -> Result<String> {
-    let info = items[0].document.info();
+    let info = &items[0].document.info;
     let language = info.locale.unwrap_or_default().rfc_3066();
     let title = spine
         .title
-        .as_ref()
-        .map(|s| EcoString::from(s.as_str()))
+        .as_deref()
+        .map(EcoString::from)
         .unwrap_or_else(|| items[0].title());
 
     const INTERNAL_UNIQUE_ID: &str = "uid";
@@ -178,7 +173,7 @@ pub fn generate_package(
 
     builder = builder.add_item(Item {
         id: "nav".into(),
-        href: IriRefBuf::new("nav.xhtml".to_owned())
+        href: IriRefBuf::new("nav.xhtml".into())
             .map_err(|e| RheoError::invalid_data(format!("invalid nav href: {}", e)))?,
         media_type: XHTML_MEDIATYPE.into(),
         properties: Some("nav".into()),
@@ -320,30 +315,24 @@ fn parse_date(section: &PluginSection) -> Option<DateTime<Utc>> {
 }
 
 fn compile_epub_impl(
-    spine: &TracedSpine,
+    spine: &SpineOptions,
     epub_path: &Path,
     root: &Path,
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
 ) -> Result<()> {
-    use std::fs;
+    // Build BuiltSpine with AST-transformed sources (.typ links → .xhtml)
+    // EPUB handles concatenation itself via create_from_source, so merge=false
+    let rheo_spine = BuiltSpine::build(root, Some(spine), "epub", false)?;
 
-    // Create link transformer for EPUB (.typ → .xhtml)
-    let transformer = LinkTransformer::new();
+    // Get the spine file paths
+    let spine_paths = rheo_core::reticulate::spine::generate_spine(root, Some(spine), false)?;
 
-    let mut items = spine
-        .documents
+    let mut items = spine_paths
         .iter()
-        .map(|doc| {
-            let doc_path = &doc.path;
-            let source = fs::read_to_string(doc_path).map_err(|e| {
-                RheoError::io(e, format!("reading spine file '{}'", doc_path.display()))
-            })?;
-
-            // Transform .typ links to .xhtml links for EPUB
-            let transformed_source = transformer.transform_source(&source, doc_path, root)?;
-
-            EpubItem::create_from_source(doc_path.clone(), &transformed_source, root)
+        .zip(rheo_spine.source.iter())
+        .map(|(path, transformed_source)| {
+            EpubItem::create_from_source(path.clone(), transformed_source, root)
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -355,9 +344,9 @@ fn compile_epub_impl(
     Ok(())
 }
 
-/// Compile Typst documents to EPUB using traced spine.
+/// Compile Typst documents to EPUB using resolved spine options.
 fn compile_epub_with_spine(
-    spine: &TracedSpine,
+    spine: &SpineOptions,
     options: &RheoCompileOptions<'_>,
     section: &PluginSection,
 ) -> Result<()> {
@@ -411,9 +400,7 @@ impl EpubItem {
 
         let temp_path = temp_file.path();
         let plugin_library = EpubPlugin.typst_library().map(|s| s.to_string());
-        // Compile with EPUB polyfill mode enabled (injects target() = "epub" into all .typ files)
-        let document =
-            compile_html_to_document_with_polyfill(temp_path, root, plugin_library, true)?;
+        let document = compile_html_to_document(temp_path, root, "epub", plugin_library)?;
 
         let parent = path.parent().ok_or_else(|| {
             RheoError::invalid_data(format!("path has no parent: {}", path.display()))
@@ -441,7 +428,7 @@ impl EpubItem {
     }
 
     fn outline(doc: &HtmlDocument, href: &IriRef) -> (Vec<EcoString>, Vec<OutlineNode<EcoString>>) {
-        let elems = doc.introspector().query(&HeadingElem::ELEM.select());
+        let elems = doc.introspector.query(&HeadingElem::ELEM.select());
         let (nodes, heading_ids): (Vec<_>, Vec<_>) = elems
             .iter()
             .map(|elem| {
@@ -460,8 +447,7 @@ impl EpubItem {
                 };
                 let mut anchored_href = href.to_owned();
                 anchored_href.set_fragment(Some(
-                    Fragment::new(id.as_bytes())
-                        .expect("heading ID should be a valid IRI fragment"),
+                    Fragment::new(&id).expect("heading ID should be a valid IRI fragment"),
                 ));
                 let link = eco_format!(r#"<a href="{anchored_href}">{entry}</a>"#);
                 ((link, level, true), id)
@@ -471,7 +457,7 @@ impl EpubItem {
     }
 
     fn title(&self) -> EcoString {
-        match &self.document.info().title {
+        match &self.document.info.title {
             Some(title) => title.clone(),
             None => self.href.path().as_str().into(),
         }
