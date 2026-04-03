@@ -5,7 +5,7 @@ const PLUGIN_NAME: &str = "pdf";
 
 impl FormatPlugin for PdfPlugin {
     fn name(&self) -> &'static str {
-        &PLUGIN_NAME
+        PLUGIN_NAME
     }
 
     fn typst_library(&self) -> Option<&'static str> {

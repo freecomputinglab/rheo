@@ -472,19 +472,19 @@ mod tests {
 
     #[test]
     fn test_plugin_copy_parses() {
-        let toml = versioned_toml("[html]\ncopy = [\"assets/logo.png\", \"fonts/**\"]");
+        let toml = versioned_toml("[html]\nassets = [\"assets/logo.png\", \"fonts/**\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        assert_eq!(section.copy, vec!["assets/logo.png", "fonts/**"]);
+        assert_eq!(section.assets, vec!["assets/logo.png", "fonts/**"]);
     }
 
     #[test]
     fn test_plugin_copy_not_in_extra() {
-        let toml = versioned_toml("[html]\ncopy = [\"assets/logo.png\"]");
+        let toml = versioned_toml("[html]\nassets = [\"assets/logo.png\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        // `copy` must be in the dedicated field, not leaked into `extra`
-        assert!(section.extra.get("copy").is_none());
+        // `assets` must be in the dedicated field, not leaked into `extra`
+        assert!(section.extra.get("assets").is_none());
     }
 
     #[test]
@@ -492,6 +492,6 @@ mod tests {
         let toml = versioned_toml("[html]\nstylesheets = [\"style.css\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        assert!(section.copy.is_empty());
+        assert!(section.assets.is_empty());
     }
 }

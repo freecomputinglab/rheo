@@ -3055,8 +3055,6 @@ name = "rheo-html"
 version = "0.2.0"
 dependencies = [
  "axum",
- "html5ever",
- "markup5ever_rcdom",
  "mime_guess",
  "rheo-core",
  "thiserror 2.0.17",

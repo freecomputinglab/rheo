@@ -1,6 +1,6 @@
-mod dom;
-mod html_head;
 mod server;
+
+use rheo_core::html_utils;
 
 /// Bundled default HTML stylesheet.
 /// Used when the project doesn't provide its own style.css.
@@ -41,7 +41,7 @@ const SCRIPTS: &str = "js_scripts";
 
 impl FormatPlugin for HtmlPlugin {
     fn name(&self) -> &'static str {
-        &PLUGIN_NAME
+        PLUGIN_NAME
     }
 
     fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
@@ -75,13 +75,13 @@ impl FormatPlugin for HtmlPlugin {
     fn assets(&self) -> Vec<AssetConfig> {
         vec![
             AssetConfig {
-                name: &STYLESHEETS,
+                name: STYLESHEETS,
                 // TODO: make it possible to configure a custom path for any PluginAsset
                 default_path: "style.css",
                 required: false,
             },
             AssetConfig {
-                name: &SCRIPTS,
+                name: SCRIPTS,
                 default_path: "index.js",
                 required: false,
             },
@@ -107,15 +107,15 @@ impl FormatPlugin for HtmlPlugin {
                 vec![]
             };
 
-            html_head::inject_head_links(&html_string, &vec![], &css_assets, &js_assets)?
+            html_utils::inject_head_links(&html_string, &[], &css_assets, &js_assets)?
         } else {
             info!("No stylesheet found, using default");
-            html_head::inject_inline_styles(&html_string, &[&DEFAULT_STYLESHEET.to_string()])?
+            html_utils::inject_inline_styles(&html_string, &[DEFAULT_STYLESHEET])?
         };
 
         debug!(size = html_string.len(), "writing HTML file");
         let output = &ctx.options.output;
-        std::fs::write(&output, &html_string)
+        std::fs::write(output, &html_string)
             .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
 
         info!(output = %output.display(), "successfully compiled to HTML");

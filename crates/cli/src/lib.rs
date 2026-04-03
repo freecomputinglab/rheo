@@ -352,9 +352,9 @@ fn perform_compilation(
         // Resolve declared assets
         let mut resolved_assets: HashMap<&'static str, Asset> = HashMap::new();
         for asset_config in plugin.assets() {
-            let src = project.root.join(&asset_config.default_path);
+            let src = project.root.join(asset_config.default_path);
             if src.is_file() {
-                let dest = plugin_output_dir.join(&asset_config.default_path);
+                let dest = plugin_output_dir.join(asset_config.default_path);
                 std::fs::copy(&src, &dest).map_err(|e| {
                     RheoError::io(
                         e,
