@@ -388,7 +388,7 @@ fn perform_compilation(
         let plugin_section_for_copy = project.config.plugin_section(plugin.name());
         for pattern in project
             .config
-            .copy
+            .assets
             .iter()
             .chain(plugin_section_for_copy.assets.iter())
         {

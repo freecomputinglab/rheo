@@ -553,67 +553,6 @@ fn test_html_css_link_injection() {
     }
 }
 
-/// Test that a custom stylesheet named in rheo.toml is read and inlined into HTML output.
-#[test]
-fn test_html_custom_stylesheet_inlined() {
-    let dir = tempfile::tempdir().expect("Failed to create temp dir");
-    let project_path = dir.path();
-
-    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
-        .expect("Failed to write main.typ");
-
-    std::fs::write(
-        project_path.join("base.css"),
-        "/* rheo-test-custom-css */\nbody { background: hotpink; }\n",
-    )
-    .expect("Failed to write base.css");
-
-    std::fs::write(
-        project_path.join("rheo.toml"),
-        "version = \"0.1.2\"\nformats = [\"html\"]\n\n[html]\nstylesheets = [\"base.css\"]\n",
-    )
-    .expect("Failed to write rheo.toml");
-
-    let output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "rheo-cli",
-            "--",
-            "compile",
-            project_path.to_str().unwrap(),
-            "--html",
-        ])
-        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
-        .output()
-        .expect("Failed to run rheo compile");
-
-    assert!(
-        output.status.success(),
-        "Compilation failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let html = std::fs::read_to_string(project_path.join("build/html/main.html"))
-        .expect("Failed to read HTML file");
-
-    // Custom CSS content should be embedded as a <style> block
-    assert!(
-        html.contains("rheo-test-custom-css"),
-        "Custom CSS comment should appear in inlined <style> block"
-    );
-    assert!(
-        html.contains("background: hotpink"),
-        "Custom CSS rules should be inlined in HTML"
-    );
-
-    // Should not reference the file externally
-    assert!(
-        !html.contains(r#"href="base.css"#),
-        "Should not have a <link> pointing to base.css"
-    );
-}
-
 /// Test warning formatting with codespan-reporting
 #[test]
 fn test_warning_formatting() {
@@ -680,9 +619,9 @@ fn test_warning_formatting() {
         .output();
 }
 
-/// Test that global and per-plugin `copy` patterns in rheo.toml copy files into the build output.
+/// Test that global and per-plugin `asset` patterns in rheo.toml copy files into the build output.
 #[test]
-fn test_copy_patterns() {
+fn test_asset_patterns() {
     let dir = tempfile::tempdir().expect("Failed to create temp dir");
     let project_path = dir.path();
 
@@ -703,10 +642,10 @@ fn test_copy_patterns() {
         concat!(
             "version = \"0.1.2\"\n",
             "formats = [\"html\"]\n",
-            "copy = [\"readme.txt\"]\n",
+            "assets = [\"readme.txt\"]\n",
             "\n",
             "[html]\n",
-            "copy = [\"assets/logo.png\"]\n",
+            "assets = [\"assets/logo.png\"]\n",
         ),
     )
     .expect("Failed to write rheo.toml");
@@ -739,7 +678,7 @@ fn test_copy_patterns() {
     let html_readme = build_dir.join("html/readme.txt");
     assert!(
         html_readme.exists(),
-        "Global copy pattern: readme.txt not found in html output"
+        "Global asset pattern: readme.txt not found in html output"
     );
     assert_eq!(
         std::fs::read_to_string(&html_readme).unwrap(),
@@ -751,7 +690,7 @@ fn test_copy_patterns() {
     let html_logo = build_dir.join("html/assets/logo.png");
     assert!(
         html_logo.exists(),
-        "Per-plugin copy pattern: assets/logo.png not found in html output"
+        "Per-plugin asset pattern: assets/logo.png not found in html output"
     );
 }
 

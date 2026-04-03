@@ -70,7 +70,7 @@ pub struct RheoConfig {
 
     /// Global glob patterns for files to copy into every plugin's output directory.
     /// Paths are relative to the project root; directory structure is preserved.
-    pub copy: Vec<String>,
+    pub assets: Vec<String>,
 
     /// Per-plugin configuration sections, keyed by plugin name.
     /// Built from `[html]`, `[pdf]`, `[epub]` (and any other) table sections.
@@ -84,7 +84,7 @@ impl Default for RheoConfig {
             content_dir: Some("./".to_string()),
             build_dir: Some("./build".to_string()),
             formats: vec![],
-            copy: vec![],
+            assets: vec![],
             plugin_sections: HashMap::new(),
         }
     }
@@ -99,7 +99,7 @@ pub struct RheoConfigRaw {
     #[serde(default)]
     formats: Vec<String>,
     #[serde(default)]
-    copy: Vec<String>,
+    assets: Vec<String>,
     #[serde(flatten)]
     extra: HashMap<String, toml::Value>,
 }
@@ -121,7 +121,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             content_dir: raw.content_dir,
             build_dir: raw.build_dir,
             formats: raw.formats,
-            copy: raw.copy,
+            assets: raw.assets,
             plugin_sections,
         })
     }
@@ -457,17 +457,17 @@ mod tests {
     }
 
     #[test]
-    fn test_global_copy_parses() {
-        let toml = versioned_toml(r#"copy = ["*.txt", "assets/**/*.png"]"#);
+    fn test_global_assets_parses() {
+        let toml = versioned_toml(r#"assets = ["*.txt", "assets/**/*.png"]"#);
         let config = parse(&toml);
-        assert_eq!(config.copy, vec!["*.txt", "assets/**/*.png"]);
+        assert_eq!(config.assets, vec!["*.txt", "assets/**/*.png"]);
     }
 
     #[test]
-    fn test_global_copy_defaults_empty() {
+    fn test_global_assets_defaults_empty() {
         let toml = versioned_toml("");
         let config = parse(&toml);
-        assert!(config.copy.is_empty());
+        assert!(config.assets.is_empty());
     }
 
     #[test]
