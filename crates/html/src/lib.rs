@@ -37,6 +37,7 @@ pub struct HtmlPlugin;
 
 const PLUGIN_NAME: &str = "html";
 const STYLESHEETS: &str = "css_stylesheet";
+const SCRIPTS: &str = "js_scripts";
 
 impl FormatPlugin for HtmlPlugin {
     fn name(&self) -> &'static str {
@@ -72,12 +73,19 @@ impl FormatPlugin for HtmlPlugin {
     }
 
     fn assets(&self) -> Vec<AssetConfig> {
-        vec![AssetConfig {
-            name: &STYLESHEETS,
-            // TODO: make it possible to configure a custom path for any PluginAsset
-            default_path: "style.css",
-            required: false,
-        }]
+        vec![
+            AssetConfig {
+                name: &STYLESHEETS,
+                // TODO: make it possible to configure a custom path for any PluginAsset
+                default_path: "style.css",
+                required: false,
+            },
+            AssetConfig {
+                name: &SCRIPTS,
+                default_path: "index.js",
+                required: false,
+            },
+        ]
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
@@ -85,10 +93,21 @@ impl FormatPlugin for HtmlPlugin {
 
         // If a custom asset is specified, we inject the link to the asset into each HTML file.
         // If not, we inline the default CSS.
-        let css_path = ctx.assets.get(&STYLESHEETS);
-        let html_string = if let Some(css_asset) = css_path {
-            info!("Found stylesheet {}", &css_asset.resolved_path.display());
-            html_head::inject_head_links(&html_string, &[&css_asset.built_relative_path], &[])?
+        let html_string = if let Some(css_asset) = ctx.assets.get(&STYLESHEETS) {
+            info!(
+                "Found CSS stylesheet: {}",
+                &css_asset.resolved_path.display()
+            );
+            let css_assets = vec![&css_asset.built_relative_path[..]];
+
+            let js_assets = if let Some(js_asset) = ctx.assets.get(&SCRIPTS) {
+                info!("Found Javascript: {}", &js_asset.resolved_path.display());
+                vec![&js_asset.built_relative_path[..]]
+            } else {
+                vec![]
+            };
+
+            html_head::inject_head_links(&html_string, &vec![], &css_assets, &js_assets)?
         } else {
             info!("No stylesheet found, using default");
             html_head::inject_inline_styles(&html_string, &[&DEFAULT_STYLESHEET.to_string()])?

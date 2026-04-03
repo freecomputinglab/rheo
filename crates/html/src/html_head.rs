@@ -67,7 +67,12 @@ pub fn inject_inline_styles(html: &str, css_blocks: &[&str]) -> Result<String> {
     }
 }
 
-pub fn inject_head_links(html: &str, stylesheets: &[&str], fonts: &[&str]) -> Result<String> {
+pub fn inject_head_links(
+    html: &str,
+    fonts: &Vec<&str>,
+    stylesheets: &Vec<&str>,
+    scripts: &Vec<&str>,
+) -> Result<String> {
     // Parse the HTML document
     let dom = dom::HtmlDom::parse(html)?;
 
@@ -79,11 +84,13 @@ pub fn inject_head_links(html: &str, stylesheets: &[&str], fonts: &[&str]) -> Re
             errors: "HTML document does not contain a <head> element".to_string(),
         })?;
 
-    // Create link elements for stylesheets and fonts
-    // We prepend in reverse order so they end up in the correct order:
-    // fonts first, then stylesheets
+    // First prepend scripts (in reverse order)
+    for script in scripts.iter().rev() {
+        // TODO:
+        unimplemented!()
+    }
 
-    // First prepend stylesheets (in reverse order)
+    // Then prepend stylesheets (in reverse order)
     for stylesheet in stylesheets.iter().rev() {
         let link = dom::Element::create_link("stylesheet", stylesheet);
         head.prepend_child(link);
