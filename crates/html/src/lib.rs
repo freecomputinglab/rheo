@@ -8,7 +8,7 @@ pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
     FormatPlugin, OpenHandle, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
-    ServerHandle,
+    ServerHandle, export_typst_bundle,
 };
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -120,7 +120,7 @@ fn compile_html_bundle(options: RheoCompileOptions, config: &PluginSection) -> R
     info!("compiling HTML bundle");
 
     // Compile and export the bundle using the core helper
-    let fs = options.world.export_bundle()?;
+    let fs = export_typst_bundle(options.world)?;
 
     debug!(file_count = fs.len(), "exported HTML bundle");
 

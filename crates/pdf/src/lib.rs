@@ -1,4 +1,4 @@
-use rheo_core::{FormatPlugin, PluginContext, Result, RheoError, RheoWorld};
+use rheo_core::{FormatPlugin, PluginContext, Result, RheoError, RheoWorld, export_typst_bundle};
 use std::path::Path;
 use tracing::{debug, info};
 
@@ -47,7 +47,7 @@ fn compile_pdf_merged_bundle(world: &RheoWorld, output_path: &Path) -> Result<()
     info!("compiling merged PDF bundle");
 
     // Compile and export the bundle using the core helper
-    let fs = world.export_bundle()?;
+    let fs = export_typst_bundle(world)?;
 
     debug!(file_count = fs.len(), "exported PDF bundle");
 
@@ -73,7 +73,7 @@ fn compile_pdf_per_file_bundle(world: &RheoWorld, output_dir: &Path) -> Result<(
     info!("compiling per-file PDF bundle");
 
     // Compile and export the bundle using the core helper
-    let fs = world.export_bundle()?;
+    let fs = export_typst_bundle(world)?;
 
     debug!(file_count = fs.len(), "exported PDF bundle");
 

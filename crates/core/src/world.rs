@@ -7,17 +7,15 @@ use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
 use parking_lot::Mutex;
 use tracing::warn;
-use typst::diag::{FileError, FileResult, Warned};
+use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Datetime};
 use typst::syntax::{FileId, Lines, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
-use typst_html::HtmlDocument;
 use typst_kit::downloader::SystemDownloader;
 use typst_kit::fonts::FontStore;
 use typst_kit::packages::SystemPackages;
-use typst_layout::PagedDocument;
 use typst_library::{Feature, Features};
 
 /// A simple World implementation for rheo compilation.
@@ -225,53 +223,6 @@ impl RheoWorld {
 
     pub fn root(&self) -> &Path {
         &self.root
-    }
-
-    /// Compile and export a Typst bundle to file bytes.
-    pub fn export_bundle(&self) -> crate::Result<Vec<(String, Vec<u8>)>> {
-        use crate::diagnostics::print_diagnostics;
-        let Warned { output, warnings } = typst::compile::<typst_bundle::Bundle>(self);
-        let _ = print_diagnostics(self, &[], &warnings);
-        let bundle = output.map_err(|errors| {
-            let _ = print_diagnostics(self, &errors[..], &[]);
-            let msgs: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
-            crate::RheoError::project_config(format!(
-                "bundle compilation had errors: {}",
-                msgs.join(", ")
-            ))
-        })?;
-        let bundle_options = typst_bundle::BundleOptions {
-            pixel_per_pt: 144.0,
-            pdf: typst_pdf::PdfOptions::default(),
-        };
-        let fs = typst_bundle::export(&bundle, &bundle_options).map_err(|e| {
-            crate::RheoError::project_config(format!("bundle export failed: {:?}", e))
-        })?;
-        Ok(fs
-            .into_iter()
-            .map(|(p, b)| (p.get_without_slash().to_string(), b.to_vec()))
-            .collect())
-    }
-
-    /// Compile to an HTML document using this world.
-    pub fn compile_html(&self) -> crate::Result<HtmlDocument> {
-        use crate::diagnostics::unwrap_compilation_result;
-        use typst::diag::SourceDiagnostic;
-        tracing::info!("compiling to HTML");
-        let result = typst::compile::<HtmlDocument>(self);
-        let html_filter = |w: &SourceDiagnostic| {
-            !w.message
-                .contains("html export is under active development and incomplete")
-        };
-        unwrap_compilation_result(Some(self), result, Some(html_filter))
-    }
-
-    /// Compile to a PDF document using this world.
-    pub fn compile_pdf(&self) -> crate::Result<PagedDocument> {
-        use crate::diagnostics::unwrap_compilation_result;
-        tracing::info!("compiling to PDF");
-        let result = typst::compile::<PagedDocument>(self);
-        unwrap_compilation_result(Some(self), result, None::<fn(&_) -> bool>)
     }
 }
 
