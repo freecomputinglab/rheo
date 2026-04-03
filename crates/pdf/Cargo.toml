@@ -16,6 +16,3 @@ thiserror = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
-
-# File utilities
-tempfile = { workspace = true }

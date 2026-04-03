@@ -3071,7 +3071,6 @@ name = "rheo-pdf"
 version = "0.2.0"
 dependencies = [
  "rheo-core",
- "tempfile",
  "thiserror 2.0.17",
  "tracing",
 ]

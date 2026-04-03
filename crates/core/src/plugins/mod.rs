@@ -1,4 +1,5 @@
 use crate::config::PluginSection;
+use crate::html_compile::{compile_document_to_string, compile_html_with_world};
 use crate::output::OutputConfig;
 use crate::pdf_compile::{compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes};
 use crate::project::ProjectConfig;
@@ -92,8 +93,28 @@ impl<'a> PluginContext<'a> {
         }
     }
 
-    pub fn compile_to_html(&'a self, plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
-        unimplemented!()
+    pub fn compile_to_html_string(&'a self) -> Result<String> {
+        let world = self.options.world.as_ref().ok_or_else(|| {
+            RheoError::project_config(
+                "HTML per-file compile requires a world; this is a rheo bug (internal invariant violation)",
+            )
+        })?;
+
+        let document = compile_html_with_world(world)?;
+
+        debug!(output = %self.options.output.display(), "exporting to HTML");
+        compile_document_to_string(&document)
+    }
+
+    pub fn compile_to_html(&'a self, _plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
+        let html_string = self.compile_to_html_string()?;
+
+        debug!(size = html_string.len(), "writing HTML file");
+        std::fs::write(&self.options.output, &html_string).map_err(|e| {
+            RheoError::io(e, format!("writing HTML file to {:?}", self.options.output))
+        })?;
+
+        Ok(())
     }
 
     /// Compile to PDF using the full context. By modifying fields in the PluginContext before
@@ -480,4 +501,7 @@ pub trait FormatPlugin: Send + Sync {
     fn compile(&self, ctx: PluginContext<'_>) -> crate::Result<()>;
     // NOTE: the 'merge' attribute could be upraded to a parameter here, as this function operates
     // very differently according to whether it is true of false
+
+    // TODO: because the case here is that compile is called for EVERY source file, we need a
+    // `precompile` entrypoint that can do things like asset copying when merge is not true.
 }

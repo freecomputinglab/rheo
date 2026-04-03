@@ -8,7 +8,6 @@ pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
     FormatPlugin, OpenHandle, PluginContext, PluginSection, Result, RheoError, ServerHandle,
-    compile_document_to_string, compile_html_with_world,
 };
 use std::path::Path;
 use std::{convert::From, path::PathBuf};
@@ -102,40 +101,24 @@ impl FormatPlugin for HtmlPlugin {
         Ok(OpenHandle::Server(Box::new(handle)))
     }
 
-    // TODO: because the case here is that compile is called for EVERY source file, we need a
-    // `precompile` entrypoint that can do things like asset copying.
-
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        if ctx.spine.merge {
-            return Err(RheoError::project_config(
-                "HTML does not support merged compilation",
-            ));
-        }
-
         let html_config: HtmlConfig = (&ctx.config).into();
         let css_contents = collect_css(&html_config.stylesheets, &ctx.project.root);
-        let world = ctx.options.world.ok_or_else(|| {
-            RheoError::project_config(
-                "HTML per-file compile requires a world; this is a rheo bug (internal invariant violation)",
-            )
-        })?;
-
-        let document = compile_html_with_world(world)?;
-        let output = ctx.options.output;
-
-        debug!(output = %output.display(), "exporting to HTML");
-        let html_string = compile_document_to_string(&document)?;
+        let html_string = ctx.compile_to_html_string()?;
 
         // Inject font links first (DOM-based), then inline styles (string-based).
         // Ordering matters: string-based injection must run last to avoid re-parsing
         // and HTML-escaping CSS content (e.g., `>` in selectors).
         let font_refs: Vec<&str> = html_config.fonts.iter().map(|s| s.as_str()).collect();
+        // TODO: these head utitilities should be incorporated in core.
         let html_string = html_head::inject_head_links(&html_string, &[], &font_refs)?;
 
+        // TODO: CSS should not be inlined, but passed through as an asset and linked
         let css_refs: Vec<&str> = css_contents.iter().map(|s| s.as_str()).collect();
         let html_string = html_head::inject_inline_styles(&html_string, &css_refs)?;
 
         debug!(size = html_string.len(), "writing HTML file");
+        let output = &ctx.options.output;
         std::fs::write(&output, &html_string)
             .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
 

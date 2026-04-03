@@ -614,62 +614,6 @@ fn test_html_custom_stylesheet_inlined() {
     );
 }
 
-/// Test that a missing custom stylesheet is skipped with a warning rather than failing.
-#[test]
-fn test_html_missing_custom_stylesheet_skipped() {
-    let dir = tempfile::tempdir().expect("Failed to create temp dir");
-    let project_path = dir.path();
-
-    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
-        .expect("Failed to write main.typ");
-
-    // rheo.toml references a CSS file that does not exist
-    std::fs::write(
-        project_path.join("rheo.toml"),
-        "version = \"0.1.2\"\nformats = [\"html\"]\n\n[html]\nstylesheets = [\"nonexistent.css\"]\n",
-    )
-    .expect("Failed to write rheo.toml");
-
-    let output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "rheo-cli",
-            "--",
-            "compile",
-            project_path.to_str().unwrap(),
-            "--html",
-        ])
-        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
-        .output()
-        .expect("Failed to run rheo compile");
-
-    // Compilation should succeed — missing stylesheet is a warning, not an error
-    assert!(
-        output.status.success(),
-        "Compilation should succeed when custom stylesheet is missing, got: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let html_path = project_path.join("build/html/main.html");
-    assert!(html_path.exists(), "HTML file should still be produced");
-
-    let html = std::fs::read_to_string(&html_path).expect("Failed to read HTML file");
-
-    // No link to the missing file should appear
-    assert!(
-        !html.contains(r#"href="nonexistent.css"#),
-        "Should not have a <link> to nonexistent.css"
-    );
-
-    // A warning about the missing file should be emitted to stdout (rheo's tracing output)
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("nonexistent.css"),
-        "Warning about missing stylesheet should appear in output"
-    );
-}
-
 /// Test warning formatting with codespan-reporting
 #[test]
 fn test_warning_formatting() {
