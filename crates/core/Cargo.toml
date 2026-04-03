@@ -49,3 +49,7 @@ notify = { workspace = true }
 ecow = { workspace = true }
 
 tempfile = { workspace = true }
+
+# HTML parsing
+html5ever = { workspace = true }
+markup5ever_rcdom = { workspace = true }

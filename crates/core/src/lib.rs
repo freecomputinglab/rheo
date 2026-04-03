@@ -1,4 +1,5 @@
 pub mod compile;
+pub mod html_utils;
 pub mod config;
 pub mod constants;
 pub mod diagnostics;
