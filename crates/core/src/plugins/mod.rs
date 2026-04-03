@@ -1,8 +1,12 @@
 use crate::config::PluginSection;
 use crate::output::OutputConfig;
+use crate::pdf_compile::{compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes};
 use crate::project::ProjectConfig;
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use tempfile::NamedTempFile;
+use tracing::{debug, info};
 
 /// Trait for managing a running preview server.
 pub trait ServerHandle: Send + Sync {
@@ -21,6 +25,7 @@ pub enum OpenHandle {
 }
 
 use crate::compile::RheoCompileOptions;
+use crate::{BuiltSpine, Result, RheoError};
 
 /// Standardized spine options resolved by rheo core before calling compile().
 #[derive(Debug, Clone)]
@@ -75,6 +80,94 @@ pub struct PluginContext<'a> {
     pub inputs: HashMap<&'static str, PathBuf>,
 }
 
+impl<'a> PluginContext<'a> {
+    pub fn compile(&'a self, plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
+        let ext = plugin.extension();
+        match ext {
+            "pdf" => self.compile_to_pdf(plugin),
+            "html" => self.compile_to_html(plugin),
+            _ => Err(RheoError::misconfigured_plugin(
+                "Cannot infer compilation target from extension, as it is not 'html' or 'pdf'. Please use `ctx.compile_to_pdf` or `ctx.compile_to_html` explicitly.",
+            )),
+        }
+    }
+
+    pub fn compile_to_html(&'a self, plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
+        unimplemented!()
+    }
+
+    /// Compile to PDF using the full context. By modifying fields in the PluginContext before
+    /// calling this, you can modify the default PDF behaviour.
+    pub fn compile_to_pdf(&'a self, plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
+        if self.spine.merge {
+            // TODO: make this a `build()` function on SpineOptions
+            // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
+            let rheo_spine = BuiltSpine::build(
+                &self.options.root,
+                Some(&self.spine),
+                plugin.extension(),
+                self.spine.merge,
+            )?;
+
+            debug!(file_count = rheo_spine.source.len(), "built PDF spine");
+
+            let concatenated_source = &rheo_spine.source[0];
+            debug!(
+                source_length = concatenated_source.len(),
+                "concatenated sources"
+            );
+
+            // Create temporary file with concatenated source in root directory
+            let mut temp_file = NamedTempFile::new_in(&self.options.root)
+                .map_err(|e| RheoError::io(e, "creating temporary file for merged PDF"))?;
+            temp_file
+                .write_all(concatenated_source.as_bytes())
+                .map_err(|e| RheoError::io(e, "writing concatenated source to temporary file"))?;
+            temp_file
+                .flush()
+                .map_err(|e| RheoError::io(e, "flushing temporary file"))?;
+
+            let output_path = &self.options.output;
+            let temp_path = temp_file.path();
+            debug!(temp_path = %temp_path.display(), "created temporary file");
+
+            // output_format=None because links already transformed to labels by RheoSpine
+            let plugin_library = plugin.typst_library().map(|s| s.to_string());
+            let document =
+                compile_pdf_to_document(temp_path, &self.options.root, None, plugin_library)?;
+
+            debug!(output = %output_path.display(), "exporting to PDF");
+            let pdf_bytes = document_to_pdf_bytes(&document)?;
+
+            debug!(size = pdf_bytes.len(), "writing PDF file");
+            std::fs::write(output_path, &pdf_bytes)
+                .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output_path)))?;
+
+            info!(output = %output_path.display(), "successfully compiled merged PDF");
+            Ok(())
+        } else {
+            let world = self.options.world.as_ref().ok_or_else(|| {
+                RheoError::project_config(
+                    "PDF per-file compile requires a world; this is a rheo bug (internal invariant violation)",
+                )
+            })?;
+
+            let document = compile_pdf_with_world(world)?;
+            let output = &self.options.output;
+
+            debug!(output = %output.display(), "exporting to PDF");
+            let pdf_bytes = document_to_pdf_bytes(&document)?;
+
+            debug!(size = pdf_bytes.len(), "writing PDF file");
+            std::fs::write(output, &pdf_bytes)
+                .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output)))?;
+
+            info!(output = %output.display(), "successfully compiled to PDF");
+            Ok(())
+        }
+    }
+}
+
 /// Plugin trait for implementing new output formats in rheo.
 ///
 /// # Implementing a new plugin
@@ -123,6 +216,11 @@ pub trait FormatPlugin: Send + Sync {
     /// }
     /// ```
     fn name(&self) -> &'static str;
+
+    /// The extension that shuold be used when transforming links, if it differs from the name.
+    fn extension(&self) -> &'static str {
+        self.name()
+    }
 
     /// Whether this plugin merges files by default.
     ///
@@ -380,4 +478,6 @@ pub trait FormatPlugin: Send + Sync {
     ///
     /// * `ctx` - Compilation context with project config, options, spine, inputs, etc.
     fn compile(&self, ctx: PluginContext<'_>) -> crate::Result<()>;
+    // NOTE: the 'merge' attribute could be upraded to a parameter here, as this function operates
+    // very differently according to whether it is true of false
 }

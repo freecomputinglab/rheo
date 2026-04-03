@@ -64,6 +64,10 @@ pub enum RheoError {
     /// Invalid data error
     #[error("Invalid data: {message}")]
     InvalidData { message: String },
+
+    /// Misconfigured plugin
+    #[error("Misconfigured plugin: {message}")]
+    MisconfiguredPlugin { message: String },
 }
 
 impl RheoError {
@@ -108,6 +112,13 @@ impl RheoError {
     /// Helper to create an invalid data error
     pub fn invalid_data(message: impl Into<String>) -> Self {
         RheoError::InvalidData {
+            message: message.into(),
+        }
+    }
+
+    /// Helper to create an misconfigured error
+    pub fn misconfigured_plugin(message: impl Into<String>) -> Self {
+        RheoError::MisconfiguredPlugin {
             message: message.into(),
         }
     }

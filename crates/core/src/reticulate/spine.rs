@@ -28,12 +28,13 @@ impl BuiltSpine {
     /// # Arguments
     /// * `root` - Project root directory
     /// * `spine_config` - Optional spine configuration (determines spine files)
-    /// * `format_name` - Target output format name (e.g. "pdf", "html", "epub")
+    /// * `format_ext` - The extension to use for relative links.
+    /// * `merge_produces_pdf` - Whether the merged compile produces a PDF
     /// * `merge` - Whether to merge spine files into a single source (caller decides)
     pub fn build(
         root: &Path,
         spine_config: Option<&SpineOptions>,
-        format_name: &str,
+        format_ext: &str,
         merge: bool,
     ) -> Result<BuiltSpine> {
         let spine_files = generate_spine(root, spine_config, false)?;
@@ -58,7 +59,7 @@ impl BuiltSpine {
             // i.e. whether relative linking makes sense. For PDF, it doesn't, whereas for HTML and
             // EPUB, it does.
             let transformed_source =
-                transform_source(&source, spine_file, &spine_files, format_name, root)?;
+                transform_source(&source, spine_file, &spine_files, format_ext, root)?;
 
             let final_source = if should_merge {
                 let (label, doc_title) = extract_label_and_title(&source, spine_file)?;
@@ -94,17 +95,19 @@ fn transform_source(
     source: &str,
     spine_file: &Path,
     spine_files: &[PathBuf],
-    format_name: &str,
+    ext_name: &str,
     project_root: &Path,
 ) -> Result<String> {
     use crate::reticulate::transformer::LinkTransformer;
 
-    let transformer = if format_name == "pdf" && spine_files.len() > 1 {
+    // Plugins that produce a single merged PDF are a special case, as here we want to use Typst's
+    // internal link resolution to resolve Rheo links
+    let transformer = if ext_name == "pdf" && spine_files.len() > 1 {
         // Merged PDF: pass spine for label references
-        LinkTransformer::new(format_name).with_spine(spine_files.to_vec())
+        LinkTransformer::new(ext_name).with_spine(spine_files.to_vec())
     } else {
-        // Single-file PDF, HTML, EPUB, and all other formats
-        LinkTransformer::new(format_name)
+        // All other formats
+        LinkTransformer::new(ext_name)
     };
 
     transformer.transform_source(source, spine_file, project_root)

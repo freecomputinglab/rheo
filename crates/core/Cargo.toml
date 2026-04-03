@@ -48,5 +48,4 @@ regex = { workspace = true }
 notify = { workspace = true }
 ecow = { workspace = true }
 
-[dev-dependencies]
 tempfile = { workspace = true }
