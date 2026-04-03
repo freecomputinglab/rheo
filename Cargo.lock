@@ -2915,7 +2915,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "typst",
- "typst-bundle",
  "typst-html",
  "typst-kit",
  "typst-layout",

@@ -247,12 +247,66 @@ fn resolve_build_dir(
     }
 }
 
+fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
+    typ_file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| RheoError::project_config(format!("invalid .typ filename: {:?}", typ_file)))
+}
+
+/// Per-plugin invariants shared across all files in a single-plugin compilation pass.
+struct PerFileCtx<'a> {
+    plugin: &'a dyn FormatPlugin,
+    plugin_output_dir: &'a Path,
+    project: &'a ProjectConfig,
+    output_config: &'a OutputConfig,
+    spine: &'a TracedSpine,
+    plugin_section: &'a PluginSection,
+    resolved_inputs: &'a HashMap<&'static str, PathBuf>,
+    content_dir: &'a Path,
+}
+
+/// Compile one file with the given world, recording success/failure in `results`.
+///
+/// `get_output_filename` errors propagate; `plugin.compile()` errors are recorded
+/// as failures rather than propagated (so other files in the batch still compile).
+fn compile_one_file(
+    world: &mut RheoWorld,
+    typ_file: &Path,
+    pfc: &PerFileCtx<'_>,
+    results: &mut CompilationResults,
+) -> Result<()> {
+    let filename = get_output_filename(typ_file)?;
+    let output_path = pfc
+        .plugin_output_dir
+        .join(&filename)
+        .with_extension(pfc.plugin.output_extension());
+    let options = RheoCompileOptions::new(&output_path, pfc.content_dir, world);
+    let ctx = PluginContext {
+        project: pfc.project,
+        output_config: pfc.output_config,
+        options,
+        spine: pfc.spine.clone(),
+        config: pfc.plugin_section.clone(),
+        inputs: pfc.resolved_inputs.clone(),
+    };
+    match pfc.plugin.compile(ctx) {
+        Ok(_) => results.record_success(pfc.plugin.name()),
+        Err(e) => {
+            error!(file = %typ_file.display(), error = %e, "{} compilation failed", pfc.plugin.name());
+            results.record_failure(pfc.plugin.name());
+        }
+    }
+    Ok(())
+}
+
 /// Bundle compilation: generate bundle entry, inject into world, compile once.
-/// Used by all plugins (HTML, PDF, EPUB) with the bundle API.
+/// Used by plugins that use the bundle API (HTML, PDF non-merge).
 #[allow(clippy::too_many_arguments)]
-fn compile_with_bundle(
+fn compile_bundle(
     plugin: &dyn FormatPlugin,
-    output: &Path,
+    plugin_output_dir: &Path,
     project: &ProjectConfig,
     output_config: &OutputConfig,
     spine: &TracedSpine,
@@ -280,7 +334,7 @@ fn compile_with_bundle(
     );
     bundle_world.inject_bundle_entry(bundle_entry_source);
 
-    let options = RheoCompileOptions::new(output, compilation_root, &mut bundle_world);
+    let options = RheoCompileOptions::new(plugin_output_dir, &project.root, &mut bundle_world);
 
     let ctx = PluginContext {
         project,
@@ -303,10 +357,115 @@ fn compile_with_bundle(
     Ok(())
 }
 
+/// Merged compilation: single output from all spine documents.
+/// Used by PDF merge mode and EPUB.
+#[allow(clippy::too_many_arguments)]
+fn compile_merged(
+    plugin: &dyn FormatPlugin,
+    plugin_output_dir: &Path,
+    project: &ProjectConfig,
+    output_config: &OutputConfig,
+    spine: &TracedSpine,
+    plugin_section: &PluginSection,
+    resolved_inputs: HashMap<&'static str, PathBuf>,
+    results: &mut CompilationResults,
+    compilation_root: &Path,
+) -> Result<()> {
+    let output_path = plugin_output_dir
+        .join(&project.name)
+        .with_extension(plugin.output_extension());
+
+    let plugin_library = plugin.typst_library().map(|s| s.to_string());
+    let mut bundle_world = RheoWorld::new(
+        compilation_root,
+        spine
+            .documents
+            .first()
+            .map(|d| d.path.as_path())
+            .unwrap_or(compilation_root),
+        plugin_library,
+    )?;
+
+    let bundle_entry_source = generate_bundle_entry(
+        spine,
+        compilation_root,
+        plugin.name(),
+        plugin.typst_library().unwrap_or_default(),
+    );
+    bundle_world.inject_bundle_entry(bundle_entry_source);
+
+    let options = RheoCompileOptions::new(&output_path, compilation_root, &mut bundle_world);
+
+    let ctx = PluginContext {
+        project,
+        output_config,
+        options,
+        spine: spine.clone(),
+        config: plugin_section.clone(),
+        inputs: resolved_inputs,
+    };
+
+    match plugin.compile(ctx) {
+        Ok(_) => {
+            results.record_success(plugin.name());
+        }
+        Err(e) => {
+            error!(error = %e, "{} generation failed", plugin.name());
+            results.record_failure(plugin.name());
+        }
+    }
+    Ok(())
+}
+
+/// Per-file compilation: loop through spine documents, compile each individually.
+/// Used by PDF non-merge mode.
+#[allow(clippy::too_many_arguments)]
+fn compile_per_file(
+    plugin: &dyn FormatPlugin,
+    plugin_output_dir: &Path,
+    project: &ProjectConfig,
+    output_config: &OutputConfig,
+    spine: &TracedSpine,
+    plugin_section: &PluginSection,
+    resolved_inputs: &HashMap<&'static str, PathBuf>,
+    content_dir: &Path,
+    world: &mut Option<&mut RheoWorld>,
+    results: &mut CompilationResults,
+) -> Result<()> {
+    let files: Vec<PathBuf> = spine.documents.iter().map(|d| d.path.clone()).collect();
+
+    let pfc = PerFileCtx {
+        plugin,
+        plugin_output_dir,
+        project,
+        output_config,
+        spine,
+        plugin_section,
+        resolved_inputs,
+        content_dir,
+    };
+
+    if let Some(ref mut existing_world) = *world {
+        for typ_file in &files {
+            existing_world.set_main(typ_file)?;
+            existing_world.reset();
+            compile_one_file(existing_world, typ_file, &pfc, results)?;
+        }
+    } else {
+        let plugin_library = plugin.typst_library().map(|s| s.to_string());
+        for typ_file in &files {
+            let mut fresh_world = RheoWorld::new(content_dir, typ_file, plugin_library.clone())?;
+            compile_one_file(&mut fresh_world, typ_file, &pfc, results)?;
+        }
+    }
+    Ok(())
+}
+
 fn perform_compilation(
     project: &ProjectConfig,
     output_config: &OutputConfig,
     plugins: &[Box<dyn FormatPlugin>],
+    mut world: Option<&mut RheoWorld>,
 ) -> Result<()> {
     if project.typ_files.is_empty() {
         return Err(RheoError::project_config("no .typ files found in project"));
@@ -446,29 +605,59 @@ fn perform_compilation(
             )?
         };
 
+        // For non-single-file mode, use compilation_root; for single file mode, use file's parent
+        let content_dir = if project.mode == ProjectMode::SingleFile {
+            // For single file mode, use the file's parent directory
+            project.typ_files[0]
+                .parent()
+                .unwrap_or(&project.root)
+                .to_path_buf()
+        } else {
+            compilation_root.clone()
+        };
+
         // Get full plugin section
         let plugin_section = project.config.plugin_section(plugin.name());
 
-        // Determine output path based on merge mode
-        let output = if spine.merge {
-            plugin_output_dir
-                .join(&project.name)
-                .with_extension(plugin.output_extension())
+        // Dispatch to appropriate compilation path
+        if !spine.merge && plugin.uses_bundle_api() {
+            compile_bundle(
+                plugin.as_ref(),
+                &plugin_output_dir,
+                project,
+                output_config,
+                &spine,
+                &plugin_section,
+                resolved_inputs,
+                &mut results,
+                &compilation_root,
+            )?;
+        } else if spine.merge {
+            compile_merged(
+                plugin.as_ref(),
+                &plugin_output_dir,
+                project,
+                output_config,
+                &spine,
+                &plugin_section,
+                resolved_inputs,
+                &mut results,
+                &compilation_root,
+            )?;
         } else {
-            plugin_output_dir.clone()
-        };
-
-        compile_with_bundle(
-            plugin.as_ref(),
-            &output,
-            project,
-            output_config,
-            &spine,
-            &plugin_section,
-            resolved_inputs,
-            &mut results,
-            &compilation_root,
-        )?;
+            compile_per_file(
+                plugin.as_ref(),
+                &plugin_output_dir,
+                project,
+                output_config,
+                &spine,
+                &plugin_section,
+                &resolved_inputs,
+                &content_dir,
+                &mut world,
+                &mut results,
+            )?;
+        }
     }
 
     let names: Vec<&str> = plugins.iter().map(|p| p.name()).collect();
@@ -657,7 +846,7 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
     )?;
 
     // Initial compilation (best-effort; watch continues on failure)
-    if let Err(e) = perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins) {
+    if let Err(e) = perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None) {
         warn!(error = %e, "initial compilation failed");
     }
 
@@ -684,7 +873,8 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         match event {
             WatchEvent::FilesChanged => {
                 info!("files changed, recompiling");
-                if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins).is_ok() {
+                if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None).is_ok()
+                {
                     for handle in &open_handles {
                         if let OpenHandle::Server(server) = handle {
                             server.reload();
@@ -702,7 +892,7 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
                 ) {
                     Ok(new_ctx) => {
                         ctx = new_ctx;
-                        if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins)
+                        if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None)
                             .is_ok()
                         {
                             for handle in &open_handles {
@@ -730,7 +920,7 @@ fn run_compile(sub: &ArgMatches) -> Result<()> {
 
     let ctx = setup_compilation_context(&path, config.as_deref(), build_dir, enabled)?;
 
-    perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins)
+    perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None)
 }
 
 fn run_clean(sub: &ArgMatches) -> Result<()> {

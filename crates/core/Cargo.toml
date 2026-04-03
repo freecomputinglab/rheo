@@ -16,7 +16,6 @@ typst-library = { workspace = true }
 typst-kit = { workspace = true }
 typst-syntax = { workspace = true }
 typst-layout = { workspace = true }
-typst-bundle = { workspace = true }
 comemo = { workspace = true }
 
 # Error handling and diagnostics
