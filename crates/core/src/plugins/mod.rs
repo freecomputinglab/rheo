@@ -38,7 +38,8 @@ pub struct SpineOptions {
 }
 
 /// Declares an additional non-Typst input file needed from the project directory.
-pub struct PluginAsset {
+#[derive(Debug, Clone)]
+pub struct AssetConfig {
     /// Key used to retrieve this input from PluginContext::inputs
     pub name: &'static str,
     /// Default path relative to the project root (not the content directory) where the file is
@@ -46,6 +47,13 @@ pub struct PluginAsset {
     pub default_path: &'static str,
     /// If true, a missing file is a compile error; if false, it is absent from ctx.inputs
     pub required: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct Asset {
+    pub config: AssetConfig,
+    pub resolved_path: PathBuf,
+    pub built_relative_path: String,
 }
 
 /// Context passed to plugin.compile() for each compilation unit.
@@ -79,7 +87,7 @@ pub struct PluginContext<'a> {
     /// Paths are relative to the plugin's output directory (e.g., `build/html/`).
     /// The CLI copies each declared input from the project root to the output directory
     /// before calling `compile()`.
-    pub assets: HashMap<&'static str, PathBuf>,
+    pub assets: HashMap<&'static str, Asset>,
 }
 
 impl<'a> PluginContext<'a> {
@@ -369,7 +377,7 @@ pub trait FormatPlugin: Send + Sync {
     ///     Ok(())
     /// }
     /// ```
-    fn assets(&self) -> Vec<PluginAsset> {
+    fn assets(&self) -> Vec<AssetConfig> {
         vec![]
     }
 

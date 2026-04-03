@@ -16,6 +16,7 @@ use tracing::{debug, error, info, warn};
 
 // Re-export logging functionality
 pub use rheo_core::logging;
+use rheo_core::plugins::Asset;
 
 /// Initialize logging with specified verbosity
 pub fn init_logging(verbose: bool, quiet: bool) -> Result<()> {
@@ -289,7 +290,7 @@ struct PerFileCtx<'a> {
     output_config: &'a OutputConfig,
     spine: &'a SpineOptions,
     plugin_section: &'a PluginSection,
-    resolved_assets: &'a HashMap<&'static str, PathBuf>,
+    resolved_assets: &'a HashMap<&'static str, Asset>,
 }
 
 /// Compile one file with the given world, recording success/failure in `results`.
@@ -349,29 +350,36 @@ fn perform_compilation(
         })?;
 
         // Resolve declared assets
-        let mut resolved_assets: HashMap<&'static str, PathBuf> = HashMap::new();
-        for input in plugin.assets() {
-            let src = project.root.join(&input.default_path);
+        let mut resolved_assets: HashMap<&'static str, Asset> = HashMap::new();
+        for asset_config in plugin.assets() {
+            let src = project.root.join(&asset_config.default_path);
             if src.is_file() {
-                let dest = plugin_output_dir.join(&input.default_path);
+                let dest = plugin_output_dir.join(&asset_config.default_path);
                 std::fs::copy(&src, &dest).map_err(|e| {
                     RheoError::io(
                         e,
                         format!(
                             "copying plugin input '{}' from {} to {}",
-                            input.name,
+                            asset_config.name,
                             src.display(),
                             dest.display()
                         ),
                     )
                 })?;
-                resolved_assets.insert(input.name, dest);
-            } else if input.required {
+                resolved_assets.insert(
+                    asset_config.name,
+                    Asset {
+                        config: asset_config.clone(),
+                        resolved_path: dest,
+                        built_relative_path: asset_config.default_path.to_string(),
+                    },
+                );
+            } else if asset_config.required {
                 return Err(RheoError::project_config(format!(
                     "plugin '{}' requires input '{}' at '{}' but it was not found",
                     plugin.name(),
-                    input.name,
-                    &input.default_path
+                    asset_config.name,
+                    &asset_config.default_path
                 )));
             }
         }

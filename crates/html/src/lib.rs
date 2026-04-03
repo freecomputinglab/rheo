@@ -7,7 +7,7 @@ mod server;
 pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
-    FormatPlugin, OpenHandle, PluginAsset, PluginContext, Result, RheoError, ServerHandle,
+    AssetConfig, FormatPlugin, OpenHandle, PluginContext, Result, RheoError, ServerHandle,
 };
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -71,8 +71,8 @@ impl FormatPlugin for HtmlPlugin {
         Ok(OpenHandle::Server(Box::new(handle)))
     }
 
-    fn assets(&self) -> Vec<PluginAsset> {
-        vec![PluginAsset {
+    fn assets(&self) -> Vec<AssetConfig> {
+        vec![AssetConfig {
             name: &STYLESHEETS,
             // TODO: make it possible to configure a custom path for any PluginAsset
             default_path: "style.css",
@@ -86,9 +86,9 @@ impl FormatPlugin for HtmlPlugin {
         // If a custom asset is specified, we inject the link to the asset into each HTML file.
         // If not, we inline the default CSS.
         let css_path = ctx.assets.get(&STYLESHEETS);
-        let html_string = if let Some(css_fname) = css_path {
-            info!("Found stylesheet {}", &css_fname.display());
-            html_head::inject_head_links(&html_string, &[&css_fname.display().to_string()], &[])?
+        let html_string = if let Some(css_asset) = css_path {
+            info!("Found stylesheet {}", &css_asset.resolved_path.display());
+            html_head::inject_head_links(&html_string, &[&css_asset.built_relative_path], &[])?
         } else {
             info!("No stylesheet found, using default");
             html_head::inject_inline_styles(&html_string, &[&DEFAULT_STYLESHEET.to_string()])?
