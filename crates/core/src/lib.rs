@@ -42,7 +42,7 @@ pub use config::{PluginSection, Spine};
 
 // Plugin trait and context
 pub use plugins::{
-    FormatPlugin, OpenHandle, PluginContext, PluginInput, ServerHandle, SpineOptions,
+    FormatPlugin, OpenHandle, PluginAsset, PluginContext, ServerHandle, SpineOptions,
 };
 
 // HTML compilation functions

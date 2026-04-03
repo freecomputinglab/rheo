@@ -7,10 +7,9 @@ mod server;
 pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
-    FormatPlugin, OpenHandle, PluginContext, PluginSection, Result, RheoError, ServerHandle,
+    FormatPlugin, OpenHandle, PluginAsset, PluginContext, Result, RheoError, ServerHandle,
 };
 use std::path::Path;
-use std::{convert::From, path::PathBuf};
 use tracing::{debug, info, warn};
 
 /// Reload callback type - called by watch loop after successful compilation.
@@ -34,43 +33,14 @@ impl ServerHandle for HtmlServerHandle {
     }
 }
 
-/// Format-specific configuration parsed from the `[html]` section of rheo.toml.
-struct HtmlConfig {
-    stylesheets: Vec<String>,
-    fonts: Vec<String>,
-}
-
-impl From<&PluginSection> for HtmlConfig {
-    fn from(section: &PluginSection) -> Self {
-        let stylesheets = section
-            .extra
-            .get("stylesheets")
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_else(|| vec!["style.css".to_string()]);
-        let fonts = section
-            .extra
-            .get("fonts")
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        HtmlConfig { stylesheets, fonts }
-    }
-}
-
 pub struct HtmlPlugin;
+
+const PLUGIN_NAME: &str = "html";
+const STYLESHEETS: &str = "css_stylesheet";
 
 impl FormatPlugin for HtmlPlugin {
     fn name(&self) -> &'static str {
-        "html"
+        &PLUGIN_NAME
     }
 
     fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
@@ -101,21 +71,28 @@ impl FormatPlugin for HtmlPlugin {
         Ok(OpenHandle::Server(Box::new(handle)))
     }
 
+    fn assets(&self) -> Vec<PluginAsset> {
+        vec![PluginAsset {
+            name: &STYLESHEETS,
+            // TODO: make it possible to configure a custom path for any PluginAsset
+            default_path: "style.css",
+            required: false,
+        }]
+    }
+
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        let html_config: HtmlConfig = (&ctx.config).into();
-        let css_contents = collect_css(&html_config.stylesheets, &ctx.project.root);
         let html_string = ctx.compile_to_html_string()?;
 
-        // Inject font links first (DOM-based), then inline styles (string-based).
-        // Ordering matters: string-based injection must run last to avoid re-parsing
-        // and HTML-escaping CSS content (e.g., `>` in selectors).
-        let font_refs: Vec<&str> = html_config.fonts.iter().map(|s| s.as_str()).collect();
-        // TODO: these head utitilities should be incorporated in core.
-        let html_string = html_head::inject_head_links(&html_string, &[], &font_refs)?;
-
-        // TODO: CSS should not be inlined, but passed through as an asset and linked
-        let css_refs: Vec<&str> = css_contents.iter().map(|s| s.as_str()).collect();
-        let html_string = html_head::inject_inline_styles(&html_string, &css_refs)?;
+        // If a custom asset is specified, we inject the link to the asset into each HTML file.
+        // If not, we inline the default CSS.
+        let css_path = ctx.assets.get(&STYLESHEETS);
+        let html_string = if let Some(css_fname) = css_path {
+            info!("Found stylesheet {}", &css_fname.display());
+            html_head::inject_head_links(&html_string, &[&css_fname.display().to_string()], &[])?
+        } else {
+            info!("No stylesheet found, using default");
+            html_head::inject_inline_styles(&html_string, &[&DEFAULT_STYLESHEET.to_string()])?
+        };
 
         debug!(size = html_string.len(), "writing HTML file");
         let output = &ctx.options.output;
@@ -125,25 +102,4 @@ impl FormatPlugin for HtmlPlugin {
         info!(output = %output.display(), "successfully compiled to HTML");
         Ok(())
     }
-}
-
-/// Resolve and read each stylesheet path, collecting raw CSS content for inlining.
-fn collect_css(stylesheet_paths: &Vec<String>, project_root: &PathBuf) -> Vec<String> {
-    let mut css_contents: Vec<String> = Vec::new();
-    for stylesheet_path in stylesheet_paths {
-        let full_path = project_root.join(stylesheet_path);
-        if full_path.exists() {
-            match std::fs::read_to_string(&full_path) {
-                Ok(content) => css_contents.push(content),
-                Err(e) => {
-                    warn!(path = %full_path.display(), error = %e, "failed to read stylesheet, skipping")
-                }
-            }
-        } else if stylesheet_path == "style.css" {
-            // Default name with no file present: inline the bundled stylesheet.
-            debug!("using bundled default style.css");
-            css_contents.push(DEFAULT_STYLESHEET.to_string());
-        }
-    }
-    css_contents
 }

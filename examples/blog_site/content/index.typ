@@ -10,7 +10,7 @@
 
 #let template(doc) = {
   doc
-  context if target() == "html" or target() == "epub" {
+  context if target() == "html" {
     div[
       #br()
       #hr()

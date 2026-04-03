@@ -109,3 +109,5 @@ Logically speaking, Marx argues, there is an amount of time that goes missing in
 I refer the reader interested in the details to #link("https://www.marxists.org/archive/marx/works/1867-c1/ch20.htm")[chapter 20 of #emph[Capital] Vol. I];: but the essential point here is that it is through an obfuscation of the real value of a worker's time that the capitalist manages to produce surplus-value. 
 The production of this kind of time-distorted surplus-value is the engine of capitalism as a social relation that appears, on the surface, to be equally fair to capitalist and worker alike. 
 So the project of controlling 'perceptual chronologies' with which Lumon seems to be so concerned is perhaps not as esoteric and inessential as it might at first seem. Perhaps it is an embodiment of the core ingredient of the company's success as a company, of its incorporation as an entity that ought to be sustained even at the expense of its members' happiness, their health, and their livelihoods.
+
+

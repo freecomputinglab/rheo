@@ -38,11 +38,12 @@ pub struct SpineOptions {
 }
 
 /// Declares an additional non-Typst input file needed from the project directory.
-pub struct PluginInput {
+pub struct PluginAsset {
     /// Key used to retrieve this input from PluginContext::inputs
     pub name: &'static str,
-    /// Path relative to the project root where the file is expected
-    pub path: String,
+    /// Default path relative to the project root (not the content directory) where the file is
+    /// expected.
+    pub default_path: &'static str,
     /// If true, a missing file is a compile error; if false, it is absent from ctx.inputs
     pub required: bool,
 }
@@ -78,7 +79,7 @@ pub struct PluginContext<'a> {
     /// Paths are relative to the plugin's output directory (e.g., `build/html/`).
     /// The CLI copies each declared input from the project root to the output directory
     /// before calling `compile()`.
-    pub inputs: HashMap<&'static str, PathBuf>,
+    pub assets: HashMap<&'static str, PathBuf>,
 }
 
 impl<'a> PluginContext<'a> {
@@ -341,16 +342,16 @@ pub trait FormatPlugin: Send + Sync {
     /// # Examples
     ///
     /// ```ignore
-    /// fn inputs(&self) -> Vec<PluginInput> {
+    /// fn assets(&self) -> Vec<PluginInput> {
     ///     vec![
     ///         PluginInput {
     ///             name: "stylesheet",
-    ///             path: "styles/main.css".to_string(),
+    ///             path: "styles/main.css",
     ///             required: false,  // Optional — use default if missing
     ///         },
     ///         PluginInput {
     ///             name: "logo",
-    ///             path: "assets/logo.png".to_string(),
+    ///             path: "assets/logo.png",
     ///             required: true,   // Required — error if missing
     ///         },
     ///     ]
@@ -361,15 +362,14 @@ pub trait FormatPlugin: Send + Sync {
     ///
     /// ```ignore
     /// fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-    ///     if let Some(stylesheet_path) = ctx.inputs.get("stylesheet") {
+    ///     if let Some(stylesheet_path) = ctx.assets.get("stylesheet") {
     ///         let css = std::fs::read_to_string(stylesheet_path)?;
     ///         // ... use css ...
     ///     }
     ///     Ok(())
     /// }
     /// ```
-    /// TODO: this should be 'assets'
-    fn inputs(&self) -> Vec<PluginInput> {
+    fn assets(&self) -> Vec<PluginAsset> {
         vec![]
     }
 

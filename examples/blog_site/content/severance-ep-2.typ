@@ -120,3 +120,7 @@ Green like Macrodata Refinement, but much less put-together, the greenhouse reve
 Petey shows us that the worker, like so many words and things in the show, is not simply what it seems, but consists also of an excess signification that inevitably creeps into its conspicuous comportment. 
 Mark is a depressed drunkard on the outside, and Irving (it seems) has his fingers in some hellish kind of black pie, a color that takes over his desk as he dozes off when he lets the distinction between his waking and unconscious self slip, we might say, when the reality of sleep threatens the security of being awake. 
 There is, as the imagery in the poster of the 'Whole Mind Collective' that motivates Mark to bunk off and follow up on Petey's enigmatic red letter suggests, a real revolution of sorts brewing beneath the surface of a fantasy of symbolic control.
+
+#context if target() == "epub" [
+= Footnotes
+]

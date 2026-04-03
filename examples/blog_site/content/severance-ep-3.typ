@@ -197,3 +197,7 @@ Mark looks on from a distance as he collapses outside the store, escorted by pol
 #context if target() != "paged" {
   bibliography("./references.bib", style: "chicago-author-date")
 }
+
+#context if target() == "epub" [
+= Footnotes
+]

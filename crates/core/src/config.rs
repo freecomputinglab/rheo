@@ -40,7 +40,7 @@ pub struct PluginSection {
     /// Per-plugin glob patterns for files to copy into this plugin's output directory.
     /// Paths are relative to the project root; directory structure is preserved.
     #[serde(default)]
-    pub copy: Vec<String>,
+    pub assets: Vec<String>,
 
     /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
     /// `fonts` for HTML; `identifier`, `date` for EPUB).

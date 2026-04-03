@@ -15,5 +15,5 @@ vertebrae = ["severance-*.typ", "endmatter.typ"]
 title = "Screening the Subject | Severance"
 
 [epub.spine]
-vertebrae = ["severance-*.typ", "endmatter.typ"]
+vertebrae = ["severance-*.typ"]
 title = "Screening the Subject | Severance"
