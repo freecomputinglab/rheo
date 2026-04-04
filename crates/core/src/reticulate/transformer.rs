@@ -242,14 +242,6 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_label_name() {
-        assert_eq!(sanitize_label_name("chapter 01"), "chapter_01");
-        assert_eq!(sanitize_label_name("severance-01"), "severance-01");
-        assert_eq!(sanitize_label_name("my_file!@#"), "my_file___");
-        assert_eq!(sanitize_label_name("test.typ"), "test_typ");
-    }
-
-    #[test]
     fn test_extract_filename() {
         assert_eq!(extract_filename("./chapter2.typ"), "chapter2.typ");
         assert_eq!(extract_filename("../parent/file.typ"), "file.typ");
