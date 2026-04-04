@@ -770,3 +770,139 @@ fn test_rheo_init_and_compile() {
         std::fs::remove_dir_all(&test_dir).ok();
     }
 }
+
+/// Test that asset path overrides work end-to-end via rheo.toml
+#[test]
+fn test_asset_path_override() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+    let build_dir = project_path.join("build");
+
+    // Custom CSS at non-default path
+    std::fs::write(project_path.join("custom.css"), "body { color: red; }")
+        .expect("Failed to write custom.css");
+
+    // Minimal Typst source
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    // rheo.toml with asset path override
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        concat!(
+            "version = \"0.1.2\"\n",
+            "formats = [\"html\"]\n",
+            "\n",
+            "[html]\n",
+            "css_stylesheet = \"custom.css\"\n",
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // custom.css should be copied to output dir
+    let copied_css = build_dir.join("html/custom.css");
+    assert!(copied_css.exists(), "custom.css should be copied to html output");
+    assert_eq!(
+        std::fs::read_to_string(&copied_css).unwrap(),
+        "body { color: red; }",
+        "Copied CSS has wrong content"
+    );
+
+    // HTML should link to custom.css
+    let html_path = build_dir.join("html/main.html");
+    let html = std::fs::read_to_string(&html_path).expect("Failed to read HTML");
+    assert!(
+        html.contains(r#"href="custom.css""#),
+        "HTML should contain link to custom.css"
+    );
+}
+
+/// Test that subdirectory path overrides work end-to-end
+#[test]
+fn test_asset_path_override_subdirectory() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+    let build_dir = project_path.join("build");
+
+    // Custom CSS in subdirectory
+    let styles_dir = project_path.join("styles");
+    std::fs::create_dir_all(&styles_dir).expect("Failed to create styles dir");
+    std::fs::write(styles_dir.join("custom.css"), "body { color: blue; }")
+        .expect("Failed to write styles/custom.css");
+
+    // Minimal Typst source
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    // rheo.toml with subdirectory override
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        concat!(
+            "version = \"0.1.2\"\n",
+            "formats = [\"html\"]\n",
+            "\n",
+            "[html]\n",
+            "css_stylesheet = \"styles/custom.css\"\n",
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo-cli",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // styles/custom.css should be copied to output dir preserving subdirectory
+    let copied_css = build_dir.join("html/styles/custom.css");
+    assert!(
+        copied_css.exists(),
+        "styles/custom.css should be copied to html output"
+    );
+
+    // HTML should link to styles/custom.css
+    let html_path = build_dir.join("html/main.html");
+    let html = std::fs::read_to_string(&html_path).expect("Failed to read HTML");
+    assert!(
+        html.contains(r#"href="styles/custom.css""#),
+        "HTML should contain link to styles/custom.css"
+    );
+}

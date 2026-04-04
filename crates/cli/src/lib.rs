@@ -812,6 +812,7 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rheo_core::AssetConfig;
 
     #[test]
     fn test_determine_formats_cli_flags_override_config() {
@@ -872,6 +873,172 @@ mod tests {
             names.len() >= 3,
             "Expected at least 3 plugins, got {}",
             names.len()
+        );
+    }
+
+    // --- resolve_assets tests ---
+
+    struct MockPlugin {
+        plugin_name: &'static str,
+        declared_assets: Vec<AssetConfig>,
+    }
+
+    impl FormatPlugin for MockPlugin {
+        fn name(&self) -> &'static str {
+            self.plugin_name
+        }
+        fn assets(&self) -> Vec<AssetConfig> {
+            self.declared_assets.clone()
+        }
+        fn compile(&self, _ctx: PluginContext<'_>) -> rheo_core::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_resolve_assets_default_path_when_no_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::write(project_root.join("style.css"), "body {}").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+        let section = PluginSection::default();
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        assert_eq!(
+            resolved.get("css_stylesheet").unwrap().built_relative_path,
+            "style.css"
+        );
+    }
+
+    #[test]
+    fn test_resolve_assets_override_path_when_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::write(project_root.join("custom.css"), "body {}").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+        let mut extra = toml::map::Map::new();
+        extra.insert("css_stylesheet".into(), toml::Value::String("custom.css".into()));
+        let section = PluginSection {
+            extra,
+            ..Default::default()
+        };
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        assert_eq!(
+            resolved.get("css_stylesheet").unwrap().built_relative_path,
+            "custom.css"
+        );
+    }
+
+    #[test]
+    fn test_resolve_assets_required_missing_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "missing_asset",
+                default_path: "nonexistent.css",
+                required: true,
+            }],
+        };
+        let section = PluginSection::default();
+
+        let result = resolve_assets(&plugin, &section, project_root, &output_dir);
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("requires input"),
+            "expected 'requires input' in error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_resolve_assets_optional_missing_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "optional_asset",
+                default_path: "nonexistent.css",
+                required: false,
+            }],
+        };
+        let section = PluginSection::default();
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        assert!(
+            !resolved.contains_key("optional_asset"),
+            "optional missing asset should not be in resolved map"
+        );
+    }
+
+    #[test]
+    fn test_resolve_assets_subdirectory_in_override_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        let styles_dir = project_root.join("styles");
+        std::fs::create_dir_all(&styles_dir).unwrap();
+        std::fs::write(styles_dir.join("custom.css"), "body {}").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+        let mut extra = toml::map::Map::new();
+        extra.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("styles/custom.css".into()),
+        );
+        let section = PluginSection {
+            extra,
+            ..Default::default()
+        };
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        assert_eq!(
+            resolved.get("css_stylesheet").unwrap().built_relative_path,
+            "styles/custom.css"
+        );
+        assert!(
+            output_dir.join("styles/custom.css").exists(),
+            "subdirectory asset should be copied to output"
         );
     }
 }

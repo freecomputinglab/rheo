@@ -486,4 +486,28 @@ mod tests {
         let section = config.plugin_section("html");
         assert!(section.assets.is_empty());
     }
+
+    #[test]
+    fn test_get_string_returns_string_value() {
+        let toml = versioned_toml("[html]\ncss_stylesheet = \"custom.css\"");
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        assert_eq!(section.get_string("css_stylesheet"), Some("custom.css"));
+    }
+
+    #[test]
+    fn test_get_string_returns_none_for_missing_key() {
+        let toml = versioned_toml("[html]");
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        assert_eq!(section.get_string("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_get_string_returns_none_for_non_string_value() {
+        let toml = versioned_toml("[html]\ncss_stylesheet = [\"a\", \"b\"]");
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        assert_eq!(section.get_string("css_stylesheet"), None);
+    }
 }
