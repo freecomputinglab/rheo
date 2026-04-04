@@ -328,6 +328,56 @@ fn compile_one_file(
     Ok(())
 }
 
+/// Resolve plugin assets, applying path overrides from config.
+///
+/// For each declared asset, checks if the user configured a custom path
+/// via `plugin_section.extra[asset_name]`. If not, falls back to
+/// `asset_config.default_path`. Copies resolved files to the output directory.
+fn resolve_assets(
+    plugin: &dyn FormatPlugin,
+    plugin_section: &PluginSection,
+    project_root: &Path,
+    plugin_output_dir: &Path,
+) -> Result<HashMap<&'static str, Asset>> {
+    let mut resolved = HashMap::new();
+    for asset_config in plugin.assets() {
+        let effective_path: &str = plugin_section
+            .get_string(asset_config.name)
+            .unwrap_or(asset_config.default_path);
+
+        let src = project_root.join(effective_path);
+        if src.is_file() {
+            let dest = plugin_output_dir.join(effective_path);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    RheoError::io(e, format!("creating directory for asset '{}'", effective_path))
+                })?;
+            }
+            std::fs::copy(&src, &dest).map_err(|e| RheoError::AssetCopy {
+                source: src.clone(),
+                dest: dest.clone(),
+                error: e,
+            })?;
+            resolved.insert(
+                asset_config.name,
+                Asset {
+                    config: asset_config.clone(),
+                    resolved_path: dest,
+                    built_relative_path: effective_path.to_string(),
+                },
+            );
+        } else if asset_config.required {
+            return Err(RheoError::project_config(format!(
+                "plugin '{}' requires input '{}' at '{}' but it was not found",
+                plugin.name(),
+                asset_config.name,
+                effective_path
+            )));
+        }
+    }
+    Ok(resolved)
+}
+
 fn perform_compilation(
     project: &ProjectConfig,
     output_config: &OutputConfig,
@@ -339,6 +389,7 @@ fn perform_compilation(
     }
 
     let mut results = CompilationResults::new();
+    let default_section = PluginSection::default();
 
     for plugin in plugins {
         let plugin_output_dir = output_config.dir_for_plugin(plugin.name());
@@ -349,42 +400,26 @@ fn perform_compilation(
             )
         })?;
 
-        // Resolve declared assets
-        let mut resolved_assets: HashMap<&'static str, Asset> = HashMap::new();
-        for asset_config in plugin.assets() {
-            let src = project.root.join(asset_config.default_path);
-            if src.is_file() {
-                let dest = plugin_output_dir.join(asset_config.default_path);
-                std::fs::copy(&src, &dest).map_err(|e| RheoError::AssetCopy {
-                    source: src.clone(),
-                    dest: dest.clone(),
-                    error: e,
-                })?;
-                resolved_assets.insert(
-                    asset_config.name,
-                    Asset {
-                        config: asset_config.clone(),
-                        resolved_path: dest,
-                        built_relative_path: asset_config.default_path.to_string(),
-                    },
-                );
-            } else if asset_config.required {
-                return Err(RheoError::project_config(format!(
-                    "plugin '{}' requires input '{}' at '{}' but it was not found",
-                    plugin.name(),
-                    asset_config.name,
-                    &asset_config.default_path
-                )));
-            }
-        }
+        // Borrow the plugin section directly — no cloning
+        let plugin_section: &PluginSection = project
+            .config
+            .plugin_sections
+            .get(plugin.name())
+            .unwrap_or(&default_section);
+
+        let resolved_assets = resolve_assets(
+            plugin.as_ref(),
+            plugin_section,
+            &project.root,
+            &plugin_output_dir,
+        )?;
 
         // Execute copy patterns (global + per-plugin)
-        let plugin_section_for_copy = project.config.plugin_section(plugin.name());
         for pattern in project
             .config
             .assets
             .iter()
-            .chain(plugin_section_for_copy.assets.iter())
+            .chain(plugin_section.assets.iter())
         {
             let abs_pattern = project.root.join(pattern).display().to_string();
             let entries = glob::glob(&abs_pattern).map_err(|e| {
@@ -416,19 +451,18 @@ fn perform_compilation(
         }
 
         // Resolve spine options
-        let spine_cfg = project.config.spine_for_plugin(plugin.name());
+        let spine_cfg = plugin_section.spine.as_ref();
         let spine = SpineOptions {
             title: spine_cfg.and_then(|s| s.title.clone()),
-            vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
+            vertebrae: spine_cfg
+                .map(|s| s.vertebrae.clone())
+                .unwrap_or_default(),
             merge: spine_cfg
                 .and_then(|s| s.merge)
                 .unwrap_or(plugin.default_merge()),
         };
 
         // TODO: BuiltSpine here
-
-        // Get full plugin section
-        let plugin_section = project.config.plugin_section(plugin.name());
 
         // TODO: this is where it happens.
         // `spine.merge = true` is the simple case, as plugin.compile is just called once.
@@ -449,7 +483,7 @@ fn perform_compilation(
                 output_config,
                 options,
                 spine: &spine,
-                config: &plugin_section,
+                config: plugin_section,
                 assets: &resolved_assets,
             };
 
@@ -470,7 +504,7 @@ fn perform_compilation(
                 project,
                 output_config,
                 spine: &spine,
-                plugin_section: &plugin_section,
+                plugin_section,
                 resolved_assets: &resolved_assets,
             };
 

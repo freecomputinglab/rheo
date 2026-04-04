@@ -204,6 +204,13 @@ impl RheoConfig {
     }
 }
 
+impl PluginSection {
+    /// Get a string value from extra config, returning None if absent or not a string.
+    pub fn get_string(&self, key: &str) -> Option<&str> {
+        self.extra.get(key).and_then(|v| v.as_str())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -76,7 +76,6 @@ impl FormatPlugin for HtmlPlugin {
         vec![
             AssetConfig {
                 name: STYLESHEETS,
-                // TODO: make it possible to configure a custom path for any PluginAsset
                 default_path: "style.css",
                 required: false,
             },
