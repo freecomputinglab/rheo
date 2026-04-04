@@ -54,7 +54,7 @@ impl FormatPlugin for EpubPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        compile_epub_with_spine(ctx.spine, &ctx.options, ctx.config)
+        compile_epub_with_spine(ctx.spine, &ctx.options, ctx.config, self.extension())
     }
 }
 
@@ -324,10 +324,11 @@ fn compile_epub_impl(
     root: &Path,
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
+    format_ext: &str,
 ) -> Result<()> {
-    // Build BuiltSpine with AST-transformed sources (.typ links → .xhtml)
+    // Build BuiltSpine with AST-transformed sources (.typ links → target extension)
     // EPUB handles concatenation itself via create_from_source, so merge=false
-    let rheo_spine = BuiltSpine::build(root, Some(spine), "epub", false)?;
+    let rheo_spine = BuiltSpine::build(root, Some(spine), format_ext, false)?;
 
     // Get the spine file paths
     let spine_paths = spine.generate(root)?;
@@ -353,6 +354,7 @@ fn compile_epub_with_spine(
     spine: &SpineOptions,
     options: &RheoCompileOptions<'_>,
     section: &PluginSection,
+    format_ext: &str,
 ) -> Result<()> {
     let identifier = parse_identifier(section);
     let date = parse_date(section);
@@ -362,6 +364,7 @@ fn compile_epub_with_spine(
         &options.root,
         identifier.as_deref(),
         date.as_ref(),
+        format_ext,
     )
 }
 
