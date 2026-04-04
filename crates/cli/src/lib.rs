@@ -355,16 +355,10 @@ fn perform_compilation(
             let src = project.root.join(asset_config.default_path);
             if src.is_file() {
                 let dest = plugin_output_dir.join(asset_config.default_path);
-                std::fs::copy(&src, &dest).map_err(|e| {
-                    RheoError::io(
-                        e,
-                        format!(
-                            "copying plugin input '{}' from {} to {}",
-                            asset_config.name,
-                            src.display(),
-                            dest.display()
-                        ),
-                    )
+                std::fs::copy(&src, &dest).map_err(|e| RheoError::AssetCopy {
+                    source: src.clone(),
+                    dest: dest.clone(),
+                    error: e,
                 })?;
                 resolved_assets.insert(
                     asset_config.name,
@@ -409,11 +403,10 @@ fn perform_compilation(
                         )
                     })?;
                 }
-                std::fs::copy(&entry, &dest).map_err(|e| {
-                    RheoError::io(
-                        e,
-                        format!("copying {} to {}", entry.display(), dest.display()),
-                    )
+                std::fs::copy(&entry, &dest).map_err(|e| RheoError::AssetCopy {
+                    source: entry.clone(),
+                    dest: dest.clone(),
+                    error: e,
                 })?;
                 debug!(src = %entry.display(), dest = %dest.display(), "copied file");
             }
