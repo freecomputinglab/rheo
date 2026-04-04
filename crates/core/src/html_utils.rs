@@ -494,4 +494,21 @@ mod tests {
 
         assert!(result.contains(r#"<script src="index.js"></script>"#));
     }
+
+    #[test]
+    fn test_inject_head_links_scripts_with_stylesheets() {
+        let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
+        let result = inject_head_links(html, &[], &["style.css"], &["index.js"]).unwrap();
+
+        assert!(result.contains(r#"<script src="index.js"></script>"#));
+        assert!(result.contains(r#"<link rel="stylesheet" href="style.css">"#));
+    }
+
+    #[test]
+    fn test_inject_head_links_no_scripts() {
+        let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
+        let result = inject_head_links(html, &[], &["style.css"], &[]).unwrap();
+
+        assert!(!result.contains("<script"));
+    }
 }
