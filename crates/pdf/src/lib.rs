@@ -9,16 +9,7 @@ impl FormatPlugin for PdfPlugin {
     }
 
     fn typst_library(&self) -> Option<&'static str> {
-        // PDF-specific lemma function for numbered lemmas in academic documents
-        Some(
-            r#"
-#let lemmacount = counter("lemmas")
-#let lemma(it) = block(inset: 8pt, [
-  #lemmacount.step()
-  #strong[Lemma #context lemmacount.display()]: #it
-])
-"#,
-        )
+        Some(include_str!("lib.typ"))
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
