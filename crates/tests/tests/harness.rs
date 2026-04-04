@@ -823,7 +823,10 @@ fn test_asset_path_override() {
 
     // custom.css should be copied to output dir
     let copied_css = build_dir.join("html/custom.css");
-    assert!(copied_css.exists(), "custom.css should be copied to html output");
+    assert!(
+        copied_css.exists(),
+        "custom.css should be copied to html output"
+    );
     assert_eq!(
         std::fs::read_to_string(&copied_css).unwrap(),
         "body { color: red; }",

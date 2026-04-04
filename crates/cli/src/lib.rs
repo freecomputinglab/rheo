@@ -350,7 +350,10 @@ fn resolve_assets(
             let dest = plugin_output_dir.join(effective_path);
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
-                    RheoError::io(e, format!("creating directory for asset '{}'", effective_path))
+                    RheoError::io(
+                        e,
+                        format!("creating directory for asset '{}'", effective_path),
+                    )
                 })?;
             }
             std::fs::copy(&src, &dest).map_err(|e| RheoError::AssetCopy {
@@ -454,9 +457,7 @@ fn perform_compilation(
         let spine_cfg = plugin_section.spine.as_ref();
         let spine = SpineOptions {
             title: spine_cfg.and_then(|s| s.title.clone()),
-            vertebrae: spine_cfg
-                .map(|s| s.vertebrae.clone())
-                .unwrap_or_default(),
+            vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
             merge: spine_cfg
                 .and_then(|s| s.merge)
                 .unwrap_or(plugin.default_merge()),
@@ -939,7 +940,10 @@ mod tests {
             }],
         };
         let mut extra = toml::map::Map::new();
-        extra.insert("css_stylesheet".into(), toml::Value::String("custom.css".into()));
+        extra.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("custom.css".into()),
+        );
         let section = PluginSection {
             extra,
             ..Default::default()
