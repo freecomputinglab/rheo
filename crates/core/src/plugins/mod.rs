@@ -130,7 +130,7 @@ impl<'a> PluginContext<'a> {
             // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
             let rheo_spine = BuiltSpine::build(
                 &self.options.root,
-                Some(&self.spine),
+                Some(self.spine),
                 plugin.extension(),
                 self.spine.merge,
             )?;
@@ -196,6 +196,14 @@ impl<'a> PluginContext<'a> {
     }
 }
 
+/// The low-level compilation target for a format plugin.
+pub enum CompilationTarget {
+    /// Compile to an HTML document.
+    Html,
+    /// Compile to a paged (PDF) document.
+    Pdf,
+}
+
 /// Plugin trait for implementing new output formats in rheo.
 ///
 /// # Implementing a new plugin
@@ -221,14 +229,6 @@ impl<'a> PluginContext<'a> {
 /// 3. **Resolve inputs**: Files declared by `inputs()` are copied to output directory
 /// 4. **Compile**: `compile()` is called once per file (per-file mode) or once (merged mode)
 /// 5. **Open**: `open()` is called if `--open` flag was passed
-/// The low-level compilation target for a format plugin.
-pub enum CompilationTarget {
-    /// Compile to an HTML document.
-    Html,
-    /// Compile to a paged (PDF) document.
-    Pdf,
-}
-
 pub trait FormatPlugin: Send + Sync {
     /// Plugin identifier, CLI flag, and output subdirectory name.
     ///

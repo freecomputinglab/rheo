@@ -9,7 +9,7 @@ use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
 use rheo_core::{
     BuiltSpine, FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
-    Spine, SpineOptions, RheoWorld, compile_document_to_string, eco_format, eco_vec,
+    RheoWorld, Spine, SpineOptions, compile_document_to_string, eco_format, eco_vec,
 };
 use rheo_core::{
     DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain,
@@ -50,7 +50,7 @@ impl FormatPlugin for EpubPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        compile_epub_with_spine(&ctx.spine, &ctx.options, &ctx.config)
+        compile_epub_with_spine(ctx.spine, &ctx.options, ctx.config)
     }
 }
 

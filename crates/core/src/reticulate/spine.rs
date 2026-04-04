@@ -42,7 +42,6 @@ impl BuiltSpine {
 
         // Merge when caller requests it (typically only PDF merged mode).
         // Other formats (epub, html) handle concatenation differently.
-        let should_merge = merge;
 
         let mut sources = Vec::new();
 
@@ -61,7 +60,7 @@ impl BuiltSpine {
             let transformed_source =
                 transform_source(&source, spine_file, &spine_files, format_ext, root)?;
 
-            let final_source = if should_merge {
+            let final_source = if merge {
                 let (label, doc_title) = extract_label_and_title(&source, spine_file)?;
                 format!(
                     "#metadata(\"{}\") <{}>\n{}\n\n",
@@ -74,7 +73,7 @@ impl BuiltSpine {
             sources.push(final_source);
         }
 
-        let final_sources = if should_merge {
+        let final_sources = if merge {
             vec![sources.join("\n\n")]
         } else {
             sources
@@ -84,7 +83,7 @@ impl BuiltSpine {
 
         Ok(BuiltSpine {
             title,
-            is_merged: should_merge,
+            is_merged: merge,
             source: final_sources,
         })
     }
