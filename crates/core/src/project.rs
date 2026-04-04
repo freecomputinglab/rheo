@@ -52,12 +52,7 @@ impl ProjectConfig {
     }
 
     fn from_directory(path: &Path, config_path: Option<&Path>) -> Result<Self> {
-        let root = path.canonicalize().map_err(|e| {
-            RheoError::path(
-                path,
-                format!("failed to canonicalize project directory: {}", e),
-            )
-        })?;
+        let root = crate::path_utils::canonicalize_path(path)?;
 
         let name = root
             .file_name()
@@ -107,12 +102,7 @@ impl ProjectConfig {
             return Err(RheoError::path(file_path, "file must have .typ extension"));
         }
 
-        let file_path = file_path.canonicalize().map_err(|e| {
-            RheoError::path(
-                file_path,
-                format!("failed to canonicalize file path: {}", e),
-            )
-        })?;
+        let file_path = crate::path_utils::canonicalize_path(file_path)?;
 
         let file_parent = file_path
             .parent()

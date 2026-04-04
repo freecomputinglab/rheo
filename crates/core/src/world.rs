@@ -62,18 +62,8 @@ impl RheoWorld {
         format_name: Option<&str>,
         plugin_library: Option<String>,
     ) -> Result<Self> {
-        let root = root.canonicalize().map_err(|e| {
-            RheoError::path(
-                root,
-                format!("failed to canonicalize root directory: {}", e),
-            )
-        })?;
-        let main_path = main_file.canonicalize().map_err(|e| {
-            RheoError::path(
-                main_file,
-                format!("failed to canonicalize main file: {}", e),
-            )
-        })?;
+        let root = crate::path_utils::canonicalize_path(root)?;
+        let main_path = crate::path_utils::canonicalize_path(main_file)?;
 
         let main_vpath = VirtualPath::within_root(&main_path, &root).ok_or_else(|| {
             RheoError::path(&main_path, "main file must be within root directory")
@@ -118,12 +108,7 @@ impl RheoWorld {
 
     /// Change the main file for this world.
     pub fn set_main(&mut self, main_file: &Path) -> Result<()> {
-        let main_path = main_file.canonicalize().map_err(|e| {
-            RheoError::path(
-                main_file,
-                format!("failed to canonicalize main file: {}", e),
-            )
-        })?;
+        let main_path = crate::path_utils::canonicalize_path(main_file)?;
 
         let main_vpath = VirtualPath::within_root(&main_path, &self.root).ok_or_else(|| {
             RheoError::path(&main_path, "main file must be within root directory")
