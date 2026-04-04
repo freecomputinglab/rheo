@@ -615,22 +615,18 @@ fn setup_compilation_context(
 
     let all = all_plugins();
     let formats = determine_formats(enabled_from_cli, &project.config.formats, &all);
+    let plugins = plugins_for_formats(&formats, all);
 
     // Apply plugin smart defaults for all plugins
     // Plugins check their own state and only fill in missing values
-    {
-        let plugins = plugins_for_formats(&formats, all_plugins());
-        for plugin in &plugins {
-            let section = project
-                .config
-                .plugin_sections
-                .entry(plugin.name().to_string())
-                .or_default();
-            plugin.apply_defaults(section, &project.name);
-        }
+    for plugin in &plugins {
+        let section = project
+            .config
+            .plugin_sections
+            .entry(plugin.name().to_string())
+            .or_default();
+        plugin.apply_defaults(section, &project.name);
     }
-
-    let plugins = plugins_for_formats(&formats, all);
 
     let resolved_build_dir = resolve_build_dir(&project, build_dir)?;
     let output_config = OutputConfig::new(&project.root, resolved_build_dir);
