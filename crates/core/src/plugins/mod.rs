@@ -1,8 +1,9 @@
 use crate::config::PluginSection;
-use crate::html_compile::{compile_document_to_string, compile_html_with_world};
+use crate::html_compile::compile_document_to_string;
 use crate::output::OutputConfig;
-use crate::pdf_compile::{compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes};
+use crate::pdf_compile::document_to_pdf_bytes;
 use crate::project::ProjectConfig;
+use crate::world::RheoWorld;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -109,7 +110,7 @@ impl<'a> PluginContext<'a> {
             )
         })?;
 
-        let document = compile_html_with_world(world)?;
+        let document = world.compile_html()?;
 
         debug!(output = %self.options.output.display(), "exporting to HTML");
         compile_document_to_string(&document)
@@ -164,7 +165,7 @@ impl<'a> PluginContext<'a> {
             // output_format=None because links already transformed to labels by RheoSpine
             let plugin_library = plugin.typst_library().map(|s| s.to_string());
             let document =
-                compile_pdf_to_document(temp_path, &self.options.root, None, plugin_library)?;
+                RheoWorld::compile_pdf_file(&self.options.root, temp_path, None, plugin_library)?;
 
             debug!(output = %output_path.display(), "exporting to PDF");
             let pdf_bytes = document_to_pdf_bytes(&document)?;
@@ -182,7 +183,7 @@ impl<'a> PluginContext<'a> {
                 )
             })?;
 
-            let document = compile_pdf_with_world(world)?;
+            let document = world.compile_pdf()?;
             let output = &self.options.output;
 
             debug!(output = %output.display(), "exporting to PDF");

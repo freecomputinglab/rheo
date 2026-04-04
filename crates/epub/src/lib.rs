@@ -9,7 +9,7 @@ use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
 use rheo_core::{
     BuiltSpine, FormatPlugin, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
-    Spine, SpineOptions, compile_document_to_string, compile_html_to_document, eco_format, eco_vec,
+    Spine, SpineOptions, RheoWorld, compile_document_to_string, eco_format, eco_vec,
 };
 use rheo_core::{
     DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain,
@@ -400,7 +400,7 @@ impl EpubItem {
 
         let temp_path = temp_file.path();
         let plugin_library = EpubPlugin.typst_library().map(|s| s.to_string());
-        let document = compile_html_to_document(temp_path, root, "epub", plugin_library)?;
+        let document = RheoWorld::compile_html_file(root, temp_path, "epub", plugin_library)?;
 
         let parent = path.parent().ok_or_else(|| {
             RheoError::invalid_data(format!("path has no parent: {}", path.display()))
