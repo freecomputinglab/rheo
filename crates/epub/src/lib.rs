@@ -327,17 +327,39 @@ fn compile_epub_impl(
     format_ext: &str,
 ) -> Result<()> {
     // Build BuiltSpine with AST-transformed sources (.typ links → target extension)
-    // EPUB handles concatenation itself via create_from_source, so merge=false
+    // EPUB handles concatenation itself, so merge=false
     let rheo_spine = BuiltSpine::build(root, Some(spine), format_ext, false)?;
 
     // Get the spine file paths
     let spine_paths = spine.generate(root)?;
 
+    let plugin_library = EpubPlugin.typst_library().map(|s| s.to_string());
+
     let mut items = spine_paths
         .iter()
         .zip(rheo_spine.source.iter())
         .map(|(path, transformed_source)| {
-            EpubItem::create_from_source(path.clone(), transformed_source, root)
+            // Write transformed source to temp file and compile to HTML
+            let mut temp_file = tempfile::NamedTempFile::new_in(root)
+                .map_err(|e| RheoError::io(e, "creating temp file for EPUB item"))?;
+            temp_file
+                .write_all(transformed_source.as_bytes())
+                .map_err(|e| RheoError::io(e, "writing transformed source to temp file"))?;
+            temp_file
+                .flush()
+                .map_err(|e| RheoError::io(e, "flushing temp file"))?;
+
+            info!(file = %path.display(), "compiling spine file with transformed source");
+            let document = RheoWorld::compile_html_file(
+                root,
+                temp_file.path(),
+                "epub",
+                plugin_library.clone(),
+            )?;
+
+            // Extract just the filename for the href (flat EPUB structure)
+            let href_path = PathBuf::from(path.file_name().unwrap_or_default());
+            EpubItem::from_html_document(href_path, document)
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -389,33 +411,8 @@ fn text_to_id(s: &str) -> EcoString {
 }
 
 impl EpubItem {
-    pub fn create_from_source(
-        path: PathBuf,
-        transformed_source: &str,
-        root: &Path,
-    ) -> Result<Self> {
-        info!(file = %path.display(), "compiling spine file with transformed source");
-
-        let mut temp_file = tempfile::NamedTempFile::new_in(root)
-            .map_err(|e| RheoError::io(e, "creating temp file for EPUB item"))?;
-        temp_file
-            .write_all(transformed_source.as_bytes())
-            .map_err(|e| RheoError::io(e, "writing transformed source to temp file"))?;
-        temp_file
-            .flush()
-            .map_err(|e| RheoError::io(e, "flushing temp file"))?;
-
-        let temp_path = temp_file.path();
-        let plugin_library = EpubPlugin.typst_library().map(|s| s.to_string());
-        let document = RheoWorld::compile_html_file(root, temp_path, "epub", plugin_library)?;
-
-        let parent = path.parent().ok_or_else(|| {
-            RheoError::invalid_data(format!("path has no parent: {}", path.display()))
-        })?;
-        let bare_file = path
-            .strip_prefix(parent)
-            .map_err(|e| RheoError::invalid_data(format!("invalid path prefix: {}", e)))?;
-        let href = IriRefBuf::new(bare_file.with_extension("xhtml").display().to_string())
+    pub fn from_html_document(path: PathBuf, document: HtmlDocument) -> Result<Self> {
+        let href = IriRefBuf::new(path.with_extension("xhtml").display().to_string())
             .map_err(|e| RheoError::EpubGeneration {
                 count: 1,
                 errors: format!("invalid href for EPUB item: {}", e),
