@@ -27,6 +27,8 @@ pub fn copy_project_to_test_store(project_path: &Path, test_store: &Path) -> Res
 
         if entry.file_type().is_dir() {
             fs::create_dir_all(&dest).map_err(|e| format!("Dir creation error: {}", e))?;
+        } else if entry.file_type().is_symlink() {
+            continue; // skip symlinks
         } else if entry.path().file_name().is_some_and(|n| n == "rheo.toml") {
             copy_rheo_toml_with_version(entry.path(), &dest)?;
         } else {

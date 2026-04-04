@@ -26,6 +26,3 @@ webbrowser = { workspace = true }
 tokio-stream = { workspace = true }
 mime_guess = { workspace = true }
 
-# HTML parsing
-html5ever = { workspace = true }
-markup5ever_rcdom = { workspace = true }

@@ -1,14 +1,13 @@
-mod dom;
-mod html_head;
 mod server;
+
+use rheo_core::html_utils;
 
 /// Bundled default HTML stylesheet.
 /// Used when the project doesn't provide its own style.css.
 pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
-    FormatPlugin, OpenHandle, PluginContext, PluginSection, Result, RheoCompileOptions, RheoError,
-    RheoWorld, ServerHandle, compile_document_to_string, compile_html_with_world,
+    AssetConfig, FormatPlugin, OpenHandle, PluginContext, Result, RheoError, ServerHandle,
 };
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -34,41 +33,15 @@ impl ServerHandle for HtmlServerHandle {
     }
 }
 
-/// Format-specific configuration parsed from the `[html]` section of rheo.toml.
-struct HtmlConfig {
-    stylesheets: Vec<String>,
-    fonts: Vec<String>,
-}
-
-fn parse_html_config(section: &PluginSection) -> HtmlConfig {
-    let stylesheets = section
-        .extra
-        .get("stylesheets")
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_else(|| vec!["style.css".to_string()]);
-    let fonts = section
-        .extra
-        .get("fonts")
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    HtmlConfig { stylesheets, fonts }
-}
-
 pub struct HtmlPlugin;
+
+const PLUGIN_NAME: &str = "html";
+const STYLESHEETS: &str = "css_stylesheet";
+const SCRIPTS: &str = "js_scripts";
 
 impl FormatPlugin for HtmlPlugin {
     fn name(&self) -> &'static str {
-        "html"
+        PLUGIN_NAME
     }
 
     fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
@@ -99,77 +72,53 @@ impl FormatPlugin for HtmlPlugin {
         Ok(OpenHandle::Server(Box::new(handle)))
     }
 
-    fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        if ctx.spine.merge {
-            return Err(RheoError::project_config(
-                "HTML does not support merged compilation",
-            ));
-        }
-
-        let html_config = parse_html_config(&ctx.config);
-
-        // Resolve and read each stylesheet, collecting raw CSS content for inlining.
-        let mut css_contents: Vec<String> = Vec::new();
-        for stylesheet_path in &html_config.stylesheets {
-            let full_path = ctx.project.root.join(stylesheet_path);
-            if full_path.exists() {
-                match std::fs::read_to_string(&full_path) {
-                    Ok(content) => css_contents.push(content),
-                    Err(e) => {
-                        warn!(path = %full_path.display(), error = %e, "failed to read stylesheet, skipping")
-                    }
-                }
-            } else if stylesheet_path == "style.css" {
-                // Default name with no file present: inline the bundled stylesheet.
-                debug!("using bundled default style.css");
-                css_contents.push(DEFAULT_STYLESHEET.to_string());
-            } else {
-                warn!(path = %full_path.display(), "stylesheet not found, skipping");
-            }
-        }
-
-        compile_html_new(ctx.options, &css_contents, &html_config.fonts)
+    fn assets(&self) -> Vec<AssetConfig> {
+        vec![
+            AssetConfig {
+                name: STYLESHEETS,
+                // TODO: make it possible to configure a custom path for any PluginAsset
+                default_path: "style.css",
+                required: false,
+            },
+            AssetConfig {
+                name: SCRIPTS,
+                default_path: "index.js",
+                required: false,
+            },
+        ]
     }
-}
 
-fn compile_html_impl(
-    world: &RheoWorld,
-    output: &Path,
-    css_contents: &[String],
-    fonts: &[String],
-) -> Result<()> {
-    let document = compile_html_with_world(world)?;
+    fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
+        let html_string = ctx.compile_to_html_string()?;
 
-    debug!(output = %output.display(), "exporting to HTML");
-    let html_string = compile_document_to_string(&document)?;
+        // If a custom asset is specified, we inject the link to the asset into each HTML file.
+        // If not, we inline the default CSS.
+        let html_string = if let Some(css_asset) = ctx.assets.get(&STYLESHEETS) {
+            info!(
+                "Found CSS stylesheet: {}",
+                &css_asset.resolved_path.display()
+            );
+            let css_assets = vec![&css_asset.built_relative_path[..]];
 
-    // Inject font links first (DOM-based), then inline styles (string-based).
-    // Ordering matters: string-based injection must run last to avoid re-parsing
-    // and HTML-escaping CSS content (e.g., `>` in selectors).
-    let font_refs: Vec<&str> = fonts.iter().map(|s| s.as_str()).collect();
-    let html_string = html_head::inject_head_links(&html_string, &[], &font_refs)?;
+            let js_assets = if let Some(js_asset) = ctx.assets.get(&SCRIPTS) {
+                info!("Found Javascript: {}", &js_asset.resolved_path.display());
+                vec![&js_asset.built_relative_path[..]]
+            } else {
+                vec![]
+            };
 
-    let css_refs: Vec<&str> = css_contents.iter().map(|s| s.as_str()).collect();
-    let html_string = html_head::inject_inline_styles(&html_string, &css_refs)?;
+            html_utils::inject_head_links(&html_string, &[], &css_assets, &js_assets)?
+        } else {
+            info!("No stylesheet found, using default");
+            html_utils::inject_inline_styles(&html_string, &[DEFAULT_STYLESHEET])?
+        };
 
-    debug!(size = html_string.len(), "writing HTML file");
-    std::fs::write(output, &html_string)
-        .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
+        debug!(size = html_string.len(), "writing HTML file");
+        let output = &ctx.options.output;
+        std::fs::write(output, &html_string)
+            .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
 
-    info!(output = %output.display(), "successfully compiled to HTML");
-    Ok(())
-}
-
-/// Compile Typst document to HTML using an engine-provided World.
-pub fn compile_html_new(
-    options: RheoCompileOptions,
-    css_contents: &[String],
-    fonts: &[String],
-) -> Result<()> {
-    let world = options.world.ok_or_else(|| {
-        RheoError::project_config(
-            "HTML per-file compile requires a world; this is a rheo bug (internal invariant violation)",
-        )
-    })?;
-    compile_html_impl(world, &options.output, css_contents, fonts)
+        info!(output = %output.display(), "successfully compiled to HTML");
+        Ok(())
+    }
 }

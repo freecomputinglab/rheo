@@ -4,6 +4,7 @@ pub mod constants;
 pub mod diagnostics;
 pub mod error;
 pub mod html_compile;
+pub mod html_utils;
 pub mod init_templates;
 pub mod logging;
 pub mod manifest_version;
@@ -42,7 +43,7 @@ pub use config::{PluginSection, Spine};
 
 // Plugin trait and context
 pub use plugins::{
-    FormatPlugin, OpenHandle, PluginContext, PluginInput, ServerHandle, SpineOptions,
+    AssetConfig, FormatPlugin, OpenHandle, PluginContext, ServerHandle, SpineOptions,
 };
 
 // HTML compilation functions

@@ -16,6 +16,7 @@ use tracing::{debug, error, info, warn};
 
 // Re-export logging functionality
 pub use rheo_core::logging;
+use rheo_core::plugins::Asset;
 
 /// Initialize logging with specified verbosity
 pub fn init_logging(verbose: bool, quiet: bool) -> Result<()> {
@@ -289,7 +290,7 @@ struct PerFileCtx<'a> {
     output_config: &'a OutputConfig,
     spine: &'a SpineOptions,
     plugin_section: &'a PluginSection,
-    resolved_inputs: &'a HashMap<&'static str, PathBuf>,
+    resolved_assets: &'a HashMap<&'static str, Asset>,
 }
 
 /// Compile one file with the given world, recording success/failure in `results`.
@@ -315,7 +316,7 @@ fn compile_one_file(
         options,
         spine: pfc.spine.clone(),
         config: pfc.plugin_section.clone(),
-        inputs: pfc.resolved_inputs.clone(),
+        assets: pfc.resolved_assets.clone(),
     };
     match pfc.plugin.compile(ctx) {
         Ok(_) => results.record_success(pfc.plugin.name()),
@@ -348,30 +349,37 @@ fn perform_compilation(
             )
         })?;
 
-        // Resolve declared inputs
-        let mut resolved_inputs: HashMap<&'static str, PathBuf> = HashMap::new();
-        for input in plugin.inputs() {
-            let src = project.root.join(&input.path);
+        // Resolve declared assets
+        let mut resolved_assets: HashMap<&'static str, Asset> = HashMap::new();
+        for asset_config in plugin.assets() {
+            let src = project.root.join(asset_config.default_path);
             if src.is_file() {
-                let dest = plugin_output_dir.join(&input.path);
+                let dest = plugin_output_dir.join(asset_config.default_path);
                 std::fs::copy(&src, &dest).map_err(|e| {
                     RheoError::io(
                         e,
                         format!(
                             "copying plugin input '{}' from {} to {}",
-                            input.name,
+                            asset_config.name,
                             src.display(),
                             dest.display()
                         ),
                     )
                 })?;
-                resolved_inputs.insert(input.name, dest);
-            } else if input.required {
+                resolved_assets.insert(
+                    asset_config.name,
+                    Asset {
+                        config: asset_config.clone(),
+                        resolved_path: dest,
+                        built_relative_path: asset_config.default_path.to_string(),
+                    },
+                );
+            } else if asset_config.required {
                 return Err(RheoError::project_config(format!(
                     "plugin '{}' requires input '{}' at '{}' but it was not found",
                     plugin.name(),
-                    input.name,
-                    &input.path
+                    asset_config.name,
+                    &asset_config.default_path
                 )));
             }
         }
@@ -380,9 +388,9 @@ fn perform_compilation(
         let plugin_section_for_copy = project.config.plugin_section(plugin.name());
         for pattern in project
             .config
-            .copy
+            .assets
             .iter()
-            .chain(plugin_section_for_copy.copy.iter())
+            .chain(plugin_section_for_copy.assets.iter())
         {
             let abs_pattern = project.root.join(pattern).display().to_string();
             let entries = glob::glob(&abs_pattern).map_err(|e| {
@@ -424,9 +432,13 @@ fn perform_compilation(
                 .unwrap_or(plugin.default_merge()),
         };
 
+        // TODO: BuiltSpine here
+
         // Get full plugin section
         let plugin_section = project.config.plugin_section(plugin.name());
 
+        // TODO: this is where it happens.
+        // `spine.merge = true` is the simple case, as plugin.compile is just called once.
         if spine.merge {
             let compilation_root = project
                 .config
@@ -445,7 +457,7 @@ fn perform_compilation(
                 options,
                 spine,
                 config: plugin_section,
-                inputs: resolved_inputs,
+                assets: resolved_assets,
             };
 
             match plugin.compile(ctx) {
@@ -466,7 +478,7 @@ fn perform_compilation(
                 output_config,
                 spine: &spine,
                 plugin_section: &plugin_section,
-                resolved_inputs: &resolved_inputs,
+                resolved_assets: &resolved_assets,
             };
 
             if let Some(ref mut existing_world) = world {

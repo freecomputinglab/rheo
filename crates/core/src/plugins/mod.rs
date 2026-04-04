@@ -1,8 +1,13 @@
 use crate::config::PluginSection;
+use crate::html_compile::{compile_document_to_string, compile_html_with_world};
 use crate::output::OutputConfig;
+use crate::pdf_compile::{compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes};
 use crate::project::ProjectConfig;
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use tempfile::NamedTempFile;
+use tracing::{debug, info};
 
 /// Trait for managing a running preview server.
 pub trait ServerHandle: Send + Sync {
@@ -21,6 +26,7 @@ pub enum OpenHandle {
 }
 
 use crate::compile::RheoCompileOptions;
+use crate::{BuiltSpine, Result, RheoError};
 
 /// Standardized spine options resolved by rheo core before calling compile().
 #[derive(Debug, Clone)]
@@ -32,13 +38,22 @@ pub struct SpineOptions {
 }
 
 /// Declares an additional non-Typst input file needed from the project directory.
-pub struct PluginInput {
+#[derive(Debug, Clone)]
+pub struct AssetConfig {
     /// Key used to retrieve this input from PluginContext::inputs
     pub name: &'static str,
-    /// Path relative to the project root where the file is expected
-    pub path: String,
+    /// Default path relative to the project root (not the content directory) where the file is
+    /// expected.
+    pub default_path: &'static str,
     /// If true, a missing file is a compile error; if false, it is absent from ctx.inputs
     pub required: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct Asset {
+    pub config: AssetConfig,
+    pub resolved_path: PathBuf,
+    pub built_relative_path: String,
 }
 
 /// Context passed to plugin.compile() for each compilation unit.
@@ -72,7 +87,115 @@ pub struct PluginContext<'a> {
     /// Paths are relative to the plugin's output directory (e.g., `build/html/`).
     /// The CLI copies each declared input from the project root to the output directory
     /// before calling `compile()`.
-    pub inputs: HashMap<&'static str, PathBuf>,
+    pub assets: HashMap<&'static str, Asset>,
+}
+
+impl<'a> PluginContext<'a> {
+    pub fn compile(&'a self, plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
+        let ext = plugin.extension();
+        match ext {
+            "pdf" => self.compile_to_pdf(plugin),
+            "html" => self.compile_to_html(plugin),
+            _ => Err(RheoError::misconfigured_plugin(
+                "Cannot infer compilation target from extension, as it is not 'html' or 'pdf'. Please use `ctx.compile_to_pdf` or `ctx.compile_to_html` explicitly.",
+            )),
+        }
+    }
+
+    pub fn compile_to_html_string(&'a self) -> Result<String> {
+        let world = self.options.world.as_ref().ok_or_else(|| {
+            RheoError::project_config(
+                "HTML per-file compile requires a world; this is a rheo bug (internal invariant violation)",
+            )
+        })?;
+
+        let document = compile_html_with_world(world)?;
+
+        debug!(output = %self.options.output.display(), "exporting to HTML");
+        compile_document_to_string(&document)
+    }
+
+    pub fn compile_to_html(&'a self, _plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
+        let html_string = self.compile_to_html_string()?;
+
+        debug!(size = html_string.len(), "writing HTML file");
+        std::fs::write(&self.options.output, &html_string).map_err(|e| {
+            RheoError::io(e, format!("writing HTML file to {:?}", self.options.output))
+        })?;
+
+        Ok(())
+    }
+
+    /// Compile to PDF using the full context. By modifying fields in the PluginContext before
+    /// calling this, you can modify the default PDF behaviour.
+    pub fn compile_to_pdf(&'a self, plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
+        if self.spine.merge {
+            // TODO: make this a `build()` function on SpineOptions
+            // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
+            let rheo_spine = BuiltSpine::build(
+                &self.options.root,
+                Some(&self.spine),
+                plugin.extension(),
+                self.spine.merge,
+            )?;
+
+            debug!(file_count = rheo_spine.source.len(), "built PDF spine");
+
+            let concatenated_source = &rheo_spine.source[0];
+            debug!(
+                source_length = concatenated_source.len(),
+                "concatenated sources"
+            );
+
+            // Create temporary file with concatenated source in root directory
+            let mut temp_file = NamedTempFile::new_in(&self.options.root)
+                .map_err(|e| RheoError::io(e, "creating temporary file for merged PDF"))?;
+            temp_file
+                .write_all(concatenated_source.as_bytes())
+                .map_err(|e| RheoError::io(e, "writing concatenated source to temporary file"))?;
+            temp_file
+                .flush()
+                .map_err(|e| RheoError::io(e, "flushing temporary file"))?;
+
+            let output_path = &self.options.output;
+            let temp_path = temp_file.path();
+            debug!(temp_path = %temp_path.display(), "created temporary file");
+
+            // output_format=None because links already transformed to labels by RheoSpine
+            let plugin_library = plugin.typst_library().map(|s| s.to_string());
+            let document =
+                compile_pdf_to_document(temp_path, &self.options.root, None, plugin_library)?;
+
+            debug!(output = %output_path.display(), "exporting to PDF");
+            let pdf_bytes = document_to_pdf_bytes(&document)?;
+
+            debug!(size = pdf_bytes.len(), "writing PDF file");
+            std::fs::write(output_path, &pdf_bytes)
+                .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output_path)))?;
+
+            info!(output = %output_path.display(), "successfully compiled merged PDF");
+            Ok(())
+        } else {
+            let world = self.options.world.as_ref().ok_or_else(|| {
+                RheoError::project_config(
+                    "PDF per-file compile requires a world; this is a rheo bug (internal invariant violation)",
+                )
+            })?;
+
+            let document = compile_pdf_with_world(world)?;
+            let output = &self.options.output;
+
+            debug!(output = %output.display(), "exporting to PDF");
+            let pdf_bytes = document_to_pdf_bytes(&document)?;
+
+            debug!(size = pdf_bytes.len(), "writing PDF file");
+            std::fs::write(output, &pdf_bytes)
+                .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output)))?;
+
+            info!(output = %output.display(), "successfully compiled to PDF");
+            Ok(())
+        }
+    }
 }
 
 /// Plugin trait for implementing new output formats in rheo.
@@ -123,6 +246,11 @@ pub trait FormatPlugin: Send + Sync {
     /// }
     /// ```
     fn name(&self) -> &'static str;
+
+    /// The extension that shuold be used when transforming links, if it differs from the name.
+    fn extension(&self) -> &'static str {
+        self.name()
+    }
 
     /// Whether this plugin merges files by default.
     ///
@@ -222,16 +350,16 @@ pub trait FormatPlugin: Send + Sync {
     /// # Examples
     ///
     /// ```ignore
-    /// fn inputs(&self) -> Vec<PluginInput> {
+    /// fn assets(&self) -> Vec<PluginInput> {
     ///     vec![
     ///         PluginInput {
     ///             name: "stylesheet",
-    ///             path: "styles/main.css".to_string(),
+    ///             path: "styles/main.css",
     ///             required: false,  // Optional — use default if missing
     ///         },
     ///         PluginInput {
     ///             name: "logo",
-    ///             path: "assets/logo.png".to_string(),
+    ///             path: "assets/logo.png",
     ///             required: true,   // Required — error if missing
     ///         },
     ///     ]
@@ -242,14 +370,14 @@ pub trait FormatPlugin: Send + Sync {
     ///
     /// ```ignore
     /// fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-    ///     if let Some(stylesheet_path) = ctx.inputs.get("stylesheet") {
+    ///     if let Some(stylesheet_path) = ctx.assets.get("stylesheet") {
     ///         let css = std::fs::read_to_string(stylesheet_path)?;
     ///         // ... use css ...
     ///     }
     ///     Ok(())
     /// }
     /// ```
-    fn inputs(&self) -> Vec<PluginInput> {
+    fn assets(&self) -> Vec<AssetConfig> {
         vec![]
     }
 
@@ -330,6 +458,7 @@ pub trait FormatPlugin: Send + Sync {
     /// # Default implementation
     ///
     /// Returns `None` (no library code contributed).
+    /// TODO: make this nicer, i.e. as a Typst file
     fn typst_library(&self) -> Option<&'static str> {
         None
     }
@@ -378,4 +507,9 @@ pub trait FormatPlugin: Send + Sync {
     ///
     /// * `ctx` - Compilation context with project config, options, spine, inputs, etc.
     fn compile(&self, ctx: PluginContext<'_>) -> crate::Result<()>;
+    // NOTE: the 'merge' attribute could be upraded to a parameter here, as this function operates
+    // very differently according to whether it is true of false
+
+    // TODO: because the case here is that compile is called for EVERY source file, we need a
+    // `precompile` entrypoint that can do things like asset copying when merge is not true.
 }

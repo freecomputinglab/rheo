@@ -48,5 +48,8 @@ regex = { workspace = true }
 notify = { workspace = true }
 ecow = { workspace = true }
 
-[dev-dependencies]
 tempfile = { workspace = true }
+
+# HTML parsing
+html5ever = { workspace = true }
+markup5ever_rcdom = { workspace = true }

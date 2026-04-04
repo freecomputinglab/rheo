@@ -21,10 +21,8 @@ cargo run -- clean <project-path>
 RUST_LOG=rheo=trace cargo run -- compile ... # debug logging
 
 # Tests
-cargo test
-cargo test --test harness
-UPDATE_REFERENCES=1 cargo test --test harness   # update snapshots
-RUN_HTML_TESTS=1 / RUN_PDF_TESTS=1 / RUN_EPUB_TESTS=1 cargo test --test harness
+cargo test                                    # run all tests
+See [TESTING.md](TESTING.md) for more test commands and options.
 cargo fmt && cargo clippy -- -D warnings
 ```
 

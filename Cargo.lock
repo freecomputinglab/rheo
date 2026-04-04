@@ -3006,7 +3006,9 @@ dependencies = [
  "ecow",
  "glob",
  "globset",
+ "html5ever",
  "lazy_static",
+ "markup5ever_rcdom",
  "notify",
  "opener",
  "parking_lot",
@@ -3053,8 +3055,6 @@ name = "rheo-html"
 version = "0.2.0"
 dependencies = [
  "axum",
- "html5ever",
- "markup5ever_rcdom",
  "mime_guess",
  "rheo-core",
  "thiserror 2.0.17",
@@ -3071,7 +3071,6 @@ name = "rheo-pdf"
 version = "0.2.0"
 dependencies = [
  "rheo-core",
- "tempfile",
  "thiserror 2.0.17",
  "tracing",
 ]
@@ -3084,6 +3083,7 @@ dependencies = [
  "lopdf",
  "markup5ever_rcdom",
  "ntest",
+ "paste",
  "rheo-core",
  "rheo-epub",
  "rheo-html",

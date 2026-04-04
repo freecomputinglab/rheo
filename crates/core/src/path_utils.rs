@@ -5,7 +5,7 @@
 //! for path-related operations throughout the codebase.
 
 use crate::{Result, RheoError};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Extension trait for Path to provide safe operations that return Result instead of Option
 pub trait PathExt {
@@ -55,6 +55,12 @@ impl PathExt for Path {
             .to_str()
             .ok_or_else(|| RheoError::path(self, "extension contains invalid UTF-8"))
     }
+}
+
+/// Canonicalize a path, wrapping errors in RheoError.
+pub fn canonicalize_path(path: &Path) -> Result<PathBuf> {
+    path.canonicalize()
+        .map_err(|e| RheoError::path(path, format!("failed to canonicalize path: {}", e)))
 }
 
 #[cfg(test)]

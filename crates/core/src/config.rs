@@ -40,7 +40,7 @@ pub struct PluginSection {
     /// Per-plugin glob patterns for files to copy into this plugin's output directory.
     /// Paths are relative to the project root; directory structure is preserved.
     #[serde(default)]
-    pub copy: Vec<String>,
+    pub assets: Vec<String>,
 
     /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
     /// `fonts` for HTML; `identifier`, `date` for EPUB).
@@ -70,7 +70,7 @@ pub struct RheoConfig {
 
     /// Global glob patterns for files to copy into every plugin's output directory.
     /// Paths are relative to the project root; directory structure is preserved.
-    pub copy: Vec<String>,
+    pub assets: Vec<String>,
 
     /// Per-plugin configuration sections, keyed by plugin name.
     /// Built from `[html]`, `[pdf]`, `[epub]` (and any other) table sections.
@@ -84,7 +84,7 @@ impl Default for RheoConfig {
             content_dir: Some("./".to_string()),
             build_dir: Some("./build".to_string()),
             formats: vec![],
-            copy: vec![],
+            assets: vec![],
             plugin_sections: HashMap::new(),
         }
     }
@@ -99,7 +99,7 @@ pub struct RheoConfigRaw {
     #[serde(default)]
     formats: Vec<String>,
     #[serde(default)]
-    copy: Vec<String>,
+    assets: Vec<String>,
     #[serde(flatten)]
     extra: HashMap<String, toml::Value>,
 }
@@ -121,7 +121,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             content_dir: raw.content_dir,
             build_dir: raw.build_dir,
             formats: raw.formats,
-            copy: raw.copy,
+            assets: raw.assets,
             plugin_sections,
         })
     }
@@ -139,16 +139,7 @@ impl RheoConfig {
         }
 
         debug!(path = %config_path.display(), "loading configuration");
-        let contents = std::fs::read_to_string(&config_path)
-            .map_err(|e| crate::RheoError::io(e, format!("reading {}", config_path.display())))?;
-
-        let raw: RheoConfigRaw = toml::from_str(&contents)
-            .map_err(|e| crate::RheoError::project_config(format!("invalid rheo.toml: {}", e)))?;
-        let config = RheoConfig::try_from(raw)
-            .map_err(|e| crate::RheoError::project_config(format!("invalid rheo.toml: {}", e)))?;
-
-        config.validate()?;
-        Ok(config)
+        Self::parse_config(&config_path, "rheo.toml")
     }
 
     /// Load configuration from a specific path with validation.
@@ -166,28 +157,22 @@ impl RheoConfig {
             ));
         }
 
-        let contents = std::fs::read_to_string(config_path).map_err(|e| {
-            crate::RheoError::io(e, format!("reading config file {}", config_path.display()))
-        })?;
+        let config = Self::parse_config(config_path, "config file")?;
+        debug!(path = %config_path.display(), "loaded custom configuration");
+        Ok(config)
+    }
 
-        let raw: RheoConfigRaw = toml::from_str(&contents).map_err(|e| {
-            crate::RheoError::project_config(format!(
-                "invalid config file {}: {}",
-                config_path.display(),
-                e
-            ))
-        })?;
-        let config = RheoConfig::try_from(raw).map_err(|e| {
-            crate::RheoError::project_config(format!(
-                "invalid config file {}: {}",
-                config_path.display(),
-                e
-            ))
-        })?;
+    /// Read, parse, convert, and validate a config file.
+    fn parse_config(config_path: &Path, label: &str) -> Result<Self> {
+        let contents = std::fs::read_to_string(config_path)
+            .map_err(|e| crate::RheoError::io(e, format!("reading {}", config_path.display())))?;
+
+        let raw: RheoConfigRaw = toml::from_str(&contents)
+            .map_err(|e| crate::RheoError::project_config(format!("invalid {}: {}", label, e)))?;
+        let config = RheoConfig::try_from(raw)
+            .map_err(|e| crate::RheoError::project_config(format!("invalid {}: {}", label, e)))?;
 
         config.validate()?;
-
-        debug!(path = %config_path.display(), "loaded custom configuration");
         Ok(config)
     }
 
@@ -202,7 +187,7 @@ impl RheoConfig {
 
     /// Returns true if `name` appears in the configured formats list.
     pub fn has_format(&self, name: &str) -> bool {
-        self.formats.iter().any(|f| f == name)
+        self.formats.contains(&name.to_string())
     }
 
     /// Return the spine config for the named plugin, if any.
@@ -457,34 +442,34 @@ mod tests {
     }
 
     #[test]
-    fn test_global_copy_parses() {
-        let toml = versioned_toml(r#"copy = ["*.txt", "assets/**/*.png"]"#);
+    fn test_global_assets_parses() {
+        let toml = versioned_toml(r#"assets = ["*.txt", "assets/**/*.png"]"#);
         let config = parse(&toml);
-        assert_eq!(config.copy, vec!["*.txt", "assets/**/*.png"]);
+        assert_eq!(config.assets, vec!["*.txt", "assets/**/*.png"]);
     }
 
     #[test]
-    fn test_global_copy_defaults_empty() {
+    fn test_global_assets_defaults_empty() {
         let toml = versioned_toml("");
         let config = parse(&toml);
-        assert!(config.copy.is_empty());
+        assert!(config.assets.is_empty());
     }
 
     #[test]
     fn test_plugin_copy_parses() {
-        let toml = versioned_toml("[html]\ncopy = [\"assets/logo.png\", \"fonts/**\"]");
+        let toml = versioned_toml("[html]\nassets = [\"assets/logo.png\", \"fonts/**\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        assert_eq!(section.copy, vec!["assets/logo.png", "fonts/**"]);
+        assert_eq!(section.assets, vec!["assets/logo.png", "fonts/**"]);
     }
 
     #[test]
     fn test_plugin_copy_not_in_extra() {
-        let toml = versioned_toml("[html]\ncopy = [\"assets/logo.png\"]");
+        let toml = versioned_toml("[html]\nassets = [\"assets/logo.png\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        // `copy` must be in the dedicated field, not leaked into `extra`
-        assert!(section.extra.get("copy").is_none());
+        // `assets` must be in the dedicated field, not leaked into `extra`
+        assert!(section.extra.get("assets").is_none());
     }
 
     #[test]
@@ -492,6 +477,6 @@ mod tests {
         let toml = versioned_toml("[html]\nstylesheets = [\"style.css\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        assert!(section.copy.is_empty());
+        assert!(section.assets.is_empty());
     }
 }
