@@ -37,6 +37,10 @@ impl FormatPlugin for EpubPlugin {
         true
     }
 
+    fn extension(&self) -> &'static str {
+        "xhtml"
+    }
+
     /// Set EPUB smart defaults: infer spine title from project name when no config exists.
     fn apply_defaults(&self, section: &mut PluginSection, project_name: &str) {
         let spine = section.spine.get_or_insert_with(|| Spine {
