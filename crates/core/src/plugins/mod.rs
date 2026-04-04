@@ -92,13 +92,9 @@ pub struct PluginContext<'a> {
 
 impl<'a> PluginContext<'a> {
     pub fn compile(&'a self, plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
-        let ext = plugin.extension();
-        match ext {
-            "pdf" => self.compile_to_pdf(plugin),
-            "html" => self.compile_to_html(plugin),
-            _ => Err(RheoError::misconfigured_plugin(
-                "Cannot infer compilation target from extension, as it is not 'html' or 'pdf'. Please use `ctx.compile_to_pdf` or `ctx.compile_to_html` explicitly.",
-            )),
+        match plugin.compilation_target() {
+            CompilationTarget::Pdf => self.compile_to_pdf(plugin),
+            CompilationTarget::Html => self.compile_to_html(plugin),
         }
     }
 
@@ -225,6 +221,14 @@ impl<'a> PluginContext<'a> {
 /// 3. **Resolve inputs**: Files declared by `inputs()` are copied to output directory
 /// 4. **Compile**: `compile()` is called once per file (per-file mode) or once (merged mode)
 /// 5. **Open**: `open()` is called if `--open` flag was passed
+/// The low-level compilation target for a format plugin.
+pub enum CompilationTarget {
+    /// Compile to an HTML document.
+    Html,
+    /// Compile to a paged (PDF) document.
+    Pdf,
+}
+
 pub trait FormatPlugin: Send + Sync {
     /// Plugin identifier, CLI flag, and output subdirectory name.
     ///
@@ -252,6 +256,18 @@ pub trait FormatPlugin: Send + Sync {
     /// The extension that shuold be used when transforming links, if it differs from the name.
     fn extension(&self) -> &'static str {
         self.name()
+    }
+
+    /// The compilation target used by `PluginContext::compile()`.
+    ///
+    /// Override this if your plugin's extension differs from its compilation target.
+    /// Default: "pdf" extension -> Pdf; everything else -> Html.
+    fn compilation_target(&self) -> CompilationTarget {
+        if self.extension() == "pdf" {
+            CompilationTarget::Pdf
+        } else {
+            CompilationTarget::Html
+        }
     }
 
     /// Whether this plugin merges files by default.
