@@ -142,7 +142,9 @@ impl<'a> PluginContext<'a> {
 
             debug!(file_count = rheo_spine.source.len(), "built PDF spine");
 
-            let concatenated_source = &rheo_spine.source[0];
+            let concatenated_source = rheo_spine.source.first().ok_or_else(|| {
+                RheoError::project_config("merged PDF spine produced no source files")
+            })?;
             debug!(
                 source_length = concatenated_source.len(),
                 "concatenated sources"
