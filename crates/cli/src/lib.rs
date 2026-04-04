@@ -628,6 +628,13 @@ fn setup_compilation_context(
         plugin.apply_defaults(section, &project.name);
     }
 
+    // Validate that no plugin declares assets with reserved names
+    for plugin in &plugins {
+        for asset_config in plugin.assets() {
+            asset_config.validate(plugin.name())?;
+        }
+    }
+
     let resolved_build_dir = resolve_build_dir(&project, build_dir)?;
     let output_config = OutputConfig::new(&project.root, resolved_build_dir);
 
