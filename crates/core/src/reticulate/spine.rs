@@ -154,8 +154,8 @@ fn check_duplicate_filenames(spine_files: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
-fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
-    let typst_files: Vec<PathBuf> = WalkDir::new(root)
+fn collect_typst_files(root: &Path) -> Vec<PathBuf> {
+    WalkDir::new(root)
         .into_iter()
         .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
         .filter(|entry| {
@@ -165,7 +165,11 @@ fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
                 .map(|ext| ext == &TYP_EXT[1..])
                 .unwrap_or(false)
         })
-        .collect();
+        .collect()
+}
+
+fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
+    let typst_files = collect_typst_files(root);
 
     match typst_files.len() {
         0 => Err(RheoError::project_config("need at least one .typ file")),
@@ -177,16 +181,7 @@ fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
 }
 
 fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut typst_files: Vec<PathBuf> = WalkDir::new(root)
-        .into_iter()
-        .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
-        .filter(|path| {
-            path.extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext == &TYP_EXT[1..])
-                .unwrap_or(false)
-        })
-        .collect();
+    let mut typst_files = collect_typst_files(root);
 
     if typst_files.is_empty() {
         return Err(RheoError::project_config("need at least one .typ file"));
