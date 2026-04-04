@@ -202,7 +202,7 @@ impl RheoConfig {
 
     /// Returns true if `name` appears in the configured formats list.
     pub fn has_format(&self, name: &str) -> bool {
-        self.formats.iter().any(|f| f == name)
+        self.formats.contains(&name.to_string())
     }
 
     /// Return the spine config for the named plugin, if any.
