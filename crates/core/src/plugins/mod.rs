@@ -62,7 +62,7 @@ pub struct PluginContext<'a> {
     pub output_config: &'a OutputConfig,
     pub options: RheoCompileOptions<'a>,
     /// Resolved spine options (title, vertebrae, merge flag).
-    pub spine: SpineOptions,
+    pub spine: &'a SpineOptions,
     /// Full parsed plugin section from rheo.toml (or default if not configured).
     ///
     /// # Reading format-specific configuration
@@ -81,13 +81,13 @@ pub struct PluginContext<'a> {
     ///     .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
     ///     .unwrap_or_default();
     /// ```
-    pub config: PluginSection,
+    pub config: &'a PluginSection,
     /// Resolved additional input files declared by the plugin.
     ///
     /// Paths are relative to the plugin's output directory (e.g., `build/html/`).
     /// The CLI copies each declared input from the project root to the output directory
     /// before calling `compile()`.
-    pub assets: HashMap<&'static str, Asset>,
+    pub assets: &'a HashMap<&'static str, Asset>,
 }
 
 impl<'a> PluginContext<'a> {

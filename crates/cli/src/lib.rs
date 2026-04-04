@@ -314,9 +314,9 @@ fn compile_one_file(
         project: pfc.project,
         output_config: pfc.output_config,
         options,
-        spine: pfc.spine.clone(),
-        config: pfc.plugin_section.clone(),
-        assets: pfc.resolved_assets.clone(),
+        spine: pfc.spine,
+        config: pfc.plugin_section,
+        assets: pfc.resolved_assets,
     };
     match pfc.plugin.compile(ctx) {
         Ok(_) => results.record_success(pfc.plugin.name()),
@@ -455,9 +455,9 @@ fn perform_compilation(
                 project,
                 output_config,
                 options,
-                spine,
-                config: plugin_section,
-                assets: resolved_assets,
+                spine: &spine,
+                config: &plugin_section,
+                assets: &resolved_assets,
             };
 
             match plugin.compile(ctx) {
