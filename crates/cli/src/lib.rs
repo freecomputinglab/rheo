@@ -277,7 +277,7 @@ fn get_files_for_plugin(
                 vertebrae: spine.vertebrae.clone(),
                 merge: spine.merge.unwrap_or(false),
             };
-            rheo_core::reticulate::spine::generate_spine(&content_dir, Some(&spine_options), false)
+            spine_options.generate(&content_dir)
         }
     }
 }

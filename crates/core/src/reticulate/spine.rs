@@ -37,7 +37,10 @@ impl BuiltSpine {
         format_ext: &str,
         merge: bool,
     ) -> Result<BuiltSpine> {
-        let spine_files = generate_spine(root, spine_config, false)?;
+        let spine_files = match spine_config {
+            Some(spine) => spine.generate(root)?,
+            None => collect_one_typst_file(root)?,
+        };
         check_duplicate_filenames(&spine_files)?;
 
         // Merge when caller requests it (typically only PDF merged mode).
@@ -188,6 +191,44 @@ fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
 
     typst_files.sort();
     Ok(typst_files)
+}
+
+/// Generates a spine (ordered list of .typ files) based on configuration.
+impl SpineOptions {
+    /// Resolve vertebrae patterns into an ordered list of .typ files.
+    ///
+    /// If no vertebrae are configured, discovers all .typ files under `root`.
+    pub fn generate(&self, root: &Path) -> Result<Vec<PathBuf>> {
+        if self.vertebrae.is_empty() {
+            return collect_all_typst_files(root);
+        }
+
+        let mut typst_files = Vec::new();
+        for pattern in &self.vertebrae {
+            let glob_pattern = root.join(pattern).display().to_string();
+            let glob = glob::glob(&glob_pattern).map_err(|e| {
+                RheoError::project_config(format!("invalid glob pattern '{}': {}", pattern, e))
+            })?;
+
+            let mut glob_files: Vec<PathBuf> = glob
+                .filter_map(|entry| entry.ok())
+                .filter(|path| path.is_file())
+                .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("typ"))
+                .collect();
+
+            // Sort by full path (lexicographic) for consistent ordering
+            glob_files.sort();
+            typst_files.extend(glob_files);
+        }
+
+        if typst_files.is_empty() {
+            return Err(RheoError::project_config(
+                "merge spine matched no .typ files",
+            ));
+        }
+
+        Ok(typst_files)
+    }
 }
 
 /// Generates a spine (ordered list of .typ files) based on configuration.

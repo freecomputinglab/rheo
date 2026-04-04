@@ -347,7 +347,7 @@ pub trait FormatPlugin: Send + Sync {
     /// }
     /// ```
     fn open(&self, output_dir: &Path, _format_name: &str) -> crate::Result<OpenHandle> {
-        crate::open_all_files_in_folder(output_dir.to_path_buf(), self.name())?;
+        open_all_files_in_folder(output_dir.to_path_buf(), self.name())?;
         Ok(OpenHandle::Direct)
     }
 
@@ -530,4 +530,26 @@ pub trait FormatPlugin: Send + Sync {
 
     // TODO: because the case here is that compile is called for EVERY source file, we need a
     // `precompile` entrypoint that can do things like asset copying when merge is not true.
+}
+
+/// Open all files with a given extension in a folder using the OS default application.
+pub(crate) fn open_all_files_in_folder(folder: PathBuf, ext: &str) -> crate::Result<()> {
+    use tracing::{info, warn};
+    use walkdir::WalkDir;
+
+    for entry in WalkDir::new(&folder)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some(ext))
+    {
+        let path = entry.path();
+        info!("Opening: {}", path.display());
+
+        if let Err(e) = opener::open(path) {
+            warn!("Failed to open {}: {}", path.display(), e);
+        }
+    }
+
+    Ok(())
 }

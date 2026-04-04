@@ -326,7 +326,7 @@ fn compile_epub_impl(
     let rheo_spine = BuiltSpine::build(root, Some(spine), "epub", false)?;
 
     // Get the spine file paths
-    let spine_paths = rheo_core::reticulate::spine::generate_spine(root, Some(spine), false)?;
+    let spine_paths = spine.generate(root)?;
 
     let mut items = spine_paths
         .iter()

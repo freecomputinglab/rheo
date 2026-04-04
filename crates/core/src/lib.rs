@@ -61,27 +61,5 @@ pub use typst_types::{
     eco_vec,
 };
 
-use std::path::PathBuf;
-use tracing::{info, warn};
-use walkdir::WalkDir;
-
 /// Result type alias using RheoError
 pub type Result<T> = std::result::Result<T, RheoError>;
-
-pub fn open_all_files_in_folder(folder: PathBuf, ext: &str) -> Result<()> {
-    for entry in WalkDir::new(&folder)
-        .max_depth(1)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some(ext))
-    {
-        let path = entry.path();
-        info!("Opening: {}", path.display());
-
-        if let Err(e) = opener::open(path) {
-            warn!("Failed to open {}: {}", path.display(), e);
-        }
-    }
-
-    Ok(())
-}
