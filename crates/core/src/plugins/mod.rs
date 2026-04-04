@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 use tracing::{debug, info};
+use typst_html::HtmlDocument;
 
 /// Trait for managing a running preview server.
 pub trait ServerHandle: Send + Sync {
@@ -140,6 +141,55 @@ impl<'a> PluginContext<'a> {
         })?;
 
         Ok(())
+    }
+
+    /// Compile each spine file to an HTML document independently.
+    ///
+    /// Builds transformed sources via `BuiltSpine::build()` (merge=false), then compiles
+    /// each one through `RheoWorld::compile_html_file()`. Returns `(original_path, HtmlDocument)`
+    /// pairs in spine order.
+    pub fn compile_spine_items_to_html(
+        &self,
+        plugin: &(impl FormatPlugin + ?Sized),
+    ) -> Result<Vec<(PathBuf, HtmlDocument)>> {
+        let rheo_spine = BuiltSpine::build(
+            &self.options.root,
+            Some(self.spine),
+            plugin.extension(),
+            false,
+        )?;
+
+        let spine_paths = self.spine.generate(&self.options.root)?;
+
+        let plugin_library = plugin.typst_library().map(|s| s.to_string());
+
+        spine_paths
+            .iter()
+            .zip(rheo_spine.source.iter())
+            .map(|(path, transformed_source)| {
+                let mut temp_file = NamedTempFile::new_in(&self.options.root)
+                    .map_err(|e| RheoError::io(e, "creating temp file for spine item HTML"))?;
+                temp_file
+                    .write_all(transformed_source.as_bytes())
+                    .map_err(|e| {
+                        RheoError::io(e, "writing transformed source to temp file")
+                    })?;
+                temp_file.flush().map_err(|e| {
+                    RheoError::io(e, "flushing temp file")
+                })?;
+
+                let temp_path = temp_file.path();
+                debug!(temp_path = %temp_path.display(), original = %path.display(), "compiling spine item to HTML");
+
+                let document = RheoWorld::compile_html_file(
+                    &self.options.root,
+                    temp_path,
+                    plugin.name(),
+                    plugin_library.clone(),
+                )?;
+                Ok((path.clone(), document))
+            })
+            .collect()
     }
 
     /// Compile to PDF using the full context. By modifying fields in the PluginContext before
