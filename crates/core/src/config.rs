@@ -139,16 +139,7 @@ impl RheoConfig {
         }
 
         debug!(path = %config_path.display(), "loading configuration");
-        let contents = std::fs::read_to_string(&config_path)
-            .map_err(|e| crate::RheoError::io(e, format!("reading {}", config_path.display())))?;
-
-        let raw: RheoConfigRaw = toml::from_str(&contents)
-            .map_err(|e| crate::RheoError::project_config(format!("invalid rheo.toml: {}", e)))?;
-        let config = RheoConfig::try_from(raw)
-            .map_err(|e| crate::RheoError::project_config(format!("invalid rheo.toml: {}", e)))?;
-
-        config.validate()?;
-        Ok(config)
+        Self::parse_config(&config_path, "rheo.toml")
     }
 
     /// Load configuration from a specific path with validation.
@@ -166,28 +157,22 @@ impl RheoConfig {
             ));
         }
 
-        let contents = std::fs::read_to_string(config_path).map_err(|e| {
-            crate::RheoError::io(e, format!("reading config file {}", config_path.display()))
-        })?;
+        let config = Self::parse_config(config_path, "config file")?;
+        debug!(path = %config_path.display(), "loaded custom configuration");
+        Ok(config)
+    }
 
-        let raw: RheoConfigRaw = toml::from_str(&contents).map_err(|e| {
-            crate::RheoError::project_config(format!(
-                "invalid config file {}: {}",
-                config_path.display(),
-                e
-            ))
-        })?;
-        let config = RheoConfig::try_from(raw).map_err(|e| {
-            crate::RheoError::project_config(format!(
-                "invalid config file {}: {}",
-                config_path.display(),
-                e
-            ))
-        })?;
+    /// Read, parse, convert, and validate a config file.
+    fn parse_config(config_path: &Path, label: &str) -> Result<Self> {
+        let contents = std::fs::read_to_string(config_path)
+            .map_err(|e| crate::RheoError::io(e, format!("reading {}", config_path.display())))?;
+
+        let raw: RheoConfigRaw = toml::from_str(&contents)
+            .map_err(|e| crate::RheoError::project_config(format!("invalid {}: {}", label, e)))?;
+        let config = RheoConfig::try_from(raw)
+            .map_err(|e| crate::RheoError::project_config(format!("invalid {}: {}", label, e)))?;
 
         config.validate()?;
-
-        debug!(path = %config_path.display(), "loaded custom configuration");
         Ok(config)
     }
 
