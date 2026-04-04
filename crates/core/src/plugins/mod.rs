@@ -1,7 +1,6 @@
+use crate::compile::{compile_document_to_string, document_to_pdf_bytes};
 use crate::config::PluginSection;
-use crate::html_compile::compile_document_to_string;
 use crate::output::OutputConfig;
-use crate::pdf_compile::document_to_pdf_bytes;
 use crate::project::ProjectConfig;
 use crate::world::RheoWorld;
 use std::collections::HashMap;
