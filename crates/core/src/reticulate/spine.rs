@@ -218,7 +218,6 @@ pub fn generate_spine(
                     .filter_map(|entry| entry.ok())
                     .filter(|path| path.is_file())
                     .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("typ"))
-                    .filter(|path| path.file_name().is_some())
                     .collect();
 
                 // Sort by full path (lexicographic) for consistent ordering
