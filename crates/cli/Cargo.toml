@@ -54,3 +54,6 @@ thiserror = { workspace = true }
 # Patterns
 globset = { workspace = true }
 glob = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

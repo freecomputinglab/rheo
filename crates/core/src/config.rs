@@ -187,7 +187,7 @@ impl RheoConfig {
 
     /// Returns true if `name` appears in the configured formats list.
     pub fn has_format(&self, name: &str) -> bool {
-        self.formats.contains(&name.to_string())
+        self.formats.iter().any(|f| f == name)
     }
 
     /// Return the spine config for the named plugin, if any.
@@ -201,6 +201,13 @@ impl RheoConfig {
     /// Returns `PluginSection::default()` if no section is configured.
     pub fn plugin_section(&self, name: &str) -> PluginSection {
         self.plugin_sections.get(name).cloned().unwrap_or_default()
+    }
+}
+
+impl PluginSection {
+    /// Get a string value from extra config, returning None if absent or not a string.
+    pub fn get_string(&self, key: &str) -> Option<&str> {
+        self.extra.get(key).and_then(|v| v.as_str())
     }
 }
 
@@ -478,5 +485,29 @@ mod tests {
         let config = parse(&toml);
         let section = config.plugin_section("html");
         assert!(section.assets.is_empty());
+    }
+
+    #[test]
+    fn test_get_string_returns_string_value() {
+        let toml = versioned_toml("[html]\ncss_stylesheet = \"custom.css\"");
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        assert_eq!(section.get_string("css_stylesheet"), Some("custom.css"));
+    }
+
+    #[test]
+    fn test_get_string_returns_none_for_missing_key() {
+        let toml = versioned_toml("[html]");
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        assert_eq!(section.get_string("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_get_string_returns_none_for_non_string_value() {
+        let toml = versioned_toml("[html]\ncss_stylesheet = [\"a\", \"b\"]");
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        assert_eq!(section.get_string("css_stylesheet"), None);
     }
 }

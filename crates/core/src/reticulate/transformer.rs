@@ -2,7 +2,7 @@ use super::types::{LinkInfo, LinkTransform};
 use crate::constants::TYP_EXT;
 use crate::pdf_utils::sanitize_label_name;
 use crate::reticulate::validator::is_relative_typ_link;
-use crate::{HTML_EXT, Result, RheoError, XHTML_EXT};
+use crate::{Result, RheoError};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -89,14 +89,10 @@ impl LinkTransformer {
                             new_label: format!("<{}>", label),
                         }
                     }
-                    ("html", _) => LinkTransform::ReplaceUrl {
-                        new_url: url.replace(TYP_EXT, HTML_EXT),
+                    // Generic extension-based replacement: .typ → .{extension}
+                    (ext, _) => LinkTransform::ReplaceUrl {
+                        new_url: url.replace(TYP_EXT, &format!(".{}", ext)),
                     },
-                    ("epub", _) => LinkTransform::ReplaceUrl {
-                        new_url: url.replace(TYP_EXT, XHTML_EXT),
-                    },
-                    // Unknown formats: passthrough
-                    _ => LinkTransform::KeepOriginal,
                 }
             } else {
                 // External URL, fragment, or non-.typ link — always preserve
@@ -232,13 +228,16 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_format_passthrough() {
+    fn test_unknown_format_replaces_extension() {
         let links = vec![make_link("./file.typ", "text", 0..10)];
         let transformer = LinkTransformer::new("unknown");
         let transforms = transformer
             .compute_transformations(&links, Path::new("test.typ"))
             .unwrap();
-        assert!(matches!(transforms[0].1, LinkTransform::KeepOriginal));
+        match &transforms[0].1 {
+            LinkTransform::ReplaceUrl { new_url } => assert_eq!(new_url, "./file.unknown"),
+            other => panic!("Expected ReplaceUrl transform, got {:?}", other),
+        }
     }
 
     #[test]

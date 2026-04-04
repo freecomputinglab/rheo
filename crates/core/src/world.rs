@@ -205,6 +205,53 @@ impl RheoWorld {
     pub fn root(&self) -> &Path {
         &self.root
     }
+
+    /// Compile the current main file to an HTML document.
+    pub fn compile_html(&self) -> crate::Result<typst_html::HtmlDocument> {
+        use crate::diagnostics::unwrap_compilation_result;
+        use typst::diag::SourceDiagnostic;
+
+        tracing::info!("compiling to HTML");
+        let result = typst::compile::<typst_html::HtmlDocument>(self);
+        let filter = |w: &SourceDiagnostic| {
+            !w.message
+                .contains("html export is under active development and incomplete")
+        };
+        unwrap_compilation_result(Some(self), result, Some(filter))
+    }
+
+    /// Compile the current main file to a paged (PDF) document.
+    pub fn compile_pdf(&self) -> crate::Result<typst::layout::PagedDocument> {
+        use crate::diagnostics::unwrap_compilation_result;
+
+        tracing::info!("compiling to PDF");
+        let result = typst::compile::<typst::layout::PagedDocument>(self);
+        unwrap_compilation_result(Some(self), result, None::<fn(&_) -> bool>)
+    }
+
+    /// Create a new world and compile the given file to an HTML document.
+    pub fn compile_html_file(
+        root: &Path,
+        input: &Path,
+        format_name: &str,
+        plugin_library: Option<String>,
+    ) -> crate::Result<typst_html::HtmlDocument> {
+        let world = Self::new(root, input, Some(format_name), plugin_library)?;
+        tracing::info!(input = %input.display(), "compiling to HTML");
+        world.compile_html()
+    }
+
+    /// Create a new world and compile the given file to a paged (PDF) document.
+    pub fn compile_pdf_file(
+        root: &Path,
+        input: &Path,
+        format_name: Option<&str>,
+        plugin_library: Option<String>,
+    ) -> crate::Result<typst::layout::PagedDocument> {
+        let world = Self::new(root, input, format_name, plugin_library)?;
+        tracing::info!(input = %input.display(), "compiling to PDF");
+        world.compile_pdf()
+    }
 }
 
 impl World for RheoWorld {

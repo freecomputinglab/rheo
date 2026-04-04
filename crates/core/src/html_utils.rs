@@ -40,6 +40,40 @@ impl HtmlDom {
         find_element_by_tag(&self.dom.document, tag_name).map(|handle| Element { handle })
     }
 
+    /// Inject `<link>` and `<script>` elements into the HTML `<head>`.
+    ///
+    /// Links are prepended in order: fonts first, then stylesheets, then scripts.
+    pub fn inject_head_links(
+        &mut self,
+        fonts: &[&str],
+        stylesheets: &[&str],
+        scripts: &[&str],
+    ) -> Result<()> {
+        let head = self
+            .find_element("head")
+            .ok_or_else(|| RheoError::HtmlGeneration {
+                count: 1,
+                errors: "HTML document does not contain a <head> element".to_string(),
+            })?;
+
+        for script in scripts.iter().rev() {
+            let node = Element::create_script(script);
+            head.prepend_child(node);
+        }
+
+        for stylesheet in stylesheets.iter().rev() {
+            let link = Element::create_link("stylesheet", stylesheet);
+            head.prepend_child(link);
+        }
+
+        for font in fonts.iter().rev() {
+            let link = Element::create_link("stylesheet", font);
+            head.prepend_child(link);
+        }
+
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn document_root(&self) -> &Handle {
         &self.dom.document
@@ -266,30 +300,8 @@ pub fn inject_head_links(
     stylesheets: &[&str],
     scripts: &[&str],
 ) -> Result<String> {
-    let dom = HtmlDom::parse(html)?;
-
-    let head = dom
-        .find_element("head")
-        .ok_or_else(|| RheoError::HtmlGeneration {
-            count: 1,
-            errors: "HTML document does not contain a <head> element".to_string(),
-        })?;
-
-    for script in scripts.iter().rev() {
-        let node = Element::create_script(script);
-        head.prepend_child(node);
-    }
-
-    for stylesheet in stylesheets.iter().rev() {
-        let link = Element::create_link("stylesheet", stylesheet);
-        head.prepend_child(link);
-    }
-
-    for font in fonts.iter().rev() {
-        let link = Element::create_link("stylesheet", font);
-        head.prepend_child(link);
-    }
-
+    let mut dom = HtmlDom::parse(html)?;
+    dom.inject_head_links(fonts, stylesheets, scripts)?;
     dom.serialize()
 }
 
@@ -481,5 +493,22 @@ mod tests {
         let result = inject_head_links(html, &[], &[], &["index.js"]).unwrap();
 
         assert!(result.contains(r#"<script src="index.js"></script>"#));
+    }
+
+    #[test]
+    fn test_inject_head_links_scripts_with_stylesheets() {
+        let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
+        let result = inject_head_links(html, &[], &["style.css"], &["index.js"]).unwrap();
+
+        assert!(result.contains(r#"<script src="index.js"></script>"#));
+        assert!(result.contains(r#"<link rel="stylesheet" href="style.css">"#));
+    }
+
+    #[test]
+    fn test_inject_head_links_no_scripts() {
+        let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
+        let result = inject_head_links(html, &[], &["style.css"], &[]).unwrap();
+
+        assert!(!result.contains("<script"));
     }
 }

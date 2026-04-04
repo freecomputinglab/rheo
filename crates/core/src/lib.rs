@@ -3,21 +3,18 @@ pub mod config;
 pub mod constants;
 pub mod diagnostics;
 pub mod error;
-pub mod html_compile;
 pub mod html_utils;
 pub mod init_templates;
 pub mod logging;
 pub mod manifest_version;
 pub mod output;
 pub mod path_utils;
-pub mod pdf_compile;
 pub mod pdf_utils;
 pub mod plugins;
 pub mod project;
 pub mod results;
 pub mod reticulate;
 pub mod typst_types;
-pub mod unified_compile;
 pub mod validation;
 pub mod watch;
 pub mod world;
@@ -46,20 +43,8 @@ pub use plugins::{
     AssetConfig, FormatPlugin, OpenHandle, PluginContext, ServerHandle, SpineOptions,
 };
 
-// HTML compilation functions
-pub use html_compile::{
-    compile_document_to_string, compile_html_to_document, compile_html_with_world,
-};
-
-// PDF compilation functions
-pub use pdf_compile::{compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes};
-
-// Unified compilation API (consistent naming pattern)
-pub use unified_compile::{
-    HtmlDocument as HtmlDoc, HtmlString, PagedDocument as PdfDoc, PdfBytes,
-    compile_to_html_document, compile_to_html_document_with_world, compile_to_html_string,
-    compile_to_pdf_bytes, compile_to_pdf_document, compile_to_pdf_document_with_world,
-};
+// HTML/PDF export utilities
+pub use compile::{compile_document_to_string, document_to_pdf_bytes};
 
 // World (Typst compilation context)
 pub use world::RheoWorld;
@@ -76,27 +61,5 @@ pub use typst_types::{
     eco_vec,
 };
 
-use std::path::PathBuf;
-use tracing::{info, warn};
-use walkdir::WalkDir;
-
 /// Result type alias using RheoError
 pub type Result<T> = std::result::Result<T, RheoError>;
-
-pub fn open_all_files_in_folder(folder: PathBuf, ext: &str) -> Result<()> {
-    for entry in WalkDir::new(&folder)
-        .max_depth(1)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some(ext))
-    {
-        let path = entry.path();
-        info!("Opening: {}", path.display());
-
-        if let Err(e) = opener::open(path) {
-            warn!("Failed to open {}: {}", path.display(), e);
-        }
-    }
-
-    Ok(())
-}

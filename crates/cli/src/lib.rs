@@ -277,7 +277,7 @@ fn get_files_for_plugin(
                 vertebrae: spine.vertebrae.clone(),
                 merge: spine.merge.unwrap_or(false),
             };
-            rheo_core::reticulate::spine::generate_spine(&content_dir, Some(&spine_options), false)
+            spine_options.generate(&content_dir)
         }
     }
 }
@@ -314,9 +314,9 @@ fn compile_one_file(
         project: pfc.project,
         output_config: pfc.output_config,
         options,
-        spine: pfc.spine.clone(),
-        config: pfc.plugin_section.clone(),
-        assets: pfc.resolved_assets.clone(),
+        spine: pfc.spine,
+        config: pfc.plugin_section,
+        assets: pfc.resolved_assets,
     };
     match pfc.plugin.compile(ctx) {
         Ok(_) => results.record_success(pfc.plugin.name()),
@@ -326,6 +326,59 @@ fn compile_one_file(
         }
     }
     Ok(())
+}
+
+/// Resolve plugin assets, applying path overrides from config.
+///
+/// For each declared asset, checks if the user configured a custom path
+/// via `plugin_section.extra[asset_name]`. If not, falls back to
+/// `asset_config.default_path`. Copies resolved files to the output directory.
+fn resolve_assets(
+    plugin: &dyn FormatPlugin,
+    plugin_section: &PluginSection,
+    project_root: &Path,
+    plugin_output_dir: &Path,
+) -> Result<HashMap<&'static str, Asset>> {
+    let mut resolved = HashMap::new();
+    for asset_config in plugin.assets() {
+        let effective_path: &str = plugin_section
+            .get_string(asset_config.name)
+            .unwrap_or(asset_config.default_path);
+
+        let src = project_root.join(effective_path);
+        if src.is_file() {
+            let dest = plugin_output_dir.join(effective_path);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    RheoError::io(
+                        e,
+                        format!("creating directory for asset '{}'", effective_path),
+                    )
+                })?;
+            }
+            std::fs::copy(&src, &dest).map_err(|e| RheoError::AssetCopy {
+                source: src.clone(),
+                dest: dest.clone(),
+                error: e,
+            })?;
+            resolved.insert(
+                asset_config.name,
+                Asset {
+                    config: asset_config.clone(),
+                    resolved_path: dest,
+                    built_relative_path: effective_path.to_string(),
+                },
+            );
+        } else if asset_config.required {
+            return Err(RheoError::project_config(format!(
+                "plugin '{}' requires input '{}' at '{}' but it was not found",
+                plugin.name(),
+                asset_config.name,
+                effective_path
+            )));
+        }
+    }
+    Ok(resolved)
 }
 
 fn perform_compilation(
@@ -339,6 +392,7 @@ fn perform_compilation(
     }
 
     let mut results = CompilationResults::new();
+    let default_section = PluginSection::default();
 
     for plugin in plugins {
         let plugin_output_dir = output_config.dir_for_plugin(plugin.name());
@@ -349,48 +403,26 @@ fn perform_compilation(
             )
         })?;
 
-        // Resolve declared assets
-        let mut resolved_assets: HashMap<&'static str, Asset> = HashMap::new();
-        for asset_config in plugin.assets() {
-            let src = project.root.join(asset_config.default_path);
-            if src.is_file() {
-                let dest = plugin_output_dir.join(asset_config.default_path);
-                std::fs::copy(&src, &dest).map_err(|e| {
-                    RheoError::io(
-                        e,
-                        format!(
-                            "copying plugin input '{}' from {} to {}",
-                            asset_config.name,
-                            src.display(),
-                            dest.display()
-                        ),
-                    )
-                })?;
-                resolved_assets.insert(
-                    asset_config.name,
-                    Asset {
-                        config: asset_config.clone(),
-                        resolved_path: dest,
-                        built_relative_path: asset_config.default_path.to_string(),
-                    },
-                );
-            } else if asset_config.required {
-                return Err(RheoError::project_config(format!(
-                    "plugin '{}' requires input '{}' at '{}' but it was not found",
-                    plugin.name(),
-                    asset_config.name,
-                    &asset_config.default_path
-                )));
-            }
-        }
+        // Borrow the plugin section directly — no cloning
+        let plugin_section: &PluginSection = project
+            .config
+            .plugin_sections
+            .get(plugin.name())
+            .unwrap_or(&default_section);
+
+        let resolved_assets = resolve_assets(
+            plugin.as_ref(),
+            plugin_section,
+            &project.root,
+            &plugin_output_dir,
+        )?;
 
         // Execute copy patterns (global + per-plugin)
-        let plugin_section_for_copy = project.config.plugin_section(plugin.name());
         for pattern in project
             .config
             .assets
             .iter()
-            .chain(plugin_section_for_copy.assets.iter())
+            .chain(plugin_section.assets.iter())
         {
             let abs_pattern = project.root.join(pattern).display().to_string();
             let entries = glob::glob(&abs_pattern).map_err(|e| {
@@ -409,11 +441,10 @@ fn perform_compilation(
                         )
                     })?;
                 }
-                std::fs::copy(&entry, &dest).map_err(|e| {
-                    RheoError::io(
-                        e,
-                        format!("copying {} to {}", entry.display(), dest.display()),
-                    )
+                std::fs::copy(&entry, &dest).map_err(|e| RheoError::AssetCopy {
+                    source: entry.clone(),
+                    dest: dest.clone(),
+                    error: e,
                 })?;
                 debug!(src = %entry.display(), dest = %dest.display(), "copied file");
             }
@@ -423,7 +454,7 @@ fn perform_compilation(
         }
 
         // Resolve spine options
-        let spine_cfg = project.config.spine_for_plugin(plugin.name());
+        let spine_cfg = plugin_section.spine.as_ref();
         let spine = SpineOptions {
             title: spine_cfg.and_then(|s| s.title.clone()),
             vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
@@ -433,9 +464,6 @@ fn perform_compilation(
         };
 
         // TODO: BuiltSpine here
-
-        // Get full plugin section
-        let plugin_section = project.config.plugin_section(plugin.name());
 
         // TODO: this is where it happens.
         // `spine.merge = true` is the simple case, as plugin.compile is just called once.
@@ -455,9 +483,9 @@ fn perform_compilation(
                 project,
                 output_config,
                 options,
-                spine,
+                spine: &spine,
                 config: plugin_section,
-                assets: resolved_assets,
+                assets: &resolved_assets,
             };
 
             match plugin.compile(ctx) {
@@ -477,7 +505,7 @@ fn perform_compilation(
                 project,
                 output_config,
                 spine: &spine,
-                plugin_section: &plugin_section,
+                plugin_section,
                 resolved_assets: &resolved_assets,
             };
 
@@ -622,22 +650,25 @@ fn setup_compilation_context(
 
     let all = all_plugins();
     let formats = determine_formats(enabled_from_cli, &project.config.formats, &all);
+    let plugins = plugins_for_formats(&formats, all);
 
     // Apply plugin smart defaults for all plugins
     // Plugins check their own state and only fill in missing values
-    {
-        let plugins = plugins_for_formats(&formats, all_plugins());
-        for plugin in &plugins {
-            let section = project
-                .config
-                .plugin_sections
-                .entry(plugin.name().to_string())
-                .or_default();
-            plugin.apply_defaults(section, &project.name);
-        }
+    for plugin in &plugins {
+        let section = project
+            .config
+            .plugin_sections
+            .entry(plugin.name().to_string())
+            .or_default();
+        plugin.apply_defaults(section, &project.name);
     }
 
-    let plugins = plugins_for_formats(&formats, all);
+    // Validate that no plugin declares assets with reserved names
+    for plugin in &plugins {
+        for asset_config in plugin.assets() {
+            asset_config.validate(plugin.name())?;
+        }
+    }
 
     let resolved_build_dir = resolve_build_dir(&project, build_dir)?;
     let output_config = OutputConfig::new(&project.root, resolved_build_dir);
@@ -782,6 +813,7 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rheo_core::AssetConfig;
 
     #[test]
     fn test_determine_formats_cli_flags_override_config() {
@@ -842,6 +874,175 @@ mod tests {
             names.len() >= 3,
             "Expected at least 3 plugins, got {}",
             names.len()
+        );
+    }
+
+    // --- resolve_assets tests ---
+
+    struct MockPlugin {
+        plugin_name: &'static str,
+        declared_assets: Vec<AssetConfig>,
+    }
+
+    impl FormatPlugin for MockPlugin {
+        fn name(&self) -> &'static str {
+            self.plugin_name
+        }
+        fn assets(&self) -> Vec<AssetConfig> {
+            self.declared_assets.clone()
+        }
+        fn compile(&self, _ctx: PluginContext<'_>) -> rheo_core::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_resolve_assets_default_path_when_no_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::write(project_root.join("style.css"), "body {}").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+        let section = PluginSection::default();
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        assert_eq!(
+            resolved.get("css_stylesheet").unwrap().built_relative_path,
+            "style.css"
+        );
+    }
+
+    #[test]
+    fn test_resolve_assets_override_path_when_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::write(project_root.join("custom.css"), "body {}").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+        let mut extra = toml::map::Map::new();
+        extra.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("custom.css".into()),
+        );
+        let section = PluginSection {
+            extra,
+            ..Default::default()
+        };
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        assert_eq!(
+            resolved.get("css_stylesheet").unwrap().built_relative_path,
+            "custom.css"
+        );
+    }
+
+    #[test]
+    fn test_resolve_assets_required_missing_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "missing_asset",
+                default_path: "nonexistent.css",
+                required: true,
+            }],
+        };
+        let section = PluginSection::default();
+
+        let result = resolve_assets(&plugin, &section, project_root, &output_dir);
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("requires input"),
+            "expected 'requires input' in error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_resolve_assets_optional_missing_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "optional_asset",
+                default_path: "nonexistent.css",
+                required: false,
+            }],
+        };
+        let section = PluginSection::default();
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        assert!(
+            !resolved.contains_key("optional_asset"),
+            "optional missing asset should not be in resolved map"
+        );
+    }
+
+    #[test]
+    fn test_resolve_assets_subdirectory_in_override_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        let styles_dir = project_root.join("styles");
+        std::fs::create_dir_all(&styles_dir).unwrap();
+        std::fs::write(styles_dir.join("custom.css"), "body {}").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+        let mut extra = toml::map::Map::new();
+        extra.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("styles/custom.css".into()),
+        );
+        let section = PluginSection {
+            extra,
+            ..Default::default()
+        };
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        assert_eq!(
+            resolved.get("css_stylesheet").unwrap().built_relative_path,
+            "styles/custom.css"
+        );
+        assert!(
+            output_dir.join("styles/custom.css").exists(),
+            "subdirectory asset should be copied to output"
         );
     }
 }

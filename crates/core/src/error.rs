@@ -123,13 +123,3 @@ impl RheoError {
         }
     }
 }
-
-/// Automatic conversion from std::io::Error for convenience
-impl From<std::io::Error> for RheoError {
-    fn from(error: std::io::Error) -> Self {
-        RheoError::Io {
-            source: error,
-            context: "unknown operation".to_string(),
-        }
-    }
-}

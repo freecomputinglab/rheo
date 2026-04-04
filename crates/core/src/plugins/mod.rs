@@ -1,13 +1,14 @@
+use crate::compile::{compile_document_to_string, document_to_pdf_bytes};
 use crate::config::PluginSection;
-use crate::html_compile::{compile_document_to_string, compile_html_with_world};
 use crate::output::OutputConfig;
-use crate::pdf_compile::{compile_pdf_to_document, compile_pdf_with_world, document_to_pdf_bytes};
 use crate::project::ProjectConfig;
+use crate::world::RheoWorld;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 use tracing::{debug, info};
+use typst_html::HtmlDocument;
 
 /// Trait for managing a running preview server.
 pub trait ServerHandle: Send + Sync {
@@ -49,6 +50,26 @@ pub struct AssetConfig {
     pub required: bool,
 }
 
+impl AssetConfig {
+    /// Names that are reserved by `PluginSection` serde deserialization.
+    /// An asset with one of these names would silently collide with
+    /// `PluginSection::spine` or `PluginSection::assets`.
+    pub const RESERVED_NAMES: &[&str] = &["spine", "assets"];
+
+    /// Validate that this asset's name does not collide with reserved keys.
+    pub fn validate(&self, plugin_name: &str) -> crate::Result<()> {
+        if Self::RESERVED_NAMES.contains(&self.name) {
+            return Err(crate::RheoError::misconfigured_plugin(format!(
+                "plugin '{}' declares an asset named '{}' which conflicts \
+                 with the reserved rheo.toml field; asset names must not be \
+                 'spine' or 'assets'",
+                plugin_name, self.name
+            )));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Asset {
     pub config: AssetConfig,
@@ -62,7 +83,7 @@ pub struct PluginContext<'a> {
     pub output_config: &'a OutputConfig,
     pub options: RheoCompileOptions<'a>,
     /// Resolved spine options (title, vertebrae, merge flag).
-    pub spine: SpineOptions,
+    pub spine: &'a SpineOptions,
     /// Full parsed plugin section from rheo.toml (or default if not configured).
     ///
     /// # Reading format-specific configuration
@@ -81,24 +102,20 @@ pub struct PluginContext<'a> {
     ///     .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
     ///     .unwrap_or_default();
     /// ```
-    pub config: PluginSection,
+    pub config: &'a PluginSection,
     /// Resolved additional input files declared by the plugin.
     ///
     /// Paths are relative to the plugin's output directory (e.g., `build/html/`).
     /// The CLI copies each declared input from the project root to the output directory
     /// before calling `compile()`.
-    pub assets: HashMap<&'static str, Asset>,
+    pub assets: &'a HashMap<&'static str, Asset>,
 }
 
 impl<'a> PluginContext<'a> {
     pub fn compile(&'a self, plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
-        let ext = plugin.extension();
-        match ext {
-            "pdf" => self.compile_to_pdf(plugin),
-            "html" => self.compile_to_html(plugin),
-            _ => Err(RheoError::misconfigured_plugin(
-                "Cannot infer compilation target from extension, as it is not 'html' or 'pdf'. Please use `ctx.compile_to_pdf` or `ctx.compile_to_html` explicitly.",
-            )),
+        match plugin.compilation_target() {
+            CompilationTarget::Pdf => self.compile_to_pdf(plugin),
+            CompilationTarget::Html => self.compile_to_html(plugin),
         }
     }
 
@@ -109,7 +126,7 @@ impl<'a> PluginContext<'a> {
             )
         })?;
 
-        let document = compile_html_with_world(world)?;
+        let document = world.compile_html()?;
 
         debug!(output = %self.options.output.display(), "exporting to HTML");
         compile_document_to_string(&document)
@@ -126,6 +143,55 @@ impl<'a> PluginContext<'a> {
         Ok(())
     }
 
+    /// Compile each spine file to an HTML document independently.
+    ///
+    /// Builds transformed sources via `BuiltSpine::build()` (merge=false), then compiles
+    /// each one through `RheoWorld::compile_html_file()`. Returns `(original_path, HtmlDocument)`
+    /// pairs in spine order.
+    pub fn compile_spine_items_to_html(
+        &self,
+        plugin: &(impl FormatPlugin + ?Sized),
+    ) -> Result<Vec<(PathBuf, HtmlDocument)>> {
+        let rheo_spine = BuiltSpine::build(
+            &self.options.root,
+            Some(self.spine),
+            plugin.extension(),
+            false,
+        )?;
+
+        let spine_paths = self.spine.generate(&self.options.root)?;
+
+        let plugin_library = plugin.typst_library().map(|s| s.to_string());
+
+        spine_paths
+            .iter()
+            .zip(rheo_spine.source.iter())
+            .map(|(path, transformed_source)| {
+                let mut temp_file = NamedTempFile::new_in(&self.options.root)
+                    .map_err(|e| RheoError::io(e, "creating temp file for spine item HTML"))?;
+                temp_file
+                    .write_all(transformed_source.as_bytes())
+                    .map_err(|e| {
+                        RheoError::io(e, "writing transformed source to temp file")
+                    })?;
+                temp_file.flush().map_err(|e| {
+                    RheoError::io(e, "flushing temp file")
+                })?;
+
+                let temp_path = temp_file.path();
+                debug!(temp_path = %temp_path.display(), original = %path.display(), "compiling spine item to HTML");
+
+                let document = RheoWorld::compile_html_file(
+                    &self.options.root,
+                    temp_path,
+                    plugin.name(),
+                    plugin_library.clone(),
+                )?;
+                Ok((path.clone(), document))
+            })
+            .collect()
+    }
+
     /// Compile to PDF using the full context. By modifying fields in the PluginContext before
     /// calling this, you can modify the default PDF behaviour.
     pub fn compile_to_pdf(&'a self, plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
@@ -134,14 +200,16 @@ impl<'a> PluginContext<'a> {
             // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
             let rheo_spine = BuiltSpine::build(
                 &self.options.root,
-                Some(&self.spine),
+                Some(self.spine),
                 plugin.extension(),
                 self.spine.merge,
             )?;
 
             debug!(file_count = rheo_spine.source.len(), "built PDF spine");
 
-            let concatenated_source = &rheo_spine.source[0];
+            let concatenated_source = rheo_spine.source.first().ok_or_else(|| {
+                RheoError::project_config("merged PDF spine produced no source files")
+            })?;
             debug!(
                 source_length = concatenated_source.len(),
                 "concatenated sources"
@@ -164,7 +232,7 @@ impl<'a> PluginContext<'a> {
             // output_format=None because links already transformed to labels by RheoSpine
             let plugin_library = plugin.typst_library().map(|s| s.to_string());
             let document =
-                compile_pdf_to_document(temp_path, &self.options.root, None, plugin_library)?;
+                RheoWorld::compile_pdf_file(&self.options.root, temp_path, None, plugin_library)?;
 
             debug!(output = %output_path.display(), "exporting to PDF");
             let pdf_bytes = document_to_pdf_bytes(&document)?;
@@ -182,7 +250,7 @@ impl<'a> PluginContext<'a> {
                 )
             })?;
 
-            let document = compile_pdf_with_world(world)?;
+            let document = world.compile_pdf()?;
             let output = &self.options.output;
 
             debug!(output = %output.display(), "exporting to PDF");
@@ -196,6 +264,14 @@ impl<'a> PluginContext<'a> {
             Ok(())
         }
     }
+}
+
+/// The low-level compilation target for a format plugin.
+pub enum CompilationTarget {
+    /// Compile to an HTML document.
+    Html,
+    /// Compile to a paged (PDF) document.
+    Pdf,
 }
 
 /// Plugin trait for implementing new output formats in rheo.
@@ -250,6 +326,18 @@ pub trait FormatPlugin: Send + Sync {
     /// The extension that shuold be used when transforming links, if it differs from the name.
     fn extension(&self) -> &'static str {
         self.name()
+    }
+
+    /// The compilation target used by `PluginContext::compile()`.
+    ///
+    /// Override this if your plugin's extension differs from its compilation target.
+    /// Default: "pdf" extension -> Pdf; everything else -> Html.
+    fn compilation_target(&self) -> CompilationTarget {
+        if self.extension() == "pdf" {
+            CompilationTarget::Pdf
+        } else {
+            CompilationTarget::Html
+        }
     }
 
     /// Whether this plugin merges files by default.
@@ -329,7 +417,7 @@ pub trait FormatPlugin: Send + Sync {
     /// }
     /// ```
     fn open(&self, output_dir: &Path, _format_name: &str) -> crate::Result<OpenHandle> {
-        crate::open_all_files_in_folder(output_dir.to_path_buf(), self.name())?;
+        open_all_files_in_folder(output_dir.to_path_buf(), self.name())?;
         Ok(OpenHandle::Direct)
     }
 
@@ -512,4 +600,79 @@ pub trait FormatPlugin: Send + Sync {
 
     // TODO: because the case here is that compile is called for EVERY source file, we need a
     // `precompile` entrypoint that can do things like asset copying when merge is not true.
+}
+
+/// Open all files with a given extension in a folder using the OS default application.
+pub(crate) fn open_all_files_in_folder(folder: PathBuf, ext: &str) -> crate::Result<()> {
+    use tracing::{info, warn};
+    use walkdir::WalkDir;
+
+    for entry in WalkDir::new(&folder)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some(ext))
+    {
+        let path = entry.path();
+        info!("Opening: {}", path.display());
+
+        if let Err(e) = opener::open(path) {
+            warn!("Failed to open {}: {}", path.display(), e);
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_rejects_spine() {
+        let config = AssetConfig {
+            name: "spine",
+            default_path: "x.css",
+            required: false,
+        };
+        let err = config.validate("test_plugin").unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("spine"));
+    }
+
+    #[test]
+    fn test_validate_rejects_assets() {
+        let config = AssetConfig {
+            name: "assets",
+            default_path: "x.css",
+            required: false,
+        };
+        let err = config.validate("test_plugin").unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("assets"));
+    }
+
+    #[test]
+    fn test_validate_accepts_valid_name() {
+        let config = AssetConfig {
+            name: "css_stylesheet",
+            default_path: "style.css",
+            required: false,
+        };
+        assert!(config.validate("test_plugin").is_ok());
+    }
+
+    #[test]
+    fn test_validate_returns_misconfigured_plugin_variant() {
+        let config = AssetConfig {
+            name: "spine",
+            default_path: "x.css",
+            required: false,
+        };
+        let err = config.validate("test_plugin").unwrap_err();
+        assert!(
+            matches!(err, crate::RheoError::MisconfiguredPlugin { .. }),
+            "expected MisconfiguredPlugin variant"
+        );
+    }
 }
