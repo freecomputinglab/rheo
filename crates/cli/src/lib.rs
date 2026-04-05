@@ -104,6 +104,13 @@ fn build_compile_command(plugins: &[Box<dyn FormatPlugin>]) -> Command {
             Arg::new("build-dir")
                 .long("build-dir")
                 .help("Build output directory (overrides rheo.toml if set)"),
+        )
+        .arg(
+            Arg::new("font-dir")
+                .long("font-dir")
+                .value_name("DIR")
+                .action(ArgAction::Append)
+                .help("Additional font directory (can be repeated; appended to autoscan/config)"),
         );
     add_format_flags(cmd, plugins)
 }
@@ -133,6 +140,13 @@ fn build_watch_command(plugins: &[Box<dyn FormatPlugin>]) -> Command {
                 .long("open")
                 .action(ArgAction::SetTrue)
                 .help("Open output in appropriate viewer (HTML opens in browser with live reload)"),
+        )
+        .arg(
+            Arg::new("font-dir")
+                .long("font-dir")
+                .value_name("DIR")
+                .action(ArgAction::Append)
+                .help("Additional font directory (can be repeated; appended to autoscan/config)"),
         );
     add_format_flags(cmd, plugins)
 }
@@ -217,6 +231,7 @@ struct CompilationContext {
     project: ProjectConfig,
     plugins: Vec<Box<dyn FormatPlugin>>,
     output_config: OutputConfig,
+    font_dirs: Vec<PathBuf>,
 }
 
 /// Resolve a path relative to a base directory.
@@ -245,6 +260,35 @@ fn resolve_build_dir(
     } else {
         Ok(None)
     }
+}
+
+/// Resolve font directories with autoscan, config, and CLI precedence.
+///
+/// - Autoscan: if no `font_dirs` in config, auto-include `fonts/` at project root
+/// - Config replaces autoscan: if `font_dirs` is set, autoscan is skipped
+/// - CLI appends: `--font-dir` flags always append on top
+fn resolve_font_dirs(
+    project: &ProjectConfig,
+    cli_font_dirs: &[PathBuf],
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    if project.config.font_dirs.is_empty() {
+        let autoscan_dir = project.root.join("fonts");
+        if autoscan_dir.is_dir() {
+            debug!(dir = %autoscan_dir.display(), "auto-discovered font directory");
+            dirs.push(autoscan_dir);
+        }
+    } else {
+        dirs.extend(project.config.resolve_font_dirs(&project.root));
+    }
+
+    let cwd = std::env::current_dir().unwrap();
+    for dir in cli_font_dirs {
+        dirs.push(resolve_path(&cwd, dir));
+    }
+
+    dirs
 }
 
 fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
@@ -386,6 +430,7 @@ fn perform_compilation(
     output_config: &OutputConfig,
     plugins: &[Box<dyn FormatPlugin>],
     mut world: Option<&mut RheoWorld>,
+    font_dirs: &[PathBuf],
 ) -> Result<()> {
     if project.typ_files.is_empty() {
         return Err(RheoError::project_config("no .typ files found in project"));
@@ -525,6 +570,7 @@ fn perform_compilation(
                         typ_file,
                         Some(plugin.name()),
                         plugin_library.clone(),
+                        font_dirs.to_vec(),
                     )?;
                     compile_one_file(&mut fresh_world, typ_file, &pfc, &mut results)?;
                 }
@@ -684,6 +730,7 @@ fn setup_compilation_context(
     config_path: Option<&Path>,
     build_dir: Option<PathBuf>,
     enabled_from_cli: Vec<String>,
+    cli_font_dirs: Vec<PathBuf>,
 ) -> Result<CompilationContext> {
     info!(path = %path.display(), "loading project");
     let mut project = ProjectConfig::from_path(path, config_path)?;
@@ -725,10 +772,13 @@ fn setup_compilation_context(
     let resolved_build_dir = resolve_build_dir(&project, build_dir)?;
     let output_config = OutputConfig::new(&project.root, resolved_build_dir);
 
+    let font_dirs = resolve_font_dirs(&project, &cli_font_dirs);
+
     Ok(CompilationContext {
         project,
         plugins,
         output_config,
+        font_dirs,
     })
 }
 
@@ -757,6 +807,10 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
     let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
     let config_path = sub.get_one::<String>("config").map(PathBuf::from);
     let build_dir = sub.get_one::<String>("build-dir").map(PathBuf::from);
+    let cli_font_dirs: Vec<PathBuf> = sub
+        .get_many::<String>("font-dir")
+        .map(|vals| vals.map(PathBuf::from).collect())
+        .unwrap_or_default();
     let open = sub.get_flag("open");
 
     let all = all_plugins();
@@ -767,10 +821,11 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         config_path.as_deref(),
         build_dir.clone(),
         enabled.clone(),
+        cli_font_dirs.clone(),
     )?;
 
     // Initial compilation (best-effort; watch continues on failure)
-    if let Err(e) = perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None) {
+    if let Err(e) = perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None, &ctx.font_dirs) {
         warn!(error = %e, "initial compilation failed");
     }
 
@@ -797,7 +852,7 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         match event {
             WatchEvent::FilesChanged => {
                 info!("files changed, recompiling");
-                if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None).is_ok()
+                if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None, &ctx.font_dirs).is_ok()
                 {
                     for handle in &open_handles {
                         if let OpenHandle::Server(server) = handle {
@@ -813,10 +868,11 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
                     config_path.as_deref(),
                     build_dir.clone(),
                     enabled.clone(),
+                    cli_font_dirs.clone(),
                 ) {
                     Ok(new_ctx) => {
                         ctx = new_ctx;
-                        if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None)
+                        if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None, &ctx.font_dirs)
                             .is_ok()
                         {
                             for handle in &open_handles {
@@ -838,13 +894,17 @@ fn run_compile(sub: &ArgMatches) -> Result<()> {
     let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
     let config = sub.get_one::<String>("config").map(PathBuf::from);
     let build_dir = sub.get_one::<String>("build-dir").map(PathBuf::from);
+    let cli_font_dirs: Vec<PathBuf> = sub
+        .get_many::<String>("font-dir")
+        .map(|vals| vals.map(PathBuf::from).collect())
+        .unwrap_or_default();
 
     let all = all_plugins();
     let enabled = enabled_formats_from_matches(sub, &all);
 
-    let ctx = setup_compilation_context(&path, config.as_deref(), build_dir, enabled)?;
+    let ctx = setup_compilation_context(&path, config.as_deref(), build_dir, enabled, cli_font_dirs)?;
 
-    perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None)
+    perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None, &ctx.font_dirs)
 }
 
 fn run_clean(sub: &ArgMatches) -> Result<()> {
