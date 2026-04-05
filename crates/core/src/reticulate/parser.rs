@@ -1,4 +1,4 @@
-use crate::reticulate::types::LinkInfo;
+use crate::reticulate::types::{ImportInfo, LinkInfo};
 use typst::syntax::{Source, SyntaxKind, SyntaxNode};
 
 /// The identifier in the Typst AST for links.
@@ -115,6 +115,47 @@ fn extract_text_from_node(node: &SyntaxNode) -> Option<String> {
     }
 }
 
+/// Extract all import/include paths from Typst source by parsing and traversing AST
+pub fn extract_imports(source: &Source) -> Vec<ImportInfo> {
+    let root = typst::syntax::parse(source.text());
+    let mut imports = Vec::new();
+    extract_imports_from_node(&root, &root, &mut imports);
+    imports
+}
+
+fn extract_imports_from_node(
+    node: &SyntaxNode,
+    root: &SyntaxNode,
+    imports: &mut Vec<ImportInfo>,
+) {
+    if (node.kind() == SyntaxKind::ModuleImport || node.kind() == SyntaxKind::ModuleInclude)
+        && let Some(import_info) = parse_import_node(node, root)
+    {
+        imports.push(import_info);
+    }
+
+    for child in node.children() {
+        extract_imports_from_node(child, root, imports);
+    }
+}
+
+fn parse_import_node(node: &SyntaxNode, root: &SyntaxNode) -> Option<ImportInfo> {
+    // Find the first Str child — that is the path argument
+    let str_node = node.children().find(|n| n.kind() == SyntaxKind::Str)?;
+
+    let text = str_node.text();
+    let path = text.trim_matches('"').to_string();
+
+    let offset = calculate_node_offset(root, str_node)?;
+    let byte_range = offset..(offset + str_node.len());
+
+    Some(ImportInfo {
+        is_package: path.starts_with('@'),
+        path,
+        byte_range,
+    })
+}
+
 /// Calculate the byte offset of a target node within the root AST
 fn calculate_node_offset(root: &SyntaxNode, target: &SyntaxNode) -> Option<usize> {
     calculate_node_offset_impl(root, target, 0)
@@ -212,5 +253,77 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "url");
         assert_eq!(links[0].body, "bold and italic");
+    }
+
+    // --- extract_imports tests ---
+
+    #[test]
+    fn test_extract_import_relative() {
+        let source = Source::detached(r#"#import "./utils.typ": *"#);
+        let imports = extract_imports(&source);
+
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].path, "./utils.typ");
+        assert!(!imports[0].is_package);
+    }
+
+    #[test]
+    fn test_extract_import_package() {
+        let source = Source::detached(r#"#import "@preview/tablex:0.0.6": tablex"#);
+        let imports = extract_imports(&source);
+
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].path, "@preview/tablex:0.0.6");
+        assert!(imports[0].is_package);
+    }
+
+    #[test]
+    fn test_extract_include() {
+        let source = Source::detached(r#"#include "./figures/fig1.typ""#);
+        let imports = extract_imports(&source);
+
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].path, "./figures/fig1.typ");
+        assert!(!imports[0].is_package);
+    }
+
+    #[test]
+    fn test_extract_multiple_imports() {
+        let source = Source::detached(
+            r#"
+            #import "./utils.typ": *
+            #import "@preview/tablex:0.0.6": tablex
+            #include "./figures/fig1.typ"
+        "#,
+        );
+        let imports = extract_imports(&source);
+
+        assert_eq!(imports.len(), 3);
+        assert_eq!(imports[0].path, "./utils.typ");
+        assert!(!imports[0].is_package);
+        assert_eq!(imports[1].path, "@preview/tablex:0.0.6");
+        assert!(imports[1].is_package);
+        assert_eq!(imports[2].path, "./figures/fig1.typ");
+        assert!(!imports[2].is_package);
+    }
+
+    #[test]
+    fn test_extract_import_byte_range() {
+        let source = Source::detached(r#"#import "./utils.typ": *"#);
+        let imports = extract_imports(&source);
+
+        assert_eq!(imports.len(), 1);
+        // byte_range should cover the Str node including quotes
+        let source_text = source.text();
+        let range_text = &source_text[imports[0].byte_range.clone()];
+        assert_eq!(range_text, "\"./utils.typ\"");
+    }
+
+    #[test]
+    fn test_no_imports() {
+        let source = Source::detached("Just plain text with no imports");
+        let imports = extract_imports(&source);
+
+        assert_eq!(imports.len(), 0);
     }
 }

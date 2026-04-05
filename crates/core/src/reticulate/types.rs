@@ -17,6 +17,19 @@ pub struct LinkInfo {
     pub byte_range: Range<usize>,
 }
 
+/// Information about an import/include extracted from the AST
+#[derive(Debug, Clone)]
+pub struct ImportInfo {
+    /// The raw path string (e.g. "./utils.typ" or "@preview/foo:0.1.0")
+    pub path: String,
+
+    /// Byte range of the path string (NOT the whole statement)
+    pub byte_range: Range<usize>,
+
+    /// true if path starts with '@' (package import)
+    pub is_package: bool,
+}
+
 /// Link transformation operation
 #[derive(Debug, Clone)]
 pub enum LinkTransform {
