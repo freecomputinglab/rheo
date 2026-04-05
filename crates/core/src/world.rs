@@ -61,6 +61,7 @@ impl RheoWorld {
         main_file: &Path,
         format_name: Option<&str>,
         plugin_library: Option<String>,
+        font_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
         let root = crate::path_utils::canonicalize_path(root)?;
         let main_path = crate::path_utils::canonicalize_path(main_file)?;
@@ -78,9 +79,12 @@ impl RheoWorld {
             .build();
 
         let include_system_fonts = std::env::var("TYPST_IGNORE_SYSTEM_FONTS").is_err();
+        if !font_dirs.is_empty() {
+            tracing::info!(dirs = ?font_dirs, "loading fonts from {} additional directories", font_dirs.len());
+        }
         let font_search = Fonts::searcher()
             .include_system_fonts(include_system_fonts)
-            .search();
+            .search_with(&font_dirs);
 
         let package_storage = PackageStorage::new(
             None,
@@ -236,7 +240,7 @@ impl RheoWorld {
         format_name: &str,
         plugin_library: Option<String>,
     ) -> crate::Result<typst_html::HtmlDocument> {
-        let world = Self::new(root, input, Some(format_name), plugin_library)?;
+        let world = Self::new(root, input, Some(format_name), plugin_library, vec![])?;
         tracing::info!(input = %input.display(), "compiling to HTML");
         world.compile_html()
     }
@@ -248,7 +252,7 @@ impl RheoWorld {
         format_name: Option<&str>,
         plugin_library: Option<String>,
     ) -> crate::Result<typst::layout::PagedDocument> {
-        let world = Self::new(root, input, format_name, plugin_library)?;
+        let world = Self::new(root, input, format_name, plugin_library, vec![])?;
         tracing::info!(input = %input.display(), "compiling to PDF");
         world.compile_pdf()
     }
