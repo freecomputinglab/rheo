@@ -267,10 +267,7 @@ fn resolve_build_dir(
 /// - Autoscan: if no `font_dirs` in config, auto-include `fonts/` at project root
 /// - Config replaces autoscan: if `font_dirs` is set, autoscan is skipped
 /// - CLI appends: `--font-dir` flags always append on top
-fn resolve_font_dirs(
-    project: &ProjectConfig,
-    cli_font_dirs: &[PathBuf],
-) -> Vec<PathBuf> {
+fn resolve_font_dirs(project: &ProjectConfig, cli_font_dirs: &[PathBuf]) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
     if project.config.font_dirs.is_empty() {
@@ -825,7 +822,13 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
     )?;
 
     // Initial compilation (best-effort; watch continues on failure)
-    if let Err(e) = perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None, &ctx.font_dirs) {
+    if let Err(e) = perform_compilation(
+        &ctx.project,
+        &ctx.output_config,
+        &ctx.plugins,
+        None,
+        &ctx.font_dirs,
+    ) {
         warn!(error = %e, "initial compilation failed");
     }
 
@@ -852,7 +855,14 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         match event {
             WatchEvent::FilesChanged => {
                 info!("files changed, recompiling");
-                if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None, &ctx.font_dirs).is_ok()
+                if perform_compilation(
+                    &ctx.project,
+                    &ctx.output_config,
+                    &ctx.plugins,
+                    None,
+                    &ctx.font_dirs,
+                )
+                .is_ok()
                 {
                     for handle in &open_handles {
                         if let OpenHandle::Server(server) = handle {
@@ -872,8 +882,14 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
                 ) {
                     Ok(new_ctx) => {
                         ctx = new_ctx;
-                        if perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None, &ctx.font_dirs)
-                            .is_ok()
+                        if perform_compilation(
+                            &ctx.project,
+                            &ctx.output_config,
+                            &ctx.plugins,
+                            None,
+                            &ctx.font_dirs,
+                        )
+                        .is_ok()
                         {
                             for handle in &open_handles {
                                 if let OpenHandle::Server(server) = handle {
@@ -902,9 +918,16 @@ fn run_compile(sub: &ArgMatches) -> Result<()> {
     let all = all_plugins();
     let enabled = enabled_formats_from_matches(sub, &all);
 
-    let ctx = setup_compilation_context(&path, config.as_deref(), build_dir, enabled, cli_font_dirs)?;
+    let ctx =
+        setup_compilation_context(&path, config.as_deref(), build_dir, enabled, cli_font_dirs)?;
 
-    perform_compilation(&ctx.project, &ctx.output_config, &ctx.plugins, None, &ctx.font_dirs)
+    perform_compilation(
+        &ctx.project,
+        &ctx.output_config,
+        &ctx.plugins,
+        None,
+        &ctx.font_dirs,
+    )
 }
 
 fn run_clean(sub: &ArgMatches) -> Result<()> {

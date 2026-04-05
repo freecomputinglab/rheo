@@ -33,6 +33,7 @@ version = "0.2.0"        # required, must match CLI version
 content_dir = "content"  # optional
 build_dir = "build"      # optional
 formats = ["html", "pdf", "epub"]  # default formats
+font_dirs = ["fonts"]    # optional; replaces autoscan of fonts/ directory
 
 [html]
 stylesheets = ["style.css"]
@@ -53,6 +54,8 @@ vertebrae = ["cover.typ", "chapters/**/*.typ"]
 ```
 
 Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title and spine are inferred from filename/directory.
+
+**Font directory resolution:** Without `font_dirs` in config, `fonts/` at project root is auto-discovered. Setting `font_dirs` replaces autoscan (include `"fonts"` explicitly if desired). `--font-dir` CLI flag always appends.
 
 ## Code Style
 
