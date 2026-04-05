@@ -72,6 +72,9 @@ pub struct RheoConfig {
     /// Paths are relative to the project root; directory structure is preserved.
     pub assets: Vec<String>,
 
+    /// Directories to search for fonts (relative to project root unless absolute).
+    pub font_dirs: Vec<String>,
+
     /// Per-plugin configuration sections, keyed by plugin name.
     /// Built from `[html]`, `[pdf]`, `[epub]` (and any other) table sections.
     pub plugin_sections: HashMap<String, PluginSection>,
@@ -85,6 +88,7 @@ impl Default for RheoConfig {
             build_dir: Some("./build".to_string()),
             formats: vec![],
             assets: vec![],
+            font_dirs: vec![],
             plugin_sections: HashMap::new(),
         }
     }
@@ -100,6 +104,8 @@ pub struct RheoConfigRaw {
     formats: Vec<String>,
     #[serde(default)]
     assets: Vec<String>,
+    #[serde(default)]
+    font_dirs: Vec<String>,
     #[serde(flatten)]
     extra: HashMap<String, toml::Value>,
 }
@@ -122,6 +128,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             build_dir: raw.build_dir,
             formats: raw.formats,
             assets: raw.assets,
+            font_dirs: raw.font_dirs,
             plugin_sections,
         })
     }
@@ -183,6 +190,18 @@ impl RheoConfig {
             debug!(content_dir = %path.display(), "resolved content directory");
             path
         })
+    }
+
+    /// Resolve all font_dirs to absolute paths.
+    pub fn resolve_font_dirs(&self, base_dir: &Path) -> Vec<std::path::PathBuf> {
+        self.font_dirs
+            .iter()
+            .map(|dir| {
+                let path = base_dir.join(dir);
+                debug!(dir = %path.display(), "resolved font directory");
+                path
+            })
+            .collect()
     }
 
     /// Returns true if `name` appears in the configured formats list.
@@ -509,5 +528,30 @@ mod tests {
         let config = parse(&toml);
         let section = config.plugin_section("html");
         assert_eq!(section.get_string("css_stylesheet"), None);
+    }
+
+    #[test]
+    fn test_font_dirs_parses() {
+        let toml = versioned_toml(r#"font_dirs = ["fonts", "custom/typefaces"]"#);
+        let config = parse(&toml);
+        assert_eq!(config.font_dirs, vec!["fonts", "custom/typefaces"]);
+    }
+
+    #[test]
+    fn test_font_dirs_defaults_empty() {
+        let toml = versioned_toml("");
+        let config = parse(&toml);
+        assert!(config.font_dirs.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_font_dirs_resolves_relative() {
+        use std::path::PathBuf;
+
+        let toml = versioned_toml(r#"font_dirs = ["fonts"]"#);
+        let config = parse(&toml);
+        let base_dir = PathBuf::from("/project");
+        let resolved = config.resolve_font_dirs(&base_dir);
+        assert_eq!(resolved, vec![PathBuf::from("/project/fonts")]);
     }
 }
