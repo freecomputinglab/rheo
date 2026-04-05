@@ -20,23 +20,23 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
-            command: test
+            test: true
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
-            command: test
+            test: true
           - target: x86_64-apple-darwin
             os: macos-latest
-            command: build
+            test: false
           - target: aarch64-apple-darwin
             os: macos-latest
-            command: test
+            test: true
           # disabling windows tests for now bc of a bunch of biome issues
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            command: build
+            test: false
           - target: aarch64-pc-windows-msvc
             os: windows-11-arm
-            command: build
+            test: false
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -46,8 +46,11 @@ jobs:
         run: rustup target add ${{ matrix.target }}
       - name: Setup
         uses: ./.github/workflows/setup
-      - name: Compile binary
-        run: cargo ${{ matrix.command }} --locked --target ${{ matrix.target }} -p rheo
+      - name: Build binary
+        run: cargo build --locked --target ${{ matrix.target }} -p rheo
+      - name: Run tests
+        if: matrix.test
+        run: cargo test --locked --target ${{ matrix.target }} -p rheo
       - name: Compress artifacts (Windows)
         if: runner.os == 'Windows'
         run: |
