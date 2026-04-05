@@ -216,6 +216,17 @@ fn is_relevant_path(path: &Path, project: &ProjectConfig, build_dir: &Path) -> b
                 }
             }
 
+            // Check if it's a font file
+            let font_extensions = ["ttf", "otf", "woff", "woff2"];
+            if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| font_extensions.contains(&e))
+                .unwrap_or(false)
+            {
+                return true;
+            }
+
             false
         }
     }
