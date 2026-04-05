@@ -16,7 +16,7 @@ cargo test --lib
 ### Unit Tests (specific crate)
 ```bash
 cargo test --lib -p rheo-core
-cargo test --lib -p rheo-cli
+cargo test --lib -p rheo
 ```
 
 ### Integration Tests (harness)

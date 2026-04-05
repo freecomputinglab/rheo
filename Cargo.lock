@@ -2963,7 +2963,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rheo-cli"
+name = "rheo"
 version = "0.2.0"
 dependencies = [
  "atty",

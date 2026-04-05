@@ -117,7 +117,7 @@ fn run_test_case(name: &str) {
     let mut compile_args = vec![
         "run",
         "-p",
-        "rheo-cli",
+        "rheo",
         "--",
         "compile",
         project_path.to_str().unwrap(),
@@ -268,7 +268,7 @@ fn test_pdf_merge() {
         .args([
             "run",
             "-p",
-            "rheo-cli",
+            "rheo",
             "--",
             "compile",
             project_path.to_str().unwrap(),
@@ -456,7 +456,7 @@ fn test_html_css_link_injection() {
         .args([
             "run",
             "-p",
-            "rheo-cli",
+            "rheo",
             "--",
             "clean",
             project_path.to_str().unwrap(),
@@ -475,7 +475,7 @@ fn test_html_css_link_injection() {
         .args([
             "run",
             "-p",
-            "rheo-cli",
+            "rheo",
             "--",
             "compile",
             project_path.to_str().unwrap(),
@@ -565,7 +565,7 @@ fn test_warning_formatting() {
         .args([
             "run",
             "-p",
-            "rheo-cli",
+            "rheo",
             "--",
             "clean",
             test_dir.to_str().unwrap(),
@@ -577,7 +577,7 @@ fn test_warning_formatting() {
         .args([
             "run",
             "-p",
-            "rheo-cli",
+            "rheo",
             "--",
             "compile",
             test_dir.to_str().unwrap(),
@@ -612,7 +612,7 @@ fn test_warning_formatting() {
         .args([
             "run",
             "-p",
-            "rheo-cli",
+            "rheo",
             "--",
             "clean",
             test_dir.to_str().unwrap(),
@@ -641,7 +641,7 @@ fn test_asset_patterns() {
     std::fs::write(
         project_path.join("rheo.toml"),
         concat!(
-            "version = \"0.1.2\"\n",
+            "version = \"0.2.0\"\n",
             "formats = [\"html\"]\n",
             "assets = [\"readme.txt\"]\n",
             "\n",
@@ -657,7 +657,7 @@ fn test_asset_patterns() {
         .args([
             "run",
             "-p",
-            "rheo-cli",
+            "rheo",
             "--",
             "compile",
             project_path.to_str().unwrap(),
@@ -710,7 +710,7 @@ fn test_rheo_init_and_compile() {
         .args([
             "run",
             "-p",
-            "rheo-cli",
+            "rheo",
             "--",
             "init",
             test_dir.to_str().unwrap(),
@@ -742,7 +742,7 @@ fn test_rheo_init_and_compile() {
         .args([
             "run",
             "-p",
-            "rheo-cli",
+            "rheo",
             "--",
             "compile",
             test_dir.to_str().unwrap(),
@@ -790,7 +790,7 @@ fn test_asset_path_override() {
     std::fs::write(
         project_path.join("rheo.toml"),
         concat!(
-            "version = \"0.1.2\"\n",
+            "version = \"0.2.0\"\n",
             "formats = [\"html\"]\n",
             "\n",
             "[html]\n",
@@ -803,7 +803,7 @@ fn test_asset_path_override() {
         .args([
             "run",
             "-p",
-            "rheo-cli",
+            "rheo",
             "--",
             "compile",
             project_path.to_str().unwrap(),
@@ -863,7 +863,7 @@ fn test_asset_path_override_subdirectory() {
     std::fs::write(
         project_path.join("rheo.toml"),
         concat!(
-            "version = \"0.1.2\"\n",
+            "version = \"0.2.0\"\n",
             "formats = [\"html\"]\n",
             "\n",
             "[html]\n",
@@ -876,7 +876,7 @@ fn test_asset_path_override_subdirectory() {
         .args([
             "run",
             "-p",
-            "rheo-cli",
+            "rheo",
             "--",
             "compile",
             project_path.to_str().unwrap(),
