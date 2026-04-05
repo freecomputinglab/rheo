@@ -9,6 +9,9 @@ content_dir = "content"
 # Default: ["pdf", "html"]
 # formats = ["html", "pdf"]
 
+[html.spine]
+vertebrae = ["severance-*.typ"]
+
 [pdf.spine]
 merge = true 
 vertebrae = ["severance-*.typ", "endmatter.typ"]
