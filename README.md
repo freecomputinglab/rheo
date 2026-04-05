@@ -35,8 +35,6 @@ See [the documentation](https://rheo.ohrg.org) for more information regarding wh
 cargo binstall rheo
 ```
 
-**Note:** The `rheo` package is a lightweight alias that re-exports `rheo-cli`. For direct installation, you can also use `cargo binstall rheo-cli`.
-
 ### Using cargo
 Rheo requires Rust and Cargo.
 Install from [rustup.rs](https://rustup.rs/).

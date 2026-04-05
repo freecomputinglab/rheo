@@ -19,7 +19,7 @@ pub mod validation;
 pub mod watch;
 pub mod world;
 
-// Note: Cli is now in rheo-cli crate, not exported here
+// Note: Cli is now in rheo crate, not exported here
 
 // === Core types (already exported) ===
 pub use config::RheoConfig;

@@ -47,7 +47,7 @@ jobs:
       - name: Setup
         uses: ./.github/workflows/setup
       - name: Compile binary
-        run: cargo ${{ matrix.command }} --locked --target ${{ matrix.target }} -p rheo-cli
+        run: cargo ${{ matrix.command }} --locked --target ${{ matrix.target }} -p rheo
       - name: Compress artifacts (Windows)
         if: runner.os == 'Windows'
         run: |
@@ -57,7 +57,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/debug
-          zip -9 ${{ matrix.target }}.zip ${{ github.event.repository.name }}-cli
+          zip -9 ${{ matrix.target }}.zip rheo
 
   publish-dry-run:
     if: contains(github.event.pull_request.labels.*.name, 'release')
@@ -73,7 +73,6 @@ jobs:
           cargo publish -p rheo-html --dry-run --allow-dirty || true
           cargo publish -p rheo-pdf --dry-run --allow-dirty || true
           cargo publish -p rheo-epub --dry-run --allow-dirty || true
-          cargo publish -p rheo-cli --dry-run --allow-dirty || true
           cargo publish -p rheo --dry-run --allow-dirty || true
 
   check-pr-name:

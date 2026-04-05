@@ -94,7 +94,7 @@ pub fn run_compat(url: &str, name: &str) {
         .args([
             "run",
             "-p",
-            "rheo-cli",
+            "rheo",
             "--",
             "compile",
             cloned_path.to_str().unwrap(),
