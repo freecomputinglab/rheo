@@ -57,7 +57,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/debug
-          zip -9 ${{ matrix.target }}.zip ${{ github.event.repository.name }}
+          zip -9 ${{ matrix.target }}.zip ${{ github.event.repository.name }}-cli
 
   publish-dry-run:
     if: contains(github.event.pull_request.labels.*.name, 'release')
