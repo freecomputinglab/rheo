@@ -489,7 +489,7 @@ pub trait FormatPlugin: Send + Sync {
     /// # Examples
     ///
     /// ```ignore
-    /// fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
+    /// fn init_template_files(&self) -> Vec<(&'static str, &'static str)> {
     ///     vec![
     ///         ("style.css", include_str!("templates/style.css")),
     ///         ("content/html-example.typ", include_str!("templates/example.typ")),
@@ -500,8 +500,31 @@ pub trait FormatPlugin: Send + Sync {
     /// # Default implementation
     ///
     /// Returns an empty vector (no template files contributed).
-    fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
+    fn init_template_files(&self) -> Vec<(&'static str, &'static str)> {
         vec![]
+    }
+
+    /// Provide a `rheo.toml` configuration section template for `rheo init`.
+    ///
+    /// The returned content should use section-relative headers (e.g. `[spine]`
+    /// rather than `[html.spine]`) — the `init` command automatically prefixes
+    /// each header with the plugin name when building the final `rheo.toml`.
+    ///
+    /// # Return value
+    ///
+    /// - `Some(content)` — TOML snippet to embed under `[<plugin_name>.*]` in the
+    ///   generated `rheo.toml`
+    /// - `None` — no config section contributed (default)
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
+    ///     Some(include_str!("templates/init/rheo_section.toml"))
+    /// }
+    /// ```
+    fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
+        None
     }
 
     /// Provide Typst library code to inject into all compiled files.

@@ -1,0 +1,4 @@
+[spine]
+title = "rheo_project"
+vertebrae = ["index.typ"]
+merge = true

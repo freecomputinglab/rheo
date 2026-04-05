@@ -44,8 +44,12 @@ impl FormatPlugin for HtmlPlugin {
         PLUGIN_NAME
     }
 
-    fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
+    fn init_template_files(&self) -> Vec<(&'static str, &'static str)> {
         vec![("style.css", include_str!("templates/style.css"))]
+    }
+
+    fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
+        Some(include_str!("templates/init/rheo_section.toml"))
     }
 
     fn open(&self, output_dir: &Path, _format_name: &str) -> Result<OpenHandle> {

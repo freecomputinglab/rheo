@@ -1,11 +1,2 @@
 version = "{{VERSION}}"
 content_dir = "content"
-
-[pdf.spine]
-title = "rheo_project"
-vertebrae = ["index.typ"]
-merge = true
-
-[epub.spine]
-title = "rheo_project"
-vertebrae = ["index.typ", "about.typ"]

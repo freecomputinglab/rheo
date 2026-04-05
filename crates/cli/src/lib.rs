@@ -551,6 +551,51 @@ fn perform_compilation(
     }
 }
 
+/// Rewrites TOML section headers to be nested under a given prefix.
+///
+/// `[spine]` becomes `[prefix.spine]` and `[[items]]` becomes `[[prefix.items]]`.
+/// Only matches bare headers (no leading whitespace, no inline comments).
+/// Non-header lines and already-prefixed headers are returned unchanged.
+fn prefix_toml_headers(content: &str, prefix: &str) -> String {
+    content
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim();
+            // Skip already-prefixed headers (idempotent)
+            if trimmed.starts_with(&format!("[{prefix}."))
+                || trimmed.starts_with(&format!("[[{prefix}."))
+            {
+                return line.to_string();
+            }
+            if let Some(inner) = trimmed
+                .strip_prefix("[[")
+                .and_then(|s| s.strip_suffix("]]"))
+            {
+                let inner = inner.trim();
+                if !inner.is_empty()
+                    && inner
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+                {
+                    return line.replace(trimmed, &format!("[[{prefix}.{inner}]]"));
+                }
+            } else if let Some(inner) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']'))
+            {
+                let inner = inner.trim();
+                if !inner.is_empty()
+                    && inner
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+                {
+                    return line.replace(trimmed, &format!("[{prefix}.{inner}]"));
+                }
+            }
+            line.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn init_project(target_dir: &Path) -> Result<()> {
     if target_dir.exists() {
         return Err(RheoError::project_config(format!(
@@ -561,9 +606,16 @@ fn init_project(target_dir: &Path) -> Result<()> {
 
     fs::create_dir_all(target_dir).map_err(|e| RheoError::io(e, "creating target directory"))?;
 
-    let toml_content =
+    let mut toml_content =
         rheo_core::init_templates::RHEO_TOML.replace("{{VERSION}}", manifest_version::CURRENT);
-    fs::write(target_dir.join("rheo.toml"), toml_content)
+    for plugin in all_plugins() {
+        if let Some(section) = plugin.init_rheo_toml_section_template() {
+            toml_content.push('\n');
+            toml_content.push_str(&prefix_toml_headers(section, plugin.name()));
+            toml_content.push('\n');
+        }
+    }
+    fs::write(target_dir.join("rheo.toml"), &toml_content)
         .map_err(|e| RheoError::io(e, "writing rheo.toml"))?;
 
     let content_dir = target_dir.join("content");
@@ -597,7 +649,7 @@ fn init_project(target_dir: &Path) -> Result<()> {
     let mut plugin_templates: std::collections::HashMap<&str, (&str, &str)> =
         std::collections::HashMap::new();
     for plugin in all_plugins() {
-        for (path, content) in plugin.init_templates() {
+        for (path, content) in plugin.init_template_files() {
             if let Some((existing_plugin, _)) = plugin_templates.get(path) {
                 return Err(RheoError::project_config(format!(
                     "template path conflict: both '{}' and '{}' plugins want to write '{}'",

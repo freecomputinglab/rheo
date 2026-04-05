@@ -53,6 +53,10 @@ impl FormatPlugin for EpubPlugin {
         }
     }
 
+    fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
+        Some(include_str!("templates/init/rheo_section.toml"))
+    }
+
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
         let identifier = parse_identifier(ctx.config);
         let date = parse_date(ctx.config);
