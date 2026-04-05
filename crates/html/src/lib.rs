@@ -44,7 +44,7 @@ impl FormatPlugin for HtmlPlugin {
         PLUGIN_NAME
     }
 
-    fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
+    fn init_template_files(&self) -> Vec<(&'static str, &'static str)> {
         vec![("style.css", include_str!("templates/style.css"))]
     }
 

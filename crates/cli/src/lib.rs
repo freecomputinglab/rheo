@@ -624,7 +624,7 @@ fn init_project(target_dir: &Path) -> Result<()> {
     let mut plugin_templates: std::collections::HashMap<&str, (&str, &str)> =
         std::collections::HashMap::new();
     for plugin in all_plugins() {
-        for (path, content) in plugin.init_templates() {
+        for (path, content) in plugin.init_template_files() {
             if let Some((existing_plugin, _)) = plugin_templates.get(path) {
                 return Err(RheoError::project_config(format!(
                     "template path conflict: both '{}' and '{}' plugins want to write '{}'",

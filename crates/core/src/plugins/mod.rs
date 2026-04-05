@@ -489,7 +489,7 @@ pub trait FormatPlugin: Send + Sync {
     /// # Examples
     ///
     /// ```ignore
-    /// fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
+    /// fn init_template_files(&self) -> Vec<(&'static str, &'static str)> {
     ///     vec![
     ///         ("style.css", include_str!("templates/style.css")),
     ///         ("content/html-example.typ", include_str!("templates/example.typ")),
@@ -500,7 +500,7 @@ pub trait FormatPlugin: Send + Sync {
     /// # Default implementation
     ///
     /// Returns an empty vector (no template files contributed).
-    fn init_templates(&self) -> Vec<(&'static str, &'static str)> {
+    fn init_template_files(&self) -> Vec<(&'static str, &'static str)> {
         vec![]
     }
 
