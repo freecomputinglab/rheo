@@ -29,7 +29,7 @@ cargo fmt && cargo clippy -- -D warnings
 ## rheo.toml
 
 ```toml
-version = "0.1.2"        # required, must match CLI version
+version = "0.2.0"        # required, must match CLI version
 content_dir = "content"  # optional
 build_dir = "build"      # optional
 formats = ["html", "pdf", "epub"]  # default formats

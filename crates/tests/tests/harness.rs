@@ -641,7 +641,7 @@ fn test_asset_patterns() {
     std::fs::write(
         project_path.join("rheo.toml"),
         concat!(
-            "version = \"0.1.2\"\n",
+            "version = \"0.2.0\"\n",
             "formats = [\"html\"]\n",
             "assets = [\"readme.txt\"]\n",
             "\n",
@@ -790,7 +790,7 @@ fn test_asset_path_override() {
     std::fs::write(
         project_path.join("rheo.toml"),
         concat!(
-            "version = \"0.1.2\"\n",
+            "version = \"0.2.0\"\n",
             "formats = [\"html\"]\n",
             "\n",
             "[html]\n",
@@ -863,7 +863,7 @@ fn test_asset_path_override_subdirectory() {
     std::fs::write(
         project_path.join("rheo.toml"),
         concat!(
-            "version = \"0.1.2\"\n",
+            "version = \"0.2.0\"\n",
             "formats = [\"html\"]\n",
             "\n",
             "[html]\n",
