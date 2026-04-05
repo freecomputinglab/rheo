@@ -554,18 +554,43 @@ fn perform_compilation(
 /// Rewrites TOML section headers to be nested under a given prefix.
 ///
 /// `[spine]` becomes `[prefix.spine]` and `[[items]]` becomes `[[prefix.items]]`.
-/// Non-header lines are returned unchanged.
+/// Only matches bare headers (no leading whitespace, no inline comments).
+/// Non-header lines and already-prefixed headers are returned unchanged.
 fn prefix_toml_headers(content: &str, prefix: &str) -> String {
     content
         .lines()
         .map(|line| {
-            if let Some(inner) = line.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
-                format!("[[{prefix}.{inner}]]")
-            } else if let Some(inner) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-                format!("[{prefix}.{inner}]")
-            } else {
-                line.to_string()
+            let trimmed = line.trim();
+            // Skip already-prefixed headers (idempotent)
+            if trimmed.starts_with(&format!("[{prefix}."))
+                || trimmed.starts_with(&format!("[[{prefix}."))
+            {
+                return line.to_string();
             }
+            if let Some(inner) = trimmed
+                .strip_prefix("[[")
+                .and_then(|s| s.strip_suffix("]]"))
+            {
+                let inner = inner.trim();
+                if !inner.is_empty()
+                    && inner
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+                {
+                    return line.replace(trimmed, &format!("[[{prefix}.{inner}]]"));
+                }
+            } else if let Some(inner) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']'))
+            {
+                let inner = inner.trim();
+                if !inner.is_empty()
+                    && inner
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+                {
+                    return line.replace(trimmed, &format!("[{prefix}.{inner}]"));
+                }
+            }
+            line.to_string()
         })
         .collect::<Vec<_>>()
         .join("\n")
