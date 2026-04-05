@@ -504,6 +504,29 @@ pub trait FormatPlugin: Send + Sync {
         vec![]
     }
 
+    /// Provide a `rheo.toml` configuration section template for `rheo init`.
+    ///
+    /// The returned content should use section-relative headers (e.g. `[spine]`
+    /// rather than `[html.spine]`) — the `init` command automatically prefixes
+    /// each header with the plugin name when building the final `rheo.toml`.
+    ///
+    /// # Return value
+    ///
+    /// - `Some(content)` — TOML snippet to embed under `[<plugin_name>.*]` in the
+    ///   generated `rheo.toml`
+    /// - `None` — no config section contributed (default)
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
+    ///     Some(include_str!("templates/init/rheo_section.toml"))
+    /// }
+    /// ```
+    fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Provide Typst library code to inject into all compiled files.
     ///
     /// This method allows plugins to contribute format-specific Typst functions,

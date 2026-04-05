@@ -8,6 +8,10 @@ impl FormatPlugin for PdfPlugin {
         PLUGIN_NAME
     }
 
+    fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
+        Some(include_str!("templates/init/rheo_section.toml"))
+    }
+
     fn typst_library(&self) -> Option<&'static str> {
         Some(include_str!("lib.typ"))
     }

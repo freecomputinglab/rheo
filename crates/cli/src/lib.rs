@@ -551,6 +551,26 @@ fn perform_compilation(
     }
 }
 
+/// Rewrites TOML section headers to be nested under a given prefix.
+///
+/// `[spine]` becomes `[prefix.spine]` and `[[items]]` becomes `[[prefix.items]]`.
+/// Non-header lines are returned unchanged.
+fn prefix_toml_headers(content: &str, prefix: &str) -> String {
+    content
+        .lines()
+        .map(|line| {
+            if let Some(inner) = line.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
+                format!("[[{prefix}.{inner}]]")
+            } else if let Some(inner) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                format!("[{prefix}.{inner}]")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn init_project(target_dir: &Path) -> Result<()> {
     if target_dir.exists() {
         return Err(RheoError::project_config(format!(
@@ -561,9 +581,16 @@ fn init_project(target_dir: &Path) -> Result<()> {
 
     fs::create_dir_all(target_dir).map_err(|e| RheoError::io(e, "creating target directory"))?;
 
-    let toml_content =
+    let mut toml_content =
         rheo_core::init_templates::RHEO_TOML.replace("{{VERSION}}", manifest_version::CURRENT);
-    fs::write(target_dir.join("rheo.toml"), toml_content)
+    for plugin in all_plugins() {
+        if let Some(section) = plugin.init_rheo_toml_section_template() {
+            toml_content.push('\n');
+            toml_content.push_str(&prefix_toml_headers(section, plugin.name()));
+            toml_content.push('\n');
+        }
+    }
+    fs::write(target_dir.join("rheo.toml"), &toml_content)
         .map_err(|e| RheoError::io(e, "writing rheo.toml"))?;
 
     let content_dir = target_dir.join("content");
