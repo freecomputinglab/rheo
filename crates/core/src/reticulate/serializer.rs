@@ -40,16 +40,23 @@ pub fn apply_transformations(
                 format!("[{}]", body)
             }
             LinkTransform::ReplaceUrl { new_url } => {
-                // Replace URL but keep the rest of the syntax
-                // Original: #link("old.typ")[body]
-                // New:      #link("new.typ")[body]
-                replace_url_in_link(original, new_url, false)
+                // Bare string literal (import/include): just re-quote
+                if original.starts_with('"') {
+                    format!("\"{}\"", new_url)
+                } else {
+                    // Full link expression: preserve surrounding syntax
+                    replace_url_in_link(original, new_url, false)
+                }
             }
             LinkTransform::ReplaceUrlWithLabel { new_label } => {
                 // Replace URL but keep the rest of the syntax
                 // Original: #link("old.typ")[body]
                 // New:      #link(<label>)[body]
                 replace_url_in_link(original, new_label, true)
+            }
+            LinkTransform::ReplaceStringLiteralInPlace { new_value } => {
+                // byte_range covers the Str node including surrounding quotes
+                format!("\"{}\"", new_value)
             }
 
             LinkTransform::KeepOriginal => {
@@ -70,9 +77,8 @@ pub fn apply_transformations(
 /// Returns byte ranges of all Raw nodes (code blocks and inline code).
 /// Links within these ranges should be preserved unchanged.
 pub fn find_code_block_ranges(source: &Source) -> Vec<Range<usize>> {
-    let root = typst::syntax::parse(source.text());
     let mut ranges = Vec::new();
-    collect_raw_ranges(&root, &mut ranges, 0);
+    collect_raw_ranges(source.root(), &mut ranges, 0);
     ranges
 }
 

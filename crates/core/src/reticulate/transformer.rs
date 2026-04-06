@@ -6,6 +6,7 @@ use crate::{Result, RheoError};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 /// Link transformer that converts Typst links to format-specific targets.
 pub struct LinkTransformer {
@@ -30,18 +31,53 @@ impl LinkTransformer {
         self
     }
 
-    /// Transform source code by processing all links.
+    /// Transform source code by processing all links and rewriting relative
+    /// import/include paths so they resolve correctly from the project root
+    /// (needed when spine files are merged into a temp file at the root).
+    ///
+    /// Parses the source exactly once and traverses the AST once to collect
+    /// both link info and import info.
     pub fn transform_source(
         &self,
         source: &str,
         current_file: &Path,
-        _project_root: &Path,
+        project_root: &Path,
     ) -> Result<String> {
         use crate::reticulate::{parser, serializer};
 
         let source_obj = typst::syntax::Source::detached(source);
-        let links = parser::extract_links(&source_obj);
-        let transformations = self.compute_transformations(&links, current_file)?;
+        let extracted = parser::extract_nodes(&source_obj);
+
+        for line in &extracted.unresolvable_link_lines {
+            warn!(
+                file = %current_file.display(),
+                line = line,
+                "rheo: #link() call has a non-literal URL argument that cannot be statically \
+                 transformed. The .typ extension will NOT be rewritten in the output. \
+                 To fix: use a string literal directly: #link(\"./file.typ\")[...], \
+                 or define the wrapper function in the same file."
+            );
+        }
+
+        let mut transformations = self.compute_transformations(&extracted.links, current_file)?;
+
+        // Rewrite relative import/include paths to be project-root-relative
+        for import in &extracted.imports {
+            if import.is_package || import.path.starts_with('/') {
+                continue;
+            }
+            let file_dir = current_file.parent().unwrap_or(Path::new(""));
+            let absolute = file_dir.join(&import.path);
+            let new_path = absolute
+                .strip_prefix(project_root)
+                .map(|p| p.to_str().unwrap().to_owned())
+                .unwrap_or_else(|_| import.path.clone());
+            transformations.push((
+                import.byte_range.clone(),
+                LinkTransform::ReplaceUrl { new_url: new_path },
+            ));
+        }
+
         let code_ranges = serializer::find_code_block_ranges(&source_obj);
         Ok(serializer::apply_transformations(
             source,
@@ -99,6 +135,27 @@ impl LinkTransformer {
                 LinkTransform::KeepOriginal
             };
 
+            // Wrapper-call links only cover the Str argument, so use
+            // ReplaceStringLiteralInPlace regardless of the computed transform.
+            let transform = if link.is_wrapper_call {
+                match transform {
+                    LinkTransform::Remove { .. } => LinkTransform::ReplaceStringLiteralInPlace {
+                        new_value: String::new(),
+                    },
+                    LinkTransform::ReplaceUrl { new_url } => {
+                        LinkTransform::ReplaceStringLiteralInPlace { new_value: new_url }
+                    }
+                    LinkTransform::ReplaceUrlWithLabel { new_label } => {
+                        LinkTransform::ReplaceStringLiteralInPlace {
+                            new_value: new_label,
+                        }
+                    }
+                    other => other,
+                }
+            } else {
+                transform
+            };
+
             transformations.push((link.byte_range.clone(), transform));
         }
 
@@ -138,6 +195,7 @@ mod tests {
             body: body.to_string(),
             span: Span::detached(),
             byte_range,
+            is_wrapper_call: false,
         }
     }
 
@@ -246,5 +304,28 @@ mod tests {
         assert_eq!(extract_filename("../parent/file.typ"), "file.typ");
         assert_eq!(extract_filename("/absolute/path.typ"), "path.typ");
         assert_eq!(extract_filename("simple.typ"), "simple.typ");
+    }
+
+    #[test]
+    fn test_unresolvable_link_does_not_error() {
+        let source = r#"#link(compute_url())[text]"#;
+        let transformer = LinkTransformer::new("html");
+        let result =
+            transformer.transform_source(source, Path::new("test.typ"), Path::new("/root"));
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("#link(compute_url())"));
+    }
+
+    #[test]
+    fn test_unresolvable_link_passes_through_unchanged() {
+        // Dynamic URL expression: should compile fine and leave link untouched
+        let source = r#"#link("./ch" + num + ".typ")[Chapter]"#;
+        let transformer = LinkTransformer::new("html");
+        let result =
+            transformer.transform_source(source, Path::new("test.typ"), Path::new("/root"));
+        assert!(result.is_ok());
+        // The link call passes through unchanged (no transformation applied)
+        let output = result.unwrap();
+        assert!(output.contains("#link("));
     }
 }

@@ -554,7 +554,6 @@ fn perform_compilation(
             if let Some(ref mut existing_world) = world {
                 for typ_file in &files {
                     existing_world.set_main(typ_file)?;
-                    existing_world.reset();
                     compile_one_file(existing_world, typ_file, &pfc, &mut results)?;
                 }
             } else {

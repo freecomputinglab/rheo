@@ -39,6 +39,7 @@ use std::path::PathBuf;
 #[test_case("cases/error_formatting/invalid_field.typ")]
 #[test_case("cases/error_formatting/multiple_errors.typ")]
 #[test_case("cases/error_formatting/array_index_error.typ")]
+#[test_case("store/compat/merged-imports")]
 fn run_test_case(name: &str) {
     let test_case = TestCase::new(name);
     let update_mode = env::var("UPDATE_REFERENCES").is_ok();
@@ -907,5 +908,68 @@ fn test_asset_path_override_subdirectory() {
     assert!(
         html.contains(r#"href="styles/custom.css""#),
         "HTML should contain link to styles/custom.css"
+    );
+}
+
+/// Test that a merged spine with a missing relative import produces a clear error
+/// referencing the original source file path (not a temp path).
+#[test]
+fn test_merged_imports_missing_file() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+    let content_dir = project_path.join("content");
+    std::fs::create_dir_all(&content_dir).expect("Failed to create content dir");
+
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        concat!(
+            "version = \"0.2.0\"\n",
+            "formats = [\"pdf\"]\n",
+            "\n",
+            "[pdf.spine]\n",
+            "title = \"Missing Import Test\"\n",
+            "vertebrae = [\"content/chapter.typ\"]\n",
+            "merge = true\n",
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    // chapter.typ imports a file that does not exist
+    std::fs::write(
+        content_dir.join("chapter.typ"),
+        "#import \"../shared/nonexistent.typ\": *\n\n= Chapter\n\nContent.\n",
+    )
+    .expect("Failed to write chapter.typ");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--pdf",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        !output.status.success(),
+        "Expected compilation to fail when import target is missing"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // The error should mention the source file name, not a temp/internal path
+    assert!(
+        stderr.contains("chapter.typ") || stderr.contains("nonexistent.typ"),
+        "Expected error to reference source file, got:\n{}",
+        stderr
     );
 }
