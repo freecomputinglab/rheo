@@ -222,37 +222,9 @@ pub fn generate_spine(
             "spine configuration required but not provided",
         ));
     }
-
     match spine_config {
         None => collect_one_typst_file(root),
-        Some(spine) if spine.vertebrae.is_empty() => collect_all_typst_files(root),
-        Some(spine) => {
-            let mut typst_files = Vec::new();
-            for pattern in &spine.vertebrae {
-                let glob_pattern = root.join(pattern).display().to_string();
-                let glob = glob::glob(&glob_pattern).map_err(|e| {
-                    RheoError::project_config(format!("invalid glob pattern '{}': {}", pattern, e))
-                })?;
-
-                let mut glob_files: Vec<PathBuf> = glob
-                    .filter_map(|entry| entry.ok())
-                    .filter(|path| path.is_file())
-                    .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("typ"))
-                    .collect();
-
-                // Sort by full path (lexicographic) for consistent ordering
-                glob_files.sort();
-                typst_files.extend(glob_files);
-            }
-
-            if typst_files.is_empty() {
-                return Err(RheoError::project_config(
-                    "merge spine matched no .typ files",
-                ));
-            }
-
-            Ok(typst_files)
-        }
+        Some(spine) => spine.generate(root),
     }
 }
 
