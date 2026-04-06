@@ -794,7 +794,7 @@ fn test_asset_path_override() {
             "version = \"0.2.0\"\n",
             "formats = [\"html\"]\n",
             "\n",
-            "[html]\n",
+            "[html.assets]\n",
             "css_stylesheet = \"custom.css\"\n",
         ),
     )
@@ -867,7 +867,7 @@ fn test_asset_path_override_subdirectory() {
             "version = \"0.2.0\"\n",
             "formats = [\"html\"]\n",
             "\n",
-            "[html]\n",
+            "[html.assets]\n",
             "css_stylesheet = \"styles/custom.css\"\n",
         ),
     )
