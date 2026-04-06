@@ -61,7 +61,10 @@ impl HtmlDom {
 
         let mut offset = 0;
         for font in fonts {
-            head.insert_child_at(insert_pos + offset, Element::create_link("stylesheet", font));
+            head.insert_child_at(
+                insert_pos + offset,
+                Element::create_link("stylesheet", font),
+            );
             offset += 1;
         }
         for stylesheet in stylesheets {
@@ -163,12 +166,14 @@ impl Element {
     /// Returns the index of the last `<meta>` child in this element's children, if any.
     fn last_meta_index(&self) -> Option<usize> {
         let children = self.handle.children.borrow();
-        children.iter().enumerate().rev().find_map(|(i, child)| {
-            match &child.data {
+        children
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, child)| match &child.data {
                 NodeData::Element { name, .. } if name.local.as_ref() == "meta" => Some(i),
                 _ => None,
-            }
-        })
+            })
     }
 
     #[cfg(test)]
@@ -497,8 +502,13 @@ mod tests {
         assert!(result.contains(r#"<link rel="stylesheet" href="style.css">"#));
 
         let last_meta_pos = result.find(r#"<meta name="viewport""#).unwrap();
-        let link_pos = result.find(r#"<link rel="stylesheet" href="style.css">"#).unwrap();
-        assert!(link_pos > last_meta_pos, "link should appear after meta tags");
+        let link_pos = result
+            .find(r#"<link rel="stylesheet" href="style.css">"#)
+            .unwrap();
+        assert!(
+            link_pos > last_meta_pos,
+            "link should appear after meta tags"
+        );
     }
 
     #[test]

@@ -1,8 +1,0 @@
-version = "0.2.0"
-
-formats = ["html", "pdf"]
-
-[pdf.spine]
-merge = true
-title = "Relative Path Test"
-vertebrae = ["root.typ", "subdir/child.typ", "subdir/sibling.typ"]
