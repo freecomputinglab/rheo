@@ -1,7 +1,6 @@
 use crate::reticulate::types::{ImportInfo, LinkInfo};
 use crate::reticulate::validator::is_relative_typ_link;
 use std::collections::HashMap;
-use std::ops::Range;
 use typst::syntax::{Source, SyntaxKind, SyntaxNode};
 
 /// The identifier in the Typst AST for links.
@@ -143,10 +142,7 @@ fn parse_link_call(
 }
 
 /// Return the text and node reference of the n-th positional `Str` argument.
-fn extract_nth_string_arg_with_node(
-    args: &SyntaxNode,
-    n: usize,
-) -> Option<(String, &SyntaxNode)> {
+fn extract_nth_string_arg_with_node(args: &SyntaxNode, n: usize) -> Option<(String, &SyntaxNode)> {
     let mut pos = 0;
     for child in args.children() {
         // Skip structural tokens and named args
@@ -189,17 +185,6 @@ fn extract_nth_ident_arg(args: &SyntaxNode, n: usize) -> Option<String> {
             return None;
         }
         pos += 1;
-    }
-    None
-}
-
-fn extract_first_string_arg(args: &SyntaxNode) -> Option<String> {
-    for child in args.children() {
-        if child.kind() == SyntaxKind::Str {
-            // Remove quotes
-            let text = child.text();
-            return Some(text.trim_matches('"').to_string());
-        }
     }
     None
 }
@@ -270,7 +255,10 @@ fn try_register_wrapper(let_binding: &SyntaxNode, map: &mut WrapperMap) {
     // Case 1: Closure wrapper — #let f(x, y) = link(x, y)
     // The Closure is a direct child of LetBinding; the function name Ident
     // lives *inside* the Closure, not as a direct child of LetBinding.
-    if let Some(closure) = let_binding.children().find(|c| c.kind() == SyntaxKind::Closure) {
+    if let Some(closure) = let_binding
+        .children()
+        .find(|c| c.kind() == SyntaxKind::Closure)
+    {
         register_closure_wrapper(closure, map);
         return;
     }
@@ -409,11 +397,11 @@ fn collect_url_bindings_from_node(
             }
             if after_eq && child.kind() == SyntaxKind::Str {
                 let text = child.text().trim_matches('"').to_string();
-                if is_relative_typ_link(&text) {
-                    if let Some(offset) = calculate_node_offset(root, child) {
-                        let byte_range = offset..(offset + child.len());
-                        map.insert(binding_name, (text, byte_range));
-                    }
+                if is_relative_typ_link(&text)
+                    && let Some(offset) = calculate_node_offset(root, child)
+                {
+                    let byte_range = offset..(offset + child.len());
+                    map.insert(binding_name, (text, byte_range));
                 }
                 break;
             }
@@ -552,8 +540,10 @@ mod tests {
 
     #[test]
     fn test_wrapper_direct_alias() {
-        let source = Source::detached(r#"#let mylink = link
-#mylink("./chapter2.typ")[text]"#);
+        let source = Source::detached(
+            r#"#let mylink = link
+#mylink("./chapter2.typ")[text]"#,
+        );
         let links = extract_links(&source);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "./chapter2.typ");

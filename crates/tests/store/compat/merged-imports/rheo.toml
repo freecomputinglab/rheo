@@ -1,0 +1,13 @@
+version = "0.2.0"
+
+content_dir = "content"
+build_dir = "build"
+formats = ["pdf"]
+
+[pdf.spine]
+title = "Merged Imports"
+vertebrae = [
+  "chapters/ch01.typ",
+  "chapters/ch02.typ"
+]
+merge = true

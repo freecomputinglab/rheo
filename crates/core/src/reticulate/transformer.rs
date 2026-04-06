@@ -126,11 +126,9 @@ impl LinkTransformer {
             // ReplaceStringLiteralInPlace regardless of the computed transform.
             let transform = if link.is_wrapper_call {
                 match transform {
-                    LinkTransform::Remove { .. } => {
-                        LinkTransform::ReplaceStringLiteralInPlace {
-                            new_value: String::new(),
-                        }
-                    }
+                    LinkTransform::Remove { .. } => LinkTransform::ReplaceStringLiteralInPlace {
+                        new_value: String::new(),
+                    },
                     LinkTransform::ReplaceUrl { new_url } => {
                         LinkTransform::ReplaceStringLiteralInPlace { new_value: new_url }
                     }
