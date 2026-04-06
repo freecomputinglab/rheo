@@ -2,7 +2,7 @@
   "name": "component",
   "version": "1.0.0",
   "description": "",
-  "main": "dist/tooltip.js",
+  "main": "dist/my-tooltip.js",
   "scripts": {
     "build": "vite build"
   },
@@ -16,7 +16,6 @@
     "tippy.js": "^6.3.7",
     "typescript": "^6.0.2",
     "vite": "^8.0.5",
-    "vite-plugin-css-injected-by-js": "^4.0.1",
     "vite-plugin-static-copy": "^4.0.1"
   }
 }

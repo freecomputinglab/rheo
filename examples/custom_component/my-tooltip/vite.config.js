@@ -1,5 +1,4 @@
 import { defineConfig } from "vite";
-import cssInjectedByJsPlugin from "vite-plugin-css-injected-by-js";
 import replace from "rollup-plugin-replace";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 
@@ -21,8 +20,8 @@ export default defineConfig({
     lib: {
       entry: "src/lib.ts",
       formats: ["iife"],
-      name: "TooltipComponent",
-      fileName: () => "tooltip.js",
+      name: "MyTooltipComponent",
+      fileName: () => "my-tooltip.js",
     },
     outDir: "dist",
   },

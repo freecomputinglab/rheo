@@ -2,7 +2,7 @@ version = "0.2.0"
 content_dir = "content"
 
 [html]
-js_scripts = "my-tooltip/dist/tooltip.js"
+js_scripts = "my-tooltip/dist/my-tooltip.js"
 
 [html.spine]
 vertebrae = ["*.typ"]
