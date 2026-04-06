@@ -1,5 +1,6 @@
 use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
 use crate::plugins::SpineOptions;
+use crate::reticulate::transformer::LinkTransformer;
 use crate::{Result, RheoError, TYP_EXT};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -46,6 +47,12 @@ impl BuiltSpine {
         // Merge when caller requests it (typically only PDF merged mode).
         // Other formats (epub, html) handle concatenation differently.
 
+        let transformer = if format_ext == "pdf" && spine_files.len() > 1 {
+            LinkTransformer::new(format_ext).with_spine(spine_files.to_vec())
+        } else {
+            LinkTransformer::new(format_ext)
+        };
+
         let mut sources = Vec::new();
 
         for spine_file in &spine_files {
@@ -57,11 +64,7 @@ impl BuiltSpine {
                 ))
             })?;
 
-            // TODO: this source needs to be transformed according to what the plugin specifies,
-            // i.e. whether relative linking makes sense. For PDF, it doesn't, whereas for HTML and
-            // EPUB, it does.
-            let transformed_source =
-                transform_source(&source, spine_file, &spine_files, format_ext, root)?;
+            let transformed_source = transformer.transform_source(&source, spine_file, root)?;
 
             let final_source = if merge {
                 let (label, doc_title) = extract_label_and_title(&source, spine_file)?;
@@ -90,29 +93,6 @@ impl BuiltSpine {
             source: final_sources,
         })
     }
-}
-
-/// Transform source using AST-based link transformation.
-fn transform_source(
-    source: &str,
-    spine_file: &Path,
-    spine_files: &[PathBuf],
-    ext_name: &str,
-    project_root: &Path,
-) -> Result<String> {
-    use crate::reticulate::transformer::LinkTransformer;
-
-    // Plugins that produce a single merged PDF are a special case, as here we want to use Typst's
-    // internal link resolution to resolve Rheo links
-    let transformer = if ext_name == "pdf" && spine_files.len() > 1 {
-        // Merged PDF: pass spine for label references
-        LinkTransformer::new(ext_name).with_spine(spine_files.to_vec())
-    } else {
-        // All other formats
-        LinkTransformer::new(ext_name)
-    };
-
-    transformer.transform_source(source, spine_file, project_root)
 }
 
 fn extract_label_and_title(source: &str, spine_file: &Path) -> Result<(String, String)> {
