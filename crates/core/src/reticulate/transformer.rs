@@ -6,6 +6,7 @@ use crate::{Result, RheoError};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 /// Link transformer that converts Typst links to format-specific targets.
 pub struct LinkTransformer {
@@ -46,6 +47,18 @@ impl LinkTransformer {
 
         let source_obj = typst::syntax::Source::detached(source);
         let extracted = parser::extract_nodes(&source_obj);
+
+        for line in &extracted.unresolvable_link_lines {
+            warn!(
+                file = %current_file.display(),
+                line = line,
+                "rheo: #link() call has a non-literal URL argument that cannot be statically \
+                 transformed. The .typ extension will NOT be rewritten in the output. \
+                 To fix: use a string literal directly: #link(\"./file.typ\")[...], \
+                 or define the wrapper function in the same file."
+            );
+        }
+
         let mut transformations = self.compute_transformations(&extracted.links, current_file)?;
 
         // Rewrite relative import/include paths to be project-root-relative
@@ -291,5 +304,28 @@ mod tests {
         assert_eq!(extract_filename("../parent/file.typ"), "file.typ");
         assert_eq!(extract_filename("/absolute/path.typ"), "path.typ");
         assert_eq!(extract_filename("simple.typ"), "simple.typ");
+    }
+
+    #[test]
+    fn test_unresolvable_link_does_not_error() {
+        let source = r#"#link(compute_url())[text]"#;
+        let transformer = LinkTransformer::new("html");
+        let result =
+            transformer.transform_source(source, Path::new("test.typ"), Path::new("/root"));
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("#link(compute_url())"));
+    }
+
+    #[test]
+    fn test_unresolvable_link_passes_through_unchanged() {
+        // Dynamic URL expression: should compile fine and leave link untouched
+        let source = r#"#link("./ch" + num + ".typ")[Chapter]"#;
+        let transformer = LinkTransformer::new("html");
+        let result =
+            transformer.transform_source(source, Path::new("test.typ"), Path::new("/root"));
+        assert!(result.is_ok());
+        // The link call passes through unchanged (no transformation applied)
+        let output = result.unwrap();
+        assert!(output.contains("#link("));
     }
 }

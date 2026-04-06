@@ -33,6 +33,10 @@ pub fn extract_imports(source: &Source) -> Vec<ImportInfo> {
 pub struct ExtractedNodes {
     pub links: Vec<LinkInfo>,
     pub imports: Vec<ImportInfo>,
+    /// 1-based line numbers of `#link()` calls whose first URL argument could
+    /// not be statically resolved (not a string literal, not a resolved
+    /// let-binding, not a label reference).
+    pub unresolvable_link_lines: Vec<usize>,
 }
 
 /// Single-pass extraction of both links and imports from Typst source.
@@ -45,31 +49,43 @@ pub fn extract_nodes(source: &Source) -> ExtractedNodes {
     let url_bindings = collect_url_bindings(&root);
     let mut links = Vec::new();
     let mut imports = Vec::new();
+    let mut unresolvable_link_lines = Vec::new();
     extract_from_node(
         &root,
         &root,
+        source.text(),
         &mut links,
         &mut imports,
+        &mut unresolvable_link_lines,
         &wrappers,
         &url_bindings,
     );
-    ExtractedNodes { links, imports }
+    ExtractedNodes {
+        links,
+        imports,
+        unresolvable_link_lines,
+    }
 }
 
 /// Combined single-pass traversal that collects both links and imports.
+#[allow(clippy::too_many_arguments)]
 fn extract_from_node(
     node: &SyntaxNode,
     root: &SyntaxNode,
+    source_text: &str,
     links: &mut Vec<LinkInfo>,
     imports: &mut Vec<ImportInfo>,
+    unresolvable: &mut Vec<usize>,
     wrappers: &WrapperMap,
     url_bindings: &UrlBindingMap,
 ) {
     // Collect link info from function calls
-    if node.kind() == SyntaxKind::FuncCall
-        && let Some(link_info) = parse_link_call(node, root, wrappers, url_bindings)
-    {
-        links.push(link_info);
+    if node.kind() == SyntaxKind::FuncCall {
+        if let Some(link_info) = parse_link_call(node, root, wrappers, url_bindings) {
+            links.push(link_info);
+        } else {
+            collect_unresolvable_link(node, root, source_text, url_bindings, unresolvable);
+        }
     }
 
     // Collect import/include info
@@ -81,7 +97,74 @@ fn extract_from_node(
 
     // Recursively traverse children
     for child in node.children() {
-        extract_from_node(child, root, links, imports, wrappers, url_bindings);
+        extract_from_node(
+            child,
+            root,
+            source_text,
+            links,
+            imports,
+            unresolvable,
+            wrappers,
+            url_bindings,
+        );
+    }
+}
+
+/// Check whether a FuncCall node is a direct `#link()` call with an unresolvable
+/// first argument, and if so record the 1-based line number.
+fn collect_unresolvable_link(
+    func_call: &SyntaxNode,
+    root: &SyntaxNode,
+    text: &str,
+    url_bindings: &UrlBindingMap,
+    results: &mut Vec<usize>,
+) {
+    // Only direct `#link(...)` calls, not unknown wrapper calls.
+    let Some(ident) = func_call
+        .children()
+        .find(|n| n.kind() == SyntaxKind::Ident)
+    else {
+        return;
+    };
+    if ident.text() != LINK_IDENT_ID {
+        return;
+    }
+
+    let Some(args) = func_call
+        .children()
+        .find(|n| n.kind() == SyntaxKind::Args)
+    else {
+        return;
+    };
+
+    // First positional argument (skip parens, commas, spaces, named args).
+    let first = args.children().find(|c| {
+        !matches!(
+            c.kind(),
+            SyntaxKind::LeftParen
+                | SyntaxKind::RightParen
+                | SyntaxKind::Comma
+                | SyntaxKind::Space
+                | SyntaxKind::Named
+        )
+    });
+    let Some(first) = first else { return };
+
+    let is_unresolvable = match first.kind() {
+        SyntaxKind::Str => false,   // literal string — resolved
+        SyntaxKind::Label => false, // label reference — valid non-string target
+        SyntaxKind::Ident => !url_bindings.contains_key(first.text().as_str()),
+        _ => true, // FuncCall, BinaryOp, etc.
+    };
+
+    if is_unresolvable {
+        let line = calculate_node_offset(root, func_call)
+            .map(|offset| {
+                let safe = offset.min(text.len());
+                text[..safe].lines().count().max(1)
+            })
+            .unwrap_or(1);
+        results.push(line);
     }
 }
 
