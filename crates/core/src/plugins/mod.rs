@@ -626,4 +626,3 @@ pub(crate) fn open_all_files_in_folder(folder: PathBuf, ext: &str) -> crate::Res
 
     Ok(())
 }
-

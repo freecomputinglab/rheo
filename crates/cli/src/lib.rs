@@ -460,19 +460,14 @@ fn perform_compilation(
         )?;
 
         // Execute copy patterns (global + per-plugin)
-        for pattern in project
-            .config
-            .copy
-            .iter()
-            .chain(
-                plugin_section
-                    .assets
-                    .as_ref()
-                    .map(|a| a.copy.iter())
-                    .into_iter()
-                    .flatten(),
-            )
-        {
+        for pattern in project.config.copy.iter().chain(
+            plugin_section
+                .assets
+                .as_ref()
+                .map(|a| a.copy.iter())
+                .into_iter()
+                .flatten(),
+        ) {
             let abs_pattern = project.root.join(pattern).display().to_string();
             let entries = glob::glob(&abs_pattern).map_err(|e| {
                 RheoError::project_config(format!("invalid copy pattern '{}': {}", pattern, e))
