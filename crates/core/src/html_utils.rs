@@ -121,10 +121,16 @@ impl Element {
         use markup5ever_rcdom::Node;
         use std::cell::RefCell;
 
-        let attrs = vec![Attribute {
-            name: QualName::new(None, ns!(), LocalName::from("src")),
-            value: StrTendril::from(src),
-        }];
+        let attrs = vec![
+            Attribute {
+                name: QualName::new(None, ns!(), LocalName::from("src")),
+                value: StrTendril::from(src),
+            },
+            Attribute {
+                name: QualName::new(None, ns!(), LocalName::from("defer")),
+                value: StrTendril::from(""),
+            },
+        ];
 
         let handle = Node::new(NodeData::Element {
             name: QualName::new(None, ns!(html), LocalName::from("script")),
@@ -492,7 +498,8 @@ mod tests {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
         let result = inject_head_links(html, &[], &[], &["index.js"]).unwrap();
 
-        assert!(result.contains(r#"<script src="index.js"></script>"#));
+        assert!(result.contains(r#"src="index.js""#));
+        assert!(result.contains("defer"));
     }
 
     #[test]
@@ -500,7 +507,8 @@ mod tests {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
         let result = inject_head_links(html, &[], &["style.css"], &["index.js"]).unwrap();
 
-        assert!(result.contains(r#"<script src="index.js"></script>"#));
+        assert!(result.contains(r#"src="index.js""#));
+        assert!(result.contains("defer"));
         assert!(result.contains(r#"<link rel="stylesheet" href="style.css">"#));
     }
 
