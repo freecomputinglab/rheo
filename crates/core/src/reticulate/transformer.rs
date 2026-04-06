@@ -33,6 +33,9 @@ impl LinkTransformer {
     /// Transform source code by processing all links and rewriting relative
     /// import/include paths so they resolve correctly from the project root
     /// (needed when spine files are merged into a temp file at the root).
+    ///
+    /// Parses the source exactly once and traverses the AST once to collect
+    /// both link info and import info.
     pub fn transform_source(
         &self,
         source: &str,
@@ -42,12 +45,11 @@ impl LinkTransformer {
         use crate::reticulate::{parser, serializer};
 
         let source_obj = typst::syntax::Source::detached(source);
-        let links = parser::extract_links(&source_obj);
-        let mut transformations = self.compute_transformations(&links, current_file)?;
+        let extracted = parser::extract_nodes(&source_obj);
+        let mut transformations = self.compute_transformations(&extracted.links, current_file)?;
 
         // Rewrite relative import/include paths to be project-root-relative
-        let imports = parser::extract_imports(&source_obj);
-        for import in &imports {
+        for import in &extracted.imports {
             if import.is_package || import.path.starts_with('/') {
                 continue;
             }

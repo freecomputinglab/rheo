@@ -14,29 +14,59 @@ pub type WrapperMap = HashMap<String, usize>;
 /// Also detects same-file wrapper functions (`#let f(x) = link(x, ...)`) so
 /// that calls like `#f("url")` are recognised as links.
 pub fn extract_links(source: &Source) -> Vec<LinkInfo> {
+    extract_nodes(source).links
+}
+
+/// Extract all import/include paths from Typst source by parsing and
+/// traversing AST.
+pub fn extract_imports(source: &Source) -> Vec<ImportInfo> {
+    extract_nodes(source).imports
+}
+
+/// Result of a single-pass AST extraction.
+pub struct ExtractedNodes {
+    pub links: Vec<LinkInfo>,
+    pub imports: Vec<ImportInfo>,
+}
+
+/// Single-pass extraction of both links and imports from Typst source.
+///
+/// Parses the source exactly once and traverses the AST once to collect
+/// both link info and import info.
+pub fn extract_nodes(source: &Source) -> ExtractedNodes {
     let root = typst::syntax::parse(source.text());
     let wrappers = collect_link_wrappers(&root);
     let mut links = Vec::new();
-    extract_links_from_node(&root, &root, &mut links, &wrappers);
-    links
+    let mut imports = Vec::new();
+    extract_from_node(&root, &root, &mut links, &mut imports, &wrappers);
+    ExtractedNodes { links, imports }
 }
 
-fn extract_links_from_node(
+/// Combined single-pass traversal that collects both links and imports.
+fn extract_from_node(
     node: &SyntaxNode,
     root: &SyntaxNode,
     links: &mut Vec<LinkInfo>,
+    imports: &mut Vec<ImportInfo>,
     wrappers: &WrapperMap,
 ) {
-    // Check if this node itself is a function call
+    // Collect link info from function calls
     if node.kind() == SyntaxKind::FuncCall
         && let Some(link_info) = parse_link_call(node, root, wrappers)
     {
         links.push(link_info);
     }
 
+    // Collect import/include info
+    if (node.kind() == SyntaxKind::ModuleImport || node.kind() == SyntaxKind::ModuleInclude)
+        && let Some(import_info) = parse_import_node(node, root)
+    {
+        imports.push(import_info);
+    }
+
     // Recursively traverse children
     for child in node.children() {
-        extract_links_from_node(child, root, links, wrappers);
+        extract_from_node(child, root, links, imports, wrappers);
     }
 }
 
@@ -290,34 +320,7 @@ fn find_link_call(node: &SyntaxNode) -> Option<&SyntaxNode> {
     None
 }
 
-// ---------------------------------------------------------------------------
-// Import/include extraction
-// ---------------------------------------------------------------------------
-
-/// Extract all import/include paths from Typst source by parsing and traversing AST
-pub fn extract_imports(source: &Source) -> Vec<ImportInfo> {
-    let root = typst::syntax::parse(source.text());
-    let mut imports = Vec::new();
-    extract_imports_from_node(&root, &root, &mut imports);
-    imports
-}
-
-fn extract_imports_from_node(
-    node: &SyntaxNode,
-    root: &SyntaxNode,
-    imports: &mut Vec<ImportInfo>,
-) {
-    if (node.kind() == SyntaxKind::ModuleImport || node.kind() == SyntaxKind::ModuleInclude)
-        && let Some(import_info) = parse_import_node(node, root)
-    {
-        imports.push(import_info);
-    }
-
-    for child in node.children() {
-        extract_imports_from_node(child, root, imports);
-    }
-}
-
+/// Parse a ModuleImport or ModuleInclude node into ImportInfo.
 fn parse_import_node(node: &SyntaxNode, root: &SyntaxNode) -> Option<ImportInfo> {
     // Find the first Str child — that is the path argument
     let str_node = node.children().find(|n| n.kind() == SyntaxKind::Str)?;
