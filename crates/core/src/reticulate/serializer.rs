@@ -40,10 +40,13 @@ pub fn apply_transformations(
                 format!("[{}]", body)
             }
             LinkTransform::ReplaceUrl { new_url } => {
-                // Replace URL but keep the rest of the syntax
-                // Original: #link("old.typ")[body]
-                // New:      #link("new.typ")[body]
-                replace_url_in_link(original, new_url, false)
+                // Bare string literal (import/include): just re-quote
+                if original.starts_with('"') {
+                    format!("\"{}\"", new_url)
+                } else {
+                    // Full link expression: preserve surrounding syntax
+                    replace_url_in_link(original, new_url, false)
+                }
             }
             LinkTransform::ReplaceUrlWithLabel { new_label } => {
                 // Replace URL but keep the rest of the syntax
