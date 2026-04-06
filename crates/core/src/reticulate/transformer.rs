@@ -120,6 +120,29 @@ impl LinkTransformer {
                 LinkTransform::KeepOriginal
             };
 
+            // Wrapper-call links only cover the Str argument, so use
+            // ReplaceStringLiteralInPlace regardless of the computed transform.
+            let transform = if link.is_wrapper_call {
+                match transform {
+                    LinkTransform::Remove { .. } => {
+                        LinkTransform::ReplaceStringLiteralInPlace {
+                            new_value: String::new(),
+                        }
+                    }
+                    LinkTransform::ReplaceUrl { new_url } => {
+                        LinkTransform::ReplaceStringLiteralInPlace { new_value: new_url }
+                    }
+                    LinkTransform::ReplaceUrlWithLabel { new_label } => {
+                        LinkTransform::ReplaceStringLiteralInPlace {
+                            new_value: new_label,
+                        }
+                    }
+                    other => other,
+                }
+            } else {
+                transform
+            };
+
             transformations.push((link.byte_range.clone(), transform));
         }
 
@@ -159,6 +182,7 @@ mod tests {
             body: body.to_string(),
             span: Span::detached(),
             byte_range,
+            is_wrapper_call: false,
         }
     }
 

@@ -54,6 +54,10 @@ pub fn apply_transformations(
                 // New:      #link(<label>)[body]
                 replace_url_in_link(original, new_label, true)
             }
+            LinkTransform::ReplaceStringLiteralInPlace { new_value } => {
+                // byte_range covers the Str node including surrounding quotes
+                format!("\"{}\"", new_value)
+            }
 
             LinkTransform::KeepOriginal => {
                 // No change

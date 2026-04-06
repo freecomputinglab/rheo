@@ -1,65 +1,118 @@
 use crate::reticulate::types::{ImportInfo, LinkInfo};
+use std::collections::HashMap;
 use typst::syntax::{Source, SyntaxKind, SyntaxNode};
 
 /// The identifier in the Typst AST for links.
 const LINK_IDENT_ID: &str = "link";
 
-/// Extract all links from Typst source by parsing and traversing AST
+/// Maps a wrapper function name to the index of its parameter that is passed
+/// as the URL to the inner `link()` call.
+pub type WrapperMap = HashMap<String, usize>;
+
+/// Extract all links from Typst source by parsing and traversing AST.
+///
+/// Also detects same-file wrapper functions (`#let f(x) = link(x, ...)`) so
+/// that calls like `#f("url")` are recognised as links.
 pub fn extract_links(source: &Source) -> Vec<LinkInfo> {
     let root = typst::syntax::parse(source.text());
+    let wrappers = collect_link_wrappers(&root);
     let mut links = Vec::new();
-    extract_links_from_node(&root, &root, &mut links);
+    extract_links_from_node(&root, &root, &mut links, &wrappers);
     links
 }
 
-fn extract_links_from_node(node: &SyntaxNode, root: &SyntaxNode, links: &mut Vec<LinkInfo>) {
+fn extract_links_from_node(
+    node: &SyntaxNode,
+    root: &SyntaxNode,
+    links: &mut Vec<LinkInfo>,
+    wrappers: &WrapperMap,
+) {
     // Check if this node itself is a function call
     if node.kind() == SyntaxKind::FuncCall
-        && let Some(link_info) = parse_link_call(node, root)
+        && let Some(link_info) = parse_link_call(node, root, wrappers)
     {
         links.push(link_info);
     }
 
     // Recursively traverse children
     for child in node.children() {
-        extract_links_from_node(child, root, links);
+        extract_links_from_node(child, root, links, wrappers);
     }
 }
 
-fn parse_link_call(node: &SyntaxNode, root: &SyntaxNode) -> Option<LinkInfo> {
-    // Parse #link("url")[body] or #link("url", body)
-    // Extract:
-    // 1. Function name (must be "link")
-    // 2. URL argument (first string argument)
-    // 3. Body text (from content block or second argument)
-    // 4. Byte range by calculating AST node position
-
+fn parse_link_call(
+    node: &SyntaxNode,
+    root: &SyntaxNode,
+    wrappers: &WrapperMap,
+) -> Option<LinkInfo> {
     let ident = node.children().find(|n| n.kind() == SyntaxKind::Ident)?;
-    if ident.text() != LINK_IDENT_ID {
+
+    let (url_param_index, is_wrapper) = if ident.text() == LINK_IDENT_ID {
+        (0, false)
+    } else if let Some(&idx) = wrappers.get(ident.text().as_str()) {
+        (idx, true)
+    } else {
         return None;
-    }
+    };
 
     let args = node.children().find(|n| n.kind() == SyntaxKind::Args)?;
 
-    // Extract URL (first string argument)
-    let url = extract_first_string_arg(args)?;
+    if is_wrapper {
+        // Wrapper call: byte range covers only the Str argument
+        let (url, str_node) = extract_nth_string_arg_with_node(args, url_param_index)?;
+        let offset = calculate_node_offset(root, str_node)?;
+        let byte_range = offset..(offset + str_node.len());
 
-    // Extract body text
-    let body = extract_link_body(node)?;
+        Some(LinkInfo {
+            url,
+            body: String::new(),
+            span: node.span(),
+            byte_range,
+            is_wrapper_call: true,
+        })
+    } else {
+        // Standard link() call: byte range covers the full expression
+        let url = extract_first_string_arg(args)?;
+        let body = extract_link_body(node)?;
+        let offset = calculate_node_offset(root, node)?;
+        let byte_range = offset..(offset + node.len());
 
-    // Calculate byte range directly from AST node position
-    let offset = calculate_node_offset(root, node)?;
-    let byte_range = offset..(offset + node.len());
+        Some(LinkInfo {
+            url,
+            body,
+            span: node.span(),
+            byte_range,
+            is_wrapper_call: false,
+        })
+    }
+}
 
-    // Get span for error reporting
-    let span = node.span();
-
-    Some(LinkInfo {
-        url,
-        body,
-        span,
-        byte_range,
-    })
+/// Return the text and node reference of the n-th positional `Str` argument.
+fn extract_nth_string_arg_with_node(
+    args: &SyntaxNode,
+    n: usize,
+) -> Option<(String, &SyntaxNode)> {
+    let mut pos = 0;
+    for child in args.children() {
+        // Skip structural tokens and named args
+        match child.kind() {
+            SyntaxKind::LeftParen
+            | SyntaxKind::RightParen
+            | SyntaxKind::Comma
+            | SyntaxKind::Space
+            | SyntaxKind::Named => continue,
+            _ => {}
+        }
+        if pos == n {
+            if child.kind() == SyntaxKind::Str {
+                let text = child.text().trim_matches('"').to_string();
+                return Some((text, child));
+            }
+            return None; // n-th positional arg is not a string
+        }
+        pos += 1;
+    }
+    None
 }
 
 fn extract_first_string_arg(args: &SyntaxNode) -> Option<String> {
@@ -114,6 +167,132 @@ fn extract_text_from_node(node: &SyntaxNode) -> Option<String> {
         Some(texts.join(""))
     }
 }
+
+// ---------------------------------------------------------------------------
+// Wrapper-function detection
+// ---------------------------------------------------------------------------
+
+/// First-pass scan: collect all same-file function definitions that wrap `link()`.
+pub fn collect_link_wrappers(root: &SyntaxNode) -> WrapperMap {
+    let mut map = HashMap::new();
+    collect_wrappers_from_node(root, &mut map);
+    map
+}
+
+fn collect_wrappers_from_node(node: &SyntaxNode, map: &mut WrapperMap) {
+    if node.kind() == SyntaxKind::LetBinding {
+        try_register_wrapper(node, map);
+    }
+    for child in node.children() {
+        collect_wrappers_from_node(child, map);
+    }
+}
+
+fn try_register_wrapper(let_binding: &SyntaxNode, map: &mut WrapperMap) {
+    // Case 1: Closure wrapper — #let f(x, y) = link(x, y)
+    // The Closure is a direct child of LetBinding; the function name Ident
+    // lives *inside* the Closure, not as a direct child of LetBinding.
+    if let Some(closure) = let_binding.children().find(|c| c.kind() == SyntaxKind::Closure) {
+        register_closure_wrapper(closure, map);
+        return;
+    }
+
+    // Case 2: Direct alias — #let mylink = link
+    let idents: Vec<_> = let_binding
+        .children()
+        .filter(|c| c.kind() == SyntaxKind::Ident)
+        .collect();
+
+    if idents.len() < 2 {
+        return;
+    }
+
+    let fn_name = idents[0].text().to_string();
+    let has_link_alias = idents.iter().skip(1).any(|c| c.text() == LINK_IDENT_ID);
+    if has_link_alias {
+        map.insert(fn_name, 0);
+    }
+}
+
+fn register_closure_wrapper(closure: &SyntaxNode, map: &mut WrapperMap) {
+    // Function name is the first Ident child of the Closure
+    let fn_name_node = match closure.children().find(|c| c.kind() == SyntaxKind::Ident) {
+        Some(n) => n,
+        None => return,
+    };
+    let fn_name = fn_name_node.text().to_string();
+
+    let Some(params_node) = closure.children().find(|c| c.kind() == SyntaxKind::Params) else {
+        return;
+    };
+
+    let param_names: Vec<String> = params_node
+        .children()
+        .filter(|c| c.kind() == SyntaxKind::Ident)
+        .map(|c| c.text().to_string())
+        .collect();
+
+    let Some(link_call) = find_link_call(closure) else {
+        return;
+    };
+
+    let Some(args) = link_call.children().find(|c| c.kind() == SyntaxKind::Args) else {
+        return;
+    };
+
+    // Get first positional arg of link()
+    let first_pos_arg = args.children().find(|c| {
+        !matches!(
+            c.kind(),
+            SyntaxKind::LeftParen
+                | SyntaxKind::RightParen
+                | SyntaxKind::Comma
+                | SyntaxKind::Space
+                | SyntaxKind::Named
+        )
+    });
+
+    let Some(first_arg) = first_pos_arg else {
+        return;
+    };
+
+    // If first arg is a Str, the URL is hardcoded in the wrapper — skip
+    if first_arg.kind() == SyntaxKind::Str {
+        return;
+    }
+
+    // Must be an Ident matching a param
+    if first_arg.kind() != SyntaxKind::Ident {
+        return;
+    }
+
+    let arg_name = first_arg.text();
+    let Some(param_idx) = param_names.iter().position(|n| n == arg_name.as_str()) else {
+        return;
+    };
+
+    map.insert(fn_name, param_idx);
+}
+
+/// Find the first `FuncCall` to `link()` inside a subtree.
+fn find_link_call(node: &SyntaxNode) -> Option<&SyntaxNode> {
+    if node.kind() == SyntaxKind::FuncCall {
+        let ident = node.children().find(|c| c.kind() == SyntaxKind::Ident)?;
+        if ident.text() == LINK_IDENT_ID {
+            return Some(node);
+        }
+    }
+    for child in node.children() {
+        if let Some(found) = find_link_call(child) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Import/include extraction
+// ---------------------------------------------------------------------------
 
 /// Extract all import/include paths from Typst source by parsing and traversing AST
 pub fn extract_imports(source: &Source) -> Vec<ImportInfo> {
@@ -196,6 +375,7 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "./file.typ");
         assert_eq!(links[0].body, "text");
+        assert!(!links[0].is_wrapper_call);
     }
 
     #[test]
@@ -241,7 +421,6 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "./url");
         assert_eq!(links[0].body, "text 2"); // All text concatenated
-        // Byte range should cover the entire link (exact start may vary by 1 due to Source::detached)
         assert!(links[0].byte_range.len() >= 29);
     }
 
@@ -253,6 +432,48 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "url");
         assert_eq!(links[0].body, "bold and italic");
+    }
+
+    // --- Wrapper function tests ---
+
+    #[test]
+    fn test_wrapper_direct_alias() {
+        let source = Source::detached(r#"#let mylink = link
+#mylink("./chapter2.typ")[text]"#);
+        let links = extract_links(&source);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].url, "./chapter2.typ");
+        assert!(links[0].is_wrapper_call);
+    }
+
+    #[test]
+    fn test_wrapper_closure() {
+        let source = Source::detached(
+            r#"#let chapter-ref(path, title) = link(path, title)
+#chapter-ref("./ch02.typ", [Chapter 2])"#,
+        );
+        let links = extract_links(&source);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].url, "./ch02.typ");
+        assert!(links[0].is_wrapper_call);
+    }
+
+    #[test]
+    fn test_wrapper_cross_file_not_detected() {
+        let source = Source::detached(r#"#chapter-ref("./ch02.typ", [Ch 2])"#);
+        let links = extract_links(&source);
+        assert_eq!(links.len(), 0);
+    }
+
+    #[test]
+    fn test_wrapper_hardcoded_url_skipped() {
+        // If link() is called with a hardcoded URL, nothing to rewrite at call site
+        let source = Source::detached(
+            r#"#let homepage(body) = link("https://example.com", body)
+#homepage[text]"#,
+        );
+        let links = extract_links(&source);
+        assert_eq!(links.len(), 0);
     }
 
     // --- extract_imports tests ---
@@ -313,7 +534,6 @@ mod tests {
         let imports = extract_imports(&source);
 
         assert_eq!(imports.len(), 1);
-        // byte_range should cover the Str node including quotes
         let source_text = source.text();
         let range_text = &source_text[imports[0].byte_range.clone()];
         assert_eq!(range_text, "\"./utils.typ\"");

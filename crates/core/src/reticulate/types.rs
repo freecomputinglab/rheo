@@ -15,6 +15,11 @@ pub struct LinkInfo {
 
     /// Byte range in the source text
     pub byte_range: Range<usize>,
+
+    /// True when this link was extracted via a same-file wrapper function
+    /// (e.g. `#let f(x) = link(x)`).  Wrapper-call byte ranges cover only
+    /// the `Str` argument, not the full function call.
+    pub is_wrapper_call: bool,
 }
 
 /// Information about an import/include extracted from the AST
@@ -44,4 +49,9 @@ pub enum LinkTransform {
 
     /// Keep original (no transformation)
     KeepOriginal,
+
+    /// Replace only the quoted string literal at `byte_range` with `new_value`
+    /// (re-quoted).  Used for wrapper-function call sites where only the URL
+    /// argument should change, not the surrounding call syntax.
+    ReplaceStringLiteralInPlace { new_value: String },
 }
