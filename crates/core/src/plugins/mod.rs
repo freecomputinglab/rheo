@@ -50,26 +50,6 @@ pub struct AssetConfig {
     pub required: bool,
 }
 
-impl AssetConfig {
-    /// Names that are reserved by `PluginSection` serde deserialization.
-    /// An asset with one of these names would silently collide with
-    /// `PluginSection::spine` or `PluginSection::assets`.
-    pub const RESERVED_NAMES: &[&str] = &["spine", "assets"];
-
-    /// Validate that this asset's name does not collide with reserved keys.
-    pub fn validate(&self, plugin_name: &str) -> crate::Result<()> {
-        if Self::RESERVED_NAMES.contains(&self.name) {
-            return Err(crate::RheoError::misconfigured_plugin(format!(
-                "plugin '{}' declares an asset named '{}' which conflicts \
-                 with the reserved rheo.toml field; asset names must not be \
-                 'spine' or 'assets'",
-                plugin_name, self.name
-            )));
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Asset {
     pub config: AssetConfig,

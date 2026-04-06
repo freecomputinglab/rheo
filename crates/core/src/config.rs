@@ -26,6 +26,24 @@ pub struct Spine {
     pub merge: Option<bool>,
 }
 
+/// Asset configuration for `[plugin_name.assets]` in rheo.toml.
+///
+/// Holds both glob copy patterns (`copy`) and AssetConfig path overrides
+/// (any other key). Separating these into their own subtable ensures AssetConfig
+/// names cannot clash with other `[plugin_name]` fields like `spine`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginAssets {
+    /// Glob patterns for files to copy into this plugin's output directory.
+    /// Paths are relative to the project root; directory structure is preserved.
+    #[serde(default)]
+    pub copy: Vec<String>,
+
+    /// AssetConfig path overrides, keyed by the AssetConfig name
+    /// (e.g. `css_stylesheet = "custom.css"`).
+    #[serde(flatten, default)]
+    pub extra: toml::Table,
+}
+
 /// Plugin section for `[plugin_name]` in rheo.toml.
 ///
 /// Contains the universal `spine` field plus format-specific extra fields in
@@ -37,10 +55,9 @@ pub struct PluginSection {
     /// Spine configuration (shared by all plugins).
     pub spine: Option<Spine>,
 
-    /// Per-plugin glob patterns for files to copy into this plugin's output directory.
-    /// Paths are relative to the project root; directory structure is preserved.
-    #[serde(default)]
-    pub assets: Vec<String>,
+    /// Asset configuration subtable (`[plugin_name.assets]`).
+    /// Holds glob copy patterns and AssetConfig path overrides.
+    pub assets: Option<PluginAssets>,
 
     /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
     /// `fonts` for HTML; `identifier`, `date` for EPUB).
@@ -224,9 +241,12 @@ impl RheoConfig {
 }
 
 impl PluginSection {
-    /// Get a string value from extra config, returning None if absent or not a string.
+    /// Get a string value from the `[plugin.assets]` overrides, returning None if absent or not a string.
     pub fn get_string(&self, key: &str) -> Option<&str> {
-        self.extra.get(key).and_then(|v| v.as_str())
+        self.assets
+            .as_ref()
+            .and_then(|a| a.extra.get(key))
+            .and_then(|v| v.as_str())
     }
 }
 
