@@ -120,20 +120,14 @@ fn collect_unresolvable_link(
     results: &mut Vec<usize>,
 ) {
     // Only direct `#link(...)` calls, not unknown wrapper calls.
-    let Some(ident) = func_call
-        .children()
-        .find(|n| n.kind() == SyntaxKind::Ident)
-    else {
+    let Some(ident) = func_call.children().find(|n| n.kind() == SyntaxKind::Ident) else {
         return;
     };
     if ident.text() != LINK_IDENT_ID {
         return;
     }
 
-    let Some(args) = func_call
-        .children()
-        .find(|n| n.kind() == SyntaxKind::Args)
-    else {
+    let Some(args) = func_call.children().find(|n| n.kind() == SyntaxKind::Args) else {
         return;
     };
 

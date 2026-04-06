@@ -77,9 +77,8 @@ pub fn apply_transformations(
 /// Returns byte ranges of all Raw nodes (code blocks and inline code).
 /// Links within these ranges should be preserved unchanged.
 pub fn find_code_block_ranges(source: &Source) -> Vec<Range<usize>> {
-    let root = typst::syntax::parse(source.text());
     let mut ranges = Vec::new();
-    collect_raw_ranges(&root, &mut ranges, 0);
+    collect_raw_ranges(source.root(), &mut ranges, 0);
     ranges
 }
 
