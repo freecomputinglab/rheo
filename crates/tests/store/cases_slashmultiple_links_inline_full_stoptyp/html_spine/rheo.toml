@@ -1,5 +1,0 @@
-version = "0.2.0"
-
-[html.spine]
-title = "My Website"
-vertebrae = ["index.typ", "about.typ"]

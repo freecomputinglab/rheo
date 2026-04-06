@@ -42,7 +42,8 @@ impl HtmlDom {
 
     /// Inject `<link>` and `<script>` elements into the HTML `<head>`.
     ///
-    /// Links are prepended in order: fonts first, then stylesheets, then scripts.
+    /// Nodes are inserted after the last `<meta>` tag (or at position 0 if none),
+    /// in order: fonts, stylesheets, scripts.
     pub fn inject_head_links(
         &mut self,
         fonts: &[&str],
@@ -56,19 +57,26 @@ impl HtmlDom {
                 errors: "HTML document does not contain a <head> element".to_string(),
             })?;
 
-        for script in scripts.iter().rev() {
-            let node = Element::create_script(script);
-            head.prepend_child(node);
-        }
+        let insert_pos = head.last_meta_index().map(|i| i + 1).unwrap_or(0);
 
-        for stylesheet in stylesheets.iter().rev() {
-            let link = Element::create_link("stylesheet", stylesheet);
-            head.prepend_child(link);
+        let mut offset = 0;
+        for font in fonts {
+            head.insert_child_at(
+                insert_pos + offset,
+                Element::create_link("stylesheet", font),
+            );
+            offset += 1;
         }
-
-        for font in fonts.iter().rev() {
-            let link = Element::create_link("stylesheet", font);
-            head.prepend_child(link);
+        for stylesheet in stylesheets {
+            head.insert_child_at(
+                insert_pos + offset,
+                Element::create_link("stylesheet", stylesheet),
+            );
+            offset += 1;
+        }
+        for script in scripts {
+            head.insert_child_at(insert_pos + offset, Element::create_script(script));
+            offset += 1;
         }
 
         Ok(())
@@ -121,10 +129,16 @@ impl Element {
         use markup5ever_rcdom::Node;
         use std::cell::RefCell;
 
-        let attrs = vec![Attribute {
-            name: QualName::new(None, ns!(), LocalName::from("src")),
-            value: StrTendril::from(src),
-        }];
+        let attrs = vec![
+            Attribute {
+                name: QualName::new(None, ns!(), LocalName::from("src")),
+                value: StrTendril::from(src),
+            },
+            Attribute {
+                name: QualName::new(None, ns!(), LocalName::from("defer")),
+                value: StrTendril::from(""),
+            },
+        ];
 
         let handle = Node::new(NodeData::Element {
             name: QualName::new(None, ns!(html), LocalName::from("script")),
@@ -140,6 +154,26 @@ impl Element {
     pub fn prepend_child(&self, child: Element) {
         let mut children = self.handle.children.borrow_mut();
         children.insert(0, child.handle);
+    }
+
+    /// Insert a child element at the given index (clamped to children length).
+    pub fn insert_child_at(&self, index: usize, child: Element) {
+        let mut children = self.handle.children.borrow_mut();
+        let index = index.min(children.len());
+        children.insert(index, child.handle);
+    }
+
+    /// Returns the index of the last `<meta>` child in this element's children, if any.
+    fn last_meta_index(&self) -> Option<usize> {
+        let children = self.handle.children.borrow();
+        children
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, child)| match &child.data {
+                NodeData::Element { name, .. } if name.local.as_ref() == "meta" => Some(i),
+                _ => None,
+            })
     }
 
     #[cfg(test)]
@@ -291,7 +325,8 @@ pub fn inject_inline_styles(html: &str, css_blocks: &[&str]) -> Result<String> {
 
 /// Inject `<link>` and `<script>` elements into the HTML `<head>`.
 ///
-/// Links are prepended in order: fonts first, then stylesheets, then scripts.
+/// Nodes are inserted after the last `<meta>` tag (or at position 0 if none),
+/// in order: fonts, stylesheets, scripts.
 ///
 /// Returns an error if the HTML cannot be parsed or has no `<head>` element.
 pub fn inject_head_links(
@@ -465,6 +500,15 @@ mod tests {
         assert!(result.contains(r#"<meta charset="UTF-8">"#));
         assert!(result.contains(r#"<meta name="viewport""#));
         assert!(result.contains(r#"<link rel="stylesheet" href="style.css">"#));
+
+        let last_meta_pos = result.find(r#"<meta name="viewport""#).unwrap();
+        let link_pos = result
+            .find(r#"<link rel="stylesheet" href="style.css">"#)
+            .unwrap();
+        assert!(
+            link_pos > last_meta_pos,
+            "link should appear after meta tags"
+        );
     }
 
     #[test]
@@ -492,7 +536,8 @@ mod tests {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
         let result = inject_head_links(html, &[], &[], &["index.js"]).unwrap();
 
-        assert!(result.contains(r#"<script src="index.js"></script>"#));
+        assert!(result.contains(r#"src="index.js""#));
+        assert!(result.contains("defer"));
     }
 
     #[test]
@@ -500,7 +545,8 @@ mod tests {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
         let result = inject_head_links(html, &[], &["style.css"], &["index.js"]).unwrap();
 
-        assert!(result.contains(r#"<script src="index.js"></script>"#));
+        assert!(result.contains(r#"src="index.js""#));
+        assert!(result.contains("defer"));
         assert!(result.contains(r#"<link rel="stylesheet" href="style.css">"#));
     }
 
