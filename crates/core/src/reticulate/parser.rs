@@ -1,5 +1,7 @@
 use crate::reticulate::types::{ImportInfo, LinkInfo};
+use crate::reticulate::validator::is_relative_typ_link;
 use std::collections::HashMap;
+use std::ops::Range;
 use typst::syntax::{Source, SyntaxKind, SyntaxNode};
 
 /// The identifier in the Typst AST for links.
@@ -8,6 +10,11 @@ const LINK_IDENT_ID: &str = "link";
 /// Maps a wrapper function name to the index of its parameter that is passed
 /// as the URL to the inner `link()` call.
 pub type WrapperMap = HashMap<String, usize>;
+
+/// Maps a let-binding name to its constant `.typ` string value and the
+/// byte range of the `Str` node in the source. Only file-scope bindings
+/// of the form `#let x = "./something.typ"` are tracked.
+pub type UrlBindingMap = HashMap<String, (String, std::ops::Range<usize>)>;
 
 /// Extract all links from Typst source by parsing and traversing AST.
 ///
@@ -36,9 +43,17 @@ pub struct ExtractedNodes {
 pub fn extract_nodes(source: &Source) -> ExtractedNodes {
     let root = typst::syntax::parse(source.text());
     let wrappers = collect_link_wrappers(&root);
+    let url_bindings = collect_url_bindings(&root);
     let mut links = Vec::new();
     let mut imports = Vec::new();
-    extract_from_node(&root, &root, &mut links, &mut imports, &wrappers);
+    extract_from_node(
+        &root,
+        &root,
+        &mut links,
+        &mut imports,
+        &wrappers,
+        &url_bindings,
+    );
     ExtractedNodes { links, imports }
 }
 
@@ -49,10 +64,11 @@ fn extract_from_node(
     links: &mut Vec<LinkInfo>,
     imports: &mut Vec<ImportInfo>,
     wrappers: &WrapperMap,
+    url_bindings: &UrlBindingMap,
 ) {
     // Collect link info from function calls
     if node.kind() == SyntaxKind::FuncCall
-        && let Some(link_info) = parse_link_call(node, root, wrappers)
+        && let Some(link_info) = parse_link_call(node, root, wrappers, url_bindings)
     {
         links.push(link_info);
     }
@@ -66,7 +82,7 @@ fn extract_from_node(
 
     // Recursively traverse children
     for child in node.children() {
-        extract_from_node(child, root, links, imports, wrappers);
+        extract_from_node(child, root, links, imports, wrappers, url_bindings);
     }
 }
 
@@ -74,6 +90,7 @@ fn parse_link_call(
     node: &SyntaxNode,
     root: &SyntaxNode,
     wrappers: &WrapperMap,
+    url_bindings: &UrlBindingMap,
 ) -> Option<LinkInfo> {
     let ident = node.children().find(|n| n.kind() == SyntaxKind::Ident)?;
 
@@ -87,32 +104,40 @@ fn parse_link_call(
 
     let args = node.children().find(|n| n.kind() == SyntaxKind::Args)?;
 
-    if is_wrapper {
-        // Wrapper call: byte range covers only the Str argument
-        let (url, str_node) = extract_nth_string_arg_with_node(args, url_param_index)?;
-        let offset = calculate_node_offset(root, str_node)?;
-        let byte_range = offset..(offset + str_node.len());
-
+    // Try to extract a literal string arg first
+    if let Some((url, str_node)) = extract_nth_string_arg_with_node(args, url_param_index) {
+        if is_wrapper {
+            let offset = calculate_node_offset(root, str_node)?;
+            let byte_range = offset..(offset + str_node.len());
+            Some(LinkInfo {
+                url,
+                body: String::new(),
+                span: node.span(),
+                byte_range,
+                is_wrapper_call: true,
+            })
+        } else {
+            let body = extract_link_body(node)?;
+            let offset = calculate_node_offset(root, node)?;
+            let byte_range = offset..(offset + node.len());
+            Some(LinkInfo {
+                url,
+                body,
+                span: node.span(),
+                byte_range,
+                is_wrapper_call: false,
+            })
+        }
+    } else {
+        // No literal string — try to resolve a let-bound variable
+        let var_name = extract_nth_ident_arg(args, url_param_index)?;
+        let (url, str_byte_range) = url_bindings.get(var_name.as_str())?;
         Some(LinkInfo {
-            url,
+            url: url.clone(),
             body: String::new(),
             span: node.span(),
-            byte_range,
-            is_wrapper_call: true,
-        })
-    } else {
-        // Standard link() call: byte range covers the full expression
-        let url = extract_first_string_arg(args)?;
-        let body = extract_link_body(node)?;
-        let offset = calculate_node_offset(root, node)?;
-        let byte_range = offset..(offset + node.len());
-
-        Some(LinkInfo {
-            url,
-            body,
-            span: node.span(),
-            byte_range,
-            is_wrapper_call: false,
+            byte_range: str_byte_range.clone(),
+            is_wrapper_call: true, // reuse flag: rewrite via ReplaceStringLiteralInPlace
         })
     }
 }
@@ -139,6 +164,29 @@ fn extract_nth_string_arg_with_node(
                 return Some((text, child));
             }
             return None; // n-th positional arg is not a string
+        }
+        pos += 1;
+    }
+    None
+}
+
+/// Return the text of the n-th positional `Ident` argument.
+fn extract_nth_ident_arg(args: &SyntaxNode, n: usize) -> Option<String> {
+    let mut pos = 0;
+    for child in args.children() {
+        match child.kind() {
+            SyntaxKind::LeftParen
+            | SyntaxKind::RightParen
+            | SyntaxKind::Comma
+            | SyntaxKind::Space
+            | SyntaxKind::Named => continue,
+            _ => {}
+        }
+        if pos == n {
+            if child.kind() == SyntaxKind::Ident {
+                return Some(child.text().to_string());
+            }
+            return None;
         }
         pos += 1;
     }
@@ -318,6 +366,69 @@ fn find_link_call(node: &SyntaxNode) -> Option<&SyntaxNode> {
         }
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// Let-bound URL variable collection
+// ---------------------------------------------------------------------------
+
+/// Collect file-scope `#let x = "./something.typ"` bindings.
+///
+/// Only bindings where the value is a string literal containing a `.typ`
+/// path are tracked. Bindings inside closures or code blocks are skipped.
+pub fn collect_url_bindings(root: &SyntaxNode) -> UrlBindingMap {
+    let mut map = HashMap::new();
+    collect_url_bindings_from_node(root, root, &mut map, false);
+    map
+}
+
+fn collect_url_bindings_from_node(
+    node: &SyntaxNode,
+    root: &SyntaxNode,
+    map: &mut UrlBindingMap,
+    in_scope: bool,
+) {
+    // Only track file-scope bindings (not inside closures/code blocks)
+    if in_scope {
+        return;
+    }
+
+    if node.kind() == SyntaxKind::LetBinding {
+        let children: Vec<_> = node.children().collect();
+        // Find the binding name (first Ident) and the value (first Str after Eq)
+        let name = children.iter().find(|c| c.kind() == SyntaxKind::Ident);
+        let Some(name) = name else { return };
+        let binding_name = name.text().to_string();
+
+        // Look for a Str value — must be after the Eq token
+        let mut after_eq = false;
+        for child in &children {
+            if child.kind() == SyntaxKind::Eq {
+                after_eq = true;
+                continue;
+            }
+            if after_eq && child.kind() == SyntaxKind::Str {
+                let text = child.text().trim_matches('"').to_string();
+                if is_relative_typ_link(&text) {
+                    if let Some(offset) = calculate_node_offset(root, child) {
+                        let byte_range = offset..(offset + child.len());
+                        map.insert(binding_name, (text, byte_range));
+                    }
+                }
+                break;
+            }
+        }
+        return; // Don't recurse into LetBinding children
+    }
+
+    // Stop descending into closures and code blocks
+    if node.kind() == SyntaxKind::Closure || node.kind() == SyntaxKind::CodeBlock {
+        return;
+    }
+
+    for child in node.children() {
+        collect_url_bindings_from_node(child, root, map, in_scope);
+    }
 }
 
 /// Parse a ModuleImport or ModuleInclude node into ImportInfo.
