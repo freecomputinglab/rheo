@@ -110,8 +110,13 @@ impl RheoWorld {
         self.slots.lock().clear();
     }
 
-    /// Change the main file for this world.
+    /// Change the main file for this world, invalidating only main-file-dependent slots.
+    ///
+    /// Only the outgoing and incoming main file slots are invalidated. All other slots
+    /// (shared imports, packages) are deterministic given `format_name` and `root`, so
+    /// they remain valid across per-file compilations.
     pub fn set_main(&mut self, main_file: &Path) -> Result<()> {
+        let old_main = self.main;
         let main_path = crate::path_utils::canonicalize_path(main_file)?;
 
         let main_vpath = VirtualPath::within_root(&main_path, &self.root).ok_or_else(|| {
@@ -119,6 +124,11 @@ impl RheoWorld {
         })?;
 
         self.main = FileId::new(None, main_vpath);
+
+        let mut slots = self.slots.lock();
+        slots.remove(&old_main);
+        slots.remove(&self.main);
+
         Ok(())
     }
 
