@@ -1,0 +1,17 @@
+version = "0.2.0"
+content_dir = "content"
+
+[html]
+js_scripts = "my-tooltip/dist/my-tooltip.js"
+
+[html.spine]
+vertebrae = ["*.typ"]
+
+[pdf.spine]
+title = "rheo_project"
+vertebrae = ["index.typ"]
+merge = false
+
+[epub.spine]
+title = "rheo_project"
+vertebrae = ["index.typ", "about.typ"]
