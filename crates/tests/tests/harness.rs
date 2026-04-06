@@ -644,10 +644,10 @@ fn test_asset_patterns() {
         concat!(
             "version = \"0.2.0\"\n",
             "formats = [\"html\"]\n",
-            "assets = [\"readme.txt\"]\n",
+            "copy = [\"readme.txt\"]\n",
             "\n",
-            "[html]\n",
-            "assets = [\"assets/logo.png\"]\n",
+            "[html.assets]\n",
+            "copy = [\"assets/logo.png\"]\n",
         ),
     )
     .expect("Failed to write rheo.toml");
@@ -680,7 +680,7 @@ fn test_asset_patterns() {
     let html_readme = build_dir.join("html/readme.txt");
     assert!(
         html_readme.exists(),
-        "Global asset pattern: readme.txt not found in html output"
+        "Global asset copy pattern: readme.txt not found in html output"
     );
     assert_eq!(
         std::fs::read_to_string(&html_readme).unwrap(),
@@ -692,7 +692,7 @@ fn test_asset_patterns() {
     let html_logo = build_dir.join("html/assets/logo.png");
     assert!(
         html_logo.exists(),
-        "Per-plugin asset pattern: assets/logo.png not found in html output"
+        "Per-plugin asset copy pattern: assets/logo.png not found in html output"
     );
 }
 
