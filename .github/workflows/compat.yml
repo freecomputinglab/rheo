@@ -1,8 +1,10 @@
 name: Compat
 
 on:
-  schedule:
-    - cron: '0 2 * * *'  # 2am UTC, off-peak
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
