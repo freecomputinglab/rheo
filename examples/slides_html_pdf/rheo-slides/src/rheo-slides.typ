@@ -1,16 +1,24 @@
-#let html-element(body, name: "div", hideOffTarget: false, attrs: (:)) = context {
-    if target() == "html" or target() == "epub" {
-      html.elem(name, attrs: attrs, body)
-    } else {
-      if hideOffTarget {
-        []
-      } else {
-        body
-      }      
-    }
+#let slide(body) = {
+  [#metadata(body) <slide>]
+  context if target() != "html" {
+    box(
+      fill: rgb("#ff4444"),
+      stroke: 2pt + rgb("#ff0000"),
+      inset: (x: 8pt, y: 4pt),
+      radius: 4pt,
+      text(fill: white, weight: "bold", size: 0.9em)[SLIDE],
+    )
+  }
 }
 
-#let tooltip(placement: "top-end", body) = html-element(body, name: "my-tooltip", attrs: (placement: placement))
+#let template(doc) = {
+  context if target() == "html" {
+    for s in query(<slide>) {
+      s.value
+    }
+  } else {
+    doc
+  }
+}
 
-#let tooltip-modal(body) = html-element(body, name: "my-tooltip-modal", hideOffTarget: true)
-#let tooltip-content(body) = html-element(body, name: "my-tooltip-content")
+

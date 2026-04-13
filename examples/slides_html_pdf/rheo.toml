@@ -3,6 +3,7 @@ content_dir = "content"
 
 [html]
 js_scripts = "rheo-slides/dist/rheo-slides.js"
+# TODO: put style.css into dist also
 
 [html.spine]
 vertebrae = ["*.typ"]
