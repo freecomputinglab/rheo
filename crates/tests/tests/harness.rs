@@ -728,6 +728,7 @@ fn test_rheo_init_and_compile() {
     // Verify expected files exist
     assert!(test_dir.join("rheo.toml").exists(), "Missing rheo.toml");
     assert!(test_dir.join("style.css").exists(), "Missing style.css");
+    assert!(test_dir.join("index.js").exists(), "Missing index.js");
     assert!(
         test_dir.join("content/index.typ").exists(),
         "Missing content/index.typ"

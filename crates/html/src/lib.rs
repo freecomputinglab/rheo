@@ -45,7 +45,14 @@ impl FormatPlugin for HtmlPlugin {
     }
 
     fn init_template_files(&self) -> Vec<(&'static str, &'static str)> {
-        vec![("style.css", include_str!("templates/style.css"))]
+        vec![
+            // The stylesheet included with the template mirrors the default stylesheet, so that
+            // users can build from it or start from scratch as they wish.
+            ("style.css", include_str!("templates/style.css")),
+            // A demonstrative JS file that just logs to console. See the examples/ directory for
+            // how to use Rheo with bundled JS.
+            ("index.js", include_str!("templates/index.js")),
+        ]
     }
 
     fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
