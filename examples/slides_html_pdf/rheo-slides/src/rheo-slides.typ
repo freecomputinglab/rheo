@@ -1,6 +1,7 @@
 #let slide(body) = {
-  [#metadata(body) <slide>]
-  context if target() != "html" {
+  context if target() == "html" {
+    html.elem("section", body)
+  } else {
     box(
       fill: rgb("#ff4444"),
       stroke: 2pt + rgb("#ff0000"),
@@ -13,12 +14,10 @@
 
 #let template(doc) = {
   context if target() == "html" {
-    for s in query(<slide>) {
-      s.value
-    }
+    html.elem("div", attrs: (class: "reveal"),
+      html.elem("div", attrs: (class: "slides"), doc)
+    )
   } else {
     doc
   }
 }
-
-
