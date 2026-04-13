@@ -14,9 +14,7 @@
 
 #let template(doc) = {
   context if target() == "html" {
-    html.elem("div", attrs: (class: "reveal"),
-      html.elem("div", attrs: (class: "slides"), doc)
-    )
+    html.elem("div", attrs: (class: "reveal"), html.elem("div", attrs: (class: "slides"), doc))
   } else {
     doc
   }
