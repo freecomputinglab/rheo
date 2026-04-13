@@ -1,0 +1,21 @@
+{
+  "name": "component",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/my-tooltip.js",
+  "scripts": {
+    "build": "vite build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.21.0",
+  "devDependencies": {
+    "lit": "^3.3.2",
+    "rollup-plugin-replace": "^2.2.0",
+    "tippy.js": "^6.3.7",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.5",
+    "vite-plugin-static-copy": "^4.0.1"
+  }
+}
