@@ -1,0 +1,18 @@
+version = "0.2.0"
+content_dir = "content"
+
+[html]
+js_scripts = "rheo-slides/dist/rheo-slides.js"
+# TODO: put style.css into dist also
+
+[html.spine]
+vertebrae = ["*.typ"]
+
+[pdf.spine]
+title = "rheo_project"
+vertebrae = ["index.typ"]
+merge = false
+
+[epub.spine]
+title = "rheo_project"
+vertebrae = ["index.typ", "about.typ"]

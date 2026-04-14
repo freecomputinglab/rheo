@@ -1,0 +1,15 @@
+{
+  "name": "rheo-slides",
+  "version": "1.0.0",
+  "main": "dist/rheo-slides.js",
+  "scripts": {
+    "build": "vite build"
+  },
+  "packageManager": "pnpm@10.21.0",
+  "devDependencies": {
+    "reveal.js": "^5.2.1",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.5",
+    "vite-plugin-static-copy": "^4.0.1"
+  }
+}
