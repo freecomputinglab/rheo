@@ -34,10 +34,11 @@ content_dir = "content"  # optional
 build_dir = "build"      # optional
 formats = ["html", "pdf", "epub"]  # default formats
 font_dirs = ["fonts"]    # optional; replaces autoscan of fonts/ directory
+copy = ["*.txt"]         # optional; glob patterns copied to every plugin output dir
 
-[html]
-stylesheets = ["style.css"]
-fonts = []
+[html.assets]
+copy = ["images/**"]     # optional; glob patterns copied to html output dir only
+css_stylesheet = "custom.css"   # optional; path override for AssetConfig name
 
 [pdf.spine]
 title = "My Book"

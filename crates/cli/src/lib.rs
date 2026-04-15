@@ -460,12 +460,14 @@ fn perform_compilation(
         )?;
 
         // Execute copy patterns (global + per-plugin)
-        for pattern in project
-            .config
-            .assets
-            .iter()
-            .chain(plugin_section.assets.iter())
-        {
+        for pattern in project.config.copy.iter().chain(
+            plugin_section
+                .assets
+                .as_ref()
+                .map(|a| a.copy.iter())
+                .into_iter()
+                .flatten(),
+        ) {
             let abs_pattern = project.root.join(pattern).display().to_string();
             let entries = glob::glob(&abs_pattern).map_err(|e| {
                 RheoError::project_config(format!("invalid copy pattern '{}': {}", pattern, e))
@@ -758,13 +760,6 @@ fn setup_compilation_context(
         plugin.apply_defaults(section, &project.name);
     }
 
-    // Validate that no plugin declares assets with reserved names
-    for plugin in &plugins {
-        for asset_config in plugin.assets() {
-            asset_config.validate(plugin.name())?;
-        }
-    }
-
     let resolved_build_dir = resolve_build_dir(&project, build_dir)?;
     let output_config = OutputConfig::new(&project.root, resolved_build_dir);
 
@@ -948,6 +943,7 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
 mod tests {
     use super::*;
     use rheo_core::AssetConfig;
+    use rheo_core::config::PluginAssets;
 
     #[test]
     fn test_determine_formats_cli_flags_override_config() {
@@ -1073,13 +1069,16 @@ mod tests {
                 required: false,
             }],
         };
-        let mut extra = toml::map::Map::new();
-        extra.insert(
+        let mut asset_extra = toml::map::Map::new();
+        asset_extra.insert(
             "css_stylesheet".into(),
             toml::Value::String("custom.css".into()),
         );
         let section = PluginSection {
-            extra,
+            assets: Some(PluginAssets {
+                extra: asset_extra,
+                ..Default::default()
+            }),
             ..Default::default()
         };
 
@@ -1159,13 +1158,16 @@ mod tests {
                 required: false,
             }],
         };
-        let mut extra = toml::map::Map::new();
-        extra.insert(
+        let mut asset_extra = toml::map::Map::new();
+        asset_extra.insert(
             "css_stylesheet".into(),
             toml::Value::String("styles/custom.css".into()),
         );
         let section = PluginSection {
-            extra,
+            assets: Some(PluginAssets {
+                extra: asset_extra,
+                ..Default::default()
+            }),
             ..Default::default()
         };
 

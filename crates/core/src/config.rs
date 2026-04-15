@@ -26,6 +26,24 @@ pub struct Spine {
     pub merge: Option<bool>,
 }
 
+/// Asset configuration for `[plugin_name.assets]` in rheo.toml.
+///
+/// Holds both glob copy patterns (`copy`) and AssetConfig path overrides
+/// (any other key). Separating these into their own subtable ensures AssetConfig
+/// names cannot clash with other `[plugin_name]` fields like `spine`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginAssets {
+    /// Glob patterns for files to copy into this plugin's output directory.
+    /// Paths are relative to the project root; directory structure is preserved.
+    #[serde(default)]
+    pub copy: Vec<String>,
+
+    /// AssetConfig path overrides, keyed by the AssetConfig name
+    /// (e.g. `css_stylesheet = "custom.css"`).
+    #[serde(flatten, default)]
+    pub extra: toml::Table,
+}
+
 /// Plugin section for `[plugin_name]` in rheo.toml.
 ///
 /// Contains the universal `spine` field plus format-specific extra fields in
@@ -37,10 +55,9 @@ pub struct PluginSection {
     /// Spine configuration (shared by all plugins).
     pub spine: Option<Spine>,
 
-    /// Per-plugin glob patterns for files to copy into this plugin's output directory.
-    /// Paths are relative to the project root; directory structure is preserved.
-    #[serde(default)]
-    pub assets: Vec<String>,
+    /// Asset configuration subtable (`[plugin_name.assets]`).
+    /// Holds glob copy patterns and AssetConfig path overrides.
+    pub assets: Option<PluginAssets>,
 
     /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
     /// `fonts` for HTML; `identifier`, `date` for EPUB).
@@ -70,7 +87,7 @@ pub struct RheoConfig {
 
     /// Global glob patterns for files to copy into every plugin's output directory.
     /// Paths are relative to the project root; directory structure is preserved.
-    pub assets: Vec<String>,
+    pub copy: Vec<String>,
 
     /// Directories to search for fonts (relative to project root unless absolute).
     pub font_dirs: Vec<String>,
@@ -87,7 +104,7 @@ impl Default for RheoConfig {
             content_dir: Some("./".to_string()),
             build_dir: Some("./build".to_string()),
             formats: vec![],
-            assets: vec![],
+            copy: vec![],
             font_dirs: vec![],
             plugin_sections: HashMap::new(),
         }
@@ -103,7 +120,7 @@ pub struct RheoConfigRaw {
     #[serde(default)]
     formats: Vec<String>,
     #[serde(default)]
-    assets: Vec<String>,
+    copy: Vec<String>,
     #[serde(default)]
     font_dirs: Vec<String>,
     #[serde(flatten)]
@@ -127,7 +144,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             content_dir: raw.content_dir,
             build_dir: raw.build_dir,
             formats: raw.formats,
-            assets: raw.assets,
+            copy: raw.copy,
             font_dirs: raw.font_dirs,
             plugin_sections,
         })
@@ -224,9 +241,12 @@ impl RheoConfig {
 }
 
 impl PluginSection {
-    /// Get a string value from extra config, returning None if absent or not a string.
+    /// Get a string value from the `[plugin.assets]` overrides, returning None if absent or not a string.
     pub fn get_string(&self, key: &str) -> Option<&str> {
-        self.extra.get(key).and_then(|v| v.as_str())
+        self.assets
+            .as_ref()
+            .and_then(|a| a.extra.get(key))
+            .and_then(|v| v.as_str())
     }
 }
 
@@ -333,10 +353,11 @@ mod tests {
 
     #[test]
     fn test_html_section_defaults() {
-        // When no [html] section, plugin_section("html") returns default (empty extra)
+        // When no [html] section, plugin_section("html") returns default (no assets)
         let config = RheoConfig::default();
         let section = config.plugin_section("html");
         assert!(section.spine.is_none());
+        assert!(section.assets.is_none());
         assert!(section.extra.is_empty());
     }
 
@@ -345,6 +366,7 @@ mod tests {
         let toml = versioned_toml("[html]\nstylesheets = [\"custom.css\", \"theme.css\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
+        // stylesheets is a non-asset extra field, still in PluginSection.extra
         let sheets = section
             .extra
             .get("stylesheets")
@@ -468,34 +490,38 @@ mod tests {
     }
 
     #[test]
-    fn test_global_assets_parses() {
-        let toml = versioned_toml(r#"assets = ["*.txt", "assets/**/*.png"]"#);
+    fn test_global_copy_parses() {
+        let toml = versioned_toml(r#"copy = ["*.txt", "assets/**/*.png"]"#);
         let config = parse(&toml);
-        assert_eq!(config.assets, vec!["*.txt", "assets/**/*.png"]);
+        assert_eq!(config.copy, vec!["*.txt", "assets/**/*.png"]);
     }
 
     #[test]
-    fn test_global_assets_defaults_empty() {
+    fn test_global_copy_defaults_empty() {
         let toml = versioned_toml("");
         let config = parse(&toml);
-        assert!(config.assets.is_empty());
+        assert!(config.copy.is_empty());
     }
 
     #[test]
     fn test_plugin_copy_parses() {
-        let toml = versioned_toml("[html]\nassets = [\"assets/logo.png\", \"fonts/**\"]");
+        let toml = versioned_toml("[html.assets]\ncopy = [\"assets/logo.png\", \"fonts/**\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        assert_eq!(section.assets, vec!["assets/logo.png", "fonts/**"]);
+        assert_eq!(
+            section.assets.as_ref().unwrap().copy,
+            vec!["assets/logo.png", "fonts/**"]
+        );
     }
 
     #[test]
     fn test_plugin_copy_not_in_extra() {
-        let toml = versioned_toml("[html]\nassets = [\"assets/logo.png\"]");
+        let toml = versioned_toml("[html.assets]\ncopy = [\"assets/logo.png\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        // `assets` must be in the dedicated field, not leaked into `extra`
-        assert!(section.extra.get("assets").is_none());
+        // `copy` must be in PluginAssets.copy, not leaked into PluginAssets.extra
+        let assets = section.assets.as_ref().unwrap();
+        assert!(assets.extra.get("copy").is_none());
     }
 
     #[test]
@@ -503,12 +529,12 @@ mod tests {
         let toml = versioned_toml("[html]\nstylesheets = [\"style.css\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        assert!(section.assets.is_empty());
+        assert!(section.assets.is_none());
     }
 
     #[test]
     fn test_get_string_returns_string_value() {
-        let toml = versioned_toml("[html]\ncss_stylesheet = \"custom.css\"");
+        let toml = versioned_toml("[html.assets]\ncss_stylesheet = \"custom.css\"");
         let config = parse(&toml);
         let section = config.plugin_section("html");
         assert_eq!(section.get_string("css_stylesheet"), Some("custom.css"));
@@ -524,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_get_string_returns_none_for_non_string_value() {
-        let toml = versioned_toml("[html]\ncss_stylesheet = [\"a\", \"b\"]");
+        let toml = versioned_toml("[html.assets]\ncss_stylesheet = [\"a\", \"b\"]");
         let config = parse(&toml);
         let section = config.plugin_section("html");
         assert_eq!(section.get_string("css_stylesheet"), None);

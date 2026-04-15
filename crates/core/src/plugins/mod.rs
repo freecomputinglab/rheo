@@ -50,26 +50,6 @@ pub struct AssetConfig {
     pub required: bool,
 }
 
-impl AssetConfig {
-    /// Names that are reserved by `PluginSection` serde deserialization.
-    /// An asset with one of these names would silently collide with
-    /// `PluginSection::spine` or `PluginSection::assets`.
-    pub const RESERVED_NAMES: &[&str] = &["spine", "assets"];
-
-    /// Validate that this asset's name does not collide with reserved keys.
-    pub fn validate(&self, plugin_name: &str) -> crate::Result<()> {
-        if Self::RESERVED_NAMES.contains(&self.name) {
-            return Err(crate::RheoError::misconfigured_plugin(format!(
-                "plugin '{}' declares an asset named '{}' which conflicts \
-                 with the reserved rheo.toml field; asset names must not be \
-                 'spine' or 'assets'",
-                plugin_name, self.name
-            )));
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Asset {
     pub config: AssetConfig,
@@ -646,57 +626,4 @@ pub(crate) fn open_all_files_in_folder(folder: PathBuf, ext: &str) -> crate::Res
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_validate_rejects_spine() {
-        let config = AssetConfig {
-            name: "spine",
-            default_path: "x.css",
-            required: false,
-        };
-        let err = config.validate("test_plugin").unwrap_err();
-        let msg = format!("{}", err);
-        assert!(msg.contains("spine"));
-    }
-
-    #[test]
-    fn test_validate_rejects_assets() {
-        let config = AssetConfig {
-            name: "assets",
-            default_path: "x.css",
-            required: false,
-        };
-        let err = config.validate("test_plugin").unwrap_err();
-        let msg = format!("{}", err);
-        assert!(msg.contains("assets"));
-    }
-
-    #[test]
-    fn test_validate_accepts_valid_name() {
-        let config = AssetConfig {
-            name: "css_stylesheet",
-            default_path: "style.css",
-            required: false,
-        };
-        assert!(config.validate("test_plugin").is_ok());
-    }
-
-    #[test]
-    fn test_validate_returns_misconfigured_plugin_variant() {
-        let config = AssetConfig {
-            name: "spine",
-            default_path: "x.css",
-            required: false,
-        };
-        let err = config.validate("test_plugin").unwrap_err();
-        assert!(
-            matches!(err, crate::RheoError::MisconfiguredPlugin { .. }),
-            "expected MisconfiguredPlugin variant"
-        );
-    }
 }
