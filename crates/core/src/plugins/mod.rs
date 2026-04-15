@@ -167,7 +167,8 @@ impl<'a> PluginContext<'a> {
             .iter()
             .zip(rheo_spine.source.iter())
             .map(|(path, transformed_source)| {
-                let mut temp_file = NamedTempFile::new_in(&self.options.root)
+                let temp_dir = path.parent().unwrap_or(&self.options.root);
+                let mut temp_file = NamedTempFile::new_in(temp_dir)
                     .map_err(|e| RheoError::io(e, "creating temp file for spine item HTML"))?;
                 temp_file
                     .write_all(transformed_source.as_bytes())
@@ -182,7 +183,7 @@ impl<'a> PluginContext<'a> {
                 debug!(temp_path = %temp_path.display(), original = %path.display(), "compiling spine item to HTML");
 
                 let document = RheoWorld::compile_html_file(
-                    &self.options.root,
+                    &self.project.root,
                     temp_path,
                     plugin.name(),
                     plugin_library.clone(),
