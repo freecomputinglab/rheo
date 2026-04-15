@@ -7,9 +7,8 @@ test:
 build:
   cargo build
 
-
 install:
-  cargo install --path crates/rheo --locked
+  cargo install --path crates/cli --locked
 
 watch:
   cargo watch -x "build --profile local-dev"
