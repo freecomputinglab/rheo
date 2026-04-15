@@ -1,7 +1,7 @@
 version = "0.2.0"
 content_dir = "content"
 
-[html]
+[html.assets]
 js_scripts = "rheo-slides/dist/rheo-slides.js"
 # TODO: put style.css into dist also
 
