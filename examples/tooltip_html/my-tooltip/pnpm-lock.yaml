@@ -23,9 +23,6 @@ importers:
       vite:
         specifier: ^8.0.5
         version: 8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
-      vite-plugin-css-injected-by-js:
-        specifier: ^4.0.1
-        version: 4.0.1(vite@8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2))
       vite-plugin-static-copy:
         specifier: ^4.0.1
         version: 4.0.1(vite@8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2))
@@ -371,11 +368,6 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
-  vite-plugin-css-injected-by-js@4.0.1:
-    resolution: {integrity: sha512-WfyRojojQyAO/KzWf+efcXpTPv6zJPXaRmr9EYq5a4v5I3PWCR7kR01hiri2lW6+rHm3a57kpwsf+iahIJi1Qw==}
-    peerDependencies:
-      vite: '>2.0.0-0'
-
   vite-plugin-static-copy@4.0.1:
     resolution: {integrity: sha512-r3kQUrrimduikhyRm58ayemoxsgB8lZdn/JULLL4wpXHAZlYejtyZx7E/id7dwRtIOSYWu/tWvFjdEOTzso2MA==}
     engines: {node: ^22.0.0 || >=24.0.0}
@@ -718,10 +710,6 @@ snapshots:
     optional: true
 
   typescript@6.0.2: {}
-
-  vite-plugin-css-injected-by-js@4.0.1(vite@8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)):
-    dependencies:
-      vite: 8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
 
   vite-plugin-static-copy@4.0.1(vite@8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)):
     dependencies:
