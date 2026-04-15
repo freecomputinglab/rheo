@@ -1,7 +1,7 @@
 version = "0.2.0"
 content_dir = "content"
 
-[html]
+[html.assets]
 js_scripts = "my-tooltip/dist/my-tooltip.js"
 
 [html.spine]

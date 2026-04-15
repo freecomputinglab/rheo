@@ -1,0 +1,3 @@
+build:
+    pnpm install
+    pnpm run build
