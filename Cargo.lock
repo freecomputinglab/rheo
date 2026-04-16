@@ -2964,7 +2964,7 @@ dependencies = [
 
 [[package]]
 name = "rheo"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "atty",
  "axum",
@@ -2998,7 +2998,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "atty",
  "chrono",
@@ -3033,7 +3033,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-epub"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "html5ever",
@@ -3053,7 +3053,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-html"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "axum",
  "mime_guess",
@@ -3069,7 +3069,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-pdf"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "rheo-core",
  "thiserror 2.0.17",
@@ -3078,7 +3078,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-tests"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "html5ever",
  "lopdf",
