@@ -74,10 +74,15 @@ fn run_test_case(name: &str) {
     if store_toml.exists() {
         let content = std::fs::read_to_string(&store_toml).expect("Failed to read rheo.toml");
         let patched = content.replace(
-            &format!("version = \"{}\"", content
-                .lines()
-                .find_map(|l| l.strip_prefix("version = \"").and_then(|s| s.strip_suffix('"')))
-                .unwrap_or("")),
+            &format!(
+                "version = \"{}\"",
+                content
+                    .lines()
+                    .find_map(|l| l
+                        .strip_prefix("version = \"")
+                        .and_then(|s| s.strip_suffix('"')))
+                    .unwrap_or("")
+            ),
             &format!("version = \"{}\"", env!("CARGO_PKG_VERSION")),
         );
         std::fs::write(&store_toml, patched).expect("Failed to patch rheo.toml version");
