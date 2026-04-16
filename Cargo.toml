@@ -13,10 +13,10 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Internal crates (for convenience in workspace)
-rheo-core = { path = "crates/core" }
-rheo-html = { path = "crates/html" }
-rheo-pdf = { path = "crates/pdf" }
-rheo-epub = { path = "crates/epub" }
+rheo-core = { path = "crates/core", version = "0.2.1" }
+rheo-html = { path = "crates/html", version = "0.2.1" }
+rheo-pdf = { path = "crates/pdf", version = "0.2.1" }
+rheo-epub = { path = "crates/epub", version = "0.2.1" }
 
 # Typst dependencies
 typst = "0.14.2"
