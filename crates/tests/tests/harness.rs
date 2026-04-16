@@ -69,6 +69,20 @@ fn run_test_case(name: &str) {
             .expect("Failed to copy project to test store");
     }
 
+    // Patch rheo.toml version to match current crate version
+    let store_toml = test_store.join("rheo.toml");
+    if store_toml.exists() {
+        let content = std::fs::read_to_string(&store_toml).expect("Failed to read rheo.toml");
+        let patched = content.replace(
+            &format!("version = \"{}\"", content
+                .lines()
+                .find_map(|l| l.strip_prefix("version = \"").and_then(|s| s.strip_suffix('"')))
+                .unwrap_or("")),
+            &format!("version = \"{}\"", env!("CARGO_PKG_VERSION")),
+        );
+        std::fs::write(&store_toml, patched).expect("Failed to patch rheo.toml version");
+    }
+
     // Use test store as project path
     let project_path = if test_case.is_single_file() {
         let rel_path = original_project_path
@@ -641,13 +655,14 @@ fn test_asset_patterns() {
     // rheo.toml: global copies readme.txt; html-only copies assets/logo.png
     std::fs::write(
         project_path.join("rheo.toml"),
-        concat!(
-            "version = \"0.2.0\"\n",
-            "formats = [\"html\"]\n",
-            "copy = [\"readme.txt\"]\n",
-            "\n",
-            "[html.assets]\n",
-            "copy = [\"assets/logo.png\"]\n",
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             copy = [\"readme.txt\"]\n\
+             \n\
+             [html.assets]\n\
+             copy = [\"assets/logo.png\"]\n",
+            env!("CARGO_PKG_VERSION"),
         ),
     )
     .expect("Failed to write rheo.toml");
@@ -791,12 +806,13 @@ fn test_asset_path_override() {
     // rheo.toml with asset path override
     std::fs::write(
         project_path.join("rheo.toml"),
-        concat!(
-            "version = \"0.2.0\"\n",
-            "formats = [\"html\"]\n",
-            "\n",
-            "[html.assets]\n",
-            "css_stylesheet = \"custom.css\"\n",
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [html.assets]\n\
+             css_stylesheet = \"custom.css\"\n",
+            env!("CARGO_PKG_VERSION"),
         ),
     )
     .expect("Failed to write rheo.toml");
@@ -864,12 +880,13 @@ fn test_asset_path_override_subdirectory() {
     // rheo.toml with subdirectory override
     std::fs::write(
         project_path.join("rheo.toml"),
-        concat!(
-            "version = \"0.2.0\"\n",
-            "formats = [\"html\"]\n",
-            "\n",
-            "[html.assets]\n",
-            "css_stylesheet = \"styles/custom.css\"\n",
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [html.assets]\n\
+             css_stylesheet = \"styles/custom.css\"\n",
+            env!("CARGO_PKG_VERSION"),
         ),
     )
     .expect("Failed to write rheo.toml");
@@ -923,14 +940,15 @@ fn test_merged_imports_missing_file() {
 
     std::fs::write(
         project_path.join("rheo.toml"),
-        concat!(
-            "version = \"0.2.0\"\n",
-            "formats = [\"pdf\"]\n",
-            "\n",
-            "[pdf.spine]\n",
-            "title = \"Missing Import Test\"\n",
-            "vertebrae = [\"content/chapter.typ\"]\n",
-            "merge = true\n",
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"pdf\"]\n\
+             \n\
+             [pdf.spine]\n\
+             title = \"Missing Import Test\"\n\
+             vertebrae = [\"content/chapter.typ\"]\n\
+             merge = true\n",
+            env!("CARGO_PKG_VERSION"),
         ),
     )
     .expect("Failed to write rheo.toml");
