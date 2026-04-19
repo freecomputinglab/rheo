@@ -716,6 +716,81 @@ fn test_asset_patterns() {
     );
 }
 
+/// Test that `**/*` glob patterns recursively copy nested files into the build output.
+#[test]
+fn test_asset_patterns_glob_recursive() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Create nested directory structure
+    let icons_dir = project_path.join("images/icons");
+    std::fs::create_dir_all(&icons_dir).expect("Failed to create images/icons dir");
+    std::fs::write(project_path.join("images/hero.png"), b"\x89PNG\r\n\x1a\n")
+        .expect("Failed to write images/hero.png");
+    std::fs::write(icons_dir.join("arrow.svg"), "<svg>arrow</svg>")
+        .expect("Failed to write images/icons/arrow.svg");
+
+    // Typst source
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    // rheo.toml with recursive glob pattern
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [html.assets]\n\
+             copy = [\"images/**/*\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Both nested files should be copied, preserving directory structure
+    let html_hero = build_dir.join("html/images/hero.png");
+    assert!(
+        html_hero.exists(),
+        "Recursive glob: images/hero.png not found in html output"
+    );
+
+    let html_arrow = build_dir.join("html/images/icons/arrow.svg");
+    assert!(
+        html_arrow.exists(),
+        "Recursive glob: images/icons/arrow.svg not found in html output"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&html_arrow).unwrap(),
+        "<svg>arrow</svg>",
+        "Copied arrow.svg has wrong content"
+    );
+}
+
 /// Test that `rheo init` creates a valid project that compiles successfully
 #[test]
 fn test_rheo_init_and_compile() {
