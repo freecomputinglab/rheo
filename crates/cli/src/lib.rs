@@ -462,11 +462,9 @@ fn perform_compilation(
         // Execute copy patterns (global + per-plugin)
         for pattern in project.config.copy.iter().chain(
             plugin_section
-                .assets
-                .as_ref()
-                .map(|a| a.copy.iter())
-                .into_iter()
-                .flatten(),
+                .asset_blocks()
+                .iter()
+                .flat_map(|b| b.copy.iter()),
         ) {
             let abs_pattern = project.root.join(pattern).display().to_string();
             let entries = glob::glob(&abs_pattern).map_err(|e| {
@@ -943,7 +941,7 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
 mod tests {
     use super::*;
     use rheo_core::AssetConfig;
-    use rheo_core::config::PluginAssets;
+    use rheo_core::config::{AssetsField, PluginAssets};
 
     #[test]
     fn test_determine_formats_cli_flags_override_config() {
@@ -1077,10 +1075,10 @@ mod tests {
             toml::Value::String("custom.css".into()),
         );
         let section = PluginSection {
-            assets: Some(PluginAssets {
+            assets: Some(AssetsField::Single(PluginAssets {
                 extra: asset_extra,
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
 
@@ -1169,10 +1167,10 @@ mod tests {
             toml::Value::String("styles/custom.css".into()),
         );
         let section = PluginSection {
-            assets: Some(PluginAssets {
+            assets: Some(AssetsField::Single(PluginAssets {
                 extra: asset_extra,
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
 
