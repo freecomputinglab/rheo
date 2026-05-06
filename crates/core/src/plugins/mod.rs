@@ -111,7 +111,7 @@ pub struct PluginContext<'a> {
     /// Paths are relative to the plugin's output directory (e.g., `build/html/`).
     /// The CLI copies each declared input from the project root to the output directory
     /// before calling `compile()`.
-    pub assets: &'a HashMap<&'static str, Asset>,
+    pub assets: &'a HashMap<&'static str, Vec<Asset>>,
 }
 
 impl<'a> PluginContext<'a> {

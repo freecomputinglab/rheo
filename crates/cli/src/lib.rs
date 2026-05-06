@@ -331,7 +331,7 @@ struct PerFileCtx<'a> {
     output_config: &'a OutputConfig,
     spine: &'a SpineOptions,
     plugin_section: &'a PluginSection,
-    resolved_assets: &'a HashMap<&'static str, Asset>,
+    resolved_assets: &'a HashMap<&'static str, Vec<Asset>>,
 }
 
 /// Compile one file with the given world, recording success/failure in `results`.
@@ -379,7 +379,7 @@ fn resolve_assets(
     plugin_section: &PluginSection,
     project_root: &Path,
     plugin_output_dir: &Path,
-) -> Result<HashMap<&'static str, Asset>> {
+) -> Result<HashMap<&'static str, Vec<Asset>>> {
     let mut resolved = HashMap::new();
     for asset_config in plugin.assets() {
         let effective_path: &str = plugin_section
@@ -404,11 +404,11 @@ fn resolve_assets(
             })?;
             resolved.insert(
                 asset_config.name,
-                Asset {
+                vec![Asset {
                     config: asset_config.clone(),
                     resolved_path: dest,
                     built_relative_path: effective_path.to_string(),
-                },
+                }],
             );
         } else if asset_config.required {
             return Err(RheoError::project_config(format!(
@@ -1046,7 +1046,7 @@ mod tests {
 
         let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
         assert_eq!(
-            resolved.get("css_stylesheet").unwrap().built_relative_path,
+            resolved.get("css_stylesheet").unwrap()[0].built_relative_path,
             "style.css"
         );
     }
@@ -1084,7 +1084,7 @@ mod tests {
 
         let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
         assert_eq!(
-            resolved.get("css_stylesheet").unwrap().built_relative_path,
+            resolved.get("css_stylesheet").unwrap()[0].built_relative_path,
             "custom.css"
         );
     }
@@ -1176,7 +1176,7 @@ mod tests {
 
         let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
         assert_eq!(
-            resolved.get("css_stylesheet").unwrap().built_relative_path,
+            resolved.get("css_stylesheet").unwrap()[0].built_relative_path,
             "styles/custom.css"
         );
         assert!(
