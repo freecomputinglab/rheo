@@ -52,12 +52,6 @@ pub enum AssetsField {
     Multiple(Vec<PluginAssets>),
 }
 
-impl Default for AssetsField {
-    fn default() -> Self {
-        AssetsField::Multiple(Vec::new())
-    }
-}
-
 impl AssetsField {
     /// Normalised view: a slice of asset blocks regardless of source syntax.
     pub fn blocks(&self) -> &[PluginAssets] {

@@ -1081,7 +1081,7 @@ fn test_asset_path_override_subdirectory() {
 
 /// Test that multiple [[html.assets]] blocks produce multiple stylesheet/script links in HTML.
 #[test]
-fn test_asset_multiple_blocks_default_combiner() {
+fn test_asset_multiple_blocks_inject_all() {
     let dir = tempfile::tempdir().expect("Failed to create temp dir");
     let project_path = dir.path();
 

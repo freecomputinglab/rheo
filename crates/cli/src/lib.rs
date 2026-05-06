@@ -373,9 +373,12 @@ fn compile_one_file(
 fn copy_each(sources: &[PathBuf], project_root: &Path, build_dir: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::with_capacity(sources.len());
     for src in sources {
-        let rel = src
-            .strip_prefix(project_root)
-            .expect("source is always project_root-joined");
+        let rel = src.strip_prefix(project_root).map_err(|_| {
+            RheoError::project_config(format!(
+                "asset override path '{}' is absolute or outside the project root; paths must be relative to the project root",
+                src.display()
+            ))
+        })?;
         let dest = build_dir.join(rel);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -396,7 +399,7 @@ fn copy_each(sources: &[PathBuf], project_root: &Path, build_dir: &Path) -> Resu
 }
 
 /// Resolve plugin assets, collecting overrides across all [[plugin.assets]] blocks
-/// and dispatching to the declared combine strategy.
+/// and copying each source verbatim into the plugin output dir.
 fn resolve_assets(
     plugin: &dyn FormatPlugin,
     plugin_section: &PluginSection,
@@ -404,6 +407,7 @@ fn resolve_assets(
     plugin_output_dir: &Path,
 ) -> Result<HashMap<&'static str, Vec<Asset>>> {
     let mut resolved = HashMap::new();
+    let mut seen_relative_paths: HashMap<String, PathBuf> = HashMap::new();
     for asset_config in plugin.assets() {
         let overrides: Vec<&str> = plugin_section.get_strings(asset_config.name);
         let effective: Vec<&str> = if overrides.is_empty() {
@@ -451,16 +455,25 @@ fn resolve_assets(
             .map(|abs| {
                 let rel = abs
                     .strip_prefix(plugin_output_dir)
-                    .unwrap_or(&abs)
+                    .expect("copy_each output is always under plugin_output_dir")
                     .to_string_lossy()
                     .into_owned();
-                Asset {
+                if let Some(prev) = seen_relative_paths.get(&rel) {
+                    return Err(RheoError::project_config(format!(
+                        "asset path collision: '{}' produced by both '{}' and '{}'",
+                        rel,
+                        prev.display(),
+                        abs.display()
+                    )));
+                }
+                seen_relative_paths.insert(rel.clone(), abs.clone());
+                Ok(Asset {
                     config: asset_config.clone(),
                     resolved_path: abs,
                     built_relative_path: rel,
-                }
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         resolved.insert(asset_config.name, assets);
     }
@@ -1347,5 +1360,113 @@ mod tests {
         let assets = resolved.get("css_stylesheet").unwrap();
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].built_relative_path, "exists.css");
+    }
+
+    #[test]
+    fn test_resolve_assets_collision_across_blocks_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        // Both blocks point at the same file via different paths isn't a collision,
+        // but two blocks with the same *relative* dest path is. Create two files
+        // in different dirs that both strip to "style.css" in the output dir.
+        std::fs::write(project_root.join("a.css"), "/* a */").unwrap();
+        std::fs::write(project_root.join("b.css"), "/* b */").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+
+        // Both overrides resolve to the same built_relative_path "style.css"
+        // because they're at the project root. This means copy_each would
+        // overwrite — detect this as a collision.
+        // Actually, both "a.css" and "b.css" are at the root, so their dest
+        // paths differ ("a.css" vs "b.css"). To create a real collision we
+        // need two blocks that both set css_stylesheet = "same.css".
+        std::fs::write(project_root.join("same.css"), "/* same */").unwrap();
+
+        let mut extra1 = toml::map::Map::new();
+        extra1.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("same.css".into()),
+        );
+        let mut extra2 = toml::map::Map::new();
+        extra2.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("same.css".into()),
+        );
+        let section = PluginSection {
+            assets: Some(AssetsField::Multiple(vec![
+                PluginAssets {
+                    extra: extra1,
+                    ..Default::default()
+                },
+                PluginAssets {
+                    extra: extra2,
+                    ..Default::default()
+                },
+            ])),
+            ..Default::default()
+        };
+
+        let result = resolve_assets(&plugin, &section, project_root, &output_dir);
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("asset path collision"),
+            "expected collision error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_resolve_assets_absolute_override_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        // Create a file at an absolute path outside the project root
+        let abs_css = std::env::temp_dir().join("rheo_test_absolute.css");
+        std::fs::write(&abs_css, "body {}").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+
+        let mut asset_extra = toml::map::Map::new();
+        asset_extra.insert(
+            "css_stylesheet".into(),
+            toml::Value::String(abs_css.to_str().unwrap().into()),
+        );
+        let section = PluginSection {
+            assets: Some(AssetsField::Single(PluginAssets {
+                extra: asset_extra,
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        let result = resolve_assets(&plugin, &section, project_root, &output_dir);
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("absolute or outside the project root"),
+            "expected absolute path error, got: {}",
+            err_msg
+        );
+
+        // Clean up
+        let _ = std::fs::remove_file(&abs_css);
     }
 }
