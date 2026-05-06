@@ -1079,6 +1079,74 @@ fn test_asset_path_override_subdirectory() {
     );
 }
 
+/// Test that multiple [[html.assets]] blocks produce multiple stylesheet/script links in HTML.
+#[test]
+fn test_asset_multiple_blocks_default_combiner() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    std::fs::write(project_path.join("one.css"), "/* one */").unwrap();
+    std::fs::write(project_path.join("two.css"), "/* two */").unwrap();
+    std::fs::write(project_path.join("one.js"), "// one").unwrap();
+    std::fs::write(project_path.join("two.js"), "// two").unwrap();
+    std::fs::write(project_path.join("hello.typ"), "Hello").unwrap();
+
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             [[html.assets]]\n\
+             css_stylesheet = \"one.css\"\n\
+             js_scripts     = \"one.js\"\n\
+             [[html.assets]]\n\
+             css_stylesheet = \"two.css\"\n\
+             js_scripts     = \"two.js\"\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .unwrap();
+
+    let build_dir = project_path.join("build");
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run", "-p", "rheo", "--",
+            "compile", project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir", build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    for f in ["one.css", "two.css", "one.js", "two.js"] {
+        assert!(
+            build_dir.join("html").join(f).exists(),
+            "missing {}",
+            f
+        );
+    }
+
+    let html =
+        std::fs::read_to_string(build_dir.join("html/hello.html")).unwrap();
+    assert!(
+        html.contains("one.css") && html.contains("two.css"),
+        "html should link both stylesheets:\n{}",
+        html
+    );
+    assert!(
+        html.contains("one.js") && html.contains("two.js"),
+        "html should reference both scripts:\n{}",
+        html
+    );
+}
+
 /// Test that a merged spine with a missing relative import produces a clear error
 /// referencing the original source file path (not a temp path).
 #[test]
