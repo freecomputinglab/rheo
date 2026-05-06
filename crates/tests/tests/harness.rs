@@ -716,6 +716,76 @@ fn test_asset_patterns() {
     );
 }
 
+/// Test that copy globs across multiple [[html.assets]] blocks are all collected.
+#[test]
+fn test_asset_patterns_multiple_blocks() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Source files to copy from two different directories
+    std::fs::create_dir_all(project_path.join("css")).expect("Failed to create css dir");
+    std::fs::write(project_path.join("css/theme.css"), "body {}")
+        .expect("Failed to write css/theme.css");
+    std::fs::create_dir_all(project_path.join("js")).expect("Failed to create js dir");
+    std::fs::write(project_path.join("js/app.js"), "console.log(1)")
+        .expect("Failed to write js/app.js");
+
+    // Typst source
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    // rheo.toml: two [[html.assets]] blocks each with their own copy patterns
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [[html.assets]]\n\
+             copy = [\"css/**/*\"]\n\
+             \n\
+             [[html.assets]]\n\
+             copy = [\"js/**/*\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Both blocks' copy patterns should produce files in html output
+    assert!(
+        build_dir.join("html/css/theme.css").exists(),
+        "css/theme.css not found in html output"
+    );
+    assert!(
+        build_dir.join("html/js/app.js").exists(),
+        "js/app.js not found in html output"
+    );
+}
+
 /// Test that `**/*` glob patterns recursively copy nested files into the build output.
 #[test]
 fn test_asset_patterns_glob_recursive() {
