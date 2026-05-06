@@ -89,13 +89,11 @@ impl FormatPlugin for HtmlPlugin {
                 name: STYLESHEETS,
                 default_path: "style.css",
                 required: false,
-                combine: None,
             },
             AssetConfig {
                 name: SCRIPTS,
                 default_path: "index.js",
                 required: false,
-                combine: None,
             },
         ]
     }

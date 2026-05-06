@@ -369,13 +369,8 @@ fn compile_one_file(
     Ok(())
 }
 
-/// Default combiner used when AssetConfig.combine is None: copies each source
-/// verbatim into the build dir, preserving its path relative to the project root.
-fn default_copy_each(
-    sources: &[PathBuf],
-    project_root: &Path,
-    build_dir: &Path,
-) -> Result<Vec<PathBuf>> {
+/// Copy each source file verbatim into the build dir, preserving its path relative to the project root.
+fn copy_each(sources: &[PathBuf], project_root: &Path, build_dir: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::with_capacity(sources.len());
     for src in sources {
         let rel = src
@@ -449,10 +444,7 @@ fn resolve_assets(
             );
         }
 
-        let outputs: Vec<PathBuf> = match asset_config.combine {
-            Some(c) => c.combine(&sources, plugin_output_dir)?,
-            None => default_copy_each(&sources, project_root, plugin_output_dir)?,
-        };
+        let outputs: Vec<PathBuf> = copy_each(&sources, project_root, plugin_output_dir)?;
 
         let assets: Vec<Asset> = outputs
             .into_iter()
@@ -993,8 +985,8 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rheo_core::AssetConfig;
     use rheo_core::config::{AssetsField, PluginAssets};
-    use rheo_core::{AssetCombine, AssetConfig};
 
     #[test]
     fn test_determine_formats_cli_flags_override_config() {
@@ -1092,7 +1084,6 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
-                combine: None,
             }],
         };
         let section = PluginSection::default();
@@ -1119,7 +1110,6 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
-                combine: None,
             }],
         };
         let mut asset_extra = toml::map::Map::new();
@@ -1155,7 +1145,6 @@ mod tests {
                 name: "missing_asset",
                 default_path: "nonexistent.css",
                 required: true,
-                combine: None,
             }],
         };
         let section = PluginSection::default();
@@ -1182,7 +1171,6 @@ mod tests {
                 name: "optional_asset",
                 default_path: "nonexistent.css",
                 required: false,
-                combine: None,
             }],
         };
         let section = PluginSection::default();
@@ -1211,7 +1199,6 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
-                combine: None,
             }],
         };
         let mut asset_extra = toml::map::Map::new();
@@ -1239,7 +1226,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_assets_multiple_blocks_default_copy_each() {
+    fn test_resolve_assets_multiple_blocks_copy_each() {
         let dir = tempfile::tempdir().unwrap();
         let project_root = dir.path();
         let output_dir = dir.path().join("build/html");
@@ -1254,7 +1241,6 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
-                combine: None,
             }],
         };
 
@@ -1289,74 +1275,6 @@ mod tests {
         assert!(output_dir.join("two.css").exists());
     }
 
-    struct MockConcat;
-
-    impl AssetCombine for MockConcat {
-        fn combine(
-            &self,
-            sources: &[PathBuf],
-            build_dir: &Path,
-        ) -> rheo_core::Result<Vec<PathBuf>> {
-            let mut content = String::new();
-            for s in sources {
-                content.push_str(&std::fs::read_to_string(s).unwrap());
-            }
-            let dest = build_dir.join("combined.css");
-            std::fs::write(&dest, &content)
-                .map_err(|e| rheo_core::RheoError::io(e, "writing combined asset"))?;
-            Ok(vec![dest])
-        }
-    }
-
-    #[test]
-    fn test_resolve_assets_invokes_custom_combiner() {
-        let dir = tempfile::tempdir().unwrap();
-        let project_root = dir.path();
-        let output_dir = dir.path().join("build/html");
-        std::fs::create_dir_all(&output_dir).unwrap();
-
-        std::fs::write(project_root.join("a.css"), "/* a */").unwrap();
-        std::fs::write(project_root.join("b.css"), "/* b */").unwrap();
-
-        static COMBINER: MockConcat = MockConcat;
-        let plugin = MockPlugin {
-            plugin_name: "html",
-            declared_assets: vec![AssetConfig {
-                name: "css_stylesheet",
-                default_path: "style.css",
-                required: false,
-                combine: Some(&COMBINER),
-            }],
-        };
-
-        let mut extra1 = toml::map::Map::new();
-        extra1.insert("css_stylesheet".into(), toml::Value::String("a.css".into()));
-        let mut extra2 = toml::map::Map::new();
-        extra2.insert("css_stylesheet".into(), toml::Value::String("b.css".into()));
-        let section = PluginSection {
-            assets: Some(AssetsField::Multiple(vec![
-                PluginAssets {
-                    extra: extra1,
-                    ..Default::default()
-                },
-                PluginAssets {
-                    extra: extra2,
-                    ..Default::default()
-                },
-            ])),
-            ..Default::default()
-        };
-
-        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
-        let assets = resolved.get("css_stylesheet").unwrap();
-        assert_eq!(assets.len(), 1);
-        assert!(output_dir.join("combined.css").exists());
-        assert_eq!(
-            std::fs::read_to_string(output_dir.join("combined.css")).unwrap(),
-            "/* a *//* b */"
-        );
-    }
-
     #[test]
     fn test_resolve_assets_required_all_missing_errors() {
         let dir = tempfile::tempdir().unwrap();
@@ -1370,7 +1288,6 @@ mod tests {
                 name: "missing_asset",
                 default_path: "nonexistent.css",
                 required: true,
-                combine: None,
             }],
         };
         let section = PluginSection::default();
@@ -1399,7 +1316,6 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: true,
-                combine: None,
             }],
         };
 
