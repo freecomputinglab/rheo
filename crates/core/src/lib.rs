@@ -40,7 +40,7 @@ pub use config::{PluginAssets, PluginSection, Spine};
 
 // Plugin trait and context
 pub use plugins::{
-    AssetConfig, FormatPlugin, OpenHandle, PluginContext, ServerHandle, SpineOptions,
+    AssetCombine, AssetConfig, FormatPlugin, OpenHandle, PluginContext, ServerHandle, SpineOptions,
 };
 
 // HTML/PDF export utilities

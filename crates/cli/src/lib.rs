@@ -1041,6 +1041,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                combine: None,
             }],
         };
         let section = PluginSection::default();
@@ -1067,6 +1068,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                combine: None,
             }],
         };
         let mut asset_extra = toml::map::Map::new();
@@ -1102,6 +1104,7 @@ mod tests {
                 name: "missing_asset",
                 default_path: "nonexistent.css",
                 required: true,
+                combine: None,
             }],
         };
         let section = PluginSection::default();
@@ -1128,6 +1131,7 @@ mod tests {
                 name: "optional_asset",
                 default_path: "nonexistent.css",
                 required: false,
+                combine: None,
             }],
         };
         let section = PluginSection::default();
@@ -1156,6 +1160,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                combine: None,
             }],
         };
         let mut asset_extra = toml::map::Map::new();

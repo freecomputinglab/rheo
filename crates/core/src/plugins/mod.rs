@@ -38,8 +38,18 @@ pub struct SpineOptions {
     pub merge: bool,
 }
 
+/// Strategy for materialising one or more source files for a single AssetConfig
+/// into the plugin's build directory. Implementations are stateless static singletons.
+pub trait AssetCombine: Send + Sync {
+    /// Combine `sources` (absolute paths under the project root) into files
+    /// under `build_dir` (the plugin's output directory). Returns the absolute
+    /// paths of the produced files, in the order they should be presented to
+    /// the consuming plugin (e.g., link injection order).
+    fn combine(&self, sources: &[PathBuf], build_dir: &Path) -> crate::Result<Vec<PathBuf>>;
+}
+
 /// Declares an additional non-Typst input file needed from the project directory.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AssetConfig {
     /// Key used to retrieve this input from PluginContext::inputs
     pub name: &'static str,
@@ -48,6 +58,19 @@ pub struct AssetConfig {
     pub default_path: &'static str,
     /// If true, a missing file is a compile error; if false, it is absent from ctx.inputs
     pub required: bool,
+    /// Combine strategy. None = use the built-in default (copy each source
+    /// verbatim, preserving its path relative to the project root).
+    pub combine: Option<&'static dyn AssetCombine>,
+}
+
+impl std::fmt::Debug for AssetConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AssetConfig")
+            .field("name", &self.name)
+            .field("default_path", &self.default_path)
+            .field("required", &self.required)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
