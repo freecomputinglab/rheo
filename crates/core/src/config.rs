@@ -28,15 +28,26 @@ pub struct Spine {
 
 /// Asset configuration for `[plugin_name.assets]` in rheo.toml.
 ///
-/// Holds both glob copy patterns (`copy`) and AssetConfig path overrides
-/// (any other key). Separating these into their own subtable ensures AssetConfig
-/// names cannot clash with other `[plugin_name]` fields like `spine`.
+/// Holds glob copy patterns (`copy`), an optional destination subdirectory
+/// (`dest`), and AssetConfig path overrides (any other key). Separating these
+/// into their own subtable ensures AssetConfig names cannot clash with other
+/// `[plugin_name]` fields like `spine`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginAssets {
     /// Glob patterns for files to copy into this plugin's output directory.
     /// Paths are relative to the project root; directory structure is preserved.
     #[serde(default)]
     pub copy: Vec<String>,
+
+    /// Optional destination subdirectory (relative to plugin output dir)
+    /// for every file produced by this block. When set:
+    /// - named asset overrides (e.g. `js_scripts`) are placed at
+    ///   `<plugin_output_dir>/<dest>/<basename>` (source directory stripped);
+    /// - `copy` glob matches are placed at
+    ///   `<plugin_output_dir>/<dest>/<rel>` where `<rel>` is the source's
+    ///   project-root-relative path (structure preserved).
+    #[serde(default)]
+    pub dest: Option<String>,
 
     /// AssetConfig path overrides, keyed by the AssetConfig name
     /// (e.g. `css_stylesheet = "custom.css"`).
@@ -277,6 +288,16 @@ impl PluginSection {
         self.asset_blocks()
             .iter()
             .filter_map(|b| b.extra.get(key).and_then(|v| v.as_str()))
+            .collect()
+    }
+
+    /// Collect every (block, override-value) pair for `key` across all
+    /// asset blocks, in declared order. Used by callers that need each
+    /// block's `dest` to compute output paths.
+    pub fn get_strings_with_block(&self, key: &str) -> Vec<(&PluginAssets, &str)> {
+        self.asset_blocks()
+            .iter()
+            .filter_map(|b| b.extra.get(key).and_then(|v| v.as_str()).map(|s| (b, s)))
             .collect()
     }
 }
@@ -660,5 +681,39 @@ mod tests {
         let config = parse(&toml);
         let section = config.plugin_section("html");
         assert!(section.asset_blocks().is_empty());
+    }
+
+    #[test]
+    fn test_dest_field_parses() {
+        let toml =
+            versioned_toml("[html.assets]\ndest = \"allassets\"\ncss_stylesheet = \"custom.css\"");
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        let blocks = section.asset_blocks();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].dest.as_deref(), Some("allassets"));
+    }
+
+    #[test]
+    fn test_dest_defaults_to_none() {
+        let toml = versioned_toml("[html.assets]\ncss_stylesheet = \"custom.css\"");
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        assert!(section.asset_blocks()[0].dest.is_none());
+    }
+
+    #[test]
+    fn test_get_strings_with_block_returns_pairs() {
+        let toml = versioned_toml(
+            "[[html.assets]]\njs_scripts = \"one.js\"\ndest = \"subdir\"\n[[html.assets]]\njs_scripts = \"two.js\"",
+        );
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        let pairs = section.get_strings_with_block("js_scripts");
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0].1, "one.js");
+        assert_eq!(pairs[0].0.dest.as_deref(), Some("subdir"));
+        assert_eq!(pairs[1].1, "two.js");
+        assert!(pairs[1].0.dest.is_none());
     }
 }

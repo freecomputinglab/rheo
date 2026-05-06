@@ -369,8 +369,15 @@ fn compile_one_file(
     Ok(())
 }
 
-/// Copy each source file verbatim into the build dir, preserving its path relative to the project root.
-fn copy_each(sources: &[PathBuf], project_root: &Path, build_dir: &Path) -> Result<Vec<PathBuf>> {
+/// Copy each source file verbatim into the build dir.
+/// When `strip_to_basename` is true, only the filename is used (for dest-prefixed dirs).
+/// Otherwise the project-root-relative path is preserved.
+fn copy_each(
+    sources: &[PathBuf],
+    project_root: &Path,
+    build_dir: &Path,
+    strip_to_basename: bool,
+) -> Result<Vec<PathBuf>> {
     let mut out = Vec::with_capacity(sources.len());
     for src in sources {
         let rel = src.strip_prefix(project_root).map_err(|_| {
@@ -379,7 +386,11 @@ fn copy_each(sources: &[PathBuf], project_root: &Path, build_dir: &Path) -> Resu
                 src.display()
             ))
         })?;
-        let dest = build_dir.join(rel);
+        let dest = if strip_to_basename {
+            build_dir.join(src.file_name().expect("source must have a filename"))
+        } else {
+            build_dir.join(rel)
+        };
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 RheoError::io(
@@ -399,7 +410,9 @@ fn copy_each(sources: &[PathBuf], project_root: &Path, build_dir: &Path) -> Resu
 }
 
 /// Resolve plugin assets, collecting overrides across all [[plugin.assets]] blocks
-/// and copying each source verbatim into the plugin output dir.
+/// and copying each source verbatim into the plugin output dir. When a block
+/// has `dest` set, named assets are placed under that subdirectory with their
+/// directory components stripped (basename only).
 fn resolve_assets(
     plugin: &dyn FormatPlugin,
     plugin_section: &PluginSection,
@@ -409,73 +422,105 @@ fn resolve_assets(
     let mut resolved = HashMap::new();
     let mut seen_relative_paths: HashMap<String, PathBuf> = HashMap::new();
     for asset_config in plugin.assets() {
-        let overrides: Vec<&str> = plugin_section.get_strings(asset_config.name);
-        let effective: Vec<&str> = if overrides.is_empty() {
-            vec![asset_config.default_path]
+        let pairs = plugin_section.get_strings_with_block(asset_config.name);
+        let effective: Vec<(Option<&str>, &str)> = if pairs.is_empty() {
+            vec![(None, asset_config.default_path)]
         } else {
-            overrides
+            pairs
+                .into_iter()
+                .map(|(b, p)| (b.dest.as_deref(), p))
+                .collect()
         };
 
-        let mut sources: Vec<PathBuf> = Vec::new();
-        let mut missing: Vec<&str> = Vec::new();
-        for path in &effective {
-            let abs = project_root.join(path);
-            if abs.is_file() {
-                sources.push(abs);
+        // Group sources by dest, preserving insertion order.
+        let mut groups: Vec<(Option<&str>, Vec<&str>)> = Vec::new();
+        for (dest, path) in &effective {
+            if let Some(group) = groups.iter_mut().find(|(d, _)| *d == *dest) {
+                group.1.push(*path);
             } else {
-                missing.push(path);
+                groups.push((*dest, vec![*path]));
             }
         }
 
-        if sources.is_empty() {
+        let mut all_assets: Vec<Asset> = Vec::new();
+        let mut any_source_found = false;
+
+        for (dest, paths) in &groups {
+            let out_dir = match dest {
+                Some(d) => plugin_output_dir.join(d),
+                None => plugin_output_dir.to_path_buf(),
+            };
+
+            let mut sources: Vec<PathBuf> = Vec::new();
+            let mut missing: Vec<&str> = Vec::new();
+            for path in paths {
+                let abs = project_root.join(path);
+                if abs.is_file() {
+                    sources.push(abs);
+                } else {
+                    missing.push(path);
+                }
+            }
+
+            if sources.is_empty() {
+                continue;
+            }
+            any_source_found = true;
+
+            for m in &missing {
+                warn!(
+                    plugin = plugin.name(),
+                    asset = asset_config.name,
+                    path = %m,
+                    "asset override path not found, skipping"
+                );
+            }
+
+            let outputs: Vec<PathBuf> =
+                copy_each(&sources, project_root, &out_dir, dest.is_some())?;
+
+            let assets: Vec<Asset> = outputs
+                .into_iter()
+                .map(|abs| {
+                    let rel = abs
+                        .strip_prefix(plugin_output_dir)
+                        .expect("copy_each output is always under plugin_output_dir")
+                        .to_string_lossy()
+                        .into_owned();
+                    if let Some(prev) = seen_relative_paths.get(&rel) {
+                        return Err(RheoError::project_config(format!(
+                            "asset path collision: '{}' produced by both '{}' and '{}'",
+                            rel,
+                            prev.display(),
+                            abs.display()
+                        )));
+                    }
+                    seen_relative_paths.insert(rel.clone(), abs.clone());
+                    Ok(Asset {
+                        config: asset_config.clone(),
+                        resolved_path: abs,
+                        built_relative_path: rel,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            all_assets.extend(assets);
+        }
+
+        if !any_source_found {
             if asset_config.required {
+                let paths: Vec<&str> = effective.iter().map(|(_, p)| *p).collect();
                 return Err(RheoError::project_config(format!(
                     "plugin '{}' requires input '{}' but no source was found (tried: {})",
                     plugin.name(),
                     asset_config.name,
-                    effective.join(", ")
+                    paths.join(", ")
                 )));
             }
             continue;
         }
 
-        for m in &missing {
-            warn!(
-                plugin = plugin.name(),
-                asset = asset_config.name,
-                path = %m,
-                "asset override path not found, skipping"
-            );
-        }
-
-        let outputs: Vec<PathBuf> = copy_each(&sources, project_root, plugin_output_dir)?;
-
-        let assets: Vec<Asset> = outputs
-            .into_iter()
-            .map(|abs| {
-                let rel = abs
-                    .strip_prefix(plugin_output_dir)
-                    .expect("copy_each output is always under plugin_output_dir")
-                    .to_string_lossy()
-                    .into_owned();
-                if let Some(prev) = seen_relative_paths.get(&rel) {
-                    return Err(RheoError::project_config(format!(
-                        "asset path collision: '{}' produced by both '{}' and '{}'",
-                        rel,
-                        prev.display(),
-                        abs.display()
-                    )));
-                }
-                seen_relative_paths.insert(rel.clone(), abs.clone());
-                Ok(Asset {
-                    config: asset_config.clone(),
-                    resolved_path: abs,
-                    built_relative_path: rel,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        resolved.insert(asset_config.name, assets);
+        resolved.insert(asset_config.name, all_assets);
     }
     Ok(resolved)
 }
@@ -1468,5 +1513,139 @@ mod tests {
 
         // Clean up
         let _ = std::fs::remove_file(&abs_css);
+    }
+
+    #[test]
+    fn test_resolve_assets_dest_places_in_subdirectory() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::write(project_root.join("custom.css"), "/* custom */").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+
+        let mut extra = toml::map::Map::new();
+        extra.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("custom.css".into()),
+        );
+        let section = PluginSection {
+            assets: Some(AssetsField::Multiple(vec![PluginAssets {
+                extra,
+                dest: Some("subdir".into()),
+                ..Default::default()
+            }])),
+            ..Default::default()
+        };
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let assets = resolved.get("css_stylesheet").unwrap();
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].built_relative_path, "subdir/custom.css");
+        assert!(output_dir.join("subdir/custom.css").exists());
+    }
+
+    #[test]
+    fn test_resolve_assets_mixed_dest_and_no_dest() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::write(project_root.join("root.css"), "/* root */").unwrap();
+        std::fs::write(project_root.join("dest.css"), "/* dest */").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+
+        let mut extra1 = toml::map::Map::new();
+        extra1.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("root.css".into()),
+        );
+        let mut extra2 = toml::map::Map::new();
+        extra2.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("dest.css".into()),
+        );
+        let section = PluginSection {
+            assets: Some(AssetsField::Multiple(vec![
+                PluginAssets {
+                    extra: extra1,
+                    ..Default::default()
+                },
+                PluginAssets {
+                    extra: extra2,
+                    dest: Some("assets".into()),
+                    ..Default::default()
+                },
+            ])),
+            ..Default::default()
+        };
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let assets = resolved.get("css_stylesheet").unwrap();
+        assert_eq!(assets.len(), 2);
+        assert!(output_dir.join("root.css").exists());
+        assert!(output_dir.join("assets/dest.css").exists());
+    }
+
+    #[test]
+    fn test_resolve_assets_dest_strips_to_basename() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::create_dir_all(project_root.join("dist")).unwrap();
+        std::fs::write(project_root.join("dist/index.js"), "// js").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "js_scripts",
+                default_path: "script.js",
+                required: false,
+            }],
+        };
+
+        let mut extra = toml::map::Map::new();
+        extra.insert(
+            "js_scripts".into(),
+            toml::Value::String("dist/index.js".into()),
+        );
+        let section = PluginSection {
+            assets: Some(AssetsField::Multiple(vec![PluginAssets {
+                extra,
+                dest: Some("allassets".into()),
+                ..Default::default()
+            }])),
+            ..Default::default()
+        };
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let assets = resolved.get("js_scripts").unwrap();
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].built_relative_path, "allassets/index.js");
+        assert!(output_dir.join("allassets/index.js").exists());
+        assert!(
+            !output_dir.join("allassets/dist/index.js").exists(),
+            "source directory components should be stripped under dest"
+        );
     }
 }

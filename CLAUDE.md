@@ -50,6 +50,7 @@ css_stylesheet = "custom.css"   # optional; path override for AssetConfig name
 [[html.assets]]
 css_stylesheet = "one.css"
 js_scripts     = "one.js"
+dest           = "subdir"  # optional; output subdirectory for this block's files
 
 [[html.assets]]
 css_stylesheet = "two.css"
