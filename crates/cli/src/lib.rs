@@ -369,11 +369,39 @@ fn compile_one_file(
     Ok(())
 }
 
-/// Resolve plugin assets, applying path overrides from config.
-///
-/// For each declared asset, checks if the user configured a custom path
-/// via `plugin_section.extra[asset_name]`. If not, falls back to
-/// `asset_config.default_path`. Copies resolved files to the output directory.
+/// Default combiner used when AssetConfig.combine is None: copies each source
+/// verbatim into the build dir, preserving its path relative to the project root.
+fn default_copy_each(
+    sources: &[PathBuf],
+    project_root: &Path,
+    build_dir: &Path,
+) -> Result<Vec<PathBuf>> {
+    let mut out = Vec::with_capacity(sources.len());
+    for src in sources {
+        let rel = src
+            .strip_prefix(project_root)
+            .expect("source is always project_root-joined");
+        let dest = build_dir.join(rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                RheoError::io(
+                    e,
+                    format!("creating directory for asset '{}'", rel.display()),
+                )
+            })?;
+        }
+        std::fs::copy(src, &dest).map_err(|e| RheoError::AssetCopy {
+            source: src.clone(),
+            dest: dest.clone(),
+            error: e,
+        })?;
+        out.push(dest);
+    }
+    Ok(out)
+}
+
+/// Resolve plugin assets, collecting overrides across all [[plugin.assets]] blocks
+/// and dispatching to the declared combine strategy.
 fn resolve_assets(
     plugin: &dyn FormatPlugin,
     plugin_section: &PluginSection,
@@ -382,42 +410,67 @@ fn resolve_assets(
 ) -> Result<HashMap<&'static str, Vec<Asset>>> {
     let mut resolved = HashMap::new();
     for asset_config in plugin.assets() {
-        let effective_path: &str = plugin_section
-            .get_string(asset_config.name)
-            .unwrap_or(asset_config.default_path);
+        let overrides: Vec<&str> = plugin_section.get_strings(asset_config.name);
+        let effective: Vec<&str> = if overrides.is_empty() {
+            vec![asset_config.default_path]
+        } else {
+            overrides
+        };
 
-        let src = project_root.join(effective_path);
-        if src.is_file() {
-            let dest = plugin_output_dir.join(effective_path);
-            if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    RheoError::io(
-                        e,
-                        format!("creating directory for asset '{}'", effective_path),
-                    )
-                })?;
+        let mut sources: Vec<PathBuf> = Vec::new();
+        let mut missing: Vec<&str> = Vec::new();
+        for path in &effective {
+            let abs = project_root.join(path);
+            if abs.is_file() {
+                sources.push(abs);
+            } else {
+                missing.push(path);
             }
-            std::fs::copy(&src, &dest).map_err(|e| RheoError::AssetCopy {
-                source: src.clone(),
-                dest: dest.clone(),
-                error: e,
-            })?;
-            resolved.insert(
-                asset_config.name,
-                vec![Asset {
-                    config: asset_config.clone(),
-                    resolved_path: dest,
-                    built_relative_path: effective_path.to_string(),
-                }],
-            );
-        } else if asset_config.required {
-            return Err(RheoError::project_config(format!(
-                "plugin '{}' requires input '{}' at '{}' but it was not found",
-                plugin.name(),
-                asset_config.name,
-                effective_path
-            )));
         }
+
+        if sources.is_empty() {
+            if asset_config.required {
+                return Err(RheoError::project_config(format!(
+                    "plugin '{}' requires input '{}' but no source was found (tried: {})",
+                    plugin.name(),
+                    asset_config.name,
+                    effective.join(", ")
+                )));
+            }
+            continue;
+        }
+
+        for m in &missing {
+            warn!(
+                plugin = plugin.name(),
+                asset = asset_config.name,
+                path = %m,
+                "asset override path not found, skipping"
+            );
+        }
+
+        let outputs: Vec<PathBuf> = match asset_config.combine {
+            Some(c) => c.combine(&sources, plugin_output_dir)?,
+            None => default_copy_each(&sources, project_root, plugin_output_dir)?,
+        };
+
+        let assets: Vec<Asset> = outputs
+            .into_iter()
+            .map(|abs| {
+                let rel = abs
+                    .strip_prefix(plugin_output_dir)
+                    .unwrap_or(&abs)
+                    .to_string_lossy()
+                    .into_owned();
+                Asset {
+                    config: asset_config.clone(),
+                    resolved_path: abs,
+                    built_relative_path: rel,
+                }
+            })
+            .collect();
+
+        resolved.insert(asset_config.name, assets);
     }
     Ok(resolved)
 }
@@ -940,7 +993,7 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rheo_core::AssetConfig;
+    use rheo_core::{AssetCombine, AssetConfig};
     use rheo_core::config::{AssetsField, PluginAssets};
 
     #[test]
@@ -1183,5 +1236,170 @@ mod tests {
             output_dir.join("styles/custom.css").exists(),
             "subdirectory asset should be copied to output"
         );
+    }
+
+    #[test]
+    fn test_resolve_assets_multiple_blocks_default_copy_each() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::write(project_root.join("one.css"), "/* one */").unwrap();
+        std::fs::write(project_root.join("two.css"), "/* two */").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+                combine: None,
+            }],
+        };
+
+        let mut extra1 = toml::map::Map::new();
+        extra1.insert("css_stylesheet".into(), toml::Value::String("one.css".into()));
+        let mut extra2 = toml::map::Map::new();
+        extra2.insert("css_stylesheet".into(), toml::Value::String("two.css".into()));
+        let section = PluginSection {
+            assets: Some(AssetsField::Multiple(vec![
+                PluginAssets { extra: extra1, ..Default::default() },
+                PluginAssets { extra: extra2, ..Default::default() },
+            ])),
+            ..Default::default()
+        };
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let assets = resolved.get("css_stylesheet").unwrap();
+        assert_eq!(assets.len(), 2);
+        assert!(output_dir.join("one.css").exists());
+        assert!(output_dir.join("two.css").exists());
+    }
+
+    struct MockConcat;
+
+    impl AssetCombine for MockConcat {
+        fn combine(
+            &self,
+            sources: &[PathBuf],
+            build_dir: &Path,
+        ) -> rheo_core::Result<Vec<PathBuf>> {
+            let mut content = String::new();
+            for s in sources {
+                content.push_str(&std::fs::read_to_string(s).unwrap());
+            }
+            let dest = build_dir.join("combined.css");
+            std::fs::write(&dest, &content)
+                .map_err(|e| rheo_core::RheoError::io(e, "writing combined asset"))?;
+            Ok(vec![dest])
+        }
+    }
+
+    #[test]
+    fn test_resolve_assets_invokes_custom_combiner() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::write(project_root.join("a.css"), "/* a */").unwrap();
+        std::fs::write(project_root.join("b.css"), "/* b */").unwrap();
+
+        static COMBINER: MockConcat = MockConcat;
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+                combine: Some(&COMBINER),
+            }],
+        };
+
+        let mut extra1 = toml::map::Map::new();
+        extra1.insert("css_stylesheet".into(), toml::Value::String("a.css".into()));
+        let mut extra2 = toml::map::Map::new();
+        extra2.insert("css_stylesheet".into(), toml::Value::String("b.css".into()));
+        let section = PluginSection {
+            assets: Some(AssetsField::Multiple(vec![
+                PluginAssets { extra: extra1, ..Default::default() },
+                PluginAssets { extra: extra2, ..Default::default() },
+            ])),
+            ..Default::default()
+        };
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let assets = resolved.get("css_stylesheet").unwrap();
+        assert_eq!(assets.len(), 1);
+        assert!(output_dir.join("combined.css").exists());
+        assert_eq!(
+            std::fs::read_to_string(output_dir.join("combined.css")).unwrap(),
+            "/* a *//* b */"
+        );
+    }
+
+    #[test]
+    fn test_resolve_assets_required_all_missing_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "missing_asset",
+                default_path: "nonexistent.css",
+                required: true,
+                combine: None,
+            }],
+        };
+        let section = PluginSection::default();
+
+        let result = resolve_assets(&plugin, &section, project_root, &output_dir);
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("requires input"),
+            "expected 'requires input' in error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_resolve_assets_required_some_missing_warns_but_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::write(project_root.join("exists.css"), "body {}").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: true,
+                combine: None,
+            }],
+        };
+
+        let mut extra1 = toml::map::Map::new();
+        extra1.insert("css_stylesheet".into(), toml::Value::String("exists.css".into()));
+        let mut extra2 = toml::map::Map::new();
+        extra2.insert("css_stylesheet".into(), toml::Value::String("missing.css".into()));
+        let section = PluginSection {
+            assets: Some(AssetsField::Multiple(vec![
+                PluginAssets { extra: extra1, ..Default::default() },
+                PluginAssets { extra: extra2, ..Default::default() },
+            ])),
+            ..Default::default()
+        };
+
+        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let assets = resolved.get("css_stylesheet").unwrap();
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].built_relative_path, "exists.css");
     }
 }
