@@ -1110,10 +1110,15 @@ fn test_asset_multiple_blocks_default_combiner() {
     let build_dir = project_path.join("build");
     let output = std::process::Command::new("cargo")
         .args([
-            "run", "-p", "rheo", "--",
-            "compile", project_path.to_str().unwrap(),
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
             "--html",
-            "--build-dir", build_dir.to_str().unwrap(),
+            "--build-dir",
+            build_dir.to_str().unwrap(),
         ])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
@@ -1126,15 +1131,10 @@ fn test_asset_multiple_blocks_default_combiner() {
     );
 
     for f in ["one.css", "two.css", "one.js", "two.js"] {
-        assert!(
-            build_dir.join("html").join(f).exists(),
-            "missing {}",
-            f
-        );
+        assert!(build_dir.join("html").join(f).exists(), "missing {}", f);
     }
 
-    let html =
-        std::fs::read_to_string(build_dir.join("html/hello.html")).unwrap();
+    let html = std::fs::read_to_string(build_dir.join("html/hello.html")).unwrap();
     assert!(
         html.contains("one.css") && html.contains("two.css"),
         "html should link both stylesheets:\n{}",

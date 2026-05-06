@@ -40,6 +40,18 @@ copy = ["*.txt"]         # optional; glob patterns copied to every plugin output
 copy = ["images/**"]     # optional; glob patterns copied to html output dir only
 css_stylesheet = "custom.css"   # optional; path override for AssetConfig name
 
+# Multiple asset blocks: each [[html.assets]] contributes its own
+# overrides and copy patterns. All sources are copied verbatim by default.
+[[html.assets]]
+css_stylesheet = "one.css"
+js_scripts     = "one.js"
+
+[[html.assets]]
+css_stylesheet = "two.css"
+js_scripts     = "two.js"
+
+Plugins may declare a custom `AssetCombine` strategy on any `AssetConfig` (see `crates/core/src/plugins/mod.rs`) to bundle multiple sources into a single output.
+
 [pdf.spine]
 title = "My Book"
 vertebrae = ["cover.typ", "chapters/**/*.typ"]

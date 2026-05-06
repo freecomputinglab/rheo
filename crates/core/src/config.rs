@@ -625,10 +625,7 @@ mod tests {
         let config = parse(&toml);
         let section = config.plugin_section("html");
         assert_eq!(section.asset_blocks().len(), 2);
-        assert_eq!(
-            section.get_strings("js_scripts"),
-            vec!["one.js", "two.js"]
-        );
+        assert_eq!(section.get_strings("js_scripts"), vec!["one.js", "two.js"]);
     }
 
     #[test]
@@ -647,7 +644,10 @@ mod tests {
         );
         let config = parse(&toml);
         let section = config.plugin_section("html");
-        assert_eq!(section.get_strings("css_stylesheet"), vec!["a.css", "b.css"]);
+        assert_eq!(
+            section.get_strings("css_stylesheet"),
+            vec!["a.css", "b.css"]
+        );
     }
 
     #[test]

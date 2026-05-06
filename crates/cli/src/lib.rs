@@ -993,8 +993,8 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rheo_core::{AssetCombine, AssetConfig};
     use rheo_core::config::{AssetsField, PluginAssets};
+    use rheo_core::{AssetCombine, AssetConfig};
 
     #[test]
     fn test_determine_formats_cli_flags_override_config() {
@@ -1259,13 +1259,25 @@ mod tests {
         };
 
         let mut extra1 = toml::map::Map::new();
-        extra1.insert("css_stylesheet".into(), toml::Value::String("one.css".into()));
+        extra1.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("one.css".into()),
+        );
         let mut extra2 = toml::map::Map::new();
-        extra2.insert("css_stylesheet".into(), toml::Value::String("two.css".into()));
+        extra2.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("two.css".into()),
+        );
         let section = PluginSection {
             assets: Some(AssetsField::Multiple(vec![
-                PluginAssets { extra: extra1, ..Default::default() },
-                PluginAssets { extra: extra2, ..Default::default() },
+                PluginAssets {
+                    extra: extra1,
+                    ..Default::default()
+                },
+                PluginAssets {
+                    extra: extra2,
+                    ..Default::default()
+                },
             ])),
             ..Default::default()
         };
@@ -1323,8 +1335,14 @@ mod tests {
         extra2.insert("css_stylesheet".into(), toml::Value::String("b.css".into()));
         let section = PluginSection {
             assets: Some(AssetsField::Multiple(vec![
-                PluginAssets { extra: extra1, ..Default::default() },
-                PluginAssets { extra: extra2, ..Default::default() },
+                PluginAssets {
+                    extra: extra1,
+                    ..Default::default()
+                },
+                PluginAssets {
+                    extra: extra2,
+                    ..Default::default()
+                },
             ])),
             ..Default::default()
         };
@@ -1386,13 +1404,25 @@ mod tests {
         };
 
         let mut extra1 = toml::map::Map::new();
-        extra1.insert("css_stylesheet".into(), toml::Value::String("exists.css".into()));
+        extra1.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("exists.css".into()),
+        );
         let mut extra2 = toml::map::Map::new();
-        extra2.insert("css_stylesheet".into(), toml::Value::String("missing.css".into()));
+        extra2.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("missing.css".into()),
+        );
         let section = PluginSection {
             assets: Some(AssetsField::Multiple(vec![
-                PluginAssets { extra: extra1, ..Default::default() },
-                PluginAssets { extra: extra2, ..Default::default() },
+                PluginAssets {
+                    extra: extra1,
+                    ..Default::default()
+                },
+                PluginAssets {
+                    extra: extra2,
+                    ..Default::default()
+                },
             ])),
             ..Default::default()
         };
