@@ -101,26 +101,35 @@ impl FormatPlugin for HtmlPlugin {
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
         let html_string = ctx.compile_to_html_string()?;
 
-        let css_vec = ctx.assets.get(&STYLESHEETS);
-        let html_string = if let Some(css_assets) = css_vec.filter(|v| !v.is_empty()) {
-            for a in css_assets {
-                info!("Found CSS stylesheet: {}", a.resolved_path.display());
+        let css_assets = ctx.assets.get(&STYLESHEETS).filter(|v| !v.is_empty());
+        let js_assets = ctx.assets.get(&SCRIPTS).filter(|v| !v.is_empty());
+
+        let (css_paths, inline_styles): (Vec<&str>, &[&str]) = match css_assets {
+            Some(assets) => {
+                for a in assets {
+                    info!("Found CSS stylesheet: {}", a.resolved_path.display());
+                }
+                let paths = assets
+                    .iter()
+                    .map(|a| a.built_relative_path.as_str())
+                    .collect();
+                (paths, &[])
             }
-            let css_paths: Vec<&str> = css_assets
-                .iter()
-                .map(|a| a.built_relative_path.as_str())
-                .collect();
+            None => {
+                info!("No stylesheet found, using default");
+                (Vec::new(), &[DEFAULT_STYLESHEET])
+            }
+        };
 
-            let js_paths: Vec<&str> = ctx
-                .assets
-                .get(&SCRIPTS)
-                .map(|v| v.iter().map(|a| a.built_relative_path.as_str()).collect())
-                .unwrap_or_default();
+        let js_paths: Vec<&str> = js_assets
+            .map(|v| v.iter().map(|a| a.built_relative_path.as_str()).collect())
+            .unwrap_or_default();
 
-            html_utils::inject_head_links(&html_string, &[], &css_paths, &js_paths)?
+        let html_string = html_utils::inject_inline_styles(&html_string, inline_styles)?;
+        let html_string = if css_paths.is_empty() && js_paths.is_empty() {
+            html_string
         } else {
-            info!("No stylesheet found, using default");
-            html_utils::inject_inline_styles(&html_string, &[DEFAULT_STYLESHEET])?
+            html_utils::inject_head_links(&html_string, &[], &css_paths, &js_paths)?
         };
 
         debug!(size = html_string.len(), "writing HTML file");

@@ -25,6 +25,7 @@ use std::path::PathBuf;
 #[test_case("cases/pdf_individual")]
 #[test_case("cases/pdf_merge_false")]
 #[test_case("cases/script_injection")]
+#[test_case("cases/script_injection_no_css")]
 #[test_case("cases/relative_path_links")]
 #[test_case("cases/target_function")]
 #[test_case("cases/target_function_in_module")]
