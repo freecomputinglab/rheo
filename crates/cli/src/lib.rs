@@ -598,10 +598,7 @@ fn perform_compilation(
             for pattern in block.copy.iter() {
                 let abs_pattern = project.root.join(pattern).display().to_string();
                 let entries = glob::glob(&abs_pattern).map_err(|e| {
-                    RheoError::project_config(format!(
-                        "invalid copy pattern '{}': {}",
-                        pattern, e
-                    ))
+                    RheoError::project_config(format!("invalid copy pattern '{}': {}", pattern, e))
                 })?;
                 let mut matched = false;
                 for entry in entries.filter_map(|e| e.ok()).filter(|p| p.is_file()) {

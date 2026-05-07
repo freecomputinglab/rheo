@@ -929,7 +929,9 @@ fn test_asset_patterns_dest_preserves_structure() {
         "image.png not found at html/allassets/image.png"
     );
     assert!(
-        build_dir.join("html/allassets/images/icons/arrow.svg").exists(),
+        build_dir
+            .join("html/allassets/images/icons/arrow.svg")
+            .exists(),
         "images/icons/arrow.svg not found at html/allassets/images/icons/arrow.svg"
     );
 
@@ -937,6 +939,86 @@ fn test_asset_patterns_dest_preserves_structure() {
     assert!(
         build_dir.join("html/main.typ").exists(),
         "main.typ not found at html/main.typ (block without dest)"
+    );
+}
+
+/// End-to-end test that `dest` works for both named assets and copy globs together.
+#[test]
+fn test_asset_dest_subdirectory() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Source files
+    std::fs::write(project_path.join("index.typ"), "= Hello\n\nWorld.\n").unwrap();
+    std::fs::write(project_path.join("image.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    std::fs::write(project_path.join("index.css"), "body { color: red; }").unwrap();
+    std::fs::create_dir_all(project_path.join("dist")).unwrap();
+    std::fs::write(project_path.join("dist/index.js"), "console.log(\"hi\");").unwrap();
+
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [[html.assets]]\n\
+             dest = \"allassets\"\n\
+             copy = [\"image.png\"]\n\
+             js_scripts     = \"dist/index.js\"\n\
+             css_stylesheet = \"index.css\"\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .unwrap();
+
+    let build_dir = project_path.join("build");
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // All assets land under allassets/
+    assert!(
+        build_dir.join("html/allassets/image.png").is_file(),
+        "image.png not found at html/allassets/image.png"
+    );
+    assert!(
+        build_dir.join("html/allassets/index.css").is_file(),
+        "index.css not found at html/allassets/index.css"
+    );
+    assert!(
+        build_dir.join("html/allassets/index.js").is_file(),
+        "index.js not found at html/allassets/index.js (basename stripped from dist/index.js)"
+    );
+
+    // HTML output references the dest-prefixed paths
+    let html = std::fs::read_to_string(build_dir.join("html/index.html")).unwrap();
+    assert!(
+        html.contains("allassets/index.css"),
+        "html should link stylesheet at allassets/index.css:\n{}",
+        html
+    );
+    assert!(
+        html.contains("allassets/index.js"),
+        "html should reference script at allassets/index.js:\n{}",
+        html
     );
 }
 
