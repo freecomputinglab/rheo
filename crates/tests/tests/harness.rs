@@ -862,6 +862,84 @@ fn test_asset_patterns_glob_recursive() {
     );
 }
 
+/// Test that `dest` on a [[html.assets]] block prefixes copy-glob outputs while
+/// preserving project-root-relative structure underneath.
+#[test]
+fn test_asset_patterns_dest_preserves_structure() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Single file + nested directory structure
+    std::fs::write(project_path.join("image.png"), b"\x89PNG\r\n\x1a\n")
+        .expect("Failed to write image.png");
+    let icons_dir = project_path.join("images/icons");
+    std::fs::create_dir_all(&icons_dir).expect("Failed to create images/icons dir");
+    std::fs::write(icons_dir.join("arrow.svg"), "<svg>arrow</svg>")
+        .expect("Failed to write images/icons/arrow.svg");
+
+    // Typst source
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    // rheo.toml: one block with dest, one without
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [[html.assets]]\n\
+             copy = [\"image.png\", \"images/**/*\"]\n\
+             dest = \"allassets\"\n\
+             \n\
+             [[html.assets]]\n\
+             copy = [\"main.typ\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Block with dest = "allassets": structure preserved under dest prefix
+    assert!(
+        build_dir.join("html/allassets/image.png").exists(),
+        "image.png not found at html/allassets/image.png"
+    );
+    assert!(
+        build_dir.join("html/allassets/images/icons/arrow.svg").exists(),
+        "images/icons/arrow.svg not found at html/allassets/images/icons/arrow.svg"
+    );
+
+    // Block without dest: current behaviour (project-root-relative)
+    assert!(
+        build_dir.join("html/main.typ").exists(),
+        "main.typ not found at html/main.typ (block without dest)"
+    );
+}
+
 /// Test that `rheo init` creates a valid project that compiles successfully
 #[test]
 fn test_rheo_init_and_compile() {
