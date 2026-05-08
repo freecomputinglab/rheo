@@ -45,6 +45,17 @@ copy = ["*.txt"]         # optional; glob patterns copied to every plugin output
 copy = ["images/**"]     # optional; glob patterns copied to html output dir only
 css_stylesheet = "custom.css"   # optional; path override for AssetConfig name
 
+# Package sugar: expands into synthetic asset blocks with copy=["**/*"]
+# and dest=final-path-component (or @preview package name).
+# Field of [html] (plugin section), not [html.assets].
+[html]
+packages = ["./packages/a", "@preview/some-pkg:1.0.0"]
+# Equivalent to:
+#   [[html.assets]] dest = "a" copy = ["**/*"]
+#   [[html.assets]] dest = "some-pkg" copy = ["**/*"]
+# @preview/<name>:<version> resolves from the Typst package cache;
+# errors if not already cached. Other @namespaces are unsupported.
+
 # Multiple asset blocks: each [[html.assets]] contributes its own
 # overrides and copy patterns. All sources are copied verbatim by default.
 [[html.assets]]
