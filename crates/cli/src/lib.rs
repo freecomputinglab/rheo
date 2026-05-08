@@ -1729,4 +1729,139 @@ mod tests {
             "source directory components should be stripped under dest"
         );
     }
+
+    // --- map_packages_to_assets tests ---
+
+    #[test]
+    fn test_map_packages_local_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let cache_dir = dir.path().join("cache");
+
+        std::fs::create_dir_all(project_root.join("mypkg")).unwrap();
+        std::fs::write(project_root.join("mypkg/file.txt"), "data").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![],
+        };
+        let packages = vec!["./mypkg".to_string()];
+        let result = plugin
+            .map_packages_to_assets(&packages, project_root, &cache_dir)
+            .unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].assets.dest.as_deref(), Some("mypkg"));
+        assert_eq!(result[0].assets.copy, vec!["**/*"]);
+        assert_eq!(result[0].source_root, project_root.join("mypkg"));
+    }
+
+    #[test]
+    fn test_map_packages_preview_namespace() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path();
+        let project_root = dir.path().join("project");
+        std::fs::create_dir_all(&project_root).unwrap();
+
+        // Create fake Typst package cache layout
+        std::fs::create_dir_all(cache_dir.join("preview/cool-pkg/1.0.0")).unwrap();
+        std::fs::write(cache_dir.join("preview/cool-pkg/1.0.0/lib.typ"), "").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![],
+        };
+        let packages = vec!["@preview/cool-pkg:1.0.0".to_string()];
+        let result = plugin
+            .map_packages_to_assets(&packages, &project_root, cache_dir)
+            .unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].assets.dest.as_deref(), Some("cool-pkg"));
+        assert_eq!(result[0].assets.copy, vec!["**/*"]);
+        assert_eq!(
+            result[0].source_root,
+            cache_dir.join("preview/cool-pkg/1.0.0")
+        );
+    }
+
+    #[test]
+    fn test_map_packages_unsupported_namespace_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![],
+        };
+        let packages = vec!["@local/foo:0.1.0".to_string()];
+        let result = plugin.map_packages_to_assets(&packages, project_root, dir.path());
+
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("only @preview is supported"),
+            "expected @local error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_map_packages_missing_directory_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![],
+        };
+        let packages = vec!["./nonexistent".to_string()];
+        let result = plugin.map_packages_to_assets(&packages, project_root, dir.path());
+
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("not found"),
+            "expected missing directory error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_map_packages_preview_missing_version_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![],
+        };
+        let packages = vec!["@preview/some-pkg".to_string()];
+        let result = plugin.map_packages_to_assets(&packages, project_root, dir.path());
+
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("missing a version"),
+            "expected missing version error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_map_packages_preview_not_in_cache_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![],
+        };
+        let packages = vec!["@preview/absent:0.1.0".to_string()];
+        let result = plugin.map_packages_to_assets(&packages, project_root, dir.path());
+
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("not found in cache"),
+            "expected cache miss error, got: {}",
+            err
+        );
+    }
 }

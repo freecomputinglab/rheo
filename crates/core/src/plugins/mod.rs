@@ -257,6 +257,7 @@ pub enum CompilationTarget {
 }
 
 /// A package expanded into synthetic asset blocks, carrying its resolved source root.
+#[derive(Debug)]
 pub struct PackageAssets {
     pub assets: PluginAssets,
     pub source_root: PathBuf,

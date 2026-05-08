@@ -1371,3 +1371,225 @@ fn test_merged_imports_missing_file() {
         stderr
     );
 }
+
+/// Test that `packages = ["./packages/a"]` copies files from the package
+/// directory into `<format>/a/` in the build output.
+#[test]
+fn test_packages_sugar_copies_files() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Package directory with files
+    let pkg_dir = project_path.join("packages/a/sub");
+    std::fs::create_dir_all(&pkg_dir).expect("Failed to create packages/a/sub");
+    std::fs::write(project_path.join("packages/a/index.css"), "body {}")
+        .expect("Failed to write index.css");
+    std::fs::write(pkg_dir.join("file.txt"), "hello").expect("Failed to write file.txt");
+
+    // Typst source
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    // rheo.toml with packages for html and pdf
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\", \"pdf\"]\n\
+             \n\
+             [html]\n\
+             packages = [\"./packages/a\"]\n\
+             \n\
+             [pdf]\n\
+             packages = [\"./packages/a\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // HTML output should have files under html/a/
+    assert!(
+        build_dir.join("html/a/index.css").exists(),
+        "packages: html/a/index.css not found"
+    );
+    assert!(
+        build_dir.join("html/a/sub/file.txt").exists(),
+        "packages: html/a/sub/file.txt not found"
+    );
+    assert_eq!(
+        std::fs::read_to_string(build_dir.join("html/a/sub/file.txt")).unwrap(),
+        "hello",
+    );
+
+    // PDF output should have files under pdf/a/
+    assert!(
+        build_dir.join("pdf/a/index.css").exists(),
+        "packages: pdf/a/index.css not found"
+    );
+    assert!(
+        build_dir.join("pdf/a/sub/file.txt").exists(),
+        "packages: pdf/a/sub/file.txt not found"
+    );
+}
+
+/// Test that `packages = []` is a no-op (no extra files).
+#[test]
+fn test_packages_empty_is_noop() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // A stray directory that should NOT be copied
+    std::fs::create_dir_all(project_path.join("packages/extra")).expect("Failed to create dir");
+    std::fs::write(project_path.join("packages/extra/data.txt"), "secret")
+        .expect("Failed to write data.txt");
+
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [html]\n\
+             packages = []\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // No package files should appear in output
+    assert!(
+        !build_dir.join("html/extra").exists(),
+        "empty packages list should produce no output"
+    );
+    assert!(
+        !build_dir.join("html/a").exists(),
+        "empty packages list should produce no output"
+    );
+}
+
+/// Test that `packages` and `[[html.assets]]` blocks both work together.
+#[test]
+fn test_packages_with_explicit_assets() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Package directory
+    std::fs::create_dir_all(project_path.join("pkg/theme")).expect("Failed to create pkg/theme");
+    std::fs::write(project_path.join("pkg/theme.css"), "/* pkg */")
+        .expect("Failed to write theme.css");
+    std::fs::write(project_path.join("pkg/theme/dark.css"), "/* dark */")
+        .expect("Failed to write dark.css");
+
+    // Explicit asset file
+    std::fs::write(project_path.join("custom.js"), "console.log(1)")
+        .expect("Failed to write custom.js");
+
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [html]\n\
+             packages = [\"./pkg\"]\n\
+             \n\
+             [[html.assets]]\n\
+             copy = [\"custom.js\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Package files under html/pkg/
+    assert!(
+        build_dir.join("html/pkg/theme.css").exists(),
+        "package file html/pkg/theme.css not found"
+    );
+    assert!(
+        build_dir.join("html/pkg/theme/dark.css").exists(),
+        "package file html/pkg/theme/dark.css not found"
+    );
+
+    // Explicit asset at html/custom.js
+    assert!(
+        build_dir.join("html/custom.js").exists(),
+        "explicit asset html/custom.js not found"
+    );
+}
