@@ -539,6 +539,10 @@ fn perform_compilation(
     let mut results = CompilationResults::new();
     let default_section = PluginSection::default();
 
+    let typst_cache_dir = dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("typst/packages");
+
     for plugin in plugins {
         let plugin_output_dir = output_config.dir_for_plugin(plugin.name());
         std::fs::create_dir_all(&plugin_output_dir).map_err(|e| {
@@ -590,6 +594,52 @@ fn perform_compilation(
             }
             if !matched {
                 debug!(pattern = %pattern, "copy pattern matched no files");
+            }
+        }
+
+        // Expand package specifiers into synthetic asset blocks
+        let package_blocks = plugin.map_packages_to_assets(
+            plugin_section.packages(),
+            &project.root,
+            &typst_cache_dir,
+        )?;
+
+        // Copy-glob loop: packages first, then user-declared blocks
+        for package in &package_blocks {
+            let block = &package.assets;
+            let block_dest = block.dest.as_deref();
+            let source_root = &package.source_root;
+            for pattern in block.copy.iter() {
+                let abs_pattern = source_root.join(pattern).display().to_string();
+                let entries = glob::glob(&abs_pattern).map_err(|e| {
+                    RheoError::project_config(format!("invalid copy pattern '{}': {}", pattern, e))
+                })?;
+                let mut matched = false;
+                for entry in entries.filter_map(|e| e.ok()).filter(|p| p.is_file()) {
+                    matched = true;
+                    let rel = entry.strip_prefix(source_root).unwrap_or(entry.as_path());
+                    let dest = match block_dest {
+                        Some(d) => plugin_output_dir.join(d).join(rel),
+                        None => plugin_output_dir.join(rel),
+                    };
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| {
+                            RheoError::io(
+                                e,
+                                format!("creating directory for copy of {}", rel.display()),
+                            )
+                        })?;
+                    }
+                    std::fs::copy(&entry, &dest).map_err(|e| RheoError::AssetCopy {
+                        source: entry.clone(),
+                        dest: dest.clone(),
+                        error: e,
+                    })?;
+                    debug!(src = %entry.display(), dest = %dest.display(), "copied package file");
+                }
+                if !matched {
+                    debug!(pattern = %pattern, "package copy pattern matched no files");
+                }
             }
         }
 

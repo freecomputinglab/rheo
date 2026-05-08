@@ -58,6 +58,7 @@ chrono = { version = "0.4", features = ["serde"] }
 globset = "0.4"
 glob = "0.3"
 tempfile = "3.8"
+dirs = "6"
 
 # Development server (HTML plugin uses, CLI also uses)
 tokio = { version = "1", features = ["rt", "sync", "time", "signal", "rt-multi-thread", "macros"] }

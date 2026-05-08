@@ -2970,6 +2970,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "dirs",
  "glob",
  "globset",
  "mime_guess",

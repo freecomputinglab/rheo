@@ -88,6 +88,10 @@ pub struct PluginSection {
     /// Holds glob copy patterns and AssetConfig path overrides.
     pub assets: Option<AssetsField>,
 
+    /// Package paths to expand into synthetic asset blocks (e.g. `./packages/a`).
+    #[serde(default)]
+    pub packages: Option<Vec<String>>,
+
     /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
     /// `fonts` for HTML; `identifier`, `date` for EPUB).
     #[serde(flatten, default)]
@@ -273,6 +277,11 @@ impl PluginSection {
     /// Returns the asset blocks, normalised to a slice regardless of source syntax.
     pub fn asset_blocks(&self) -> &[PluginAssets] {
         self.assets.as_ref().map(|a| a.blocks()).unwrap_or(&[])
+    }
+
+    /// Returns the declared packages, or an empty slice if none configured.
+    pub fn packages(&self) -> &[String] {
+        self.packages.as_deref().unwrap_or(&[])
     }
 
     /// Get a string value from the `[plugin.assets]` overrides, returning None if absent or not a string.
