@@ -1,9 +1,8 @@
 version = "0.2.1"
 content_dir = "content"
 
-[html.assets]
-js_scripts = "rheo-slides/dist/rheo-slides.js"
-# TODO: put style.css into dist also
+[html]
+packages = ["./rheo-slides"]
 
 [html.spine]
 vertebrae = ["*.typ"]
