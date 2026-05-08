@@ -5,7 +5,12 @@
 **rheo** compiles Typst documents to PDF, HTML, and EPUB. Written in Rust using the Typst compiler as a library.
 
 **Source structure:**
-- `src/rs/` — Rust: `main.rs`, `cli.rs`, `compile.rs`, `world.rs`, `project.rs`, `output.rs`, `assets.rs`
+- `crates/cli/` — CLI entry point, `resolve_assets`, compilation orchestration
+- `crates/core/` — Config, plugin trait (`FormatPlugin`), `PluginContext`, `AssetConfig`, world, spine, compilation
+- `crates/html/` — HTML plugin (dev server, CSS/JS injection)
+- `crates/pdf/` — PDF plugin
+- `crates/epub/` — EPUB plugin
+- `crates/tests/` — Integration tests and harness
 - `src/typ/rheo.typ` — Core Typst template (auto-injected)
 - `build/` — Output dir (gitignored): `pdf/`, `html/`, `epub/`
 
@@ -29,7 +34,7 @@ cargo fmt && cargo clippy -- -D warnings
 ## rheo.toml
 
 ```toml
-version = "0.2.0"        # required, must match CLI version
+version = "0.2.1"        # required, must match CLI version
 content_dir = "content"  # optional
 build_dir = "build"      # optional
 formats = ["html", "pdf", "epub"]  # default formats
@@ -39,6 +44,17 @@ copy = ["*.txt"]         # optional; glob patterns copied to every plugin output
 [html.assets]
 copy = ["images/**"]     # optional; glob patterns copied to html output dir only
 css_stylesheet = "custom.css"   # optional; path override for AssetConfig name
+
+# Multiple asset blocks: each [[html.assets]] contributes its own
+# overrides and copy patterns. All sources are copied verbatim by default.
+[[html.assets]]
+css_stylesheet = "one.css"
+js_scripts     = "one.js"
+dest           = "subdir"  # optional; output subdirectory for this block's files
+
+[[html.assets]]
+css_stylesheet = "two.css"
+js_scripts     = "two.js"
 
 [pdf.spine]
 title = "My Book"

@@ -25,6 +25,7 @@ use std::path::PathBuf;
 #[test_case("cases/pdf_individual")]
 #[test_case("cases/pdf_merge_false")]
 #[test_case("cases/script_injection")]
+#[test_case("cases/script_injection_no_css")]
 #[test_case("cases/relative_path_links")]
 #[test_case("cases/target_function")]
 #[test_case("cases/target_function_in_module")]
@@ -716,6 +717,311 @@ fn test_asset_patterns() {
     );
 }
 
+/// Test that copy globs across multiple [[html.assets]] blocks are all collected.
+#[test]
+fn test_asset_patterns_multiple_blocks() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Source files to copy from two different directories
+    std::fs::create_dir_all(project_path.join("css")).expect("Failed to create css dir");
+    std::fs::write(project_path.join("css/theme.css"), "body {}")
+        .expect("Failed to write css/theme.css");
+    std::fs::create_dir_all(project_path.join("js")).expect("Failed to create js dir");
+    std::fs::write(project_path.join("js/app.js"), "console.log(1)")
+        .expect("Failed to write js/app.js");
+
+    // Typst source
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    // rheo.toml: two [[html.assets]] blocks each with their own copy patterns
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [[html.assets]]\n\
+             copy = [\"css/**/*\"]\n\
+             \n\
+             [[html.assets]]\n\
+             copy = [\"js/**/*\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Both blocks' copy patterns should produce files in html output
+    assert!(
+        build_dir.join("html/css/theme.css").exists(),
+        "css/theme.css not found in html output"
+    );
+    assert!(
+        build_dir.join("html/js/app.js").exists(),
+        "js/app.js not found in html output"
+    );
+}
+
+/// Test that `**/*` glob patterns recursively copy nested files into the build output.
+#[test]
+fn test_asset_patterns_glob_recursive() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Create nested directory structure
+    let icons_dir = project_path.join("images/icons");
+    std::fs::create_dir_all(&icons_dir).expect("Failed to create images/icons dir");
+    std::fs::write(project_path.join("images/hero.png"), b"\x89PNG\r\n\x1a\n")
+        .expect("Failed to write images/hero.png");
+    std::fs::write(icons_dir.join("arrow.svg"), "<svg>arrow</svg>")
+        .expect("Failed to write images/icons/arrow.svg");
+
+    // Typst source
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    // rheo.toml with recursive glob pattern
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [html.assets]\n\
+             copy = [\"images/**/*\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Both nested files should be copied, preserving directory structure
+    let html_hero = build_dir.join("html/images/hero.png");
+    assert!(
+        html_hero.exists(),
+        "Recursive glob: images/hero.png not found in html output"
+    );
+
+    let html_arrow = build_dir.join("html/images/icons/arrow.svg");
+    assert!(
+        html_arrow.exists(),
+        "Recursive glob: images/icons/arrow.svg not found in html output"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&html_arrow).unwrap(),
+        "<svg>arrow</svg>",
+        "Copied arrow.svg has wrong content"
+    );
+}
+
+/// Test that `dest` on a [[html.assets]] block prefixes copy-glob outputs while
+/// preserving project-root-relative structure underneath.
+#[test]
+fn test_asset_patterns_dest_preserves_structure() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Single file + nested directory structure
+    std::fs::write(project_path.join("image.png"), b"\x89PNG\r\n\x1a\n")
+        .expect("Failed to write image.png");
+    let icons_dir = project_path.join("images/icons");
+    std::fs::create_dir_all(&icons_dir).expect("Failed to create images/icons dir");
+    std::fs::write(icons_dir.join("arrow.svg"), "<svg>arrow</svg>")
+        .expect("Failed to write images/icons/arrow.svg");
+
+    // Typst source
+    std::fs::write(project_path.join("main.typ"), "= Hello\n\nTest document.\n")
+        .expect("Failed to write main.typ");
+
+    // rheo.toml: one block with dest, one without
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [[html.assets]]\n\
+             copy = [\"image.png\", \"images/**/*\"]\n\
+             dest = \"allassets\"\n\
+             \n\
+             [[html.assets]]\n\
+             copy = [\"main.typ\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Block with dest = "allassets": structure preserved under dest prefix
+    assert!(
+        build_dir.join("html/allassets/image.png").exists(),
+        "image.png not found at html/allassets/image.png"
+    );
+    assert!(
+        build_dir
+            .join("html/allassets/images/icons/arrow.svg")
+            .exists(),
+        "images/icons/arrow.svg not found at html/allassets/images/icons/arrow.svg"
+    );
+
+    // Block without dest: current behaviour (project-root-relative)
+    assert!(
+        build_dir.join("html/main.typ").exists(),
+        "main.typ not found at html/main.typ (block without dest)"
+    );
+}
+
+/// End-to-end test that `dest` works for both named assets and copy globs together.
+#[test]
+fn test_asset_dest_subdirectory() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Source files
+    std::fs::write(project_path.join("index.typ"), "= Hello\n\nWorld.\n").unwrap();
+    std::fs::write(project_path.join("image.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    std::fs::write(project_path.join("index.css"), "body { color: red; }").unwrap();
+    std::fs::create_dir_all(project_path.join("dist")).unwrap();
+    std::fs::write(project_path.join("dist/index.js"), "console.log(\"hi\");").unwrap();
+
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [[html.assets]]\n\
+             dest = \"allassets\"\n\
+             copy = [\"image.png\"]\n\
+             js_scripts     = \"dist/index.js\"\n\
+             css_stylesheet = \"index.css\"\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .unwrap();
+
+    let build_dir = project_path.join("build");
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // All assets land under allassets/
+    assert!(
+        build_dir.join("html/allassets/image.png").is_file(),
+        "image.png not found at html/allassets/image.png"
+    );
+    assert!(
+        build_dir.join("html/allassets/index.css").is_file(),
+        "index.css not found at html/allassets/index.css"
+    );
+    assert!(
+        build_dir.join("html/allassets/index.js").is_file(),
+        "index.js not found at html/allassets/index.js (basename stripped from dist/index.js)"
+    );
+
+    // HTML output references the dest-prefixed paths
+    let html = std::fs::read_to_string(build_dir.join("html/index.html")).unwrap();
+    assert!(
+        html.contains("allassets/index.css"),
+        "html should link stylesheet at allassets/index.css:\n{}",
+        html
+    );
+    assert!(
+        html.contains("allassets/index.js"),
+        "html should reference script at allassets/index.js:\n{}",
+        html
+    );
+}
+
 /// Test that `rheo init` creates a valid project that compiles successfully
 #[test]
 fn test_rheo_init_and_compile() {
@@ -931,6 +1237,74 @@ fn test_asset_path_override_subdirectory() {
     assert!(
         html.contains(r#"href="styles/custom.css""#),
         "HTML should contain link to styles/custom.css"
+    );
+}
+
+/// Test that multiple [[html.assets]] blocks produce multiple stylesheet/script links in HTML.
+#[test]
+fn test_asset_multiple_blocks_inject_all() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    std::fs::write(project_path.join("one.css"), "/* one */").unwrap();
+    std::fs::write(project_path.join("two.css"), "/* two */").unwrap();
+    std::fs::write(project_path.join("one.js"), "// one").unwrap();
+    std::fs::write(project_path.join("two.js"), "// two").unwrap();
+    std::fs::write(project_path.join("hello.typ"), "Hello").unwrap();
+
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             [[html.assets]]\n\
+             css_stylesheet = \"one.css\"\n\
+             js_scripts     = \"one.js\"\n\
+             [[html.assets]]\n\
+             css_stylesheet = \"two.css\"\n\
+             js_scripts     = \"two.js\"\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .unwrap();
+
+    let build_dir = project_path.join("build");
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    for f in ["one.css", "two.css", "one.js", "two.js"] {
+        assert!(build_dir.join("html").join(f).exists(), "missing {}", f);
+    }
+
+    let html = std::fs::read_to_string(build_dir.join("html/hello.html")).unwrap();
+    assert!(
+        html.contains("one.css") && html.contains("two.css"),
+        "html should link both stylesheets:\n{}",
+        html
+    );
+    assert!(
+        html.contains("one.js") && html.contains("two.js"),
+        "html should reference both scripts:\n{}",
+        html
     );
 }
 

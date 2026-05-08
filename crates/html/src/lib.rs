@@ -101,26 +101,35 @@ impl FormatPlugin for HtmlPlugin {
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
         let html_string = ctx.compile_to_html_string()?;
 
-        // If a custom asset is specified, we inject the link to the asset into each HTML file.
-        // If not, we inline the default CSS.
-        let html_string = if let Some(css_asset) = ctx.assets.get(&STYLESHEETS) {
-            info!(
-                "Found CSS stylesheet: {}",
-                &css_asset.resolved_path.display()
-            );
-            let css_assets = vec![&css_asset.built_relative_path[..]];
+        let css_assets = ctx.assets.get(&STYLESHEETS).filter(|v| !v.is_empty());
+        let js_assets = ctx.assets.get(&SCRIPTS).filter(|v| !v.is_empty());
 
-            let js_assets = if let Some(js_asset) = ctx.assets.get(&SCRIPTS) {
-                info!("Found Javascript: {}", &js_asset.resolved_path.display());
-                vec![&js_asset.built_relative_path[..]]
-            } else {
-                vec![]
-            };
+        let (css_paths, inline_styles): (Vec<&str>, &[&str]) = match css_assets {
+            Some(assets) => {
+                for a in assets {
+                    info!("Found CSS stylesheet: {}", a.resolved_path.display());
+                }
+                let paths = assets
+                    .iter()
+                    .map(|a| a.built_relative_path.as_str())
+                    .collect();
+                (paths, &[])
+            }
+            None => {
+                info!("No stylesheet found, using default");
+                (Vec::new(), &[DEFAULT_STYLESHEET])
+            }
+        };
 
-            html_utils::inject_head_links(&html_string, &[], &css_assets, &js_assets)?
+        let js_paths: Vec<&str> = js_assets
+            .map(|v| v.iter().map(|a| a.built_relative_path.as_str()).collect())
+            .unwrap_or_default();
+
+        let html_string = html_utils::inject_inline_styles(&html_string, inline_styles)?;
+        let html_string = if css_paths.is_empty() && js_paths.is_empty() {
+            html_string
         } else {
-            info!("No stylesheet found, using default");
-            html_utils::inject_inline_styles(&html_string, &[DEFAULT_STYLESHEET])?
+            html_utils::inject_head_links(&html_string, &[], &css_paths, &js_paths)?
         };
 
         debug!(size = html_string.len(), "writing HTML file");
