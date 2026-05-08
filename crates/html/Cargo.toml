@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 # Core
 rheo-core = { workspace = true }
+toml = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

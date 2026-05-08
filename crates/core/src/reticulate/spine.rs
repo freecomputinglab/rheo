@@ -48,9 +48,11 @@ impl BuiltSpine {
         // Other formats (epub, html) handle concatenation differently.
 
         let transformer = if format_ext == "pdf" && spine_files.len() > 1 {
-            LinkTransformer::new(format_ext).with_spine(spine_files.to_vec())
-        } else {
             LinkTransformer::new(format_ext)
+                .with_spine(spine_files.to_vec())
+                .with_import_rewriting(merge)
+        } else {
+            LinkTransformer::new(format_ext).with_import_rewriting(merge)
         };
 
         let mut sources = Vec::new();

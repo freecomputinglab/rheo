@@ -40,6 +40,7 @@ use std::path::PathBuf;
 #[test_case("cases/error_formatting/invalid_field.typ")]
 #[test_case("cases/error_formatting/multiple_errors.typ")]
 #[test_case("cases/error_formatting/array_index_error.typ")]
+#[test_case("cases/merged_subdir_imports")]
 #[test_case("store/compat/merged-imports")]
 fn run_test_case(name: &str) {
     let test_case = TestCase::new(name);
@@ -1591,5 +1592,91 @@ fn test_packages_with_explicit_assets() {
     assert!(
         build_dir.join("html/custom.js").exists(),
         "explicit asset html/custom.js not found"
+    );
+}
+
+#[test]
+fn test_html_package_defaults_css_js() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Package directory with index.css and index.js
+    let pkg_dir = project_path.join("pkg");
+    std::fs::create_dir_all(&pkg_dir).expect("Failed to create pkg dir");
+    std::fs::write(pkg_dir.join("index.css"), "body { color: red; }")
+        .expect("Failed to write index.css");
+    std::fs::write(pkg_dir.join("index.js"), "console.log('pkg');")
+        .expect("Failed to write index.js");
+
+    // Typst source
+    std::fs::create_dir_all(project_path.join("content")).expect("Failed to create content dir");
+    std::fs::write(project_path.join("content/index.typ"), "= Hello\n")
+        .expect("Failed to write index.typ");
+
+    // rheo.toml with packages only — no [[html.assets]] block
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             content_dir = \"content\"\n\
+             \n\
+             [html]\n\
+             packages = [\"./pkg\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Package files copied to html/pkg/
+    assert!(
+        build_dir.join("html/pkg/index.css").exists(),
+        "pkg/index.css not found in html output"
+    );
+    assert!(
+        build_dir.join("html/pkg/index.js").exists(),
+        "pkg/index.js not found in html output"
+    );
+
+    // HTML head contains injected links
+    let html = std::fs::read_to_string(
+        build_dir
+            .join("html/index.html")
+            .into_boxed_path()
+            .to_str()
+            .unwrap(),
+    )
+    .expect("Failed to read HTML");
+
+    assert!(
+        html.contains(r#"href="pkg/index.css""#),
+        "HTML should contain link to pkg/index.css"
+    );
+    assert!(
+        html.contains(r#"src="pkg/index.js""#),
+        "HTML should contain script tag for pkg/index.js"
     );
 }

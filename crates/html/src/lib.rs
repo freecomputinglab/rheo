@@ -6,8 +6,10 @@ use rheo_core::html_utils;
 /// Used when the project doesn't provide its own style.css.
 pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
+use rheo_core::plugins::{PackageAssets, ResolvedPackage};
 use rheo_core::{
     AssetConfig, FormatPlugin, OpenHandle, PluginContext, Result, RheoError, ServerHandle,
+    default_package_assets,
 };
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -96,6 +98,24 @@ impl FormatPlugin for HtmlPlugin {
                 required: false,
             },
         ]
+    }
+
+    fn map_packages_to_assets(&self, packages: &[ResolvedPackage]) -> Vec<PackageAssets> {
+        packages
+            .iter()
+            .map(|pkg| {
+                let mut block = default_package_assets(pkg);
+                block.assets.extra.insert(
+                    "css_stylesheet".into(),
+                    toml::Value::String("index.css".into()),
+                );
+                block
+                    .assets
+                    .extra
+                    .insert("js_scripts".into(), toml::Value::String("index.js".into()));
+                block
+            })
+            .collect()
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {

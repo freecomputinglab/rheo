@@ -55,6 +55,12 @@ packages = ["./packages/a", "@preview/some-pkg:1.0.0"]
 #   [[html.assets]] dest = "some-pkg" copy = ["**/*"]
 # @preview/<name>:<version> resolves from the Typst package cache;
 # errors if not already cached. Other @namespaces are unsupported.
+# For [html] only, the plugin also synthesizes css_stylesheet="index.css"
+# and js_scripts="index.js" overrides per package. Both are optional —
+# missing files are silently skipped (no warning). Paths resolve against
+# the package's own source root, not project root. If the user also
+# declares [[html.assets]] with the same dest, both values are injected
+# (stacking semantics).
 
 # Multiple asset blocks: each [[html.assets]] contributes its own
 # overrides and copy patterns. All sources are copied verbatim by default.

@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 
 // Re-export logging functionality
 pub use rheo_core::logging;
-use rheo_core::plugins::Asset;
+use rheo_core::plugins::{Asset, PackageAssets};
 
 /// Initialize logging with specified verbosity
 pub fn init_logging(verbose: bool, quiet: bool) -> Result<()> {
@@ -416,49 +416,68 @@ fn copy_each(
 fn resolve_assets(
     plugin: &dyn FormatPlugin,
     plugin_section: &PluginSection,
+    package_blocks: &[PackageAssets],
     project_root: &Path,
     plugin_output_dir: &Path,
 ) -> Result<HashMap<&'static str, Vec<Asset>>> {
     let mut resolved = HashMap::new();
     let mut seen_relative_paths: HashMap<String, PathBuf> = HashMap::new();
     for asset_config in plugin.assets() {
-        let pairs = plugin_section.get_strings_with_block(asset_config.name);
-        let effective: Vec<(Option<&str>, &str)> = if pairs.is_empty() {
-            vec![(None, asset_config.default_path)]
+        // Gather pairs from user-declared asset blocks and package blocks.
+        let mut all_pairs: Vec<(Option<&str>, &Path, &str, bool)> = Vec::new();
+
+        // User-declared pairs resolve against project_root.
+        let user_pairs = plugin_section.get_strings_with_block(asset_config.name);
+        for (block, path) in &user_pairs {
+            all_pairs.push((block.dest.as_deref(), project_root, *path, false));
+        }
+
+        // Package-derived pairs resolve against their own source_root.
+        for pkg in package_blocks {
+            if let Some(val) = pkg.assets.extra.get(asset_config.name)
+                && let Some(s) = val.as_str()
+            {
+                all_pairs.push((pkg.assets.dest.as_deref(), &pkg.source_root, s, true));
+            }
+        }
+
+        let effective: Vec<(Option<&str>, &Path, &str, bool)> = if all_pairs.is_empty() {
+            vec![(None, project_root, asset_config.default_path, false)]
         } else {
-            pairs
-                .into_iter()
-                .map(|(b, p)| (b.dest.as_deref(), p))
-                .collect()
+            all_pairs
         };
 
-        // Group sources by dest, preserving insertion order.
-        let mut groups: Vec<(Option<&str>, Vec<&str>)> = Vec::new();
-        for (dest, path) in &effective {
-            if let Some(group) = groups.iter_mut().find(|(d, _)| *d == *dest) {
-                group.1.push(*path);
+        // Group sources by (dest, resolution_root), preserving insertion order.
+        #[allow(clippy::type_complexity)]
+        let mut groups: Vec<(Option<&str>, &Path, Vec<(&str, bool)>)> = Vec::new();
+        for (dest, root, path, is_pkg) in &effective {
+            if let Some(group) = groups
+                .iter_mut()
+                .find(|(d, r, _)| *d == *dest && r.as_os_str() == root.as_os_str())
+            {
+                group.2.push((*path, *is_pkg));
             } else {
-                groups.push((*dest, vec![*path]));
+                groups.push((*dest, *root, vec![(*path, *is_pkg)]));
             }
         }
 
         let mut all_assets: Vec<Asset> = Vec::new();
         let mut any_source_found = false;
 
-        for (dest, paths) in &groups {
+        for (dest, resolution_root, entries) in &groups {
             let out_dir = match dest {
                 Some(d) => plugin_output_dir.join(d),
                 None => plugin_output_dir.to_path_buf(),
             };
 
             let mut sources: Vec<PathBuf> = Vec::new();
-            let mut missing: Vec<&str> = Vec::new();
-            for path in paths {
-                let abs = project_root.join(path);
+            let mut missing: Vec<(&str, bool)> = Vec::new();
+            for (path, is_pkg) in entries {
+                let abs = resolution_root.join(path);
                 if abs.is_file() {
                     sources.push(abs);
                 } else {
-                    missing.push(path);
+                    missing.push((*path, *is_pkg));
                 }
             }
 
@@ -467,17 +486,19 @@ fn resolve_assets(
             }
             any_source_found = true;
 
-            for m in &missing {
-                warn!(
-                    plugin = plugin.name(),
-                    asset = asset_config.name,
-                    path = %m,
-                    "asset override path not found, skipping"
-                );
+            for (m, is_pkg) in &missing {
+                if !is_pkg {
+                    warn!(
+                        plugin = plugin.name(),
+                        asset = asset_config.name,
+                        path = %m,
+                        "asset override path not found, skipping"
+                    );
+                }
             }
 
             let outputs: Vec<PathBuf> =
-                copy_each(&sources, project_root, &out_dir, dest.is_some())?;
+                copy_each(&sources, resolution_root, &out_dir, dest.is_some())?;
 
             let assets: Vec<Asset> = outputs
                 .into_iter()
@@ -509,7 +530,7 @@ fn resolve_assets(
 
         if !any_source_found {
             if asset_config.required {
-                let paths: Vec<&str> = effective.iter().map(|(_, p)| *p).collect();
+                let paths: Vec<&str> = effective.iter().map(|(_, _, p, _)| *p).collect();
                 return Err(RheoError::project_config(format!(
                     "plugin '{}' requires input '{}' but no source was found (tried: {})",
                     plugin.name(),
@@ -559,9 +580,18 @@ fn perform_compilation(
             .get(plugin.name())
             .unwrap_or(&default_section);
 
+        // Expand package specifiers into synthetic asset blocks
+        let resolved_packages = rheo_core::plugins::resolve_packages(
+            plugin_section.packages(),
+            &project.root,
+            &typst_cache_dir,
+        )?;
+        let package_blocks = plugin.map_packages_to_assets(&resolved_packages);
+
         let resolved_assets = resolve_assets(
             plugin.as_ref(),
             plugin_section,
+            &package_blocks,
             &project.root,
             &plugin_output_dir,
         )?;
@@ -596,13 +626,6 @@ fn perform_compilation(
                 debug!(pattern = %pattern, "copy pattern matched no files");
             }
         }
-
-        // Expand package specifiers into synthetic asset blocks
-        let package_blocks = plugin.map_packages_to_assets(
-            plugin_section.packages(),
-            &project.root,
-            &typst_cache_dir,
-        )?;
 
         // Copy-glob loop: packages first, then user-declared blocks
         for package in &package_blocks {
@@ -1227,7 +1250,7 @@ mod tests {
         };
         let section = PluginSection::default();
 
-        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let resolved = resolve_assets(&plugin, &section, &[], project_root, &output_dir).unwrap();
         assert_eq!(
             resolved.get("css_stylesheet").unwrap()[0].built_relative_path,
             "style.css"
@@ -1264,7 +1287,7 @@ mod tests {
             ..Default::default()
         };
 
-        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let resolved = resolve_assets(&plugin, &section, &[], project_root, &output_dir).unwrap();
         assert_eq!(
             resolved.get("css_stylesheet").unwrap()[0].built_relative_path,
             "custom.css"
@@ -1288,7 +1311,7 @@ mod tests {
         };
         let section = PluginSection::default();
 
-        let result = resolve_assets(&plugin, &section, project_root, &output_dir);
+        let result = resolve_assets(&plugin, &section, &[], project_root, &output_dir);
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
             err_msg.contains("requires input"),
@@ -1314,7 +1337,7 @@ mod tests {
         };
         let section = PluginSection::default();
 
-        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let resolved = resolve_assets(&plugin, &section, &[], project_root, &output_dir).unwrap();
         assert!(
             !resolved.contains_key("optional_asset"),
             "optional missing asset should not be in resolved map"
@@ -1353,7 +1376,7 @@ mod tests {
             ..Default::default()
         };
 
-        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let resolved = resolve_assets(&plugin, &section, &[], project_root, &output_dir).unwrap();
         assert_eq!(
             resolved.get("css_stylesheet").unwrap()[0].built_relative_path,
             "styles/custom.css"
@@ -1407,7 +1430,7 @@ mod tests {
             ..Default::default()
         };
 
-        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let resolved = resolve_assets(&plugin, &section, &[], project_root, &output_dir).unwrap();
         let assets = resolved.get("css_stylesheet").unwrap();
         assert_eq!(assets.len(), 2);
         assert!(output_dir.join("one.css").exists());
@@ -1431,7 +1454,7 @@ mod tests {
         };
         let section = PluginSection::default();
 
-        let result = resolve_assets(&plugin, &section, project_root, &output_dir);
+        let result = resolve_assets(&plugin, &section, &[], project_root, &output_dir);
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
             err_msg.contains("requires input"),
@@ -1482,7 +1505,7 @@ mod tests {
             ..Default::default()
         };
 
-        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let resolved = resolve_assets(&plugin, &section, &[], project_root, &output_dir).unwrap();
         let assets = resolved.get("css_stylesheet").unwrap();
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].built_relative_path, "exists.css");
@@ -1542,7 +1565,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = resolve_assets(&plugin, &section, project_root, &output_dir);
+        let result = resolve_assets(&plugin, &section, &[], project_root, &output_dir);
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
             err_msg.contains("asset path collision"),
@@ -1584,7 +1607,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = resolve_assets(&plugin, &section, project_root, &output_dir);
+        let result = resolve_assets(&plugin, &section, &[], project_root, &output_dir);
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
             err_msg.contains("absolute or outside the project root"),
@@ -1628,7 +1651,7 @@ mod tests {
             ..Default::default()
         };
 
-        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let resolved = resolve_assets(&plugin, &section, &[], project_root, &output_dir).unwrap();
         let assets = resolved.get("css_stylesheet").unwrap();
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].built_relative_path, "subdir/custom.css");
@@ -1679,7 +1702,7 @@ mod tests {
             ..Default::default()
         };
 
-        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let resolved = resolve_assets(&plugin, &section, &[], project_root, &output_dir).unwrap();
         let assets = resolved.get("css_stylesheet").unwrap();
         assert_eq!(assets.len(), 2);
         assert!(output_dir.join("root.css").exists());
@@ -1719,7 +1742,7 @@ mod tests {
             ..Default::default()
         };
 
-        let resolved = resolve_assets(&plugin, &section, project_root, &output_dir).unwrap();
+        let resolved = resolve_assets(&plugin, &section, &[], project_root, &output_dir).unwrap();
         let assets = resolved.get("js_scripts").unwrap();
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].built_relative_path, "allassets/index.js");
@@ -1730,10 +1753,10 @@ mod tests {
         );
     }
 
-    // --- map_packages_to_assets tests ---
+    // --- resolve_packages tests ---
 
     #[test]
-    fn test_map_packages_local_directory() {
+    fn test_resolve_packages_local_directory() {
         let dir = tempfile::tempdir().unwrap();
         let project_root = dir.path();
         let cache_dir = dir.path().join("cache");
@@ -1741,61 +1764,44 @@ mod tests {
         std::fs::create_dir_all(project_root.join("mypkg")).unwrap();
         std::fs::write(project_root.join("mypkg/file.txt"), "data").unwrap();
 
-        let plugin = MockPlugin {
-            plugin_name: "html",
-            declared_assets: vec![],
-        };
         let packages = vec!["./mypkg".to_string()];
-        let result = plugin
-            .map_packages_to_assets(&packages, project_root, &cache_dir)
-            .unwrap();
+        let resolved =
+            rheo_core::plugins::resolve_packages(&packages, project_root, &cache_dir).unwrap();
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].assets.dest.as_deref(), Some("mypkg"));
-        assert_eq!(result[0].assets.copy, vec!["**/*"]);
-        assert_eq!(result[0].source_root, project_root.join("mypkg"));
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].name, "mypkg");
+        assert_eq!(resolved[0].source_root, project_root.join("mypkg"));
     }
 
     #[test]
-    fn test_map_packages_preview_namespace() {
+    fn test_resolve_packages_preview_namespace() {
         let dir = tempfile::tempdir().unwrap();
         let cache_dir = dir.path();
         let project_root = dir.path().join("project");
         std::fs::create_dir_all(&project_root).unwrap();
 
-        // Create fake Typst package cache layout
         std::fs::create_dir_all(cache_dir.join("preview/cool-pkg/1.0.0")).unwrap();
         std::fs::write(cache_dir.join("preview/cool-pkg/1.0.0/lib.typ"), "").unwrap();
 
-        let plugin = MockPlugin {
-            plugin_name: "html",
-            declared_assets: vec![],
-        };
         let packages = vec!["@preview/cool-pkg:1.0.0".to_string()];
-        let result = plugin
-            .map_packages_to_assets(&packages, &project_root, cache_dir)
-            .unwrap();
+        let resolved =
+            rheo_core::plugins::resolve_packages(&packages, &project_root, cache_dir).unwrap();
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].assets.dest.as_deref(), Some("cool-pkg"));
-        assert_eq!(result[0].assets.copy, vec!["**/*"]);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].name, "cool-pkg");
         assert_eq!(
-            result[0].source_root,
+            resolved[0].source_root,
             cache_dir.join("preview/cool-pkg/1.0.0")
         );
     }
 
     #[test]
-    fn test_map_packages_unsupported_namespace_errors() {
+    fn test_resolve_packages_unsupported_namespace_errors() {
         let dir = tempfile::tempdir().unwrap();
         let project_root = dir.path();
 
-        let plugin = MockPlugin {
-            plugin_name: "html",
-            declared_assets: vec![],
-        };
         let packages = vec!["@local/foo:0.1.0".to_string()];
-        let result = plugin.map_packages_to_assets(&packages, project_root, dir.path());
+        let result = rheo_core::plugins::resolve_packages(&packages, project_root, dir.path());
 
         let err = format!("{}", result.unwrap_err());
         assert!(
@@ -1806,16 +1812,12 @@ mod tests {
     }
 
     #[test]
-    fn test_map_packages_missing_directory_errors() {
+    fn test_resolve_packages_missing_directory_errors() {
         let dir = tempfile::tempdir().unwrap();
         let project_root = dir.path();
 
-        let plugin = MockPlugin {
-            plugin_name: "html",
-            declared_assets: vec![],
-        };
         let packages = vec!["./nonexistent".to_string()];
-        let result = plugin.map_packages_to_assets(&packages, project_root, dir.path());
+        let result = rheo_core::plugins::resolve_packages(&packages, project_root, dir.path());
 
         let err = format!("{}", result.unwrap_err());
         assert!(
@@ -1826,16 +1828,12 @@ mod tests {
     }
 
     #[test]
-    fn test_map_packages_preview_missing_version_errors() {
+    fn test_resolve_packages_preview_missing_version_errors() {
         let dir = tempfile::tempdir().unwrap();
         let project_root = dir.path();
 
-        let plugin = MockPlugin {
-            plugin_name: "html",
-            declared_assets: vec![],
-        };
         let packages = vec!["@preview/some-pkg".to_string()];
-        let result = plugin.map_packages_to_assets(&packages, project_root, dir.path());
+        let result = rheo_core::plugins::resolve_packages(&packages, project_root, dir.path());
 
         let err = format!("{}", result.unwrap_err());
         assert!(
@@ -1846,22 +1844,268 @@ mod tests {
     }
 
     #[test]
-    fn test_map_packages_preview_not_in_cache_errors() {
+    fn test_resolve_packages_preview_not_in_cache_errors() {
         let dir = tempfile::tempdir().unwrap();
         let project_root = dir.path();
 
-        let plugin = MockPlugin {
-            plugin_name: "html",
-            declared_assets: vec![],
-        };
         let packages = vec!["@preview/absent:0.1.0".to_string()];
-        let result = plugin.map_packages_to_assets(&packages, project_root, dir.path());
+        let result = rheo_core::plugins::resolve_packages(&packages, project_root, dir.path());
 
         let err = format!("{}", result.unwrap_err());
         assert!(
             err.contains("not found in cache"),
             "expected cache miss error, got: {}",
             err
+        );
+    }
+
+    #[test]
+    fn test_map_packages_to_assets_uses_resolved() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+
+        std::fs::create_dir_all(project_root.join("mypkg")).unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![],
+        };
+        let packages = vec!["./mypkg".to_string()];
+        let resolved =
+            rheo_core::plugins::resolve_packages(&packages, project_root, dir.path()).unwrap();
+        let result = plugin.map_packages_to_assets(&resolved);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].assets.dest.as_deref(), Some("mypkg"));
+        assert_eq!(result[0].assets.copy, vec!["**/*"]);
+        assert_eq!(result[0].source_root, project_root.join("mypkg"));
+    }
+
+    #[test]
+    fn test_resolve_assets_package_block_css_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        let pkg_dir = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(pkg_dir.join("index.css"), "body { color: red; }").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+        let section = PluginSection::default();
+        let mut extra = toml::map::Map::new();
+        extra.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("index.css".into()),
+        );
+        let package_blocks = vec![PackageAssets {
+            assets: rheo_core::config::PluginAssets {
+                copy: vec![],
+                dest: Some("pkg".into()),
+                extra,
+            },
+            source_root: pkg_dir.clone(),
+        }];
+
+        let resolved = resolve_assets(
+            &plugin,
+            &section,
+            &package_blocks,
+            project_root,
+            &output_dir,
+        )
+        .unwrap();
+        let assets = resolved.get("css_stylesheet").unwrap();
+        assert_eq!(assets[0].built_relative_path, "pkg/index.css");
+    }
+
+    #[test]
+    fn test_resolve_assets_package_block_optional_missing_skips() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        let pkg_dir = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        // No index.css on disk
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+        let section = PluginSection::default();
+        let mut extra = toml::map::Map::new();
+        extra.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("index.css".into()),
+        );
+        let package_blocks = vec![PackageAssets {
+            assets: rheo_core::config::PluginAssets {
+                copy: vec![],
+                dest: Some("pkg".into()),
+                extra,
+            },
+            source_root: pkg_dir,
+        }];
+
+        let resolved = resolve_assets(
+            &plugin,
+            &section,
+            &package_blocks,
+            project_root,
+            &output_dir,
+        )
+        .unwrap();
+        assert!(
+            !resolved.contains_key("css_stylesheet"),
+            "missing package default should be silently skipped"
+        );
+    }
+
+    #[test]
+    fn test_resolve_assets_user_and_package_collision() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        let pkg_dir = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(pkg_dir.join("x.css"), "/* pkg */").unwrap();
+        std::fs::write(project_root.join("x.css"), "/* user */").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+        let mut user_extra = toml::map::Map::new();
+        user_extra.insert("css_stylesheet".into(), toml::Value::String("x.css".into()));
+        let section = PluginSection {
+            assets: Some(rheo_core::config::AssetsField::Single(
+                rheo_core::config::PluginAssets {
+                    dest: Some("pkg".into()),
+                    extra: user_extra,
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
+        };
+        let mut pkg_extra = toml::map::Map::new();
+        pkg_extra.insert("css_stylesheet".into(), toml::Value::String("x.css".into()));
+        let package_blocks = vec![PackageAssets {
+            assets: rheo_core::config::PluginAssets {
+                copy: vec![],
+                dest: Some("pkg".into()),
+                extra: pkg_extra,
+            },
+            source_root: pkg_dir,
+        }];
+
+        let result = resolve_assets(
+            &plugin,
+            &section,
+            &package_blocks,
+            project_root,
+            &output_dir,
+        );
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("asset path collision"),
+            "expected collision error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_assets_user_and_package_stack_css() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        let pkg_dir = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(pkg_dir.join("index.css"), "/* pkg default */").unwrap();
+        std::fs::write(project_root.join("custom.css"), "/* user */").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+            }],
+        };
+        // User declares custom.css for dest "pkg"
+        let mut user_extra = toml::map::Map::new();
+        user_extra.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("custom.css".into()),
+        );
+        let section = PluginSection {
+            assets: Some(rheo_core::config::AssetsField::Single(
+                rheo_core::config::PluginAssets {
+                    dest: Some("pkg".into()),
+                    extra: user_extra,
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
+        };
+        // Package contributes index.css for dest "pkg"
+        let mut pkg_extra = toml::map::Map::new();
+        pkg_extra.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("index.css".into()),
+        );
+        let package_blocks = vec![PackageAssets {
+            assets: rheo_core::config::PluginAssets {
+                copy: vec![],
+                dest: Some("pkg".into()),
+                extra: pkg_extra,
+            },
+            source_root: pkg_dir,
+        }];
+
+        let resolved = resolve_assets(
+            &plugin,
+            &section,
+            &package_blocks,
+            project_root,
+            &output_dir,
+        )
+        .unwrap();
+        let assets = resolved.get("css_stylesheet").unwrap();
+        let paths: Vec<&str> = assets
+            .iter()
+            .map(|a| a.built_relative_path.as_str())
+            .collect();
+        assert!(
+            paths.contains(&"pkg/custom.css"),
+            "expected user css in output, got: {:?}",
+            paths
+        );
+        assert!(
+            paths.contains(&"pkg/index.css"),
+            "expected package default css in output, got: {:?}",
+            paths
         );
     }
 }
