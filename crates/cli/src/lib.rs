@@ -1609,7 +1609,7 @@ mod tests {
         let result = resolve_assets(&plugin, &section, &[], project_root, &output_dir);
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("absolute or outside the project root"),
+            err_msg.contains("absolute or outside the source root"),
             "expected absolute path error, got: {}",
             err_msg
         );
