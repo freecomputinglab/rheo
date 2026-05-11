@@ -1,8 +1,11 @@
 version = "0.2.1"
 content_dir = "content"
 
+[html]
+packages = ["./my-tooltip"]
+
 [html.assets]
-js_scripts = "my-tooltip/dist/my-tooltip.js"
+css_stylesheet = "style.css"
 
 [html.spine]
 vertebrae = ["*.typ"]

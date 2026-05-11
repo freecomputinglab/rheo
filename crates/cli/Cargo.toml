@@ -55,5 +55,8 @@ thiserror = { workspace = true }
 globset = { workspace = true }
 glob = { workspace = true }
 
+# System paths
+dirs = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }

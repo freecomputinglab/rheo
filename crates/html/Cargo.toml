@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 # Core
 rheo-core = { workspace = true }
+toml = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
@@ -25,4 +26,7 @@ tower-http = { workspace = true }
 webbrowser = { workspace = true }
 tokio-stream = { workspace = true }
 mime_guess = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 

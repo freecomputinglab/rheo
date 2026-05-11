@@ -27,6 +27,7 @@ pub enum OpenHandle {
 }
 
 use crate::compile::RheoCompileOptions;
+use crate::config::PluginAssets;
 use crate::{BuiltSpine, Result, RheoError};
 
 /// Standardized spine options resolved by rheo core before calling compile().
@@ -253,6 +254,98 @@ pub enum CompilationTarget {
     Html,
     /// Compile to a paged (PDF) document.
     Pdf,
+}
+
+/// A package expanded into synthetic asset blocks, carrying its resolved source root.
+#[derive(Debug)]
+pub struct PackageAssets {
+    pub assets: PluginAssets,
+    pub source_root: PathBuf,
+}
+
+/// A resolved package specifier ready for asset block synthesis.
+#[derive(Debug)]
+pub struct ResolvedPackage {
+    pub name: String,
+    pub source_root: PathBuf,
+}
+
+/// Resolves package specifiers into filesystem locations.
+///
+/// For each entry in `packages`:
+/// - `@preview/<name>:<version>` — resolves from the Typst package cache
+/// - `<relative-path>` — resolves relative to `project_root`
+pub fn resolve_packages(
+    packages: &[String],
+    project_root: &Path,
+    cache_dir: &Path,
+) -> Result<Vec<ResolvedPackage>> {
+    let mut result = Vec::with_capacity(packages.len());
+    for spec in packages {
+        let (source_root, name) = if let Some(rest) = spec.strip_prefix("@preview/") {
+            let colon_pos = rest.rfind(':').ok_or_else(|| {
+                RheoError::project_config(format!(
+                    "package '{}' is missing a version (expected @preview/<name>:<version>)",
+                    spec
+                ))
+            })?;
+            let pkg_name = &rest[..colon_pos];
+            let version = &rest[colon_pos + 1..];
+            if pkg_name.is_empty() || version.is_empty() {
+                return Err(RheoError::project_config(format!(
+                    "package '{}' has empty name or version",
+                    spec
+                )));
+            }
+            let resolved = cache_dir.join("preview").join(pkg_name).join(version);
+            if !resolved.is_dir() {
+                return Err(RheoError::project_config(format!(
+                    "package '{}' not found in cache at '{}' — run a Typst compile first so the package is fetched",
+                    spec,
+                    resolved.display()
+                )));
+            }
+            (resolved, pkg_name.to_string())
+        } else if spec.starts_with('@') {
+            return Err(RheoError::project_config(format!(
+                "package '{}' uses an unsupported namespace (only @preview is supported)",
+                spec
+            )));
+        } else {
+            let resolved = project_root.join(spec);
+            if !resolved.is_dir() {
+                return Err(RheoError::project_config(format!(
+                    "package directory '{}' not found",
+                    spec
+                )));
+            }
+            let dest = resolved
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| {
+                    RheoError::project_config(format!(
+                        "package path '{}' has no directory name",
+                        spec
+                    ))
+                })?
+                .to_string();
+            (resolved, dest)
+        };
+        result.push(ResolvedPackage { name, source_root });
+    }
+    Ok(result)
+}
+
+/// Produces the default `PackageAssets` for a resolved package.
+pub fn default_package_assets(pkg: &ResolvedPackage) -> PackageAssets {
+    PackageAssets {
+        assets: PluginAssets {
+            copy: vec!["**/*".to_string()],
+            dest: Some(pkg.name.clone()),
+            extra: toml::map::Map::new(),
+        },
+        source_root: pkg.source_root.clone(),
+    }
 }
 
 /// Plugin trait for implementing new output formats in rheo.
@@ -506,6 +599,11 @@ pub trait FormatPlugin: Send + Sync {
     /// ```
     fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
         None
+    }
+
+    /// Maps resolved packages to synthetic asset blocks.
+    fn map_packages_to_assets(&self, packages: &[ResolvedPackage]) -> Vec<PackageAssets> {
+        packages.iter().map(default_package_assets).collect()
     }
 
     /// Provide Typst library code to inject into all compiled files.

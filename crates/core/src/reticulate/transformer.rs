@@ -14,6 +14,11 @@ pub struct LinkTransformer {
     // a flag set in the FormatPlugin indicating whether `merge = true` produces a PDF...
     format_name: String,
     spine: Option<Vec<PathBuf>>,
+    /// When true, rewrite relative import/include paths to be project-root-relative.
+    /// Needed when sources will be compiled from a different directory (e.g. merged into
+    /// a single temp file at the project root). Must be false when each source is compiled
+    /// from its own directory, or the rewritten paths will be wrong.
+    rewrite_imports: bool,
 }
 
 impl LinkTransformer {
@@ -22,12 +27,19 @@ impl LinkTransformer {
         Self {
             format_name: format_name.to_string(),
             spine: None,
+            rewrite_imports: false,
         }
     }
 
     /// Set the spine for merged PDF compilation.
     pub fn with_spine(mut self, spine: Vec<PathBuf>) -> Self {
         self.spine = Some(spine);
+        self
+    }
+
+    /// Enable import path rewriting for merged compilation.
+    pub fn with_import_rewriting(mut self, rewrite: bool) -> Self {
+        self.rewrite_imports = rewrite;
         self
     }
 
@@ -62,20 +74,23 @@ impl LinkTransformer {
         let mut transformations = self.compute_transformations(&extracted.links, current_file)?;
 
         // Rewrite relative import/include paths to be project-root-relative
-        for import in &extracted.imports {
-            if import.is_package || import.path.starts_with('/') {
-                continue;
+        // when sources will be hoisted to a temp file at the project root (merge mode).
+        if self.rewrite_imports {
+            for import in &extracted.imports {
+                if import.is_package || import.path.starts_with('/') {
+                    continue;
+                }
+                let file_dir = current_file.parent().unwrap_or(Path::new(""));
+                let absolute = file_dir.join(&import.path);
+                let new_path = absolute
+                    .strip_prefix(project_root)
+                    .map(|p| p.to_str().unwrap().to_owned())
+                    .unwrap_or_else(|_| import.path.clone());
+                transformations.push((
+                    import.byte_range.clone(),
+                    LinkTransform::ReplaceUrl { new_url: new_path },
+                ));
             }
-            let file_dir = current_file.parent().unwrap_or(Path::new(""));
-            let absolute = file_dir.join(&import.path);
-            let new_path = absolute
-                .strip_prefix(project_root)
-                .map(|p| p.to_str().unwrap().to_owned())
-                .unwrap_or_else(|_| import.path.clone());
-            transformations.push((
-                import.byte_range.clone(),
-                LinkTransform::ReplaceUrl { new_url: new_path },
-            ));
         }
 
         let code_ranges = serializer::find_code_block_ranges(&source_obj);

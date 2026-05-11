@@ -1,4 +1,4 @@
-#import "../rheo-slides/dist/rheo-slides.typ": slide, template
+#import "../rheo-slides/rheo-slides.typ": slide, template
 
 #show: template
 
