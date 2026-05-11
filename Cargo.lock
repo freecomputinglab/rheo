@@ -3059,6 +3059,7 @@ dependencies = [
  "axum",
  "mime_guess",
  "rheo-core",
+ "tempfile",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",

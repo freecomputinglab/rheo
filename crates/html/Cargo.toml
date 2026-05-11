@@ -27,3 +27,6 @@ webbrowser = { workspace = true }
 tokio-stream = { workspace = true }
 mime_guess = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+

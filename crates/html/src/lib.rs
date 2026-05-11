@@ -161,3 +161,35 @@ impl FormatPlugin for HtmlPlugin {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rheo_core::plugins::ResolvedPackage;
+
+    #[test]
+    fn test_html_plugin_map_packages_to_assets_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_root = dir.path().join("mypkg");
+        std::fs::create_dir_all(&source_root).unwrap();
+
+        let resolved = vec![ResolvedPackage {
+            name: "mypkg".into(),
+            source_root: source_root.clone(),
+        }];
+        let result = HtmlPlugin.map_packages_to_assets(&resolved);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].assets.extra.get("css_stylesheet"),
+            Some(&toml::Value::String("index.css".into()))
+        );
+        assert_eq!(
+            result[0].assets.extra.get("js_scripts"),
+            Some(&toml::Value::String("index.js".into()))
+        );
+        assert_eq!(result[0].assets.dest.as_deref(), Some("mypkg"));
+        assert_eq!(result[0].assets.copy, vec!["**/*"]);
+        assert_eq!(result[0].source_root, source_root);
+    }
+}
