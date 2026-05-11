@@ -374,15 +374,15 @@ fn compile_one_file(
 /// Otherwise the project-root-relative path is preserved.
 fn copy_each(
     sources: &[PathBuf],
-    project_root: &Path,
+    source_root: &Path,
     build_dir: &Path,
     strip_to_basename: bool,
 ) -> Result<Vec<PathBuf>> {
     let mut out = Vec::with_capacity(sources.len());
     for src in sources {
-        let rel = src.strip_prefix(project_root).map_err(|_| {
+        let rel = src.strip_prefix(source_root).map_err(|_| {
             RheoError::project_config(format!(
-                "asset override path '{}' is absolute or outside the project root; paths must be relative to the project root",
+                "asset override path '{}' is absolute or outside the source root; paths must be relative to the source root",
                 src.display()
             ))
         })?;
@@ -479,7 +479,12 @@ fn resolve_assets(
         // User-declared pairs resolve against project_root.
         let user_pairs = plugin_section.get_strings_with_block(asset_config.name);
         for (block, path) in &user_pairs {
-            all_pairs.push(AssetEntry { dest: block.dest.as_deref(), root: project_root, path, is_pkg: false });
+            all_pairs.push(AssetEntry {
+                dest: block.dest.as_deref(),
+                root: project_root,
+                path,
+                is_pkg: false,
+            });
         }
 
         // Package-derived pairs resolve against their own source_root.
@@ -487,12 +492,22 @@ fn resolve_assets(
             if let Some(val) = pkg.assets.extra.get(asset_config.name)
                 && let Some(s) = val.as_str()
             {
-                all_pairs.push(AssetEntry { dest: pkg.assets.dest.as_deref(), root: &pkg.source_root, path: s, is_pkg: true });
+                all_pairs.push(AssetEntry {
+                    dest: pkg.assets.dest.as_deref(),
+                    root: &pkg.source_root,
+                    path: s,
+                    is_pkg: true,
+                });
             }
         }
 
         let effective: Vec<AssetEntry<'_>> = if all_pairs.is_empty() {
-            vec![AssetEntry { dest: None, root: project_root, path: asset_config.default_path, is_pkg: false }]
+            vec![AssetEntry {
+                dest: None,
+                root: project_root,
+                path: asset_config.default_path,
+                is_pkg: false,
+            }]
         } else {
             all_pairs
         };
@@ -511,7 +526,11 @@ fn resolve_assets(
             {
                 group.entries.push((entry.path, entry.is_pkg));
             } else {
-                groups.push(AssetGroup { dest: entry.dest, root: entry.root, entries: vec![(entry.path, entry.is_pkg)] });
+                groups.push(AssetGroup {
+                    dest: entry.dest,
+                    root: entry.root,
+                    entries: vec![(entry.path, entry.is_pkg)],
+                });
             }
         }
 
@@ -657,7 +676,12 @@ fn perform_compilation(
         )?;
 
         // Execute copy patterns — global, then package blocks, then user-declared blocks
-        copy_glob_patterns(&project.config.copy, &project.root, &plugin_output_dir, None)?;
+        copy_glob_patterns(
+            &project.config.copy,
+            &project.root,
+            &plugin_output_dir,
+            None,
+        )?;
 
         for package in &package_blocks {
             copy_glob_patterns(
