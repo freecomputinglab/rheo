@@ -467,12 +467,19 @@ fn resolve_assets(
     let mut seen_relative_paths: HashMap<String, PathBuf> = HashMap::new();
     for asset_config in plugin.assets() {
         // Gather pairs from user-declared asset blocks and package blocks.
-        let mut all_pairs: Vec<(Option<&str>, &Path, &str, bool)> = Vec::new();
+        struct AssetEntry<'a> {
+            dest: Option<&'a str>,
+            root: &'a Path,
+            path: &'a str,
+            is_pkg: bool,
+        }
+
+        let mut all_pairs: Vec<AssetEntry<'_>> = Vec::new();
 
         // User-declared pairs resolve against project_root.
         let user_pairs = plugin_section.get_strings_with_block(asset_config.name);
         for (block, path) in &user_pairs {
-            all_pairs.push((block.dest.as_deref(), project_root, *path, false));
+            all_pairs.push(AssetEntry { dest: block.dest.as_deref(), root: project_root, path, is_pkg: false });
         }
 
         // Package-derived pairs resolve against their own source_root.
@@ -480,43 +487,47 @@ fn resolve_assets(
             if let Some(val) = pkg.assets.extra.get(asset_config.name)
                 && let Some(s) = val.as_str()
             {
-                all_pairs.push((pkg.assets.dest.as_deref(), &pkg.source_root, s, true));
+                all_pairs.push(AssetEntry { dest: pkg.assets.dest.as_deref(), root: &pkg.source_root, path: s, is_pkg: true });
             }
         }
 
-        let effective: Vec<(Option<&str>, &Path, &str, bool)> = if all_pairs.is_empty() {
-            vec![(None, project_root, asset_config.default_path, false)]
+        let effective: Vec<AssetEntry<'_>> = if all_pairs.is_empty() {
+            vec![AssetEntry { dest: None, root: project_root, path: asset_config.default_path, is_pkg: false }]
         } else {
             all_pairs
         };
 
         // Group sources by (dest, resolution_root), preserving insertion order.
-        #[allow(clippy::type_complexity)]
-        let mut groups: Vec<(Option<&str>, &Path, Vec<(&str, bool)>)> = Vec::new();
-        for (dest, root, path, is_pkg) in &effective {
+        struct AssetGroup<'a> {
+            dest: Option<&'a str>,
+            root: &'a Path,
+            entries: Vec<(&'a str, bool)>,
+        }
+        let mut groups: Vec<AssetGroup<'_>> = Vec::new();
+        for entry in &effective {
             if let Some(group) = groups
                 .iter_mut()
-                .find(|(d, r, _)| *d == *dest && r.as_os_str() == root.as_os_str())
+                .find(|g| g.dest == entry.dest && g.root.as_os_str() == entry.root.as_os_str())
             {
-                group.2.push((*path, *is_pkg));
+                group.entries.push((entry.path, entry.is_pkg));
             } else {
-                groups.push((*dest, *root, vec![(*path, *is_pkg)]));
+                groups.push(AssetGroup { dest: entry.dest, root: entry.root, entries: vec![(entry.path, entry.is_pkg)] });
             }
         }
 
         let mut all_assets: Vec<Asset> = Vec::new();
         let mut any_source_found = false;
 
-        for (dest, resolution_root, entries) in &groups {
-            let out_dir = match dest {
+        for group in &groups {
+            let out_dir = match group.dest {
                 Some(d) => plugin_output_dir.join(d),
                 None => plugin_output_dir.to_path_buf(),
             };
 
             let mut sources: Vec<PathBuf> = Vec::new();
             let mut missing: Vec<(&str, bool)> = Vec::new();
-            for (path, is_pkg) in entries {
-                let abs = resolution_root.join(path);
+            for (path, is_pkg) in &group.entries {
+                let abs = group.root.join(path);
                 if abs.is_file() {
                     sources.push(abs);
                 } else {
@@ -541,7 +552,7 @@ fn resolve_assets(
             }
 
             let outputs: Vec<PathBuf> =
-                copy_each(&sources, resolution_root, &out_dir, dest.is_some())?;
+                copy_each(&sources, group.root, &out_dir, group.dest.is_some())?;
 
             let assets: Vec<Asset> = outputs
                 .into_iter()
@@ -574,7 +585,7 @@ fn resolve_assets(
 
         if !any_source_found {
             if asset_config.required {
-                let paths: Vec<&str> = effective.iter().map(|(_, _, p, _)| *p).collect();
+                let paths: Vec<&str> = effective.iter().map(|e| e.path).collect();
                 return Err(RheoError::project_config(format!(
                     "plugin '{}' requires input '{}' but no source was found (tried: {})",
                     plugin.name(),
