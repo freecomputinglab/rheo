@@ -409,6 +409,49 @@ fn copy_each(
     Ok(out)
 }
 
+/// Expand glob patterns against `source_root` and copy matching files into
+/// `plugin_output_dir` (optionally under `dest_prefix`).
+fn copy_glob_patterns(
+    patterns: &[String],
+    source_root: &Path,
+    plugin_output_dir: &Path,
+    dest_prefix: Option<&str>,
+) -> Result<()> {
+    for pattern in patterns {
+        let abs_pattern = source_root.join(pattern).display().to_string();
+        let entries = glob::glob(&abs_pattern).map_err(|e| {
+            RheoError::project_config(format!("invalid copy pattern '{}': {}", pattern, e))
+        })?;
+        let mut matched = false;
+        for entry in entries.filter_map(|e| e.ok()).filter(|p| p.is_file()) {
+            matched = true;
+            let rel = entry.strip_prefix(source_root).unwrap_or(entry.as_path());
+            let dest = match dest_prefix {
+                Some(d) => plugin_output_dir.join(d).join(rel),
+                None => plugin_output_dir.join(rel),
+            };
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    RheoError::io(
+                        e,
+                        format!("creating directory for copy of {}", rel.display()),
+                    )
+                })?;
+            }
+            std::fs::copy(&entry, &dest).map_err(|e| RheoError::AssetCopy {
+                source: entry.clone(),
+                dest: dest.clone(),
+                error: e,
+            })?;
+            debug!(src = %entry.display(), dest = %dest.display(), "copied file");
+        }
+        if !matched {
+            debug!(pattern = %pattern, "copy pattern matched no files");
+        }
+    }
+    Ok(())
+}
+
 /// Resolve plugin assets, collecting overrides across all [[plugin.assets]] blocks
 /// and copying each source verbatim into the plugin output dir. When a block
 /// has `dest` set, named assets are placed under that subdirectory with their
@@ -597,110 +640,25 @@ fn perform_compilation(
             &plugin_output_dir,
         )?;
 
-        // Execute copy patterns — global (Pass A) then per-block (Pass B)
-        for pattern in project.config.copy.iter() {
-            let abs_pattern = project.root.join(pattern).display().to_string();
-            let entries = glob::glob(&abs_pattern).map_err(|e| {
-                RheoError::project_config(format!("invalid copy pattern '{}': {}", pattern, e))
-            })?;
-            let mut matched = false;
-            for entry in entries.filter_map(|e| e.ok()).filter(|p| p.is_file()) {
-                matched = true;
-                let rel = entry.strip_prefix(&project.root).unwrap_or(entry.as_path());
-                let dest = plugin_output_dir.join(rel);
-                if let Some(parent) = dest.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        RheoError::io(
-                            e,
-                            format!("creating directory for copy of {}", rel.display()),
-                        )
-                    })?;
-                }
-                std::fs::copy(&entry, &dest).map_err(|e| RheoError::AssetCopy {
-                    source: entry.clone(),
-                    dest: dest.clone(),
-                    error: e,
-                })?;
-                debug!(src = %entry.display(), dest = %dest.display(), "copied file");
-            }
-            if !matched {
-                debug!(pattern = %pattern, "copy pattern matched no files");
-            }
-        }
+        // Execute copy patterns — global, then package blocks, then user-declared blocks
+        copy_glob_patterns(&project.config.copy, &project.root, &plugin_output_dir, None)?;
 
-        // Copy-glob loop: packages first, then user-declared blocks
         for package in &package_blocks {
-            let block = &package.assets;
-            let block_dest = block.dest.as_deref();
-            let source_root = &package.source_root;
-            for pattern in block.copy.iter() {
-                let abs_pattern = source_root.join(pattern).display().to_string();
-                let entries = glob::glob(&abs_pattern).map_err(|e| {
-                    RheoError::project_config(format!("invalid copy pattern '{}': {}", pattern, e))
-                })?;
-                let mut matched = false;
-                for entry in entries.filter_map(|e| e.ok()).filter(|p| p.is_file()) {
-                    matched = true;
-                    let rel = entry.strip_prefix(source_root).unwrap_or(entry.as_path());
-                    let dest = match block_dest {
-                        Some(d) => plugin_output_dir.join(d).join(rel),
-                        None => plugin_output_dir.join(rel),
-                    };
-                    if let Some(parent) = dest.parent() {
-                        std::fs::create_dir_all(parent).map_err(|e| {
-                            RheoError::io(
-                                e,
-                                format!("creating directory for copy of {}", rel.display()),
-                            )
-                        })?;
-                    }
-                    std::fs::copy(&entry, &dest).map_err(|e| RheoError::AssetCopy {
-                        source: entry.clone(),
-                        dest: dest.clone(),
-                        error: e,
-                    })?;
-                    debug!(src = %entry.display(), dest = %dest.display(), "copied package file");
-                }
-                if !matched {
-                    debug!(pattern = %pattern, "package copy pattern matched no files");
-                }
-            }
+            copy_glob_patterns(
+                &package.assets.copy,
+                &package.source_root,
+                &plugin_output_dir,
+                package.assets.dest.as_deref(),
+            )?;
         }
 
         for block in plugin_section.asset_blocks() {
-            let block_dest = block.dest.as_deref();
-            for pattern in block.copy.iter() {
-                let abs_pattern = project.root.join(pattern).display().to_string();
-                let entries = glob::glob(&abs_pattern).map_err(|e| {
-                    RheoError::project_config(format!("invalid copy pattern '{}': {}", pattern, e))
-                })?;
-                let mut matched = false;
-                for entry in entries.filter_map(|e| e.ok()).filter(|p| p.is_file()) {
-                    matched = true;
-                    let rel = entry.strip_prefix(&project.root).unwrap_or(entry.as_path());
-                    let dest = match block_dest {
-                        Some(d) => plugin_output_dir.join(d).join(rel),
-                        None => plugin_output_dir.join(rel),
-                    };
-                    if let Some(parent) = dest.parent() {
-                        std::fs::create_dir_all(parent).map_err(|e| {
-                            RheoError::io(
-                                e,
-                                format!("creating directory for copy of {}", rel.display()),
-                            )
-                        })?;
-                    }
-                    std::fs::copy(&entry, &dest).map_err(|e| RheoError::AssetCopy {
-                        source: entry.clone(),
-                        dest: dest.clone(),
-                        error: e,
-                    })?;
-                    debug!(src = %entry.display(), dest = %dest.display(), "copied file");
-                }
-                if !matched {
-                    debug!(pattern = %pattern, "copy pattern matched no files");
-                }
-            }
+            copy_glob_patterns(
+                &block.copy,
+                &project.root,
+                &plugin_output_dir,
+                block.dest.as_deref(),
+            )?;
         }
 
         // Resolve spine options
