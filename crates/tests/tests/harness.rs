@@ -1754,3 +1754,58 @@ fn test_html_multiple_packages_independent_css_js() {
     assert!(html.contains(r#"src="pkg-a/index.js""#), "missing pkg-a JS script");
     assert!(html.contains(r#"src="pkg-b/index.js""#), "missing pkg-b JS script");
 }
+
+#[test]
+fn test_cli_error_invalid_package_dir() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Typst source
+    std::fs::create_dir_all(project_path.join("content")).expect("Failed to create content dir");
+    std::fs::write(project_path.join("content/index.typ"), "= Hello\n")
+        .expect("Failed to write index.typ");
+
+    // rheo.toml referencing a non-existent package
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             content_dir = \"content\"\n\
+             \n\
+             [html]\n\
+             packages = [\"./does-not-exist\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        !output.status.success(),
+        "Expected non-zero exit code for invalid package"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("does-not-exist"),
+        "Error message should mention the invalid package path: {}",
+        stderr
+    );
+}
