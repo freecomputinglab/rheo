@@ -90,7 +90,7 @@ pub struct PluginSection {
 
     /// Package paths to expand into synthetic asset blocks (e.g. `./packages/a`).
     #[serde(default)]
-    pub packages: Option<Vec<String>>,
+    pub packages: Vec<String>,
 
     /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
     /// `fonts` for HTML; `identifier`, `date` for EPUB).
@@ -281,7 +281,7 @@ impl PluginSection {
 
     /// Returns the declared packages, or an empty slice if none configured.
     pub fn packages(&self) -> &[String] {
-        self.packages.as_deref().unwrap_or(&[])
+        &self.packages
     }
 
     /// Get a string value from the `[plugin.assets]` overrides, returning None if absent or not a string.
