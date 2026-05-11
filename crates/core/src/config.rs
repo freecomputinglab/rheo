@@ -725,4 +725,20 @@ mod tests {
         assert_eq!(pairs[1].1, "two.js");
         assert!(pairs[1].0.dest.is_none());
     }
+
+    #[test]
+    fn test_packages_field_parsed_from_html_section() {
+        let toml = versioned_toml("[html]\npackages = [\"./a\", \"./b\"]");
+        let config = parse(&toml);
+        let section = config.plugin_section("html");
+        assert_eq!(
+            section.packages(),
+            ["./a", "./b"],
+            "packages should be in named field, not extra"
+        );
+        assert!(
+            section.extra.get("packages").is_none(),
+            "packages should NOT be in extra"
+        );
+    }
 }
