@@ -615,9 +615,14 @@ fn perform_compilation(
     let mut results = CompilationResults::new();
     let default_section = PluginSection::default();
 
-    let typst_cache_dir = dirs::cache_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("typst/packages");
+    let typst_cache_dir = match dirs::cache_dir() {
+        Some(d) => d,
+        None => {
+            debug!("system cache directory not found, falling back to current directory for Typst package cache");
+            PathBuf::from(".")
+        }
+    }
+    .join("typst/packages");
 
     for plugin in plugins {
         let plugin_output_dir = output_config.dir_for_plugin(plugin.name());
