@@ -1680,3 +1680,77 @@ fn test_html_package_defaults_css_js() {
         "HTML should contain script tag for pkg/index.js"
     );
 }
+
+#[test]
+fn test_html_multiple_packages_independent_css_js() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+
+    // Two packages with distinct CSS/JS
+    for pkg in &["pkg-a", "pkg-b"] {
+        let pkg_dir = project_path.join(pkg);
+        std::fs::create_dir_all(&pkg_dir).expect("Failed to create pkg dir");
+        std::fs::write(pkg_dir.join("index.css"), format!("/* {} */", pkg))
+            .expect("Failed to write index.css");
+        std::fs::write(pkg_dir.join("index.js"), format!("console.log('{}');", pkg))
+            .expect("Failed to write index.js");
+    }
+
+    // Typst source
+    std::fs::create_dir_all(project_path.join("content")).expect("Failed to create content dir");
+    std::fs::write(project_path.join("content/index.typ"), "= Hello\n")
+        .expect("Failed to write index.typ");
+
+    // rheo.toml with two packages
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             content_dir = \"content\"\n\
+             \n\
+             [html]\n\
+             packages = [\"./pkg-a\", \"./pkg-b\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let build_dir = project_path.join("build");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Both packages' files copied
+    assert!(build_dir.join("html/pkg-a/index.css").exists(), "pkg-a/index.css missing");
+    assert!(build_dir.join("html/pkg-a/index.js").exists(), "pkg-a/index.js missing");
+    assert!(build_dir.join("html/pkg-b/index.css").exists(), "pkg-b/index.css missing");
+    assert!(build_dir.join("html/pkg-b/index.js").exists(), "pkg-b/index.js missing");
+
+    // HTML head contains all four injected links
+    let html = std::fs::read_to_string(build_dir.join("html/index.html"))
+        .expect("Failed to read HTML");
+
+    assert!(html.contains(r#"href="pkg-a/index.css""#), "missing pkg-a CSS link");
+    assert!(html.contains(r#"href="pkg-b/index.css""#), "missing pkg-b CSS link");
+    assert!(html.contains(r#"src="pkg-a/index.js""#), "missing pkg-a JS script");
+    assert!(html.contains(r#"src="pkg-b/index.js""#), "missing pkg-b JS script");
+}
