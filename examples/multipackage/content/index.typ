@@ -9,7 +9,10 @@
 
 This example combines slides and tooltips in one project.
 
-#tooltip(placement: "bottom-start")[
-  #tooltip-modal[*Details*]
-  #tooltip-content[Hover to reveal.]
+#slide[
+  == Here is a tooltip
+  #tooltip(placement: "bottom-start")[
+    #tooltip-modal[*Details*]
+    #tooltip-content[Hover to reveal.]
+  ]
 ]

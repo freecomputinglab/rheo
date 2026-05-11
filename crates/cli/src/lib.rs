@@ -502,7 +502,8 @@ fn resolve_assets(
 
             let assets: Vec<Asset> = outputs
                 .into_iter()
-                .map(|abs| {
+                .zip(sources.iter())
+                .map(|(abs, src)| {
                     let rel = abs
                         .strip_prefix(plugin_output_dir)
                         .expect("copy_each output is always under plugin_output_dir")
@@ -510,13 +511,13 @@ fn resolve_assets(
                         .into_owned();
                     if let Some(prev) = seen_relative_paths.get(&rel) {
                         return Err(RheoError::project_config(format!(
-                            "asset path collision: '{}' produced by both '{}' and '{}'",
+                            "asset path collision: output '{}' would be written by both '{}' and '{}'",
                             rel,
                             prev.display(),
-                            abs.display()
+                            src.display()
                         )));
                     }
-                    seen_relative_paths.insert(rel.clone(), abs.clone());
+                    seen_relative_paths.insert(rel.clone(), src.clone());
                     Ok(Asset {
                         config: asset_config.clone(),
                         resolved_path: abs,
