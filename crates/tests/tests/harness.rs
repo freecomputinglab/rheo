@@ -1740,19 +1740,43 @@ fn test_html_multiple_packages_independent_css_js() {
     );
 
     // Both packages' files copied
-    assert!(build_dir.join("html/pkg-a/index.css").exists(), "pkg-a/index.css missing");
-    assert!(build_dir.join("html/pkg-a/index.js").exists(), "pkg-a/index.js missing");
-    assert!(build_dir.join("html/pkg-b/index.css").exists(), "pkg-b/index.css missing");
-    assert!(build_dir.join("html/pkg-b/index.js").exists(), "pkg-b/index.js missing");
+    assert!(
+        build_dir.join("html/pkg-a/index.css").exists(),
+        "pkg-a/index.css missing"
+    );
+    assert!(
+        build_dir.join("html/pkg-a/index.js").exists(),
+        "pkg-a/index.js missing"
+    );
+    assert!(
+        build_dir.join("html/pkg-b/index.css").exists(),
+        "pkg-b/index.css missing"
+    );
+    assert!(
+        build_dir.join("html/pkg-b/index.js").exists(),
+        "pkg-b/index.js missing"
+    );
 
     // HTML head contains all four injected links
-    let html = std::fs::read_to_string(build_dir.join("html/index.html"))
-        .expect("Failed to read HTML");
+    let html =
+        std::fs::read_to_string(build_dir.join("html/index.html")).expect("Failed to read HTML");
 
-    assert!(html.contains(r#"href="pkg-a/index.css""#), "missing pkg-a CSS link");
-    assert!(html.contains(r#"href="pkg-b/index.css""#), "missing pkg-b CSS link");
-    assert!(html.contains(r#"src="pkg-a/index.js""#), "missing pkg-a JS script");
-    assert!(html.contains(r#"src="pkg-b/index.js""#), "missing pkg-b JS script");
+    assert!(
+        html.contains(r#"href="pkg-a/index.css""#),
+        "missing pkg-a CSS link"
+    );
+    assert!(
+        html.contains(r#"href="pkg-b/index.css""#),
+        "missing pkg-b CSS link"
+    );
+    assert!(
+        html.contains(r#"src="pkg-a/index.js""#),
+        "missing pkg-a JS script"
+    );
+    assert!(
+        html.contains(r#"src="pkg-b/index.js""#),
+        "missing pkg-b JS script"
+    );
 }
 
 #[test]
