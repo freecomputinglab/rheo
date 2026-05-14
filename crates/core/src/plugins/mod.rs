@@ -13,7 +13,7 @@ use typst_html::HtmlDocument;
 pub mod typst_manifest;
 pub use typst_manifest::{
     detect_manifest_package_assets, detect_manifest_package_assets_in_dirs, find_local_package_dir,
-    find_package_in_dirs, manifest_package_assets, scan_project_package_imports,
+    find_package_in_dirs, manifest_package_assets, prewarm_packages, scan_project_package_imports,
 };
 
 /// Trait for managing a running preview server.

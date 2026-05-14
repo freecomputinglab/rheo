@@ -3,8 +3,12 @@ use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
 use crate::reticulate::parser::extract_package_imports;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use tracing::warn;
 use typst::syntax::Source;
+use typst::syntax::package::PackageSpec;
+use typst_kit::download::Downloader;
+use typst_kit::package::PackageStorage;
 
 /// Scans project .typ files for package imports (those starting with '@').
 /// Returns deduplicated import path strings in encounter order.
@@ -134,6 +138,38 @@ pub fn detect_manifest_package_assets(
     .flatten()
     .collect();
     detect_manifest_package_assets_in_dirs(import_paths, format_name, &dirs)
+}
+
+/// Ensure each `@namespace/name:version` import is present in the local
+/// Typst package cache, downloading if necessary. No-op for already-cached
+/// packages. Errors are logged and swallowed — pre-warm failure is not
+/// fatal; the downstream scan or compile will surface real problems.
+///
+/// Call this before `detect_manifest_package_assets` so that scan can see
+/// packages Typst would otherwise only download during compile.
+pub fn prewarm_packages(import_paths: &[String]) {
+    if import_paths.is_empty() {
+        return;
+    }
+    let storage = PackageStorage::new(
+        None,
+        None,
+        Downloader::new(concat!("rheo/", env!("CARGO_PKG_VERSION"))),
+    );
+    for spec_str in import_paths {
+        let spec = match PackageSpec::from_str(spec_str) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let mut progress = crate::world::PrintDownload::new(&spec);
+        if let Err(e) = storage.prepare_package(&spec, &mut progress) {
+            warn!(
+                spec = %spec_str,
+                error = ?e,
+                "package pre-warm failed; auto-detect may miss assets"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -319,5 +355,15 @@ css_stylesheet = "style.css"
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].assets.dest.as_deref(), Some("ns_a/slides"));
         assert_eq!(results[1].assets.dest.as_deref(), Some("ns_b/slides"));
+    }
+
+    #[test]
+    fn prewarm_empty_is_noop() {
+        prewarm_packages(&[]);
+    }
+
+    #[test]
+    fn prewarm_malformed_spec_does_not_panic() {
+        prewarm_packages(&["not-a-valid-spec".to_string()]);
     }
 }
