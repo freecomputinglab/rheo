@@ -32,7 +32,7 @@ pub struct Spine {
 /// (`dest`), and AssetConfig path overrides (any other key). Separating these
 /// into their own subtable ensures AssetConfig names cannot clash with other
 /// `[plugin_name]` fields like `spine`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct PluginAssets {
     /// Glob patterns for files to copy into this plugin's output directory.
     /// Paths are relative to the project root; directory structure is preserved.

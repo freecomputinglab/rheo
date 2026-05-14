@@ -32,6 +32,7 @@ globset = { workspace = true }
 glob = { workspace = true }
 pathdiff = { workspace = true }
 opener = { workspace = true }
+dirs = { workspace = true }
 
 # Date/time
 chrono = { workspace = true }

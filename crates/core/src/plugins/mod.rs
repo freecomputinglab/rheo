@@ -10,6 +10,13 @@ use tempfile::NamedTempFile;
 use tracing::{debug, info};
 use typst_html::HtmlDocument;
 
+pub mod typst_manifest;
+pub use typst_manifest::{
+    detect_manifest_package_assets, detect_manifest_package_assets_in_dirs,
+    find_local_package_dir, find_package_in_dirs, manifest_package_assets,
+    scan_project_package_imports,
+};
+
 /// Trait for managing a running preview server.
 pub trait ServerHandle: Send + Sync {
     fn url(&self) -> &str;
@@ -257,17 +264,34 @@ pub enum CompilationTarget {
 }
 
 /// A package expanded into synthetic asset blocks, carrying its resolved source root.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct PackageAssets {
     pub assets: PluginAssets,
     pub source_root: PathBuf,
 }
 
 /// A resolved package specifier ready for asset block synthesis.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedPackage {
     pub name: String,
     pub source_root: PathBuf,
+    pub namespace: Option<String>,
+    pub version: Option<String>,
+}
+
+/// Parse `@namespace/name:version` into its components. Returns None on malformed input.
+pub fn parse_package_spec(spec: &str) -> Option<(&str, &str, &str)> {
+    let without_at = spec.strip_prefix('@')?;
+    let slash = without_at.find('/')?;
+    let namespace = &without_at[..slash];
+    let rest = &without_at[slash + 1..];
+    let colon = rest.rfind(':')?;
+    let name = &rest[..colon];
+    let version = &rest[colon + 1..];
+    if namespace.is_empty() || name.is_empty() || version.is_empty() {
+        return None;
+    }
+    Some((namespace, name, version))
 }
 
 /// Resolves package specifiers into filesystem locations.
@@ -282,22 +306,16 @@ pub fn resolve_packages(
 ) -> Result<Vec<ResolvedPackage>> {
     let mut result = Vec::with_capacity(packages.len());
     for spec in packages {
-        let (source_root, name) = if let Some(rest) = spec.strip_prefix("@preview/") {
-            let colon_pos = rest.rfind(':').ok_or_else(|| {
-                RheoError::project_config(format!(
-                    "package '{}' is missing a version (expected @preview/<name>:<version>)",
-                    spec
-                ))
-            })?;
-            let pkg_name = &rest[..colon_pos];
-            let version = &rest[colon_pos + 1..];
-            if pkg_name.is_empty() || version.is_empty() {
+        let (source_root, name, namespace, version) = if let Some((ns, pkg_name, ver)) =
+            parse_package_spec(spec)
+        {
+            if ns != "preview" {
                 return Err(RheoError::project_config(format!(
-                    "package '{}' has empty name or version",
+                    "package '{}' uses an unsupported namespace (only @preview is supported)",
                     spec
                 )));
             }
-            let resolved = cache_dir.join("preview").join(pkg_name).join(version);
+            let resolved = cache_dir.join(ns).join(pkg_name).join(ver);
             if !resolved.is_dir() {
                 return Err(RheoError::project_config(format!(
                     "package '{}' not found in cache at '{}' — run a Typst compile first so the package is fetched",
@@ -305,10 +323,15 @@ pub fn resolve_packages(
                     resolved.display()
                 )));
             }
-            (resolved, pkg_name.to_string())
+            (
+                resolved,
+                pkg_name.to_string(),
+                Some(ns.to_string()),
+                Some(ver.to_string()),
+            )
         } else if spec.starts_with('@') {
             return Err(RheoError::project_config(format!(
-                "package '{}' uses an unsupported namespace (only @preview is supported)",
+                "package '{}' is malformed (expected @namespace/name:version)",
                 spec
             )));
         } else {
@@ -329,9 +352,14 @@ pub fn resolve_packages(
                     ))
                 })?
                 .to_string();
-            (resolved, dest)
+            (resolved, dest, None, None)
         };
-        result.push(ResolvedPackage { name, source_root });
+        result.push(ResolvedPackage {
+            name,
+            source_root,
+            namespace,
+            version,
+        });
     }
     Ok(result)
 }
