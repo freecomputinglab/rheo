@@ -4,8 +4,13 @@
 result
 result-*
 
-# Beads database and daemon files
-.beads/
+# Beads runtime/ephemeral files
+.beads/bd.sock
+.beads/beads.db-shm
+.beads/beads.db-wal
+.beads/daemon.lock
+.beads/daemon.log
+.beads/daemon.pid
 .abacus/
 
 # Claude
