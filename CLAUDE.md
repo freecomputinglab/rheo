@@ -50,11 +50,12 @@ css_stylesheet = "custom.css"   # optional; path override for AssetConfig name
 # Field of [html] (plugin section), not [html.assets].
 [html]
 packages = ["./packages/a", "@preview/some-pkg:1.0.0"]
+auto_detect_packages = false  # optional; default true. Disables import-driven asset injection.
 # Equivalent to:
 #   [[html.assets]] dest = "a" copy = ["**/*"]
 #   [[html.assets]] dest = "some-pkg" copy = ["**/*"]
-# @preview/<name>:<version> resolves from the Typst package cache;
-# errors if not already cached. Other @namespaces are unsupported.
+# @<namespace>/<name>:<version> resolves from the Typst package directories;
+# errors if not already cached. Any namespace Typst supports is valid.
 # For [html] only, the plugin also synthesizes css_stylesheet="index.css"
 # and js_scripts="index.js" overrides per package. Both are optional —
 # missing files are silently skipped (no warning). Paths resolve against

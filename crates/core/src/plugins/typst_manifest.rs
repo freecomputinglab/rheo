@@ -1,5 +1,5 @@
 use crate::config::PluginAssets;
-use crate::plugins::{parse_package_spec, PackageAssets, ResolvedPackage};
+use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
 use crate::reticulate::parser::extract_package_imports;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -81,7 +81,11 @@ pub fn manifest_package_assets(pkg: &ResolvedPackage, format_name: &str) -> Opti
             return None;
         }
     };
-    let section = toml.get("tool")?.get("rheo")?.get(format_name)?.as_table()?;
+    let section = toml
+        .get("tool")?
+        .get("rheo")?
+        .get(format_name)?
+        .as_table()?;
     if section.is_empty() {
         return None;
     }
@@ -118,7 +122,10 @@ pub fn detect_manifest_package_assets_in_dirs(
 }
 
 /// Production wrapper using Typst's system data/cache dirs.
-pub fn detect_manifest_package_assets(import_paths: &[String], format_name: &str) -> Vec<PackageAssets> {
+pub fn detect_manifest_package_assets(
+    import_paths: &[String],
+    format_name: &str,
+) -> Vec<PackageAssets> {
     let dirs: Vec<PathBuf> = [
         dirs::data_dir().map(|d| d.join("typst/packages")),
         dirs::cache_dir().map(|d| d.join("typst/packages")),
@@ -217,7 +224,12 @@ mod tests {
         dir
     }
 
-    fn make_resolved(dir: &std::path::Path, ns: &str, name: &str, version: &str) -> ResolvedPackage {
+    fn make_resolved(
+        dir: &std::path::Path,
+        ns: &str,
+        name: &str,
+        version: &str,
+    ) -> ResolvedPackage {
         ResolvedPackage {
             name: name.to_string(),
             source_root: dir.to_path_buf(),
@@ -235,11 +247,15 @@ mod tests {
             r#"[tool.rheo.html]
 css_stylesheet = "style.css"
 "#,
-        ).unwrap();
+        )
+        .unwrap();
         let pkg = make_resolved(&pkg_dir, "testns", "testpkg", "0.1.0");
         let result = manifest_package_assets(&pkg, "html").unwrap();
         assert_eq!(result.assets.dest.as_deref(), Some("testns/testpkg"));
-        assert_eq!(result.assets.extra.get("css_stylesheet").unwrap().as_str(), Some("style.css"));
+        assert_eq!(
+            result.assets.extra.get("css_stylesheet").unwrap().as_str(),
+            Some("style.css")
+        );
         assert!(result.assets.copy.is_empty());
     }
 
@@ -286,11 +302,13 @@ css_stylesheet = "style.css"
         std::fs::write(
             dir_a.join("typst.toml"),
             "[tool.rheo.html]\ncss_stylesheet = \"a.css\"\n",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             dir_b.join("typst.toml"),
             "[tool.rheo.html]\ncss_stylesheet = \"b.css\"\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let search = vec![tmp.path().to_path_buf()];
         let paths = vec![

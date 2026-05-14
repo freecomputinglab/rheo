@@ -620,6 +620,30 @@ fn resolve_assets(
     Ok(resolved)
 }
 
+fn build_package_blocks(
+    plugin: &dyn FormatPlugin,
+    plugin_section: &PluginSection,
+    project: &ProjectConfig,
+    typst_cache_dir: &Path,
+) -> Result<Vec<PackageAssets>> {
+    let resolved_packages = rheo_core::plugins::resolve_packages(
+        plugin_section.packages(),
+        &project.root,
+        typst_cache_dir,
+    )?;
+    let mut blocks = plugin.map_packages_to_assets(&resolved_packages);
+
+    if plugin_section.auto_detect_packages.unwrap_or(true) {
+        let auto_import_paths =
+            rheo_core::plugins::scan_project_package_imports(&project.typ_files);
+        let auto_blocks =
+            rheo_core::plugins::detect_manifest_package_assets(&auto_import_paths, plugin.name());
+        blocks.extend(auto_blocks);
+    }
+
+    Ok(blocks)
+}
+
 fn perform_compilation(
     project: &ProjectConfig,
     output_config: &OutputConfig,
@@ -660,12 +684,8 @@ fn perform_compilation(
             .unwrap_or(&default_section);
 
         // Expand package specifiers into synthetic asset blocks
-        let resolved_packages = rheo_core::plugins::resolve_packages(
-            plugin_section.packages(),
-            &project.root,
-            &typst_cache_dir,
-        )?;
-        let package_blocks = plugin.map_packages_to_assets(&resolved_packages);
+        let package_blocks =
+            build_package_blocks(plugin.as_ref(), plugin_section, project, &typst_cache_dir)?;
 
         let resolved_assets = resolve_assets(
             plugin.as_ref(),

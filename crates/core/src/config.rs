@@ -92,6 +92,12 @@ pub struct PluginSection {
     #[serde(default)]
     pub packages: Vec<String>,
 
+    /// When true (default), auto-detect package assets from `#import "@ns/name:ver"`
+    /// statements in .typ files by reading each package's `typst.toml` `[tool.rheo.*]`.
+    /// Set to false to disable import-driven asset injection for this format.
+    #[serde(default)]
+    pub auto_detect_packages: Option<bool>,
+
     /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
     /// `fonts` for HTML; `identifier`, `date` for EPUB).
     #[serde(flatten, default)]
