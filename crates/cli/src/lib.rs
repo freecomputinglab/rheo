@@ -633,7 +633,7 @@ fn build_package_blocks(
     )?;
     let mut blocks = plugin.map_packages_to_assets(&resolved_packages);
 
-    if plugin_section.auto_detect_packages.unwrap_or(true) {
+    if plugin_section.auto_detect_packages_enabled() {
         let auto_import_paths =
             rheo_core::plugins::scan_project_package_imports(&project.typ_files);
         let auto_blocks =
@@ -682,6 +682,13 @@ fn perform_compilation(
             .plugin_sections
             .get(plugin.name())
             .unwrap_or(&default_section);
+
+        // Pre-warm: download any @ns/name:ver imports so the auto-detect scan
+        // below sees them on first compile, not just on subsequent compiles.
+        if plugin_section.auto_detect_packages_enabled() {
+            let imports = rheo_core::plugins::scan_project_package_imports(&project.typ_files);
+            rheo_core::plugins::prewarm_packages(&imports);
+        }
 
         // Expand package specifiers into synthetic asset blocks
         let package_blocks =

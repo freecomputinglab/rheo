@@ -290,6 +290,12 @@ impl PluginSection {
         &self.packages
     }
 
+    /// Auto-detection of `@preview` package assets defaults to true; users can
+    /// disable per-plugin with `auto_detect_packages = false`.
+    pub fn auto_detect_packages_enabled(&self) -> bool {
+        self.auto_detect_packages.unwrap_or(true)
+    }
+
     /// Get a string value from the `[plugin.assets]` overrides, returning None if absent or not a string.
     /// Returns the first override found across all asset blocks.
     pub fn get_string(&self, key: &str) -> Option<&str> {
