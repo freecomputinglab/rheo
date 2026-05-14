@@ -6,6 +6,10 @@ result-*
 
 # Beads database and daemon files
 .beads/
+.abacus/
+
+# Claude
+.claude/
 
 # Per-project build directories
 **/build/
