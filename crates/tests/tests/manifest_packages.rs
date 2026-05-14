@@ -172,3 +172,214 @@ Test document.
         html
     );
 }
+
+fn stage_package_in_data_dir(data_dir: &std::path::Path) {
+    let pkg_dir = data_dir.join("typst/packages/testns/testpkg/0.1.0");
+    std::fs::create_dir_all(&pkg_dir).unwrap();
+    std::fs::write(
+        pkg_dir.join("typst.toml"),
+        r#"
+[package]
+name = "testpkg"
+version = "0.1.0"
+entrypoint = "lib.typ"
+
+[tool.rheo.html]
+css_stylesheet = "style.css"
+"#,
+    )
+    .unwrap();
+    std::fs::write(pkg_dir.join("style.css"), "body { color: green; }").unwrap();
+    std::fs::write(pkg_dir.join("lib.typ"), "").unwrap();
+}
+
+fn run_rheo_compile(
+    project_path: &std::path::Path,
+    build_dir: &std::path::Path,
+    env_extra: Vec<(&str, &std::path::Path)>,
+) -> std::process::Output {
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.args([
+        "run",
+        "-p",
+        "rheo",
+        "--",
+        "compile",
+        project_path.to_str().unwrap(),
+        "--html",
+        "--build-dir",
+        build_dir.to_str().unwrap(),
+    ])
+    .env("TYPST_IGNORE_SYSTEM_FONTS", "1");
+    for (key, path) in &env_extra {
+        cmd.env(key, path);
+    }
+    cmd.output().expect("Failed to run rheo compile")
+}
+
+/// Explicit `packages = ["@testns/testpkg:0.1.0"]` in rheo.toml resolves
+/// the package and copies its assets even without auto-detect.
+#[test]
+fn explicit_packages_in_rheo_toml_still_resolved() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let cache_dir = tempfile::tempdir().unwrap();
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_path = project_dir.path();
+
+    stage_package_in_data_dir(data_dir.path());
+
+    std::fs::write(
+        project_path.join("main.typ"),
+        "= Hello\nExplicit package test.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\nformats = [\"html\"]\n\n[html]\npackages = [\"@testns/testpkg:0.1.0\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .unwrap();
+
+    let build_dir = project_path.join("build");
+
+    let output = run_rheo_compile(
+        project_path,
+        &build_dir,
+        vec![
+            ("XDG_DATA_HOME", data_dir.path()),
+            ("XDG_CACHE_HOME", cache_dir.path()),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Explicit packages use default_package_assets with dest = pkg.name ("testpkg")
+    assert!(
+        build_dir.join("html/testpkg/style.css").exists(),
+        "explicit package CSS not found at html/testpkg/style.css"
+    );
+}
+
+/// Setting `auto_detect_packages = false` suppresses import-driven asset
+/// injection, even when the .typ file imports the package.
+#[test]
+fn auto_detect_packages_false_skips_detection() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let cache_dir = tempfile::tempdir().unwrap();
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_path = project_dir.path();
+
+    stage_package_in_data_dir(data_dir.path());
+
+    std::fs::write(
+        project_path.join("main.typ"),
+        r#"#import "@testns/testpkg:0.1.0": *
+= Hello
+Opt-out test.
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\nformats = [\"html\"]\n\n[html]\nauto_detect_packages = false\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .unwrap();
+
+    let build_dir = project_path.join("build");
+
+    let output = run_rheo_compile(
+        project_path,
+        &build_dir,
+        vec![
+            ("XDG_DATA_HOME", data_dir.path()),
+            ("XDG_CACHE_HOME", cache_dir.path()),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The package assets should NOT be copied
+    assert!(
+        !build_dir.join("html/testns/testpkg/style.css").exists(),
+        "auto-detect opted out but assets were still copied"
+    );
+
+    let html = std::fs::read_to_string(build_dir.join("html/main.html")).expect("read HTML output");
+    assert!(
+        !html.contains("testns/testpkg/style.css"),
+        "HTML should not reference auto-detected CSS when opted out:\n{}",
+        html
+    );
+}
+
+/// First-compile auto-detect: package is in XDG_DATA_HOME (not cache).
+/// Pre-warm finds it in data_dir, then auto-detect scan picks it up.
+#[test]
+fn first_compile_detects_preview_package_assets_after_prewarm() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let cache_dir = tempfile::tempdir().unwrap();
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_path = project_dir.path();
+
+    stage_package_in_data_dir(data_dir.path());
+
+    // No explicit packages in rheo.toml; auto_detect_packages defaults to true.
+    std::fs::write(
+        project_path.join("main.typ"),
+        r#"#import "@testns/testpkg:0.1.0": *
+= Hello
+First-compile prewarm test.
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\nformats = [\"html\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .unwrap();
+
+    let build_dir = project_path.join("build");
+
+    let output = run_rheo_compile(
+        project_path,
+        &build_dir,
+        vec![
+            ("XDG_DATA_HOME", data_dir.path()),
+            ("XDG_CACHE_HOME", cache_dir.path()),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        build_dir.join("html/testns/testpkg/style.css").exists(),
+        "pre-warmed auto-detected CSS not found"
+    );
+
+    let html = std::fs::read_to_string(build_dir.join("html/main.html")).expect("read HTML output");
+    assert!(
+        html.contains("testns/testpkg/style.css"),
+        "HTML should reference pre-warmed auto-detected CSS:\n{}",
+        html
+    );
+}
