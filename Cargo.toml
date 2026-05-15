@@ -34,7 +34,7 @@ anyhow = "1.0.100"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
-toml = "0.9"
+toml = "1.1"
 semver = "1.0"
 
 # CLI and utilities
@@ -69,10 +69,10 @@ webbrowser = "1.0"
 tokio-stream = { version = "0.1", features = ["sync"] }
 
 # EPUB dependencies
-zip = { version = "6.0.0", default-features = false }
-html5ever = "0.36.1"
-markup5ever_rcdom = "0.36.0"
-iref = { version = "3.2.2", features = ["serde"] }
+zip = { version = "8.6", default-features = false }
+html5ever = "0.39"
+markup5ever_rcdom = "0.39"
+iref = { version = "4.0", features = ["serde"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 itertools = "0.14.0"
 
