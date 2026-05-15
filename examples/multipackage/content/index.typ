@@ -1,5 +1,5 @@
-#import "../rheo-slides/rheo-slides.typ": slide, template
-#import "../my-tooltip/my-tooltip.typ": tooltip, tooltip-content, tooltip-modal
+#import "@rheo/slides:0.1.0": slide, template
+#import "@rheo/tooltip:0.1.0": tooltip, tooltip-content, tooltip-modal
 
 #show: template
 
