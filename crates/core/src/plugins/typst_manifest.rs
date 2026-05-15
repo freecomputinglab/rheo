@@ -140,10 +140,12 @@ pub fn detect_manifest_package_assets(
     detect_manifest_package_assets_in_dirs(import_paths, format_name, &dirs)
 }
 
-/// Ensure each `@namespace/name:version` import is present in the local
-/// Typst package cache, downloading if necessary. No-op for already-cached
-/// packages. Errors are logged and swallowed — pre-warm failure is not
-/// fatal; the downstream scan or compile will surface real problems.
+/// Ensure each `@preview/name:version` import is present in the local
+/// Typst package cache, downloading if necessary. Non-`@preview` namespaces
+/// are skipped — they are either local packages (already on disk) or not
+/// downloadable via the Typst registry. No-op for already-cached packages.
+/// Errors are logged and swallowed — pre-warm failure is not fatal; the
+/// downstream scan or compile will surface real problems.
 ///
 /// Call this before `detect_manifest_package_assets` so that scan can see
 /// packages Typst would otherwise only download during compile.
@@ -161,6 +163,9 @@ pub fn prewarm_packages(import_paths: &[String]) {
             Ok(s) => s,
             Err(_) => continue,
         };
+        if spec.namespace != "preview" {
+            continue;
+        }
         let mut progress = crate::world::PrintDownload::new(&spec);
         if let Err(e) = storage.prepare_package(&spec, &mut progress) {
             warn!(
@@ -365,5 +370,15 @@ css_stylesheet = "style.css"
     #[test]
     fn prewarm_malformed_spec_does_not_panic() {
         prewarm_packages(&["not-a-valid-spec".to_string()]);
+    }
+
+    #[test]
+    fn prewarm_skips_non_preview_namespace() {
+        // Non-preview namespaces are not downloadable via the Typst registry;
+        // the filter must skip them without attempting a network call.
+        prewarm_packages(&[
+            "@local/foo:0.1.0".to_string(),
+            "@myns/bar:2.0.0".to_string(),
+        ]);
     }
 }
