@@ -728,5 +728,4 @@ mod tests {
         assert_eq!(pairs[1].1, "two.js");
         assert!(pairs[1].0.dest.is_none());
     }
-
 }

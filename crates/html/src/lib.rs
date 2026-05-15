@@ -141,4 +141,3 @@ impl FormatPlugin for HtmlPlugin {
         Ok(())
     }
 }
-

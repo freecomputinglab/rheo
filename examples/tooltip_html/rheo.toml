@@ -2,9 +2,12 @@ version = "0.2.1"
 content_dir = "content"
 
 [html]
-packages = ["./my-tooltip"]
 
-[html.assets]
+[[html.assets]]
+copy = ["my-tooltip/**"]
+js_scripts = "my-tooltip/index.js"
+
+[[html.assets]]
 css_stylesheet = "style.css"
 
 [html.spine]

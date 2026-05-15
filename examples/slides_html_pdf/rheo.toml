@@ -2,7 +2,11 @@ version = "0.2.1"
 content_dir = "content"
 
 [html]
-packages = ["./rheo-slides"]
+
+[[html.assets]]
+copy = ["rheo-slides/**"]
+css_stylesheet = "rheo-slides/index.css"
+js_scripts = "rheo-slides/index.js"
 
 [html.spine]
 vertebrae = ["*.typ"]
