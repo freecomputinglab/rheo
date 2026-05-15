@@ -41,7 +41,7 @@ pub use config::{AssetsField, PluginAssets, PluginSection, Spine};
 // Plugin trait and context
 pub use plugins::{
     AssetConfig, FormatPlugin, OpenHandle, PackageAssets, PluginContext, ResolvedPackage,
-    ServerHandle, SpineOptions, default_package_assets, resolve_packages,
+    ServerHandle, SpineOptions,
 };
 
 // HTML/PDF export utilities
