@@ -26,6 +26,11 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Install @rheo packages
+        run: |
+          mkdir -p ~/.cache/typst/packages
+          git clone https://github.com/freecomputinglab/rheo-packages.git ~/.cache/typst/packages/rheo
+
       - name: Run tests
         run: cargo test --all-targets --all-features
         env:

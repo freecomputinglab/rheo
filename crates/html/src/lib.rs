@@ -176,6 +176,8 @@ mod tests {
         let resolved = vec![ResolvedPackage {
             name: "mypkg".into(),
             source_root: source_root.clone(),
+            namespace: None,
+            version: None,
         }];
         let result = HtmlPlugin.map_packages_to_assets(&resolved);
 

@@ -3005,6 +3005,7 @@ dependencies = [
  "chrono",
  "codespan-reporting",
  "comemo",
+ "dirs",
  "ecow",
  "glob",
  "globset",

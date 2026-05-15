@@ -416,12 +416,12 @@ impl<'a> Files<'a> for RheoWorld {
     }
 }
 
-struct PrintDownload {
+pub(crate) struct PrintDownload {
     package_name: String,
 }
 
 impl PrintDownload {
-    fn new(spec: &typst::syntax::package::PackageSpec) -> Self {
+    pub(crate) fn new(spec: &typst::syntax::package::PackageSpec) -> Self {
         Self {
             package_name: format!("{}@{}", spec.name, spec.version),
         }

@@ -32,7 +32,7 @@ pub struct Spine {
 /// (`dest`), and AssetConfig path overrides (any other key). Separating these
 /// into their own subtable ensures AssetConfig names cannot clash with other
 /// `[plugin_name]` fields like `spine`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct PluginAssets {
     /// Glob patterns for files to copy into this plugin's output directory.
     /// Paths are relative to the project root; directory structure is preserved.
@@ -91,6 +91,12 @@ pub struct PluginSection {
     /// Package paths to expand into synthetic asset blocks (e.g. `./packages/a`).
     #[serde(default)]
     pub packages: Vec<String>,
+
+    /// When true (default), auto-detect package assets from `#import "@ns/name:ver"`
+    /// statements in .typ files by reading each package's `typst.toml` `[tool.rheo.*]`.
+    /// Set to false to disable import-driven asset injection for this format.
+    #[serde(default)]
+    pub auto_detect_packages: Option<bool>,
 
     /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
     /// `fonts` for HTML; `identifier`, `date` for EPUB).
@@ -282,6 +288,12 @@ impl PluginSection {
     /// Returns the declared packages, or an empty slice if none configured.
     pub fn packages(&self) -> &[String] {
         &self.packages
+    }
+
+    /// Auto-detection of `@preview` package assets defaults to true; users can
+    /// disable per-plugin with `auto_detect_packages = false`.
+    pub fn auto_detect_packages_enabled(&self) -> bool {
+        self.auto_detect_packages.unwrap_or(true)
     }
 
     /// Get a string value from the `[plugin.assets]` overrides, returning None if absent or not a string.

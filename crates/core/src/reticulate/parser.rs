@@ -29,6 +29,28 @@ pub fn extract_imports(source: &Source) -> Vec<ImportInfo> {
     extract_nodes(source).imports
 }
 
+/// Extract only package import path strings (those starting with '@') from
+/// Typst source. Cheaper than `extract_imports` because it skips link, wrapper,
+/// and URL-binding collection.
+pub fn extract_package_imports(source: &Source) -> Vec<String> {
+    let root = typst::syntax::parse(source.text());
+    let mut out = Vec::new();
+    collect_package_imports(&root, &root, &mut out);
+    out
+}
+
+fn collect_package_imports(node: &SyntaxNode, root: &SyntaxNode, out: &mut Vec<String>) {
+    if (node.kind() == SyntaxKind::ModuleImport || node.kind() == SyntaxKind::ModuleInclude)
+        && let Some(info) = parse_import_node(node, root)
+        && info.is_package
+    {
+        out.push(info.path);
+    }
+    for child in node.children() {
+        collect_package_imports(child, root, out);
+    }
+}
+
 /// Result of a single-pass AST extraction.
 pub struct ExtractedNodes {
     pub links: Vec<LinkInfo>,
