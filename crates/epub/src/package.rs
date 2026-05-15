@@ -431,7 +431,7 @@ mod tests {
             .add_meta("test:property", "test-value")
             .add_item(Item {
                 id: "page1".into(),
-                href: IriRefBuf::new("page1.xhtml".into()).unwrap(),
+                href: IriRefBuf::new("page1.xhtml".to_string()).unwrap(),
                 media_type: "application/xhtml+xml".into(),
                 properties: None,
             })
@@ -464,7 +464,7 @@ mod tests {
             .language("en")
             .add_item(Item {
                 id: "page1".into(),
-                href: IriRefBuf::new("page1.xhtml".into()).unwrap(),
+                href: IriRefBuf::new("page1.xhtml".to_string()).unwrap(),
                 media_type: "application/xhtml+xml".into(),
                 properties: None,
             })
@@ -489,13 +489,13 @@ mod tests {
             .language("en")
             .add_item(Item {
                 id: "page1".into(),
-                href: IriRefBuf::new("page1.xhtml".into()).unwrap(),
+                href: IriRefBuf::new("page1.xhtml".to_string()).unwrap(),
                 media_type: "application/xhtml+xml".into(),
                 properties: None,
             })
             .add_item(Item {
                 id: "page1".into(), // Duplicate ID
-                href: IriRefBuf::new("page2.xhtml".into()).unwrap(),
+                href: IriRefBuf::new("page2.xhtml".to_string()).unwrap(),
                 media_type: "application/xhtml+xml".into(),
                 properties: None,
             })
