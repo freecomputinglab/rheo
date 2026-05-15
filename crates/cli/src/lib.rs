@@ -1822,7 +1822,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_packages_unsupported_namespace_errors() {
+    fn test_resolve_packages_non_preview_namespace_not_in_cache_errors() {
         let dir = tempfile::tempdir().unwrap();
         let project_root = dir.path();
 
@@ -1831,8 +1831,8 @@ mod tests {
 
         let err = format!("{}", result.unwrap_err());
         assert!(
-            err.contains("only @preview is supported"),
-            "expected @local error, got: {}",
+            err.contains("not found in cache"),
+            "expected cache miss error for non-preview namespace, got: {}",
             err
         );
     }

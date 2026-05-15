@@ -323,7 +323,7 @@ pub fn resolve_packages(
                     .find(|p| p.is_dir())
                     .ok_or_else(|| {
                         RheoError::project_config(format!(
-                            "package '{}' not found in Typst package directories — searched: {}",
+                            "package '{}' not found in cache — searched: {}",
                             spec,
                             search_dirs
                                 .iter()
@@ -339,6 +339,14 @@ pub fn resolve_packages(
                     Some(ver.to_string()),
                 )
             } else if spec.starts_with('@') {
+                let has_slash = spec.contains('/');
+                let has_colon = spec.contains(':');
+                if has_slash && !has_colon {
+                    return Err(RheoError::project_config(format!(
+                        "package '{}' is missing a version (expected @namespace/name:version)",
+                        spec
+                    )));
+                }
                 return Err(RheoError::project_config(format!(
                     "package '{}' is malformed (expected @namespace/name:version)",
                     spec
