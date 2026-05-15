@@ -325,10 +325,10 @@ Opt-out test.
     );
 }
 
-/// First-compile auto-detect: package is in XDG_DATA_HOME (not cache).
-/// Pre-warm finds it in data_dir, then auto-detect scan picks it up.
+/// Auto-detect works for non-preview namespaces: package is in XDG_DATA_HOME.
+/// Pre-warm skips non-preview packages, so auto-detect scans the data dir directly.
 #[test]
-fn first_compile_detects_preview_package_assets_after_prewarm() {
+fn auto_detects_non_preview_package_assets_from_data_dir() {
     let data_dir = tempfile::tempdir().unwrap();
     let cache_dir = tempfile::tempdir().unwrap();
     let project_dir = tempfile::tempdir().unwrap();
@@ -341,7 +341,7 @@ fn first_compile_detects_preview_package_assets_after_prewarm() {
         project_path.join("main.typ"),
         r#"#import "@testns/testpkg:0.1.0": *
 = Hello
-First-compile prewarm test.
+Non-preview auto-detect test.
 "#,
     )
     .unwrap();
@@ -373,13 +373,13 @@ First-compile prewarm test.
 
     assert!(
         build_dir.join("html/testns/testpkg/style.css").exists(),
-        "pre-warmed auto-detected CSS not found"
+        "auto-detected CSS not found at html/testns/testpkg/style.css"
     );
 
     let html = std::fs::read_to_string(build_dir.join("html/main.html")).expect("read HTML output");
     assert!(
         html.contains("testns/testpkg/style.css"),
-        "HTML should reference pre-warmed auto-detected CSS:\n{}",
+        "HTML should reference auto-detected CSS:\n{}",
         html
     );
 }

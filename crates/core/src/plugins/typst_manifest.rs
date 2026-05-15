@@ -219,6 +219,20 @@ mod tests {
     }
 
     #[test]
+    fn non_preview_namespace_imports_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.typ");
+        std::fs::write(
+            &file,
+            r#"#import "@rheo/slides:0.1.0": slide, template
+#import "@rheo/tooltip:0.1.0": tooltip"#,
+        )
+        .unwrap();
+        let result = scan_project_package_imports(&[file]);
+        assert_eq!(result, vec!["@rheo/slides:0.1.0", "@rheo/tooltip:0.1.0"]);
+    }
+
+    #[test]
     fn unreadable_files_skipped() {
         let dir = tempfile::tempdir().unwrap();
         let good = dir.path().join("good.typ");
