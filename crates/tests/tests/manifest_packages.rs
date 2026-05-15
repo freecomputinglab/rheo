@@ -383,3 +383,80 @@ First-compile prewarm test.
         html
     );
 }
+
+/// Manifest `copy` patterns cause matched files to be copied into the output.
+#[test]
+fn manifest_copy_patterns_copied_to_output() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let cache_dir = tempfile::tempdir().unwrap();
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_path = project_dir.path();
+
+    // Set up package with copy patterns and some asset files
+    let pkg_dir = data_dir.path().join("typst/packages/testns/copypkg/0.1.0");
+    std::fs::create_dir_all(pkg_dir.join("img")).unwrap();
+    std::fs::write(
+        pkg_dir.join("typst.toml"),
+        r#"[package]
+name = "copypkg"
+version = "0.1.0"
+entrypoint = "lib.typ"
+
+[tool.rheo.html]
+copy = ["img/*.png"]
+css_stylesheet = "pkg-style.css"
+"#,
+    )
+    .unwrap();
+    std::fs::write(pkg_dir.join("pkg-style.css"), "body { color: green; }").unwrap();
+    std::fs::write(pkg_dir.join("img/logo.png"), "fake-png-data").unwrap();
+    std::fs::write(pkg_dir.join("img/ignored.txt"), "not-matched").unwrap();
+    std::fs::write(pkg_dir.join("lib.typ"), "").unwrap();
+
+    std::fs::write(
+        project_path.join("main.typ"),
+        r#"#import "@testns/copypkg:0.1.0": *
+= Hello
+Copy pattern test.
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\nformats = [\"html\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .unwrap();
+
+    let build_dir = project_path.join("build");
+
+    let output = run_rheo_compile(
+        project_path,
+        &build_dir,
+        vec![
+            ("XDG_DATA_HOME", data_dir.path()),
+            ("XDG_CACHE_HOME", cache_dir.path()),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The PNG matched by copy pattern should be in the output
+    assert!(
+        build_dir.join("html/testns/copypkg/img/logo.png").exists(),
+        "copy-matched PNG not found at html/testns/copypkg/img/logo.png"
+    );
+    // The .txt file should NOT be copied (not matched by pattern)
+    assert!(
+        !build_dir
+            .join("html/testns/copypkg/img/ignored.txt")
+            .exists(),
+        "non-matched file should not be copied"
+    );
+}

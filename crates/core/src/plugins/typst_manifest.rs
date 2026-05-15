@@ -98,6 +98,15 @@ pub fn manifest_package_assets(pkg: &ResolvedPackage, format_name: &str) -> Opti
     if section.is_empty() {
         return None;
     }
+    let copy = section
+        .get("copy")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
     let extra = section.clone();
     let namespace = pkg.namespace.as_deref().unwrap_or("");
     let dest = if namespace.is_empty() {
@@ -107,7 +116,7 @@ pub fn manifest_package_assets(pkg: &ResolvedPackage, format_name: &str) -> Opti
     };
     Some(PackageAssets {
         assets: PluginAssets {
-            copy: vec![],
+            copy,
             dest: Some(dest),
             extra,
         },
@@ -296,6 +305,42 @@ css_stylesheet = "style.css"
             result.assets.extra.get("css_stylesheet").unwrap().as_str(),
             Some("style.css")
         );
+        assert!(result.assets.copy.is_empty());
+    }
+
+    #[test]
+    fn manifest_extracts_copy_patterns() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(
+            pkg_dir.join("typst.toml"),
+            r#"[tool.rheo.html]
+copy = ["**/*.css", "fonts/*"]
+css_stylesheet = "style.css"
+"#,
+        )
+        .unwrap();
+        let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
+        let result = manifest_package_assets(&pkg, "html").unwrap();
+        assert_eq!(
+            result.assets.copy,
+            vec!["**/*.css".to_string(), "fonts/*".to_string()]
+        );
+    }
+
+    #[test]
+    fn manifest_copy_absent_defaults_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(
+            pkg_dir.join("typst.toml"),
+            r#"[tool.rheo.html]
+css_stylesheet = "style.css"
+"#,
+        )
+        .unwrap();
+        let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
+        let result = manifest_package_assets(&pkg, "html").unwrap();
         assert!(result.assets.copy.is_empty());
     }
 
