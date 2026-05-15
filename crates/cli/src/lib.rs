@@ -620,29 +620,6 @@ fn resolve_assets(
     Ok(resolved)
 }
 
-fn build_package_blocks(
-    plugin: &dyn FormatPlugin,
-    plugin_section: &PluginSection,
-    project: &ProjectConfig,
-    typst_cache_dir: &Path,
-    import_paths: &[String],
-) -> Result<Vec<PackageAssets>> {
-    let resolved_packages = rheo_core::plugins::resolve_packages(
-        plugin_section.packages(),
-        &project.root,
-        typst_cache_dir,
-    )?;
-    let mut blocks = plugin.map_packages_to_assets(&resolved_packages);
-
-    if plugin_section.auto_detect_packages_enabled() {
-        let auto_blocks =
-            rheo_core::plugins::detect_manifest_package_assets(import_paths, plugin.name());
-        blocks.extend(auto_blocks);
-    }
-
-    Ok(blocks)
-}
-
 fn perform_compilation(
     project: &ProjectConfig,
     output_config: &OutputConfig,
@@ -656,15 +633,6 @@ fn perform_compilation(
 
     let mut results = CompilationResults::new();
     let default_section = PluginSection::default();
-
-    let typst_cache_dir = match dirs::cache_dir() {
-        Some(d) => d,
-        None => {
-            debug!("system cache directory not found, falling back to current directory for Typst package cache");
-            PathBuf::from(".")
-        }
-    }
-    .join("typst/packages");
 
     // Scan .typ files for package imports once — shared across all plugins
     // for pre-warming and auto-detect.
@@ -686,30 +654,23 @@ fn perform_compilation(
             .get(plugin.name())
             .unwrap_or(&default_section);
 
-        // Pre-warm: download any @ns/name:ver imports so the auto-detect scan
-        // below sees them on first compile, not just on subsequent compiles.
-        if plugin_section.auto_detect_packages_enabled() {
+        // Pre-warm and auto-detect manifest package assets
+        let manifest_blocks = if plugin_section.auto_detect_packages_enabled() {
             rheo_core::plugins::prewarm_packages(&package_imports);
-        }
-
-        // Expand package specifiers into synthetic asset blocks
-        let package_blocks = build_package_blocks(
-            plugin.as_ref(),
-            plugin_section,
-            project,
-            &typst_cache_dir,
-            &package_imports,
-        )?;
+            rheo_core::plugins::detect_manifest_package_assets(&package_imports, plugin.name())
+        } else {
+            vec![]
+        };
 
         let resolved_assets = resolve_assets(
             plugin.as_ref(),
             plugin_section,
-            &package_blocks,
+            &manifest_blocks,
             &project.root,
             &plugin_output_dir,
         )?;
 
-        // Execute copy patterns — global, then package blocks, then user-declared blocks
+        // Execute copy patterns — global, then manifest blocks, then user-declared blocks
         copy_glob_patterns(
             &project.config.copy,
             &project.root,
@@ -717,12 +678,12 @@ fn perform_compilation(
             None,
         )?;
 
-        for package in &package_blocks {
+        for block in &manifest_blocks {
             copy_glob_patterns(
-                &package.assets.copy,
-                &package.source_root,
+                &block.assets.copy,
+                &block.source_root,
                 &plugin_output_dir,
-                package.assets.dest.as_deref(),
+                block.assets.dest.as_deref(),
             )?;
         }
 
@@ -1784,134 +1745,6 @@ mod tests {
             !output_dir.join("allassets/dist/index.js").exists(),
             "source directory components should be stripped under dest"
         );
-    }
-
-    // --- resolve_packages tests ---
-
-    #[test]
-    fn test_resolve_packages_local_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let project_root = dir.path();
-        let cache_dir = dir.path().join("cache");
-
-        std::fs::create_dir_all(project_root.join("mypkg")).unwrap();
-        std::fs::write(project_root.join("mypkg/file.txt"), "data").unwrap();
-
-        let packages = vec!["./mypkg".to_string()];
-        let resolved =
-            rheo_core::plugins::resolve_packages(&packages, project_root, &cache_dir).unwrap();
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].name, "mypkg");
-        assert_eq!(resolved[0].source_root, project_root.join("mypkg"));
-    }
-
-    #[test]
-    fn test_resolve_packages_preview_namespace() {
-        let dir = tempfile::tempdir().unwrap();
-        let cache_dir = dir.path();
-        let project_root = dir.path().join("project");
-        std::fs::create_dir_all(&project_root).unwrap();
-
-        std::fs::create_dir_all(cache_dir.join("preview/cool-pkg/1.0.0")).unwrap();
-        std::fs::write(cache_dir.join("preview/cool-pkg/1.0.0/lib.typ"), "").unwrap();
-
-        let packages = vec!["@preview/cool-pkg:1.0.0".to_string()];
-        let resolved =
-            rheo_core::plugins::resolve_packages(&packages, &project_root, cache_dir).unwrap();
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].name, "cool-pkg");
-        assert_eq!(
-            resolved[0].source_root,
-            cache_dir.join("preview/cool-pkg/1.0.0")
-        );
-    }
-
-    #[test]
-    fn test_resolve_packages_non_preview_namespace_not_in_cache_errors() {
-        let dir = tempfile::tempdir().unwrap();
-        let project_root = dir.path();
-
-        let packages = vec!["@local/foo:0.1.0".to_string()];
-        let result = rheo_core::plugins::resolve_packages(&packages, project_root, dir.path());
-
-        let err = format!("{}", result.unwrap_err());
-        assert!(
-            err.contains("not found in cache"),
-            "expected cache miss error for non-preview namespace, got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn test_resolve_packages_missing_directory_errors() {
-        let dir = tempfile::tempdir().unwrap();
-        let project_root = dir.path();
-
-        let packages = vec!["./nonexistent".to_string()];
-        let result = rheo_core::plugins::resolve_packages(&packages, project_root, dir.path());
-
-        let err = format!("{}", result.unwrap_err());
-        assert!(
-            err.contains("not found"),
-            "expected missing directory error, got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn test_resolve_packages_preview_missing_version_errors() {
-        let dir = tempfile::tempdir().unwrap();
-        let project_root = dir.path();
-
-        let packages = vec!["@preview/some-pkg".to_string()];
-        let result = rheo_core::plugins::resolve_packages(&packages, project_root, dir.path());
-
-        let err = format!("{}", result.unwrap_err());
-        assert!(
-            err.contains("missing a version"),
-            "expected missing version error, got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn test_resolve_packages_preview_not_in_cache_errors() {
-        let dir = tempfile::tempdir().unwrap();
-        let project_root = dir.path();
-
-        let packages = vec!["@preview/absent:0.1.0".to_string()];
-        let result = rheo_core::plugins::resolve_packages(&packages, project_root, dir.path());
-
-        let err = format!("{}", result.unwrap_err());
-        assert!(
-            err.contains("not found in cache"),
-            "expected cache miss error, got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn test_map_packages_to_assets_uses_resolved() {
-        let dir = tempfile::tempdir().unwrap();
-        let project_root = dir.path();
-
-        std::fs::create_dir_all(project_root.join("mypkg")).unwrap();
-
-        let plugin = MockPlugin {
-            plugin_name: "html",
-            declared_assets: vec![],
-        };
-        let packages = vec!["./mypkg".to_string()];
-        let resolved =
-            rheo_core::plugins::resolve_packages(&packages, project_root, dir.path()).unwrap();
-        let result = plugin.map_packages_to_assets(&resolved);
-
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].assets.dest.as_deref(), Some("mypkg"));
-        assert_eq!(result[0].assets.copy, vec!["**/*"]);
-        assert_eq!(result[0].source_root, project_root.join("mypkg"));
     }
 
     #[test]
