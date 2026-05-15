@@ -12,8 +12,9 @@ use typst_html::HtmlDocument;
 
 pub mod typst_manifest;
 pub use typst_manifest::{
-    detect_manifest_package_assets, detect_manifest_package_assets_in_dirs, find_local_package_dir,
-    find_package_in_dirs, manifest_package_assets, prewarm_packages, scan_project_package_imports,
+    detect_manifest_package_assets, detect_manifest_package_assets_in_dirs, find_package_in_dirs,
+    manifest_package_assets, prewarm_packages, scan_project_package_imports,
+    typst_package_search_dirs,
 };
 
 /// Trait for managing a running preview server.
@@ -303,14 +304,7 @@ pub fn resolve_packages(
     project_root: &Path,
     cache_dir: &Path,
 ) -> Result<Vec<ResolvedPackage>> {
-    let search_dirs = vec![
-        dirs::data_dir().map(|d| d.join("typst/packages")),
-        dirs::cache_dir().map(|d| d.join("typst/packages")),
-        Some(cache_dir.to_path_buf()),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
+    let search_dirs = typst_manifest::typst_package_search_dirs(Some(cache_dir));
 
     let mut result = Vec::with_capacity(packages.len());
     for spec in packages {

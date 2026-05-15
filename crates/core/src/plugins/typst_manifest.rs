@@ -10,6 +10,23 @@ use typst::syntax::package::PackageSpec;
 use typst_kit::download::Downloader;
 use typst_kit::package::PackageStorage;
 
+/// Build the standard Typst package search directories:
+/// `XDG_DATA_HOME/typst/packages`, `XDG_CACHE_HOME/typst/packages`,
+/// plus an optional extra directory (e.g. a caller-supplied cache dir).
+pub fn typst_package_search_dirs(extra: Option<&Path>) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = [
+        dirs::data_dir().map(|d| d.join("typst/packages")),
+        dirs::cache_dir().map(|d| d.join("typst/packages")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if let Some(extra_dir) = extra {
+        dirs.push(extra_dir.to_path_buf());
+    }
+    dirs
+}
+
 /// Scans project .typ files for package imports (those starting with '@').
 /// Returns deduplicated import path strings in encounter order.
 /// Unreadable files are logged via `tracing::warn!` and skipped.
@@ -51,18 +68,6 @@ pub fn find_package_in_dirs(spec: &str, search_dirs: &[PathBuf]) -> Option<Resol
     })
 }
 
-/// Production resolver: probes Typst's data dir then cache dir.
-pub fn find_local_package_dir(spec: &str) -> Option<ResolvedPackage> {
-    let dirs: Vec<PathBuf> = [
-        dirs::data_dir().map(|d| d.join("typst/packages")),
-        dirs::cache_dir().map(|d| d.join("typst/packages")),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    find_package_in_dirs(spec, &dirs)
-}
-
 /// Reads `{pkg.source_root}/typst.toml` and returns a `PackageAssets` for
 /// `format_name` if `[tool.rheo.{format_name}]` exists and is non-empty.
 /// Returns `None` otherwise. IO and parse errors are logged via warn!.
@@ -93,7 +98,7 @@ pub fn manifest_package_assets(pkg: &ResolvedPackage, format_name: &str) -> Opti
     if section.is_empty() {
         return None;
     }
-    let extra: toml::map::Map<String, toml::Value> = section.clone().into_iter().collect();
+    let extra = section.clone();
     let namespace = pkg.namespace.as_deref().unwrap_or("");
     let dest = if namespace.is_empty() {
         pkg.name.clone()
@@ -130,13 +135,7 @@ pub fn detect_manifest_package_assets(
     import_paths: &[String],
     format_name: &str,
 ) -> Vec<PackageAssets> {
-    let dirs: Vec<PathBuf> = [
-        dirs::data_dir().map(|d| d.join("typst/packages")),
-        dirs::cache_dir().map(|d| d.join("typst/packages")),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let dirs = typst_package_search_dirs(None);
     detect_manifest_package_assets_in_dirs(import_paths, format_name, &dirs)
 }
 

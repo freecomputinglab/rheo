@@ -625,6 +625,7 @@ fn build_package_blocks(
     plugin_section: &PluginSection,
     project: &ProjectConfig,
     typst_cache_dir: &Path,
+    import_paths: &[String],
 ) -> Result<Vec<PackageAssets>> {
     let resolved_packages = rheo_core::plugins::resolve_packages(
         plugin_section.packages(),
@@ -634,10 +635,8 @@ fn build_package_blocks(
     let mut blocks = plugin.map_packages_to_assets(&resolved_packages);
 
     if plugin_section.auto_detect_packages_enabled() {
-        let auto_import_paths =
-            rheo_core::plugins::scan_project_package_imports(&project.typ_files);
         let auto_blocks =
-            rheo_core::plugins::detect_manifest_package_assets(&auto_import_paths, plugin.name());
+            rheo_core::plugins::detect_manifest_package_assets(import_paths, plugin.name());
         blocks.extend(auto_blocks);
     }
 
@@ -667,6 +666,10 @@ fn perform_compilation(
     }
     .join("typst/packages");
 
+    // Scan .typ files for package imports once — shared across all plugins
+    // for pre-warming and auto-detect.
+    let package_imports = rheo_core::plugins::scan_project_package_imports(&project.typ_files);
+
     for plugin in plugins {
         let plugin_output_dir = output_config.dir_for_plugin(plugin.name());
         std::fs::create_dir_all(&plugin_output_dir).map_err(|e| {
@@ -686,13 +689,17 @@ fn perform_compilation(
         // Pre-warm: download any @ns/name:ver imports so the auto-detect scan
         // below sees them on first compile, not just on subsequent compiles.
         if plugin_section.auto_detect_packages_enabled() {
-            let imports = rheo_core::plugins::scan_project_package_imports(&project.typ_files);
-            rheo_core::plugins::prewarm_packages(&imports);
+            rheo_core::plugins::prewarm_packages(&package_imports);
         }
 
         // Expand package specifiers into synthetic asset blocks
-        let package_blocks =
-            build_package_blocks(plugin.as_ref(), plugin_section, project, &typst_cache_dir)?;
+        let package_blocks = build_package_blocks(
+            plugin.as_ref(),
+            plugin_section,
+            project,
+            &typst_cache_dir,
+            &package_imports,
+        )?;
 
         let resolved_assets = resolve_assets(
             plugin.as_ref(),
