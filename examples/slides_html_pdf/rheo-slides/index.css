@@ -1,4 +1,0 @@
-/* Reveal.js controls layout; keep this minimal */
-.slides > :not(section) {
-  display: none;
-}
