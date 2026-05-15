@@ -88,10 +88,6 @@ pub struct PluginSection {
     /// Holds glob copy patterns and AssetConfig path overrides.
     pub assets: Option<AssetsField>,
 
-    /// Package paths to expand into synthetic asset blocks (e.g. `./packages/a`).
-    #[serde(default)]
-    pub packages: Vec<String>,
-
     /// When true (default), auto-detect package assets from `#import "@ns/name:ver"`
     /// statements in .typ files by reading each package's `typst.toml` `[tool.rheo.*]`.
     /// Set to false to disable import-driven asset injection for this format.
@@ -283,11 +279,6 @@ impl PluginSection {
     /// Returns the asset blocks, normalised to a slice regardless of source syntax.
     pub fn asset_blocks(&self) -> &[PluginAssets] {
         self.assets.as_ref().map(|a| a.blocks()).unwrap_or(&[])
-    }
-
-    /// Returns the declared packages, or an empty slice if none configured.
-    pub fn packages(&self) -> &[String] {
-        &self.packages
     }
 
     /// Auto-detection of `@preview` package assets defaults to true; users can
@@ -736,21 +727,5 @@ mod tests {
         assert_eq!(pairs[0].0.dest.as_deref(), Some("subdir"));
         assert_eq!(pairs[1].1, "two.js");
         assert!(pairs[1].0.dest.is_none());
-    }
-
-    #[test]
-    fn test_packages_field_parsed_from_html_section() {
-        let toml = versioned_toml("[html]\npackages = [\"./a\", \"./b\"]");
-        let config = parse(&toml);
-        let section = config.plugin_section("html");
-        assert_eq!(
-            section.packages(),
-            ["./a", "./b"],
-            "packages should be in named field, not extra"
-        );
-        assert!(
-            section.extra.get("packages").is_none(),
-            "packages should NOT be in extra"
-        );
     }
 }

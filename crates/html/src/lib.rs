@@ -6,10 +6,8 @@ use rheo_core::html_utils;
 /// Used when the project doesn't provide its own style.css.
 pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
-use rheo_core::plugins::{PackageAssets, ResolvedPackage};
 use rheo_core::{
     AssetConfig, FormatPlugin, OpenHandle, PluginContext, Result, RheoError, ServerHandle,
-    default_package_assets,
 };
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -100,24 +98,6 @@ impl FormatPlugin for HtmlPlugin {
         ]
     }
 
-    fn map_packages_to_assets(&self, packages: &[ResolvedPackage]) -> Vec<PackageAssets> {
-        packages
-            .iter()
-            .map(|pkg| {
-                let mut block = default_package_assets(pkg);
-                block.assets.extra.insert(
-                    "css_stylesheet".into(),
-                    toml::Value::String("index.css".into()),
-                );
-                block
-                    .assets
-                    .extra
-                    .insert("js_scripts".into(), toml::Value::String("index.js".into()));
-                block
-            })
-            .collect()
-    }
-
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
         let html_string = ctx.compile_to_html_string()?;
 
@@ -159,39 +139,5 @@ impl FormatPlugin for HtmlPlugin {
 
         info!(output = %output.display(), "successfully compiled to HTML");
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rheo_core::plugins::ResolvedPackage;
-
-    #[test]
-    fn test_html_plugin_map_packages_to_assets_override() {
-        let dir = tempfile::tempdir().unwrap();
-        let source_root = dir.path().join("mypkg");
-        std::fs::create_dir_all(&source_root).unwrap();
-
-        let resolved = vec![ResolvedPackage {
-            name: "mypkg".into(),
-            source_root: source_root.clone(),
-            namespace: None,
-            version: None,
-        }];
-        let result = HtmlPlugin.map_packages_to_assets(&resolved);
-
-        assert_eq!(result.len(), 1);
-        assert_eq!(
-            result[0].assets.extra.get("css_stylesheet"),
-            Some(&toml::Value::String("index.css".into()))
-        );
-        assert_eq!(
-            result[0].assets.extra.get("js_scripts"),
-            Some(&toml::Value::String("index.js".into()))
-        );
-        assert_eq!(result[0].assets.dest.as_deref(), Some("mypkg"));
-        assert_eq!(result[0].assets.copy, vec!["**/*"]);
-        assert_eq!(result[0].source_root, source_root);
     }
 }

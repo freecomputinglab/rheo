@@ -82,6 +82,19 @@ regex = "1.10"
 lazy_static = "1.4"
 serde-xml-rs = "0.8.2"
 
+# To use Typst's git main branch instead of the pinned crates.io release (e.g. to
+# test unreleased features), uncomment the [patch.crates-io] block below.
+# Cargo strips [patch] on publish, so crates.io releases always use the pinned versions.
+#
+# [patch.crates-io]
+# typst        = { git = "https://github.com/typst/typst" }
+# typst-library = { git = "https://github.com/typst/typst" }
+# typst-pdf    = { git = "https://github.com/typst/typst" }
+# typst-html   = { git = "https://github.com/typst/typst" }
+# typst-kit    = { git = "https://github.com/typst/typst" }
+# typst-syntax = { git = "https://github.com/typst/typst" }
+# comemo       = { git = "https://github.com/typst/comemo" }
+
 [profile.release]
 opt-level = 1
 lto = true

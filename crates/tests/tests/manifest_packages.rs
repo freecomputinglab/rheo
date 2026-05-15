@@ -217,55 +217,6 @@ fn run_rheo_compile(
     cmd.output().expect("Failed to run rheo compile")
 }
 
-/// Explicit `packages = ["@testns/testpkg:0.1.0"]` in rheo.toml resolves
-/// the package and copies its assets even without auto-detect.
-#[test]
-fn explicit_packages_in_rheo_toml_still_resolved() {
-    let data_dir = tempfile::tempdir().unwrap();
-    let cache_dir = tempfile::tempdir().unwrap();
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_path = project_dir.path();
-
-    stage_package_in_data_dir(data_dir.path());
-
-    std::fs::write(
-        project_path.join("main.typ"),
-        "= Hello\nExplicit package test.\n",
-    )
-    .unwrap();
-    std::fs::write(
-        project_path.join("rheo.toml"),
-        format!(
-            "version = \"{}\"\nformats = [\"html\"]\n\n[html]\npackages = [\"@testns/testpkg:0.1.0\"]\n",
-            env!("CARGO_PKG_VERSION"),
-        ),
-    )
-    .unwrap();
-
-    let build_dir = project_path.join("build");
-
-    let output = run_rheo_compile(
-        project_path,
-        &build_dir,
-        vec![
-            ("XDG_DATA_HOME", data_dir.path()),
-            ("XDG_CACHE_HOME", cache_dir.path()),
-        ],
-    );
-
-    assert!(
-        output.status.success(),
-        "Compilation failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    // Explicit packages use default_package_assets with dest = pkg.name ("testpkg")
-    assert!(
-        build_dir.join("html/testpkg/style.css").exists(),
-        "explicit package CSS not found at html/testpkg/style.css"
-    );
-}
-
 /// Setting `auto_detect_packages = false` suppresses import-driven asset
 /// injection, even when the .typ file imports the package.
 #[test]
