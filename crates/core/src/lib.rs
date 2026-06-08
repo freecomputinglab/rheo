@@ -40,9 +40,10 @@ pub use config::{AssetsField, PluginAssets, PluginSection, Spine};
 
 // Plugin trait and context
 pub use plugins::{
-    AssetConfig, FormatPlugin, OpenHandle, PackageAssets, PluginContext, ResolvedPackage,
-    ServerHandle, SpineOptions,
+    AssetConfig, CompiledHtmlVertebra, FormatPlugin, OpenHandle, PackageAssets, PluginContext,
+    ResolvedPackage, ServerHandle, SpineOptions,
 };
+pub use reticulate::types::RheoValue;
 
 // HTML/PDF export utilities
 pub use compile::{compile_document_to_string, document_to_pdf_bytes};
