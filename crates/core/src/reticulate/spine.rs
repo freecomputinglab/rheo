@@ -1,6 +1,7 @@
 use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
 use crate::plugins::SpineOptions;
 use crate::reticulate::transformer::LinkTransformer;
+use crate::reticulate::types::RheoValue;
 use crate::{Result, RheoError, TYP_EXT};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -21,6 +22,11 @@ pub struct BuiltSpine {
     /// Reticulated (relative link transformed) source files.
     /// Always length 1 if `is_merged`.
     pub source: Vec<String>,
+
+    /// Validated `rheo-*` vars (prefix stripped) per vertebra, aligned with the
+    /// original `spine_files` order — one map per original file even when
+    /// `is_merged` collapses `source` to length 1.
+    pub vars: Vec<HashMap<String, RheoValue>>,
 }
 
 impl BuiltSpine {
@@ -56,6 +62,7 @@ impl BuiltSpine {
         };
 
         let mut sources = Vec::new();
+        let mut vars = Vec::new();
 
         for spine_file in &spine_files {
             let source = fs::read_to_string(spine_file).map_err(|e| {
@@ -66,7 +73,28 @@ impl BuiltSpine {
                 ))
             })?;
 
-            let transformed_source = transformer.transform_source(&source, spine_file, root)?;
+            let output = transformer.transform_with_vars(&source, spine_file, root)?;
+            let transformed_source = output.source;
+
+            // A `None` value means the RHS was an unsupported kind. Only string
+            // literals are supported for now, so report it as such.
+            let mut file_vars = HashMap::new();
+            for v in output.rheo_vars {
+                match v.value {
+                    Some(value) => {
+                        file_vars.insert(v.key, value);
+                    }
+                    None => {
+                        return Err(RheoError::invalid_data(format!(
+                            "{}:{}: rheo-{} must be a string",
+                            spine_file.display(),
+                            v.line,
+                            v.key
+                        )));
+                    }
+                }
+            }
+            vars.push(file_vars);
 
             let final_source = if merge {
                 let (label, doc_title) = extract_label_and_title(&source, spine_file)?;
@@ -93,6 +121,7 @@ impl BuiltSpine {
             title,
             is_merged: merge,
             source: final_sources,
+            vars,
         })
     }
 }
@@ -388,5 +417,45 @@ mod tests {
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 2);
+    }
+
+    fn write_spine_dir(files: &[(&str, &str)]) -> TempDir {
+        let temp = TempDir::new().unwrap();
+        for (name, contents) in files {
+            fs::write(temp.path().join(name), contents).unwrap();
+        }
+        temp
+    }
+
+    #[test]
+    fn test_build_collects_rheo_vars_per_file() {
+        let temp = write_spine_dir(&[
+            ("a.typ", "#let rheo-feed-title = \"Alpha\"\n= A"),
+            ("b.typ", "= B, no vars"),
+        ]);
+        let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
+        let built = BuiltSpine::build(temp.path(), Some(&spine), "html", false).unwrap();
+
+        assert_eq!(built.vars.len(), 2);
+        assert_eq!(
+            built.vars[0].get("feed-title"),
+            Some(&RheoValue::Str("Alpha".to_string()))
+        );
+        assert!(built.vars[1].is_empty());
+    }
+
+    #[test]
+    fn test_build_errors_on_non_string_rheo_var() {
+        let temp = write_spine_dir(&[("a.typ", "#let rheo-x = 1\n= A")]);
+        let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
+        let result = BuiltSpine::build(temp.path(), Some(&spine), "html", false);
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("a.typ"), "message missing path: {msg}");
+        assert!(
+            msg.contains("rheo-x must be a string"),
+            "message missing reason: {msg}"
+        );
     }
 }
