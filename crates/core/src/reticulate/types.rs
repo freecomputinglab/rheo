@@ -44,6 +44,15 @@ pub enum RheoValue {
     Str(String),
 }
 
+impl RheoValue {
+    /// The inner string if this is a [`RheoValue::Str`], else `None`.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            RheoValue::Str(s) => Some(s),
+        }
+    }
+}
+
 /// A top-level `#let rheo-<key> = "..."` binding harvested from a spine
 /// vertebra during the canonical Typst parse.
 #[derive(Debug, Clone, PartialEq)]
