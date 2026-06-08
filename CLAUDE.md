@@ -179,6 +179,35 @@ Report: list all closed issues.
 
 ---
 
+## br/jj Pair (only when user says "br/jj pair")
+
+**Before first loop iteration** — verify jj identity (commits without author are broken):
+```bash
+jj config list --user
+# Must show user.name and user.email. If missing:
+jj config set --user user.name "Lachlan Kermode"
+jj config set --user user.email "lachie@ohrg.org"
+```
+
+Loop until no open issues or user stops:
+1. `br ready --json` — pick highest priority (bugs/tasks/features, not epics/chores)
+2. Implement with br/jj workflow
+3. **Pause and prompt the user** — present what was done, ask whether to continue
+   - User may review code, request changes, add/modify/remove br issues
+   - Only continue to next issue when the user explicitly says to (e.g. "continue", "next", "go")
+   - If user says "stop" or "done", exit the loop
+
+When done:
+```bash
+cargo fmt
+cargo clippy --fix --all-targets --all-features --allow-dirty -- -D warnings
+# jj squash if changes made
+```
+
+Report: list all closed issues.
+
+---
+
 ## Plan Mode (activated by "plan mode", "let's plan", "design this", or any prompt ending with "BEADS")
 
 **Rules:** No code, no file edits (except `.beads/`). Output is beads issues only.
@@ -191,4 +220,4 @@ Report: list all closed issues.
    - Each issue's `--description` must be procedural and unambiguous — written as if for an agent with no prior context. Include: background, relevant file paths and line numbers, exact steps to implement, and the expected outcome. The implementer must not need to investigate or infer anything.
 5. List created IDs and stop — do NOT implement, do NOT ask if user wants to implement
 
-**Exits** when user says "br/jj churn", "start implementing", or "go".
+**Exits** when user says "br/jj churn", "br/jj pair", "start implementing", or "go".
