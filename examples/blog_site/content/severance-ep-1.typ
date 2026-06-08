@@ -5,6 +5,9 @@
 #import "index.typ": template
 #show: template
 
+#let rheo-feed-title = "Good news about hell — Severance S1E1"
+#let rheo-feed-updated = "2025-01-17T00:00:00Z"
+
 #set document(title: [Good news about hell - #emph[Severance] [s1/e1]])
 
 #title()

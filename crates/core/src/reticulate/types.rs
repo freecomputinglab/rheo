@@ -35,6 +35,40 @@ pub struct ImportInfo {
     pub is_package: bool,
 }
 
+/// A value bound to a `rheo-*` variable. Currently only string literals are
+/// supported; the enum exists so further kinds (e.g. datetimes) can be added
+/// without changing every consumer's signature.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RheoValue {
+    /// A string literal RHS.
+    Str(String),
+}
+
+impl RheoValue {
+    /// The inner string if this is a [`RheoValue::Str`], else `None`.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            RheoValue::Str(s) => Some(s),
+        }
+    }
+}
+
+/// A top-level `#let rheo-<key> = "..."` binding harvested from a spine
+/// vertebra during the canonical Typst parse.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RheoVar {
+    /// The let-binding name with the leading `rheo-` prefix stripped
+    /// (e.g. `rheo-feed-title` → `feed-title`).
+    pub key: String,
+
+    /// `Some(value)` when the RHS is a supported kind; `None` when it is any
+    /// other kind. The consumer turns `None` into a validation error.
+    pub value: Option<RheoValue>,
+
+    /// 1-based source line of the binding, for error messages.
+    pub line: usize,
+}
+
 /// Link transformation operation
 #[derive(Debug, Clone)]
 pub enum LinkTransform {

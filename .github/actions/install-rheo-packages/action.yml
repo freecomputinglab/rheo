@@ -1,0 +1,31 @@
+name: Install @rheo packages
+description: >
+  Clone rheo-packages and build each package's dist/ into the typst package
+  cache (~/.cache/typst/packages/rheo) so @rheo/* imports resolve. The package
+  entrypoints (e.g. dist/lib.typ) are built artifacts, not committed, so the
+  per-package pnpm/vite builds must run via `just build`.
+
+runs:
+  using: composite
+  steps:
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: "10.21.0"
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Clone and build @rheo packages
+      shell: bash
+      run: |
+        rm -rf "$HOME/.cache/typst/packages/rheo"
+        mkdir -p "$HOME/.cache/typst/packages"
+        git clone https://github.com/freecomputinglab/rheo-packages.git "$HOME/.cache/typst/packages/rheo"
+        cd "$HOME/.cache/typst/packages/rheo"
+        just build

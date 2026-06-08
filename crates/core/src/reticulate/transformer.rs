@@ -1,4 +1,4 @@
-use super::types::{LinkInfo, LinkTransform};
+use super::types::{LinkInfo, LinkTransform, RheoVar};
 use crate::constants::TYP_EXT;
 use crate::pdf_utils::sanitize_label_name;
 use crate::reticulate::validator::is_relative_typ_link;
@@ -7,6 +7,13 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use tracing::warn;
+
+/// Output of a single source transformation: the rewritten source plus any
+/// `rheo-*` vars harvested from it during the (single) parse.
+pub struct TransformOutput {
+    pub source: String,
+    pub rheo_vars: Vec<RheoVar>,
+}
 
 /// Link transformer that converts Typst links to format-specific targets.
 pub struct LinkTransformer {
@@ -55,6 +62,19 @@ impl LinkTransformer {
         current_file: &Path,
         project_root: &Path,
     ) -> Result<String> {
+        Ok(self
+            .transform_with_vars(source, current_file, project_root)?
+            .source)
+    }
+
+    /// Like [`transform_source`](Self::transform_source) but also returns the
+    /// `rheo-*` vars harvested during the single parse.
+    pub fn transform_with_vars(
+        &self,
+        source: &str,
+        current_file: &Path,
+        project_root: &Path,
+    ) -> Result<TransformOutput> {
         use crate::reticulate::{parser, serializer};
 
         let source_obj = typst::syntax::Source::detached(source);
@@ -94,11 +114,11 @@ impl LinkTransformer {
         }
 
         let code_ranges = serializer::find_code_block_ranges(&source_obj);
-        Ok(serializer::apply_transformations(
-            source,
-            &transformations,
-            &code_ranges,
-        ))
+        let transformed = serializer::apply_transformations(source, &transformations, &code_ranges);
+        Ok(TransformOutput {
+            source: transformed,
+            rheo_vars: extracted.rheo_vars,
+        })
     }
 
     /// Compute format-specific transformations for links.

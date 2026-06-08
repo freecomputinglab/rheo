@@ -9,6 +9,11 @@ content_dir = "content"
 # Default: ["pdf", "html"]
 # formats = ["html", "pdf"]
 
+[html]
+# When set, the HTML build emits build/html/feed.xml (Atom 1.0) with one entry
+# per vertebra that declares `#let rheo-feed-title`. See severance-ep-*.typ.
+feed_base_url = "https://example.com/severance"
+
 [html.spine]
 vertebrae = ["index.typ", "severance-*.typ"]
 

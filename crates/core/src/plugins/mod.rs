@@ -35,7 +35,19 @@ pub enum OpenHandle {
 
 use crate::compile::RheoCompileOptions;
 use crate::config::PluginAssets;
+use crate::reticulate::types::RheoValue;
 use crate::{BuiltSpine, Result, RheoError};
+
+/// A single spine vertebra compiled to HTML, together with its harvested
+/// `rheo-*` vars (prefix stripped). Produced in spine order.
+///
+/// HTML-specific: each vertebra is compiled from Typst to HTML exactly once;
+/// downstream formats (e.g. EPUB) reuse this `document` rather than recompiling.
+pub struct CompiledHtmlVertebra {
+    pub path: PathBuf,
+    pub document: HtmlDocument,
+    pub vars: HashMap<String, RheoValue>,
+}
 
 /// Standardized spine options resolved by rheo core before calling compile().
 #[derive(Debug, Clone)]
@@ -107,6 +119,19 @@ impl<'a> PluginContext<'a> {
         }
     }
 
+    /// Root that spine `vertebrae` globs resolve against: the configured
+    /// `content_dir`, falling back to the project root.
+    ///
+    /// Spine patterns in rheo.toml are relative to `content_dir`, so spine
+    /// generation must use this rather than `options.root` — which is the
+    /// content dir in the merged path but the project root in the per-file path.
+    pub fn spine_root(&self) -> PathBuf {
+        self.project
+            .config
+            .resolve_content_dir(&self.project.root)
+            .unwrap_or_else(|| self.project.root.clone())
+    }
+
     pub fn compile_to_html_string(&'a self) -> Result<String> {
         let world = self.options.world.as_ref().ok_or_else(|| {
             RheoError::project_config(
@@ -134,27 +159,25 @@ impl<'a> PluginContext<'a> {
     /// Compile each spine file to an HTML document independently.
     ///
     /// Builds transformed sources via `BuiltSpine::build()` (merge=false), then compiles
-    /// each one through `RheoWorld::compile_html_file()`. Returns `(original_path, HtmlDocument)`
-    /// pairs in spine order.
+    /// each one through `RheoWorld::compile_html_file()`. Returns one
+    /// `CompiledHtmlVertebra` per spine file, in spine order.
     pub fn compile_spine_items_to_html(
         &self,
         plugin: &(impl FormatPlugin + ?Sized),
-    ) -> Result<Vec<(PathBuf, HtmlDocument)>> {
-        let rheo_spine = BuiltSpine::build(
-            &self.options.root,
-            Some(self.spine),
-            plugin.extension(),
-            false,
-        )?;
+    ) -> Result<Vec<CompiledHtmlVertebra>> {
+        let spine_root = self.spine_root();
+        let rheo_spine =
+            BuiltSpine::build(&spine_root, Some(self.spine), plugin.extension(), false)?;
 
-        let spine_paths = self.spine.generate(&self.options.root)?;
+        let spine_paths = self.spine.generate(&spine_root)?;
 
         let plugin_library = plugin.typst_library().map(|s| s.to_string());
 
         spine_paths
             .iter()
             .zip(rheo_spine.source.iter())
-            .map(|(path, transformed_source)| {
+            .zip(rheo_spine.vars.iter())
+            .map(|((path, transformed_source), vars)| {
                 let temp_dir = path.parent().unwrap_or(&self.options.root);
                 let mut temp_file = NamedTempFile::new_in(temp_dir)
                     .map_err(|e| RheoError::io(e, "creating temp file for spine item HTML"))?;
@@ -176,9 +199,22 @@ impl<'a> PluginContext<'a> {
                     plugin.name(),
                     plugin_library.clone(),
                 )?;
-                Ok((path.clone(), document))
+                Ok(CompiledHtmlVertebra {
+                    path: path.clone(),
+                    document,
+                    vars: vars.clone(),
+                })
             })
             .collect()
+    }
+
+    /// Per-vertebra `rheo-*` vars (prefix stripped) in spine order, without
+    /// compiling HTML. Generic accessor for non-HTML formats.
+    pub fn spine_vars(&self) -> Result<Vec<(PathBuf, HashMap<String, RheoValue>)>> {
+        let spine_root = self.spine_root();
+        let rheo_spine = BuiltSpine::build(&spine_root, Some(self.spine), "html", false)?;
+        let spine_paths = self.spine.generate(&spine_root)?;
+        Ok(spine_paths.into_iter().zip(rheo_spine.vars).collect())
     }
 
     /// Compile to PDF using the full context. By modifying fields in the PluginContext before

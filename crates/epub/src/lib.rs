@@ -64,9 +64,9 @@ impl FormatPlugin for EpubPlugin {
         let spine_items = ctx.compile_spine_items_to_html(self)?;
         let mut items = spine_items
             .into_iter()
-            .map(|(path, doc)| {
-                let href_path = PathBuf::from(path.file_name().unwrap_or_default());
-                EpubItem::from_html_document(href_path, doc)
+            .map(|v| {
+                let href_path = PathBuf::from(v.path.file_name().unwrap_or_default());
+                EpubItem::from_html_document(href_path, v.document)
             })
             .collect::<Result<Vec<_>>>()?;
 

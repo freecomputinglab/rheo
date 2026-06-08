@@ -40,6 +40,23 @@ impl HtmlDom {
         find_element_by_tag(&self.dom.document, tag_name).map(|handle| Element { handle })
     }
 
+    /// Inject an Atom autodiscovery `<link>` into the HTML `<head>`.
+    ///
+    /// Inserts `<link rel="alternate" type="application/atom+xml" title="..." href="..."/>`
+    /// after the last `<meta>` tag (or at position 0 if none).
+    pub fn inject_feed_link(&mut self, href: &str, title: &str) -> Result<()> {
+        let head = self
+            .find_element("head")
+            .ok_or_else(|| RheoError::HtmlGeneration {
+                count: 1,
+                errors: "HTML document does not contain a <head> element".to_string(),
+            })?;
+
+        let insert_pos = head.last_meta_index().map(|i| i + 1).unwrap_or(0);
+        head.insert_child_at(insert_pos, Element::create_feed_link(href, title));
+        Ok(())
+    }
+
     /// Inject `<link>` and `<script>` elements into the HTML `<head>`.
     ///
     /// Nodes are inserted after the last `<meta>` tag (or at position 0 if none),
@@ -82,6 +99,27 @@ impl HtmlDom {
         Ok(())
     }
 
+    /// Serialize the inner HTML of the `<body>` element: its children without
+    /// the surrounding `<body>` tag.
+    ///
+    /// Returns an error if the document has no `<body>` element. Head mutations
+    /// (e.g. `inject_head_links`) do not affect this output, so callers may read
+    /// the body before or after injecting head links.
+    pub fn body_inner_html(&self) -> Result<String> {
+        let body = find_element_by_tag(&self.dom.document, "body").ok_or_else(|| {
+            RheoError::HtmlGeneration {
+                count: 1,
+                errors: "HTML document does not contain a <body> element".to_string(),
+            }
+        })?;
+
+        let mut output = String::new();
+        for child in body.children.borrow().iter() {
+            serialize_node(child, &mut output)?;
+        }
+        Ok(output)
+    }
+
     #[cfg(test)]
     pub fn document_root(&self) -> &Handle {
         &self.dom.document
@@ -94,6 +132,43 @@ pub struct Element {
 }
 
 impl Element {
+    /// Create an Atom autodiscovery `<link>` element:
+    /// `<link rel="alternate" type="application/atom+xml" title="..." href="...">`.
+    pub fn create_feed_link(href: &str, title: &str) -> Self {
+        use html5ever::tendril::StrTendril;
+        use html5ever::{Attribute, LocalName, QualName, ns};
+        use markup5ever_rcdom::Node;
+        use std::cell::RefCell;
+
+        let attrs = vec![
+            Attribute {
+                name: QualName::new(None, ns!(), LocalName::from("rel")),
+                value: StrTendril::from("alternate"),
+            },
+            Attribute {
+                name: QualName::new(None, ns!(), LocalName::from("type")),
+                value: StrTendril::from("application/atom+xml"),
+            },
+            Attribute {
+                name: QualName::new(None, ns!(), LocalName::from("title")),
+                value: StrTendril::from(title),
+            },
+            Attribute {
+                name: QualName::new(None, ns!(), LocalName::from("href")),
+                value: StrTendril::from(href),
+            },
+        ];
+
+        let handle = Node::new(NodeData::Element {
+            name: QualName::new(None, ns!(html), LocalName::from("link")),
+            attrs: RefCell::new(attrs),
+            template_contents: RefCell::new(None),
+            mathml_annotation_xml_integration_point: false,
+        });
+
+        Self { handle }
+    }
+
     /// Create a `<link rel="..." href="...">` element.
     pub fn create_link(rel: &str, href: &str) -> Self {
         use html5ever::tendril::StrTendril;
@@ -323,6 +398,18 @@ pub fn inject_inline_styles(html: &str, css_blocks: &[&str]) -> Result<String> {
     }
 }
 
+/// Inject an Atom autodiscovery `<link>` into the HTML `<head>`.
+///
+/// Inserts `<link rel="alternate" type="application/atom+xml" title="..." href="..."/>`
+/// after the last `<meta>` tag (or at position 0 if none).
+///
+/// Returns an error if the HTML cannot be parsed or has no `<head>` element.
+pub fn inject_feed_link(html: &str, href: &str, title: &str) -> Result<String> {
+    let mut dom = HtmlDom::parse(html)?;
+    dom.inject_feed_link(href, title)?;
+    dom.serialize()
+}
+
 /// Inject `<link>` and `<script>` elements into the HTML `<head>`.
 ///
 /// Nodes are inserted after the last `<meta>` tag (or at position 0 if none),
@@ -338,6 +425,14 @@ pub fn inject_head_links(
     let mut dom = HtmlDom::parse(html)?;
     dom.inject_head_links(fonts, stylesheets, scripts)?;
     dom.serialize()
+}
+
+/// Extract the inner HTML of the `<body>` element: its children serialized,
+/// without the surrounding `<body>` tag.
+///
+/// Returns an error if the HTML cannot be parsed or has no `<body>` element.
+pub fn extract_body_inner_html(html: &str) -> Result<String> {
+    HtmlDom::parse(html)?.body_inner_html()
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -556,5 +651,67 @@ mod tests {
         let result = inject_head_links(html, &[], &["style.css"], &[]).unwrap();
 
         assert!(!result.contains("<script"));
+    }
+
+    // inject_feed_link tests
+
+    #[test]
+    fn test_inject_feed_link_basic() {
+        let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
+        let result = inject_feed_link(html, "https://example.com/feed.xml", "My Feed").unwrap();
+
+        assert!(result.contains(r#"<head>"#));
+        assert!(result.contains(r#"type="application/atom+xml""#));
+        assert!(result.contains(r#"rel="alternate""#));
+        assert!(result.contains(r#"title="My Feed""#));
+        assert!(result.contains(r#"href="https://example.com/feed.xml""#));
+    }
+
+    #[test]
+    fn test_inject_feed_link_after_meta_tags() {
+        let html = r#"<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width">
+<title>Test</title>
+</head><body></body></html>"#;
+        let result = inject_feed_link(html, "/feed.xml", "Blog").unwrap();
+
+        let last_meta_pos = result.find(r#"<meta name="viewport""#).unwrap();
+        let feed_link_pos = result.find("application/atom+xml").unwrap();
+        assert!(
+            feed_link_pos > last_meta_pos,
+            "feed link should appear after meta tags"
+        );
+    }
+
+    #[test]
+    fn test_inject_feed_link_no_head() {
+        let html = "<!DOCTYPE html><html><body></body></html>";
+        let result = inject_feed_link(html, "/feed.xml", "Blog");
+        // html5ever creates a <head> automatically per HTML5 spec
+        assert!(result.is_ok());
+    }
+
+    // extract_body_inner_html tests
+
+    #[test]
+    fn test_extract_body_inner_html_basic() {
+        let html = "<html><head></head><body><p>Hi</p></body></html>";
+        let inner = extract_body_inner_html(html).unwrap();
+        assert_eq!(inner, "<p>Hi</p>");
+    }
+
+    #[test]
+    fn test_extract_body_inner_html_multiple_children() {
+        let html = "<html><head></head><body><h1>T</h1><p>Body</p></body></html>";
+        let inner = extract_body_inner_html(html).unwrap();
+        assert_eq!(inner, "<h1>T</h1><p>Body</p>");
+    }
+
+    #[test]
+    fn test_extract_body_inner_html_empty_body() {
+        let html = "<html><head></head><body></body></html>";
+        let inner = extract_body_inner_html(html).unwrap();
+        assert_eq!(inner, "");
     }
 }

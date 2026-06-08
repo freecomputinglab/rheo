@@ -11,6 +11,9 @@ result-*
 .beads/daemon.lock
 .beads/daemon.log
 .beads/daemon.pid
+.beads/.br_history/
+.beads/.write.lock
+.beads/**
 .abacus/
 
 # Claude
