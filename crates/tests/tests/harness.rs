@@ -1372,3 +1372,188 @@ fn test_merged_imports_missing_file() {
         stderr
     );
 }
+
+/// Integration test for rheo-* vertebra variables and Atom feed generation.
+#[test]
+fn test_atom_feed_and_rheo_vars() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+    let build_dir = project_path.join("build");
+
+    // a.typ: declares feed-title + feed-updated
+    std::fs::write(
+        project_path.join("a.typ"),
+        "#let rheo-feed-title = \"Article A\"\n#let rheo-feed-updated = \"2025-01-15T00:00:00Z\"\n\n= Article A\n\nContent A.\n",
+    )
+    .expect("Failed to write a.typ");
+
+    // b.typ: declares feed-title only (updated falls back to mtime)
+    std::fs::write(
+        project_path.join("b.typ"),
+        "#let rheo-feed-title = \"Article B\"\n\n= Article B\n\nContent B.\n",
+    )
+    .expect("Failed to write b.typ");
+
+    // c.typ: no rheo-* vars → excluded from feed
+    std::fs::write(
+        project_path.join("c.typ"),
+        "= Article C\n\nNo feed metadata.\n",
+    )
+    .expect("Failed to write c.typ");
+
+    // rheo.toml with html spine + base_url
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [html.spine]\n\
+             title = \"Test Blog\"\n\
+             vertebrae = [\"a.typ\", \"b.typ\", \"c.typ\"]\n\
+             \n\
+             [html]\n\
+             base_url = \"https://example.com\"\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // ── feed.xml assertions ──
+    let feed_path = build_dir.join("html/feed.xml");
+    assert!(feed_path.exists(), "feed.xml not generated");
+    let feed = std::fs::read_to_string(&feed_path).expect("Failed to read feed.xml");
+
+    // Atom namespace
+    assert!(
+        feed.contains(r#"xmlns="http://www.w3.org/2005/Atom""#),
+        "feed missing Atom namespace"
+    );
+
+    // Feed-level metadata (title comes from project directory name)
+    assert!(
+        feed.contains("<author><name>Rheo</name></author>"),
+        "feed author wrong"
+    );
+    assert!(
+        feed.contains(r#"href="https://example.com/feed.xml""#) && feed.contains(r#"rel="self""#),
+        "feed self link wrong"
+    );
+
+    // Exactly two entries (c.typ excluded)
+    let entry_count = feed.matches("<entry>").count();
+    assert_eq!(entry_count, 2, "expected 2 entries, got {}", entry_count);
+
+    // Entry content
+    assert!(feed.contains("<title>Article A</title>"), "entry A missing");
+    assert!(feed.contains("<title>Article B</title>"), "entry B missing");
+    assert!(
+        feed.contains(r#"href="https://example.com/a.html""#),
+        "entry A alternate link wrong"
+    );
+    assert!(
+        feed.contains(r#"href="https://example.com/b.html""#),
+        "entry B alternate link wrong"
+    );
+    assert!(
+        feed.contains(r#"type="html""#),
+        "entries missing html content"
+    );
+
+    // a.typ's updated timestamp from rheo-feed-updated
+    assert!(
+        feed.contains("2025-01-15T00:00:00"),
+        "entry A updated timestamp wrong"
+    );
+
+    // ── autodiscovery link in rendered page ──
+    let a_html =
+        std::fs::read_to_string(build_dir.join("html/a.html")).expect("Failed to read a.html");
+    assert!(
+        a_html.contains(r#"type="application/atom+xml""#),
+        "autodiscovery link missing from a.html <head>"
+    );
+}
+
+/// Error path: non-string rheo-* variable causes compilation failure.
+#[test]
+fn test_rheo_var_non_string_error() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+    let build_dir = project_path.join("build");
+
+    std::fs::write(
+        project_path.join("main.typ"),
+        "#let rheo-bad = 42\n\n= Test\n\nContent.\n",
+    )
+    .expect("Failed to write main.typ");
+
+    // Spine + base_url are required — rheo-* validation happens during spine
+    // building, which is triggered by feed generation (gated on base_url).
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [html.spine]\n\
+             title = \"Bad Vars\"\n\
+             vertebrae = [\"main.typ\"]\n\
+             \n\
+             [html]\n\
+             base_url = \"https://example.com\"\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        !output.status.success(),
+        "Expected compilation to fail for non-string rheo-* var"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("all formats failed"),
+        "Expected compilation error, got:\n{}",
+        stderr
+    );
+}
