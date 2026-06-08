@@ -1,4 +1,4 @@
-use crate::reticulate::types::{ImportInfo, LinkInfo};
+use crate::reticulate::types::{ImportInfo, LinkInfo, RheoValue, RheoVar};
 use crate::reticulate::validator::is_relative_typ_link;
 use std::collections::HashMap;
 use typst::syntax::{Source, SyntaxKind, SyntaxNode};
@@ -59,6 +59,8 @@ pub struct ExtractedNodes {
     /// not be statically resolved (not a string literal, not a resolved
     /// let-binding, not a label reference).
     pub unresolvable_link_lines: Vec<usize>,
+    /// Top-level `#let rheo-<key> = "..."` bindings harvested from the source.
+    pub rheo_vars: Vec<RheoVar>,
 }
 
 /// Single-pass extraction of both links and imports from Typst source.
@@ -82,10 +84,12 @@ pub fn extract_nodes(source: &Source) -> ExtractedNodes {
         &wrappers,
         &url_bindings,
     );
+    let rheo_vars = collect_rheo_vars(&root, source);
     ExtractedNodes {
         links,
         imports,
         unresolvable_link_lines,
+        rheo_vars,
     }
 }
 
@@ -518,6 +522,71 @@ fn collect_url_bindings_from_node(
     }
 }
 
+// ---------------------------------------------------------------------------
+// rheo-* variable collection
+// ---------------------------------------------------------------------------
+
+/// Collect file-scope `#let rheo-<key> = "..."` bindings.
+///
+/// Only top-level bindings are tracked; bindings inside closures or code
+/// blocks are skipped. For each `rheo-`-prefixed binding the RHS is recorded
+/// as `Some(string)` when it is a string literal, otherwise `None` (the
+/// consumer turns `None` into a validation error).
+pub fn collect_rheo_vars(root: &SyntaxNode, source: &Source) -> Vec<RheoVar> {
+    collect_rheo_vars_at(root, 0, source)
+}
+
+/// Recurse from `node`, whose first byte sits at `offset` in the source.
+fn collect_rheo_vars_at(node: &SyntaxNode, offset: usize, source: &Source) -> Vec<RheoVar> {
+    match node.kind() {
+        // A file-scope let binding: harvest it if `rheo-`-prefixed, never recurse.
+        SyntaxKind::LetBinding => parse_rheo_var(node, offset, source).into_iter().collect(),
+        // Bindings inside closures or code blocks are not file-scope.
+        SyntaxKind::Closure | SyntaxKind::CodeBlock => Vec::new(),
+        _ => {
+            let mut child_offset = offset;
+            node.children()
+                .flat_map(|child| {
+                    let start = child_offset;
+                    child_offset += child.len();
+                    collect_rheo_vars_at(child, start, source)
+                })
+                .collect()
+        }
+    }
+}
+
+/// Parse a single `LetBinding` (starting at byte `offset`) into a `RheoVar` if
+/// its name is `rheo-`-prefixed. The RHS is `Some(string)` for a string literal
+/// and `None` for any other kind (the consumer turns `None` into an error).
+fn parse_rheo_var(let_binding: &SyntaxNode, offset: usize, source: &Source) -> Option<RheoVar> {
+    let name = let_binding
+        .children()
+        .find(|c| c.kind() == SyntaxKind::Ident)?;
+    let key = name.text().strip_prefix("rheo-")?;
+
+    // The value is the first meaningful node after `=` (skipping whitespace).
+    let value = let_binding
+        .children()
+        .skip_while(|c| c.kind() != SyntaxKind::Eq)
+        .skip(1)
+        .find(|c| c.kind() != SyntaxKind::Space)
+        .filter(|c| c.kind() == SyntaxKind::Str)
+        .map(|c| RheoValue::Str(c.text().trim_matches('"').to_string()));
+
+    let line = source
+        .lines()
+        .byte_to_line(offset)
+        .map(|l| l + 1)
+        .unwrap_or(1);
+
+    Some(RheoVar {
+        key: key.to_string(),
+        value,
+        line,
+    })
+}
+
 /// Parse a ModuleImport or ModuleInclude node into ImportInfo.
 fn parse_import_node(node: &SyntaxNode, root: &SyntaxNode) -> Option<ImportInfo> {
     // Find the first Str child — that is the path argument
@@ -748,5 +817,73 @@ mod tests {
         let imports = extract_imports(&source);
 
         assert_eq!(imports.len(), 0);
+    }
+
+    // --- rheo-* variable tests ---
+
+    #[test]
+    fn test_rheo_var_string() {
+        let source = Source::detached(r#"#let rheo-feed-title = "Hello""#);
+        let vars = collect_rheo_vars(&typst::syntax::parse(source.text()), &source);
+        assert_eq!(vars.len(), 1);
+        assert_eq!(vars[0].key, "feed-title");
+        assert_eq!(vars[0].value, Some(RheoValue::Str("Hello".to_string())));
+    }
+
+    #[test]
+    fn test_rheo_var_non_string_is_none() {
+        let source = Source::detached(
+            r#"#let rheo-count = 42
+#let rheo-body = [x]"#,
+        );
+        let vars = collect_rheo_vars(&typst::syntax::parse(source.text()), &source);
+        assert_eq!(vars.len(), 2);
+        assert_eq!(vars[0].key, "count");
+        assert_eq!(vars[0].value, None);
+        assert_eq!(vars[1].key, "body");
+        assert_eq!(vars[1].value, None);
+    }
+
+    #[test]
+    fn test_rheo_var_in_block_ignored() {
+        let source = Source::detached(
+            r#"#{
+  let rheo-inner = "nope"
+}
+#let f() = {
+  let rheo-closure = "nope"
+}"#,
+        );
+        let vars = collect_rheo_vars(&typst::syntax::parse(source.text()), &source);
+        assert_eq!(vars.len(), 0);
+    }
+
+    #[test]
+    fn test_rheo_vars_multiple_and_normal_skipped() {
+        let source = Source::detached(
+            r#"#let foo = "x"
+#let rheo-feed-title = "Title"
+#let rheo-feed-updated = "2025-01-15T00:00:00Z""#,
+        );
+        let vars = collect_rheo_vars(&typst::syntax::parse(source.text()), &source);
+        assert_eq!(vars.len(), 2);
+        assert_eq!(vars[0].key, "feed-title");
+        assert_eq!(vars[0].value, Some(RheoValue::Str("Title".to_string())));
+        assert_eq!(vars[1].key, "feed-updated");
+        assert_eq!(
+            vars[1].value,
+            Some(RheoValue::Str("2025-01-15T00:00:00Z".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_rheo_var_line_number() {
+        let source = Source::detached(
+            r#"Some text
+#let rheo-feed-title = "Hello""#,
+        );
+        let vars = collect_rheo_vars(&typst::syntax::parse(source.text()), &source);
+        assert_eq!(vars.len(), 1);
+        assert_eq!(vars[0].line, 2);
     }
 }
