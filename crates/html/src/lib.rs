@@ -136,6 +136,16 @@ impl FormatPlugin for HtmlPlugin {
             html_utils::inject_head_links(&html_string, &[], &css_paths, &js_paths)?
         };
 
+        let html_string = if let Some(base) = base_url(ctx.config) {
+            html_utils::inject_feed_link(
+                &html_string,
+                &format!("{base}/feed.xml"),
+                &ctx.project.name,
+            )?
+        } else {
+            html_string
+        };
+
         debug!(size = html_string.len(), "writing HTML file");
         let output = &ctx.options.output;
         std::fs::write(output, &html_string)
