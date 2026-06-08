@@ -113,25 +113,25 @@ gh pr create --base main --head feat/<name> --title "..." --body "- bullet\n- bu
 
 ---
 
-## Issue Tracking (beads/bd — NEVER use markdown TODOs)
+## Issue Tracking (beads/br — NEVER use markdown TODOs)
 
 ```bash
-bd ready --json                              # find unblocked work
-bd list --status=open
-bd show <id>
-bd create "Title" -t bug|feature|task -p 0-4 --json
-bd update <id> --status in_progress --json
-bd close <id1> <id2> --reason "Done" --json
-bd dep add <issue> <depends-on>
+br ready --json                              # find unblocked work
+br list --status=open
+br show <id>
+br create "Title" -t bug|feature|task -p 0-4 --json
+br update <id> --status in_progress --json
+br close <id1> <id2> --reason "Done" --json
+br dep add <issue> <depends-on>
 ```
 
 **Priorities:** 0=critical, 1=high, 2=medium, 3=low, 4=backlog
 
-**Local-only:** `.beads/` is gitignored, never commit it, never run `bd sync`.
+**Local-only:** `.beads/` is gitignored, never commit it, never run `br sync`.
 
 ---
 
-## The bd/jj Workflow (ALWAYS use for bd tasks)
+## The br/jj Workflow (ALWAYS use for br tasks)
 
 **Session prerequisite** — verify jj identity:
 ```bash
@@ -142,17 +142,17 @@ jj config set --user user.email "lachie@ohrg.org"
 ```
 
 **Per-task sequence:**
-1. `bd update <id> --status in_progress`
+1. `br update <id> --status in_progress`
 2. `jj log` — if empty unnamed commit below working commit, name it: `jj describe -m "..."`
 3. `jj new` — fresh working commit
 4. Do the work, run tests
 5. `jj squash` then `jj describe -r @- -m "Present tense description"`
 6. `jj log` — verify history shows correct author on each commit (not empty/unknown)
-7. `bd close <id> --reason "Done"`
+7. `br close <id> --reason "Done"`
 
 ---
 
-## bd/jj Churn (only when user says "bd/jj churn")
+## br/jj Churn (only when user says "br/jj churn")
 
 **Before first loop iteration** — verify jj identity (commits without author are broken):
 ```bash
@@ -163,8 +163,8 @@ jj config set --user user.email "lachie@ohrg.org"
 ```
 
 Loop until no open issues:
-1. `bd ready --json` — pick highest priority (bugs/tasks/features, not epics/chores)
-2. Implement with bd/jj workflow
+1. `br ready --json` — pick highest priority (bugs/tasks/features, not epics/chores)
+2. Implement with br/jj workflow
 3. `/clear` — clear context
 4. Repeat
 
@@ -185,10 +185,10 @@ Report: list all closed issues.
 
 **Workflow:**
 1. Understand goal, ask clarifying questions
-2. Decompose into discrete bd issues with type, priority, acceptance criteria
+2. Decompose into discrete br issues with type, priority, acceptance criteria
 3. Present proposal to user, ask if they want to create the issues
-4. If yes: run `bd create` commands (parallel where possible), set up deps with `bd dep add`
+4. If yes: run `br create` commands (parallel where possible), set up deps with `br dep add`
    - Each issue's `--description` must be procedural and unambiguous — written as if for an agent with no prior context. Include: background, relevant file paths and line numbers, exact steps to implement, and the expected outcome. The implementer must not need to investigate or infer anything.
 5. List created IDs and stop — do NOT implement, do NOT ask if user wants to implement
 
-**Exits** when user says "bd/jj churn", "start implementing", or "go".
+**Exits** when user says "br/jj churn", "start implementing", or "go".
