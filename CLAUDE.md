@@ -104,19 +104,21 @@ Feed variables:
 
 ## Version Control (jj — NEVER use git)
 
+**NEVER run `jj git push` (or any push) — the user always pushes themselves.**
+Prepare commits and bookmarks, then stop and let the user push.
+
 ```bash
 jj status / jj diff / jj log / jj show
 jj commit -m "message" / jj describe -m "message"
 jj new / jj new main / jj edit <commit> / jj abandon
 jj squash / jj split / jj restore <file>
 jj git fetch / jj rebase -d main
-jj git push -c @- / jj git push --allow-new
 ```
 
 **PR workflow:**
 ```bash
 jj bookmark create feat/<kebab-case-title> -r @-
-jj git push --allow-new
+# user pushes (e.g. `jj git push --allow-new`)
 gh pr create --base main --head feat/<name> --title "..." --body "- bullet\n- bullet"
 ```
 
