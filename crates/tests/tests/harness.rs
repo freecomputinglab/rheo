@@ -1497,6 +1497,82 @@ fn test_atom_feed_and_rheo_vars() {
     );
 }
 
+/// Regression: feed generation resolves spine vertebrae against the configured
+/// `content_dir`, not the project root. With `content_dir` set, the per-file
+/// HTML compile path used to glob from the project root and fail with
+/// "merge spine matched no .typ files", so no feed was produced.
+#[test]
+fn test_atom_feed_with_content_dir() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+    let build_dir = project_path.join("build");
+    let content_dir = project_path.join("content");
+    std::fs::create_dir_all(&content_dir).expect("Failed to create content dir");
+
+    // Posts live under content/, matched by a content_dir-relative glob.
+    std::fs::write(
+        content_dir.join("post-1.typ"),
+        "#let rheo-feed-title = \"Post One\"\n#let rheo-feed-updated = \"2025-02-01T00:00:00Z\"\n\n= Post One\n\nFirst.\n",
+    )
+    .expect("Failed to write post-1.typ");
+    std::fs::write(
+        content_dir.join("post-2.typ"),
+        "#let rheo-feed-title = \"Post Two\"\n\n= Post Two\n\nSecond.\n",
+    )
+    .expect("Failed to write post-2.typ");
+
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             content_dir = \"content\"\n\
+             \n\
+             [html]\n\
+             feed_base_url = \"https://example.com\"\n\
+             \n\
+             [html.spine]\n\
+             vertebrae = [\"post-*.typ\"]\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let feed_path = build_dir.join("html/feed.xml");
+    assert!(
+        feed_path.exists(),
+        "feed.xml not generated for content_dir project"
+    );
+    let feed = std::fs::read_to_string(&feed_path).expect("Failed to read feed.xml");
+
+    let entry_count = feed.matches("<entry>").count();
+    assert_eq!(entry_count, 2, "expected 2 entries, got {}", entry_count);
+    assert!(feed.contains("<title>Post One</title>"), "entry 1 missing");
+    assert!(feed.contains("<title>Post Two</title>"), "entry 2 missing");
+}
+
 /// Error path: non-string rheo-* variable causes compilation failure.
 #[test]
 fn test_rheo_var_non_string_error() {

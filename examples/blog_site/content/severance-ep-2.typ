@@ -5,6 +5,9 @@
 #import "index.typ": template
 #show: template
 
+#let rheo-feed-title = "Half Loop — Severance S1E2"
+#let rheo-feed-updated = "2025-01-24T00:00:00Z"
+
 #set document(title: [Half Loop - _Severance_ [s1/e2]])
 
 #title()

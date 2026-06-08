@@ -119,6 +119,19 @@ impl<'a> PluginContext<'a> {
         }
     }
 
+    /// Root that spine `vertebrae` globs resolve against: the configured
+    /// `content_dir`, falling back to the project root.
+    ///
+    /// Spine patterns in rheo.toml are relative to `content_dir`, so spine
+    /// generation must use this rather than `options.root` — which is the
+    /// content dir in the merged path but the project root in the per-file path.
+    pub fn spine_root(&self) -> PathBuf {
+        self.project
+            .config
+            .resolve_content_dir(&self.project.root)
+            .unwrap_or_else(|| self.project.root.clone())
+    }
+
     pub fn compile_to_html_string(&'a self) -> Result<String> {
         let world = self.options.world.as_ref().ok_or_else(|| {
             RheoError::project_config(
@@ -152,14 +165,11 @@ impl<'a> PluginContext<'a> {
         &self,
         plugin: &(impl FormatPlugin + ?Sized),
     ) -> Result<Vec<CompiledHtmlVertebra>> {
-        let rheo_spine = BuiltSpine::build(
-            &self.options.root,
-            Some(self.spine),
-            plugin.extension(),
-            false,
-        )?;
+        let spine_root = self.spine_root();
+        let rheo_spine =
+            BuiltSpine::build(&spine_root, Some(self.spine), plugin.extension(), false)?;
 
-        let spine_paths = self.spine.generate(&self.options.root)?;
+        let spine_paths = self.spine.generate(&spine_root)?;
 
         let plugin_library = plugin.typst_library().map(|s| s.to_string());
 
@@ -201,8 +211,9 @@ impl<'a> PluginContext<'a> {
     /// Per-vertebra `rheo-*` vars (prefix stripped) in spine order, without
     /// compiling HTML. Generic accessor for non-HTML formats.
     pub fn spine_vars(&self) -> Result<Vec<(PathBuf, HashMap<String, RheoValue>)>> {
-        let rheo_spine = BuiltSpine::build(&self.options.root, Some(self.spine), "html", false)?;
-        let spine_paths = self.spine.generate(&self.options.root)?;
+        let spine_root = self.spine_root();
+        let rheo_spine = BuiltSpine::build(&spine_root, Some(self.spine), "html", false)?;
+        let spine_paths = self.spine.generate(&spine_root)?;
         Ok(spine_paths.into_iter().zip(rheo_spine.vars).collect())
     }
 

@@ -180,7 +180,7 @@ impl HtmlPlugin {
             return Ok(());
         };
 
-        let spine_paths = ctx.spine.generate(&ctx.options.root)?;
+        let spine_paths = ctx.spine.generate(&ctx.spine_root())?;
         if !is_feed_generation_invocation(ctx.options.input.as_deref(), spine_paths.first()) {
             return Ok(());
         }
