@@ -129,19 +129,28 @@ impl FormatPlugin for HtmlPlugin {
             .map(|v| v.iter().map(|a| a.built_relative_path.as_str()).collect())
             .unwrap_or_default();
 
+        // Inline styles are applied via string manipulation (see
+        // `inject_inline_styles`), so they happen before any DOM parse.
         let html_string = html_utils::inject_inline_styles(&html_string, inline_styles)?;
-        let html_string = if css_paths.is_empty() && js_paths.is_empty() {
-            html_string
-        } else {
-            html_utils::inject_head_links(&html_string, &[], &css_paths, &js_paths)?
-        };
 
-        let html_string = if let Some(base) = feed_base_url(ctx.config) {
-            html_utils::inject_feed_link(
-                &html_string,
-                &format!("{base}/feed.xml"),
-                &ctx.project.name,
-            )?
+        // Single-parse invariant: the remaining per-page mutations
+        // (`inject_head_links` for stylesheets/scripts, then `inject_feed_link`
+        // for Atom autodiscovery) share ONE `HtmlDom`, so each page is parsed and
+        // serialized at most once. Head-links run before the feed link to match
+        // the prior two-pass ordering (both insert after the last <meta>).
+        let needs_head_links = !css_paths.is_empty() || !js_paths.is_empty();
+        let feed_link = feed_base_url(ctx.config)
+            .map(|base| (format!("{base}/feed.xml"), ctx.project.name.clone()));
+
+        let html_string = if needs_head_links || feed_link.is_some() {
+            let mut dom = html_utils::HtmlDom::parse(&html_string)?;
+            if needs_head_links {
+                dom.inject_head_links(&[], &css_paths, &js_paths)?;
+            }
+            if let Some((href, title)) = &feed_link {
+                dom.inject_feed_link(href, title)?;
+            }
+            dom.serialize()?
         } else {
             html_string
         };

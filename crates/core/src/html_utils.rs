@@ -99,6 +99,27 @@ impl HtmlDom {
         Ok(())
     }
 
+    /// Serialize the inner HTML of the `<body>` element: its children without
+    /// the surrounding `<body>` tag.
+    ///
+    /// Returns an error if the document has no `<body>` element. Head mutations
+    /// (e.g. `inject_head_links`) do not affect this output, so callers may read
+    /// the body before or after injecting head links.
+    pub fn body_inner_html(&self) -> Result<String> {
+        let body = find_element_by_tag(&self.dom.document, "body").ok_or_else(|| {
+            RheoError::HtmlGeneration {
+                count: 1,
+                errors: "HTML document does not contain a <body> element".to_string(),
+            }
+        })?;
+
+        let mut output = String::new();
+        for child in body.children.borrow().iter() {
+            serialize_node(child, &mut output)?;
+        }
+        Ok(output)
+    }
+
     #[cfg(test)]
     pub fn document_root(&self) -> &Handle {
         &self.dom.document
@@ -411,19 +432,7 @@ pub fn inject_head_links(
 ///
 /// Returns an error if the HTML cannot be parsed or has no `<body>` element.
 pub fn extract_body_inner_html(html: &str) -> Result<String> {
-    let dom = HtmlDom::parse(html)?;
-    let body = find_element_by_tag(&dom.dom.document, "body").ok_or_else(|| {
-        RheoError::HtmlGeneration {
-            count: 1,
-            errors: "HTML document does not contain a <body> element".to_string(),
-        }
-    })?;
-
-    let mut output = String::new();
-    for child in body.children.borrow().iter() {
-        serialize_node(child, &mut output)?;
-    }
-    Ok(output)
+    HtmlDom::parse(html)?.body_inner_html()
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
