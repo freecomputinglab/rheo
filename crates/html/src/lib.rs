@@ -136,7 +136,7 @@ impl FormatPlugin for HtmlPlugin {
             html_utils::inject_head_links(&html_string, &[], &css_paths, &js_paths)?
         };
 
-        let html_string = if let Some(base) = base_url(ctx.config) {
+        let html_string = if let Some(base) = feed_base_url(ctx.config) {
             html_utils::inject_feed_link(
                 &html_string,
                 &format!("{base}/feed.xml"),
@@ -160,14 +160,14 @@ impl FormatPlugin for HtmlPlugin {
 
 impl HtmlPlugin {
     /// Emit `build/html/feed.xml` once per build, one `<entry>` per vertebra
-    /// that declares `rheo-feed-title`. Gated on `[html].base_url` being set.
+    /// that declares `rheo-feed-title`. Gated on `[html].feed_base_url` being set.
     ///
     /// `compile` runs once per file (HTML merge=false), so generation is gated
     /// to a single invocation: the merged case (`input == None`) or the first
     /// spine vertebra.
     fn generate_feed(&self, ctx: &PluginContext<'_>) -> Result<()> {
-        let Some(base) = base_url(ctx.config) else {
-            debug!("no [html].base_url set; skipping Atom feed");
+        let Some(base) = feed_base_url(ctx.config) else {
+            debug!("no [html].feed_base_url set; skipping Atom feed");
             return Ok(());
         };
 
@@ -257,16 +257,17 @@ fn feed_updated(v: &rheo_core::CompiledHtmlVertebra) -> Result<DateTime<Utc>> {
     Ok(DateTime::<Utc>::from(modified))
 }
 
-/// Read the `base_url` key from a plugin section's config (mirrors epub's
+/// Read the `feed_base_url` key from a plugin section's config (mirrors epub's
 /// `parse_identifier`). Any trailing `/` is trimmed so callers can join paths
 /// with a single `/`. Returns `None` when the key is absent or not a string.
 ///
 /// NOTE: this is the interim reader; once `[{format}.options]` lands (rheo-uico)
-/// `base_url` becomes a validated option read via `ctx.option_str("base_url")`.
-pub fn base_url(section: &PluginSection) -> Option<String> {
+/// `feed_base_url` becomes a validated option read via
+/// `ctx.option_str("feed_base_url")`.
+pub fn feed_base_url(section: &PluginSection) -> Option<String> {
     section
         .extra
-        .get("base_url")
+        .get("feed_base_url")
         .and_then(|v| v.as_str())
         .map(|s| s.trim_end_matches('/').to_string())
 }
@@ -277,34 +278,38 @@ mod tests {
     use std::path::PathBuf;
 
     fn section_with(extra: toml::Table) -> PluginSection {
-        let mut section = PluginSection::default();
-        section.extra = extra;
-        section
+        PluginSection {
+            extra,
+            ..Default::default()
+        }
     }
 
     #[test]
-    fn test_base_url_trims_trailing_slash() {
+    fn test_feed_base_url_trims_trailing_slash() {
         let mut extra = toml::Table::new();
         extra.insert(
-            "base_url".to_string(),
+            "feed_base_url".to_string(),
             toml::Value::String("https://example.com/".to_string()),
         );
         let section = section_with(extra);
-        assert_eq!(base_url(&section).as_deref(), Some("https://example.com"));
+        assert_eq!(
+            feed_base_url(&section).as_deref(),
+            Some("https://example.com")
+        );
     }
 
     #[test]
-    fn test_base_url_absent() {
+    fn test_feed_base_url_absent() {
         let section = section_with(toml::Table::new());
-        assert_eq!(base_url(&section), None);
+        assert_eq!(feed_base_url(&section), None);
     }
 
     #[test]
-    fn test_base_url_non_string() {
+    fn test_feed_base_url_non_string() {
         let mut extra = toml::Table::new();
-        extra.insert("base_url".to_string(), toml::Value::Integer(42));
+        extra.insert("feed_base_url".to_string(), toml::Value::Integer(42));
         let section = section_with(extra);
-        assert_eq!(base_url(&section), None);
+        assert_eq!(feed_base_url(&section), None);
     }
 
     #[test]

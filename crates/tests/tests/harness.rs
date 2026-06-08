@@ -1401,7 +1401,7 @@ fn test_atom_feed_and_rheo_vars() {
     )
     .expect("Failed to write c.typ");
 
-    // rheo.toml with html spine + base_url
+    // rheo.toml with html spine + feed_base_url
     std::fs::write(
         project_path.join("rheo.toml"),
         format!(
@@ -1413,7 +1413,7 @@ fn test_atom_feed_and_rheo_vars() {
              vertebrae = [\"a.typ\", \"b.typ\", \"c.typ\"]\n\
              \n\
              [html]\n\
-             base_url = \"https://example.com\"\n",
+             feed_base_url = \"https://example.com\"\n",
             env!("CARGO_PKG_VERSION"),
         ),
     )
@@ -1510,8 +1510,8 @@ fn test_rheo_var_non_string_error() {
     )
     .expect("Failed to write main.typ");
 
-    // Spine + base_url are required — rheo-* validation happens during spine
-    // building, which is triggered by feed generation (gated on base_url).
+    // Spine + feed_base_url are required — rheo-* validation happens during spine
+    // building, which is triggered by feed generation (gated on feed_base_url).
     std::fs::write(
         project_path.join("rheo.toml"),
         format!(
@@ -1523,7 +1523,7 @@ fn test_rheo_var_non_string_error() {
              vertebrae = [\"main.typ\"]\n\
              \n\
              [html]\n\
-             base_url = \"https://example.com\"\n",
+             feed_base_url = \"https://example.com\"\n",
             env!("CARGO_PKG_VERSION"),
         ),
     )
