@@ -11,6 +11,7 @@ repository.workspace = true
 # Core
 rheo-core = { workspace = true }
 toml = { workspace = true }
+chrono = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
@@ -26,6 +27,7 @@ tower-http = { workspace = true }
 webbrowser = { workspace = true }
 tokio-stream = { workspace = true }
 mime_guess = { workspace = true }
+atom_syndication = "0.12.8"
 
 [dev-dependencies]
 tempfile = { workspace = true }

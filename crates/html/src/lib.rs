@@ -1,5 +1,7 @@
+pub mod feed;
 mod server;
 
+use rheo_core::PluginSection;
 use rheo_core::html_utils;
 
 /// Bundled default HTML stylesheet.
@@ -139,5 +141,55 @@ impl FormatPlugin for HtmlPlugin {
 
         info!(output = %output.display(), "successfully compiled to HTML");
         Ok(())
+    }
+}
+
+/// Read the `base_url` key from a plugin section's config (mirrors epub's
+/// `parse_identifier`). Any trailing `/` is trimmed so callers can join paths
+/// with a single `/`. Returns `None` when the key is absent or not a string.
+///
+/// NOTE: this is the interim reader; once `[{format}.options]` lands (rheo-uico)
+/// `base_url` becomes a validated option read via `ctx.option_str("base_url")`.
+pub fn base_url(section: &PluginSection) -> Option<String> {
+    section
+        .extra
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim_end_matches('/').to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn section_with(extra: toml::Table) -> PluginSection {
+        let mut section = PluginSection::default();
+        section.extra = extra;
+        section
+    }
+
+    #[test]
+    fn test_base_url_trims_trailing_slash() {
+        let mut extra = toml::Table::new();
+        extra.insert(
+            "base_url".to_string(),
+            toml::Value::String("https://example.com/".to_string()),
+        );
+        let section = section_with(extra);
+        assert_eq!(base_url(&section).as_deref(), Some("https://example.com"));
+    }
+
+    #[test]
+    fn test_base_url_absent() {
+        let section = section_with(toml::Table::new());
+        assert_eq!(base_url(&section), None);
+    }
+
+    #[test]
+    fn test_base_url_non_string() {
+        let mut extra = toml::Table::new();
+        extra.insert("base_url".to_string(), toml::Value::Integer(42));
+        let section = section_with(extra);
+        assert_eq!(base_url(&section), None);
     }
 }
