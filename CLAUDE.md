@@ -41,6 +41,9 @@ formats = ["html", "pdf", "epub"]  # default formats
 font_dirs = ["fonts"]    # optional; replaces autoscan of fonts/ directory
 copy = ["*.txt"]         # optional; glob patterns copied to every plugin output dir
 
+[html]
+base_url = "https://example.com"  # optional; when set, emits build/html/feed.xml (Atom)
+
 [html.assets]
 copy = ["images/**"]     # optional; glob patterns copied to html output dir only
 css_stylesheet = "custom.css"   # optional; path override for AssetConfig name
@@ -73,6 +76,16 @@ vertebrae = ["cover.typ", "chapters/**/*.typ"]
 Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title and spine are inferred from filename/directory.
 
 **Font directory resolution:** Without `font_dirs` in config, `fonts/` at project root is auto-discovered. Setting `font_dirs` replaces autoscan (include `"fonts"` explicitly if desired). `--font-dir` CLI flag always appends.
+
+## rheo-* variables and the Atom feed
+
+**Generic variable convention:** any top-level `#let rheo-<key> = "<string>"` in a vertebra is harvested during compilation. The value must be a string literal — a non-string RHS is a compile error. Plugins read these per-file with the `rheo-` prefix stripped (e.g. `rheo-feed-title` is available as `feed-title`).
+
+**Atom feed:** set `base_url` under `[html]` to enable it. When set, the HTML build emits `build/html/feed.xml` (Atom 1.0) with one `<entry>` per vertebra that declares `rheo-feed-title`, and injects a `<link rel="alternate" type="application/atom+xml">` autodiscovery tag into every page's `<head>`. Without `base_url`, no feed is emitted.
+
+Feed variables:
+- `rheo-feed-title` — entry title; **required** for a vertebra to appear in the feed.
+- `rheo-feed-updated` — entry timestamp (RFC 3339); optional, falls back to the source file's mtime.
 
 ## Code Style
 
