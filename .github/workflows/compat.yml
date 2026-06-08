@@ -21,6 +21,11 @@ jobs:
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
 
+      # Compat projects import @rheo/* packages whose built dist/ entrypoints
+      # are not committed, so clone rheo-packages and run its pnpm/vite builds.
+      - name: Install @rheo packages
+        uses: ./.github/actions/install-rheo-packages
+
       - name: Run compatibility tests
         run: cargo test --test compat
         env:
