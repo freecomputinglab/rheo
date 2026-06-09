@@ -2,6 +2,7 @@
 
 use html5ever::{ParseOpts, tendril::TendrilSink};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
+use rheo_core::{RheoError, Result};
 use rheo_core::typst_types::EcoString;
 use std::{fmt::Write, slice};
 
@@ -49,13 +50,13 @@ pub struct HtmlInfo {
 ///   See: https://github.com/servo/html5ever/issues?q=is%3Aopen+is%3Aissue+label%3Aweb-compat
 /// - Eventually the XHTML functionality should be removed once it is implemented in Typst.
 ///   See: https://github.com/typst/typst/issues/6446
-pub fn html_to_portable_xhtml(html_string: &str, heading_ids: &[EcoString]) -> (String, HtmlInfo) {
+pub fn html_to_portable_xhtml(html_string: &str, heading_ids: &[EcoString]) -> Result<(String, HtmlInfo)> {
     // TODO: should factor the XHTML-izing and portabl-izing code into separate functions.
 
     let dom = html5ever::parse_document(RcDom::default(), ParseOpts::default())
         .from_utf8()
         .read_from(&mut html_string.as_bytes())
-        .expect("`Read` should not panic for `&[u8]`");
+        .map_err(|e| RheoError::epub_generation(format!("failed to parse HTML: {e}")))?;
 
     struct Walker<'a> {
         buf: String,
@@ -120,6 +121,8 @@ pub fn html_to_portable_xhtml(html_string: &str, heading_ids: &[EcoString]) -> (
                         && c.is_numeric()
                         && c != '1'
                     {
+                        // Internal invariant: heading_ids is populated from the
+                        // same Typst document that generated these heading nodes.
                         let id = self.heading_ids.next().expect("missing heading id!");
                         write!(self.buf, " id=\"{id}\"").unwrap();
                     }
@@ -164,7 +167,7 @@ pub fn html_to_portable_xhtml(html_string: &str, heading_ids: &[EcoString]) -> (
     };
     walker.walk(&dom.document);
 
-    (walker.buf, walker.info)
+    Ok((walker.buf, walker.info))
 }
 
 #[test]
@@ -193,6 +196,6 @@ fn test_html_to_xhtml() {
     
 </p></article></body></html>"#;
 
-    let (actual, _) = html_to_portable_xhtml(input, &["test".into()]);
+    let (actual, _) = html_to_portable_xhtml(input, &["test".into()]).unwrap();
     assert_eq!(expected, actual);
 }
