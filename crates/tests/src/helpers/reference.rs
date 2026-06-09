@@ -363,7 +363,7 @@ fn create_binary_metadata(
         let contents =
             fs::read(file_path).map_err(|e| format!("Failed to read file contents: {}", e))?;
         let digest = Sha256::digest(&contents);
-        Some(format!("{:x}", digest))
+        Some(digest.iter().map(|byte| format!("{:02x}", byte)).collect())
     } else {
         None
     };
