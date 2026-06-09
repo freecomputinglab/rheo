@@ -15,22 +15,8 @@ pub type WrapperMap = HashMap<String, usize>;
 /// of the form `#let x = "./something.typ"` are tracked.
 pub type UrlBindingMap = HashMap<String, (String, std::ops::Range<usize>)>;
 
-/// Extract all links from Typst source by parsing and traversing AST.
-///
-/// Also detects same-file wrapper functions (`#let f(x) = link(x, ...)`) so
-/// that calls like `#f("url")` are recognised as links.
-pub fn extract_links(source: &Source) -> Vec<LinkInfo> {
-    extract_nodes(source).links
-}
-
-/// Extract all import/include paths from Typst source by parsing and
-/// traversing AST.
-pub fn extract_imports(source: &Source) -> Vec<ImportInfo> {
-    extract_nodes(source).imports
-}
-
 /// Extract only package import path strings (those starting with '@') from
-/// Typst source. Cheaper than `extract_imports` because it skips link, wrapper,
+/// Typst source. Cheaper than `extract_nodes` because it skips link, wrapper,
 /// and URL-binding collection.
 pub fn extract_package_imports(source: &Source) -> Vec<String> {
     let root = typst::syntax::parse(source.text());
@@ -640,7 +626,7 @@ mod tests {
     #[test]
     fn test_extract_link_with_content_block() {
         let source = Source::detached(r#"#link("./file.typ")[text]"#);
-        let links = extract_links(&source);
+        let links = extract_nodes(&source).links;
 
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "./file.typ");
@@ -656,7 +642,7 @@ mod tests {
             #link("./file2.typ")[second] content.
         "#,
         );
-        let links = extract_links(&source);
+        let links = extract_nodes(&source).links;
 
         assert_eq!(links.len(), 2);
         assert_eq!(links[0].url, "./file1.typ");
@@ -668,7 +654,7 @@ mod tests {
     #[test]
     fn test_no_links() {
         let source = Source::detached("Just plain text with no links");
-        let links = extract_links(&source);
+        let links = extract_nodes(&source).links;
 
         assert_eq!(links.len(), 0);
     }
@@ -676,7 +662,7 @@ mod tests {
     #[test]
     fn test_external_urls() {
         let source = Source::detached(r#"#link("https://example.com")[external]"#);
-        let links = extract_links(&source);
+        let links = extract_nodes(&source).links;
 
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "https://example.com");
@@ -686,7 +672,7 @@ mod tests {
     #[test]
     fn test_extract_link_with_nested_markup() {
         let source = Source::detached(r#"#link("./url")[text #super[2]]"#);
-        let links = extract_links(&source);
+        let links = extract_nodes(&source).links;
 
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "./url");
@@ -697,7 +683,7 @@ mod tests {
     #[test]
     fn test_extract_link_with_multiple_markup() {
         let source = Source::detached(r#"#link("url")[#strong[bold] and #emph[italic]]"#);
-        let links = extract_links(&source);
+        let links = extract_nodes(&source).links;
 
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "url");
@@ -712,7 +698,7 @@ mod tests {
             r#"#let mylink = link
 #mylink("./chapter2.typ")[text]"#,
         );
-        let links = extract_links(&source);
+        let links = extract_nodes(&source).links;
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "./chapter2.typ");
         assert!(links[0].is_wrapper_call);
@@ -724,7 +710,7 @@ mod tests {
             r#"#let chapter-ref(path, title) = link(path, title)
 #chapter-ref("./ch02.typ", [Chapter 2])"#,
         );
-        let links = extract_links(&source);
+        let links = extract_nodes(&source).links;
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].url, "./ch02.typ");
         assert!(links[0].is_wrapper_call);
@@ -733,7 +719,7 @@ mod tests {
     #[test]
     fn test_wrapper_cross_file_not_detected() {
         let source = Source::detached(r#"#chapter-ref("./ch02.typ", [Ch 2])"#);
-        let links = extract_links(&source);
+        let links = extract_nodes(&source).links;
         assert_eq!(links.len(), 0);
     }
 
@@ -744,16 +730,16 @@ mod tests {
             r#"#let homepage(body) = link("https://example.com", body)
 #homepage[text]"#,
         );
-        let links = extract_links(&source);
+        let links = extract_nodes(&source).links;
         assert_eq!(links.len(), 0);
     }
 
-    // --- extract_imports tests ---
+    // --- import tests ---
 
     #[test]
     fn test_extract_import_relative() {
         let source = Source::detached(r#"#import "./utils.typ": *"#);
-        let imports = extract_imports(&source);
+        let imports = extract_nodes(&source).imports;
 
         assert_eq!(imports.len(), 1);
         assert_eq!(imports[0].path, "./utils.typ");
@@ -763,7 +749,7 @@ mod tests {
     #[test]
     fn test_extract_import_package() {
         let source = Source::detached(r#"#import "@preview/tablex:0.0.6": tablex"#);
-        let imports = extract_imports(&source);
+        let imports = extract_nodes(&source).imports;
 
         assert_eq!(imports.len(), 1);
         assert_eq!(imports[0].path, "@preview/tablex:0.0.6");
@@ -773,7 +759,7 @@ mod tests {
     #[test]
     fn test_extract_include() {
         let source = Source::detached(r#"#include "./figures/fig1.typ""#);
-        let imports = extract_imports(&source);
+        let imports = extract_nodes(&source).imports;
 
         assert_eq!(imports.len(), 1);
         assert_eq!(imports[0].path, "./figures/fig1.typ");
@@ -789,7 +775,7 @@ mod tests {
             #include "./figures/fig1.typ"
         "#,
         );
-        let imports = extract_imports(&source);
+        let imports = extract_nodes(&source).imports;
 
         assert_eq!(imports.len(), 3);
         assert_eq!(imports[0].path, "./utils.typ");
@@ -803,7 +789,7 @@ mod tests {
     #[test]
     fn test_extract_import_byte_range() {
         let source = Source::detached(r#"#import "./utils.typ": *"#);
-        let imports = extract_imports(&source);
+        let imports = extract_nodes(&source).imports;
 
         assert_eq!(imports.len(), 1);
         let source_text = source.text();
@@ -814,7 +800,7 @@ mod tests {
     #[test]
     fn test_no_imports() {
         let source = Source::detached("Just plain text with no imports");
-        let imports = extract_imports(&source);
+        let imports = extract_nodes(&source).imports;
 
         assert_eq!(imports.len(), 0);
     }

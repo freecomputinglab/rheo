@@ -242,23 +242,6 @@ impl SpineOptions {
     }
 }
 
-/// Generates a spine (ordered list of .typ files) based on configuration.
-pub fn generate_spine(
-    root: &Path,
-    spine_config: Option<&SpineOptions>,
-    require_spine: bool,
-) -> Result<Vec<PathBuf>> {
-    if require_spine && spine_config.is_none() {
-        return Err(RheoError::project_config(
-            "spine configuration required but not provided",
-        ));
-    }
-    match spine_config {
-        None => collect_one_typst_file(root),
-        Some(spine) => spine.generate(root),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,66 +269,17 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_spine_requires_merge_mode() {
-        let temp = create_test_dir_with_files(&["test.typ"]);
-        let result = generate_spine(temp.path(), None, true);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("spine configuration required")
-        );
-    }
-
-    #[test]
-    fn test_generate_spine_epub_single_file_fallback() {
-        let temp = create_test_dir_with_files(&["single.typ"]);
-        let result = generate_spine(temp.path(), None, false);
-        assert!(result.is_ok());
-        let files = result.unwrap();
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].file_name().unwrap(), "single.typ");
-    }
-
-    #[test]
-    fn test_generate_spine_epub_multiple_files_error() {
-        let temp = create_test_dir_with_files(&["first.typ", "second.typ"]);
-        let result = generate_spine(temp.path(), None, false);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("multiple .typ files found")
-        );
-    }
-
-    #[test]
-    fn test_generate_spine_epub_no_files_error() {
-        let temp = create_test_dir_with_files(&["readme.md"]);
-        let result = generate_spine(temp.path(), None, false);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("need at least one .typ file")
-        );
-    }
-
-    #[test]
-    fn test_generate_spine_with_vertebrae() {
+    fn test_generate_with_vertebrae() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ", "c.typ"]);
         let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
-        let result = generate_spine(temp.path(), Some(&spine), false);
+        let result = spine.generate(temp.path());
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 3);
     }
 
     #[test]
-    fn test_generate_spine_ordered_patterns() {
+    fn test_generate_ordered_patterns() {
         let temp = create_test_dir_with_files(&[
             "cover.typ",
             "chapters/ch1.typ",
@@ -361,7 +295,7 @@ mod tests {
             ],
             merge: false,
         };
-        let result = generate_spine(temp.path(), Some(&spine), true);
+        let result = spine.generate(temp.path());
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 4);
@@ -386,10 +320,10 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_spine_no_matches_error() {
+    fn test_generate_no_matches_error() {
         let temp = create_test_dir_with_files(&["readme.md"]);
         let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
-        let result = generate_spine(temp.path(), Some(&spine), false);
+        let result = spine.generate(temp.path());
         assert!(result.is_err());
         assert!(
             result
@@ -400,20 +334,20 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_spine_empty_pattern_single_file() {
+    fn test_generate_empty_pattern_single_file() {
         let temp = create_test_dir_with_files(&["single.typ"]);
         let spine = spine_with_vertebrae(vec![]);
-        let result = generate_spine(temp.path(), Some(&spine), false);
+        let result = spine.generate(temp.path());
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 1);
     }
 
     #[test]
-    fn test_generate_spine_empty_pattern_multiple_files_returns_all() {
+    fn test_generate_empty_pattern_multiple_files_returns_all() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
         let spine = spine_with_vertebrae(vec![]);
-        let result = generate_spine(temp.path(), Some(&spine), false);
+        let result = spine.generate(temp.path());
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 2);
