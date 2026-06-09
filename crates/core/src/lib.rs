@@ -1,3 +1,4 @@
+pub mod assets;
 pub mod compile;
 pub mod config;
 pub mod constants;
@@ -31,6 +32,9 @@ pub use path_utils::PathExt;
 pub use results::{CompilationResults, FormatResult};
 
 // === Plugin API re-exports ===
+
+// Asset resolution
+pub use assets::AssetResolver;
 
 // Compile options and context
 pub use compile::RheoCompileOptions;
