@@ -136,15 +136,23 @@ impl<'a> PluginContext<'a> {
             .unwrap_or_else(|| self.project.root.clone())
     }
 
-    pub fn compile_to_html_string(&'a self) -> Result<String> {
+    /// Compile the per-file world to an [`HtmlDocument`].
+    ///
+    /// The document is kept (rather than discarded after serialization) so a
+    /// plugin can both write the page and hand the document to [`FormatPlugin::finalize`]
+    /// — e.g. the HTML Atom feed builds its entries from these without a second
+    /// compilation pass.
+    pub fn compile_to_html_document(&'a self) -> Result<HtmlDocument> {
         let world = self.options.world.as_ref().ok_or_else(|| {
             RheoError::project_config(
                 "HTML per-file compile requires a world; this is a rheo bug (internal invariant violation)",
             )
         })?;
+        world.compile_html()
+    }
 
-        let document = world.compile_html()?;
-
+    pub fn compile_to_html_string(&'a self) -> Result<String> {
+        let document = self.compile_to_html_document()?;
         debug!(output = %self.options.output.display(), "exporting to HTML");
         compile_document_to_string(&document)
     }
@@ -728,8 +736,42 @@ pub trait FormatPlugin: Send + Sync {
     // NOTE: the 'merge' attribute could be upraded to a parameter here, as this function operates
     // very differently according to whether it is true of false
 
-    // TODO: because the case here is that compile is called for EVERY source file, we need a
-    // `precompile` entrypoint that can do things like asset copying when merge is not true.
+    /// Per-file compile that may return the compiled HTML document for formats
+    /// that aggregate all vertebrae in [`finalize`](Self::finalize) (e.g. the
+    /// HTML Atom feed). The default compiles and writes via [`compile`](Self::compile),
+    /// returning `None`; paged formats (PDF) keep the default.
+    ///
+    /// Called once per `.typ` file in per-file mode, in place of [`compile`](Self::compile).
+    fn compile_vertebra(
+        &self,
+        ctx: PluginContext<'_>,
+    ) -> crate::Result<Option<CompiledHtmlVertebra>> {
+        self.compile(ctx)?;
+        Ok(None)
+    }
+
+    /// Hook run once before the per-file loop (per-file mode only).
+    ///
+    /// Use for one-time setup that must not repeat per file. The default is a
+    /// no-op. `ctx` has `input == None` and `world == None`.
+    fn precompile(&self, _ctx: &PluginContext<'_>) -> crate::Result<()> {
+        Ok(())
+    }
+
+    /// Hook run once after the per-file loop (per-file mode only), receiving every
+    /// [`CompiledHtmlVertebra`] produced by [`compile_vertebra`](Self::compile_vertebra),
+    /// in spine order, with vars populated.
+    ///
+    /// Use to emit artifacts derived from all pages without recompiling — e.g. the
+    /// HTML Atom feed. The default is a no-op. `ctx` has `input == None` and
+    /// `world == None`.
+    fn finalize(
+        &self,
+        _ctx: &PluginContext<'_>,
+        _compiled: &[CompiledHtmlVertebra],
+    ) -> crate::Result<()> {
+        Ok(())
+    }
 }
 
 /// Open all files with a given extension in a folder using the OS default application.

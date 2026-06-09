@@ -214,6 +214,32 @@ impl Build {
 
                 let plugin_library = plugin.typst_library().map(|s| s.to_string());
 
+                // Format-level context for the precompile/finalize lifecycle hooks
+                // (input == None, world == None).
+                let format_output = plugin_output_dir
+                    .join(&self.project.name)
+                    .with_extension(plugin.name());
+                let format_ctx = PluginContext {
+                    project: &self.project,
+                    output_config: &self.output,
+                    options: RheoCompileOptions::new(
+                        None::<PathBuf>,
+                        &format_output,
+                        &self.project.root,
+                        None,
+                    ),
+                    spine: &spine,
+                    config: plugin_section,
+                    assets: &resolved_assets,
+                    font_dirs: &self.font_dirs,
+                };
+
+                plugin.precompile(&format_ctx)?;
+
+                // Collect any compiled HTML documents produced per file so the
+                // finalize hook can aggregate them (e.g. the Atom feed) without a
+                // second compilation pass.
+                let mut compiled: Vec<crate::plugins::CompiledHtmlVertebra> = Vec::new();
                 for typ_file in &files {
                     let mut fresh_world = RheoWorld::new(
                         &self.project.root,
@@ -223,7 +249,21 @@ impl Build {
                         plugin_library.clone(),
                         self.font_dirs.clone(),
                     )?;
-                    compile_one_file(&mut fresh_world, typ_file, &pfc, &mut results)?;
+                    if let Some(vertebra) =
+                        compile_one_file(&mut fresh_world, typ_file, &pfc, &mut results)?
+                    {
+                        compiled.push(vertebra);
+                    }
+                }
+
+                // Hand the compiled documents to the finalize hook. Per-vertebra
+                // `rheo-*` vars (if a plugin needs them) are harvested by the hook
+                // itself, so projects that don't use finalize do no extra work.
+                // A finalize error is recorded as a format failure (like a compile
+                // error) rather than aborting the other formats.
+                if let Err(e) = plugin.finalize(&format_ctx, &compiled) {
+                    error!(error = %e, "{} finalize failed", plugin.name());
+                    results.record_failure(plugin.name());
                 }
             }
         }
@@ -259,16 +299,18 @@ struct PerFileCtx<'a> {
     font_dirs: &'a [PathBuf],
 }
 
-/// Compile one file with the given world, recording success/failure in `results`.
+/// Compile one file with the given world, recording success/failure in `results`
+/// and returning any [`CompiledHtmlVertebra`] the plugin produced (for `finalize`).
 ///
-/// `get_output_filename` errors propagate; `plugin.compile()` errors are recorded
-/// as failures rather than propagated (so other files in the batch still compile).
+/// `get_output_filename` errors propagate; `plugin.compile_vertebra()` errors are
+/// recorded as failures rather than propagated (so other files in the batch still
+/// compile), yielding `Ok(None)`.
 fn compile_one_file(
     world: &mut RheoWorld,
     typ_file: &Path,
     pfc: &PerFileCtx<'_>,
     results: &mut CompilationResults,
-) -> Result<()> {
+) -> Result<Option<crate::plugins::CompiledHtmlVertebra>> {
     let filename = get_output_filename(typ_file)?;
     let output_path = pfc
         .plugin_output_dir
@@ -285,14 +327,17 @@ fn compile_one_file(
         assets: pfc.resolved_assets,
         font_dirs: pfc.font_dirs,
     };
-    match pfc.plugin.compile(ctx) {
-        Ok(_) => results.record_success(pfc.plugin.name()),
+    match pfc.plugin.compile_vertebra(ctx) {
+        Ok(vertebra) => {
+            results.record_success(pfc.plugin.name());
+            Ok(vertebra)
+        }
         Err(e) => {
             error!(file = %typ_file.display(), error = %e, "{} compilation failed", pfc.plugin.name());
             results.record_failure(pfc.plugin.name());
+            Ok(None)
         }
     }
-    Ok(())
 }
 
 fn get_output_filename(typ_file: &Path) -> Result<String> {
