@@ -25,7 +25,7 @@ serde = { workspace = true }
 
 # Test-specific dependencies
 ntest = "0.9"
-similar = "2.6"
+similar = "3.1"
 serde_json = "1.0"
 paste = "1"
 

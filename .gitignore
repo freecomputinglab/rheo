@@ -13,7 +13,6 @@ result-*
 .beads/daemon.pid
 .beads/.br_history/
 .beads/.write.lock
-.beads/**
 .abacus/
 
 # Claude
@@ -29,3 +28,5 @@ result-*
 
 # Test store (generated test outputs)
 /tests/store/
+# br doctor per-run artifacts
+.doctor/
