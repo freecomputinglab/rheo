@@ -8,6 +8,56 @@ use html5ever::{ParseOpts, tendril::TendrilSink};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use std::fmt::Write as _;
 
+// ─── Serialization mode and helpers ──────────────────────────────────────────
+
+/// Controls how the DOM is serialized.
+pub enum SerializeMode {
+    /// Standard HTML: void elements emit `<tag>`.
+    Html,
+    /// XHTML: void elements self-close `<tag/>`, attribute values fully escaped.
+    Xhtml,
+}
+
+/// Returns true if the given tag name is an HTML void element.
+pub fn is_void_element(tag_name: &str) -> bool {
+    matches!(
+        tag_name,
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
+    )
+}
+
+/// Escape text content for HTML/XHTML output.
+pub fn escape_text(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Escape an attribute value for HTML/XHTML output.
+pub fn escape_attr(value: &str, mode: &SerializeMode) -> String {
+    let escaped = value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    match mode {
+        SerializeMode::Html => escaped,
+        SerializeMode::Xhtml => escaped.replace('"', "&quot;"),
+    }
+}
+
 // ─── DOM types ───────────────────────────────────────────────────────────────
 
 /// Wrapper around html5ever's RcDom for type-safe DOM manipulation.
@@ -31,7 +81,7 @@ impl HtmlDom {
     /// Serialize the DOM tree back to an HTML string.
     pub fn serialize(&self) -> Result<String> {
         let mut output = String::new();
-        serialize_node(&self.dom.document, &mut output)?;
+        serialize_node(&self.dom.document, &mut output, &SerializeMode::Html)?;
         Ok(output)
     }
 
@@ -136,7 +186,7 @@ impl HtmlDom {
         self.body_inner_html()
     }
 
-    #[cfg(test)]
+    /// Returns a reference to the underlying DOM document root node.
     pub fn document_root(&self) -> &Handle {
         &self.dom.document
     }
@@ -148,97 +198,53 @@ pub struct Element {
 }
 
 impl Element {
-    /// Create an Atom autodiscovery `<link>` element:
-    /// `<link rel="alternate" type="application/atom+xml" title="..." href="...">`.
-    pub fn create_feed_link(href: &str, title: &str) -> Self {
+    /// Create a DOM element node with the given tag and attribute pairs.
+    fn create_element(tag: &str, attrs: &[(&str, &str)]) -> Self {
         use html5ever::tendril::StrTendril;
         use html5ever::{Attribute, LocalName, QualName, ns};
         use markup5ever_rcdom::Node;
         use std::cell::RefCell;
 
-        let attrs = vec![
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("rel")),
-                value: StrTendril::from("alternate"),
-            },
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("type")),
-                value: StrTendril::from("application/atom+xml"),
-            },
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("title")),
-                value: StrTendril::from(title),
-            },
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("href")),
-                value: StrTendril::from(href),
-            },
-        ];
+        let attrs: Vec<_> = attrs
+            .iter()
+            .map(|(k, v)| Attribute {
+                name: QualName::new(None, ns!(), LocalName::from(*k)),
+                value: StrTendril::from(*v),
+            })
+            .collect();
 
         let handle = Node::new(NodeData::Element {
-            name: QualName::new(None, ns!(html), LocalName::from("link")),
+            name: QualName::new(None, ns!(html), LocalName::from(tag)),
             attrs: RefCell::new(attrs),
             template_contents: RefCell::new(None),
             mathml_annotation_xml_integration_point: false,
         });
 
         Self { handle }
+    }
+
+    /// Create an Atom autodiscovery `<link>` element:
+    /// `<link rel="alternate" type="application/atom+xml" title="..." href="...">`.
+    pub fn create_feed_link(href: &str, title: &str) -> Self {
+        Self::create_element(
+            "link",
+            &[
+                ("rel", "alternate"),
+                ("type", "application/atom+xml"),
+                ("title", title),
+                ("href", href),
+            ],
+        )
     }
 
     /// Create a `<link rel="..." href="...">` element.
     pub fn create_link(rel: &str, href: &str) -> Self {
-        use html5ever::tendril::StrTendril;
-        use html5ever::{Attribute, LocalName, QualName, ns};
-        use markup5ever_rcdom::Node;
-        use std::cell::RefCell;
-
-        let attrs = vec![
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("rel")),
-                value: StrTendril::from(rel),
-            },
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("href")),
-                value: StrTendril::from(href),
-            },
-        ];
-
-        let handle = Node::new(NodeData::Element {
-            name: QualName::new(None, ns!(html), LocalName::from("link")),
-            attrs: RefCell::new(attrs),
-            template_contents: RefCell::new(None),
-            mathml_annotation_xml_integration_point: false,
-        });
-
-        Self { handle }
+        Self::create_element("link", &[("rel", rel), ("href", href)])
     }
 
     /// Create a `<script src="..."></script>` element.
     pub fn create_script(src: &str) -> Self {
-        use html5ever::tendril::StrTendril;
-        use html5ever::{Attribute, LocalName, QualName, ns};
-        use markup5ever_rcdom::Node;
-        use std::cell::RefCell;
-
-        let attrs = vec![
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("src")),
-                value: StrTendril::from(src),
-            },
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("defer")),
-                value: StrTendril::from(""),
-            },
-        ];
-
-        let handle = Node::new(NodeData::Element {
-            name: QualName::new(None, ns!(html), LocalName::from("script")),
-            attrs: RefCell::new(attrs),
-            template_contents: RefCell::new(None),
-            mathml_annotation_xml_integration_point: false,
-        });
-
-        Self { handle }
+        Self::create_element("script", &[("src", src), ("defer", "")])
     }
 
     /// Prepend a child element to this element.
@@ -319,16 +325,16 @@ fn find_element_by_class(handle: &Handle, class: &str) -> Option<Handle> {
 fn inner_html(handle: &Handle) -> Result<String> {
     let mut output = String::new();
     for child in handle.children.borrow().iter() {
-        serialize_node(child, &mut output)?;
+        serialize_node(child, &mut output, &SerializeMode::Html)?;
     }
     Ok(output)
 }
 
-fn serialize_node(handle: &Handle, output: &mut String) -> Result<()> {
+fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) -> Result<()> {
     match &handle.data {
         NodeData::Document => {
             for child in handle.children.borrow().iter() {
-                serialize_node(child, output)?;
+                serialize_node(child, output, mode)?;
             }
         }
         NodeData::Doctype { name, .. } => {
@@ -339,11 +345,7 @@ fn serialize_node(handle: &Handle, output: &mut String) -> Result<()> {
         }
         NodeData::Text { contents } => {
             let text = contents.borrow();
-            let escaped = text
-                .replace('&', "&amp;")
-                .replace('<', "&lt;")
-                .replace('>', "&gt;");
-            output.push_str(&escaped);
+            output.push_str(&escape_text(&text));
         }
         NodeData::Comment { contents } => {
             write!(output, "<!--{}-->", contents).map_err(|e| RheoError::HtmlGeneration {
@@ -358,7 +360,8 @@ fn serialize_node(handle: &Handle, output: &mut String) -> Result<()> {
             })?;
 
             for attr in attrs.borrow().iter() {
-                write!(output, " {}=\"{}\"", attr.name.local, attr.value).map_err(|e| {
+                let escaped_value = escape_attr(&attr.value, mode);
+                write!(output, " {}=\"{}\"", attr.name.local, escaped_value).map_err(|e| {
                     RheoError::HtmlGeneration {
                         count: 1,
                         errors: format!("failed to serialize attribute: {}", e),
@@ -367,11 +370,14 @@ fn serialize_node(handle: &Handle, output: &mut String) -> Result<()> {
             }
 
             if is_void_element(&name.local) {
-                output.push('>');
+                match mode {
+                    SerializeMode::Xhtml => output.push_str("/>"),
+                    SerializeMode::Html => output.push('>'),
+                }
             } else {
                 output.push('>');
                 for child in handle.children.borrow().iter() {
-                    serialize_node(child, output)?;
+                    serialize_node(child, output, mode)?;
                 }
                 write!(output, "</{}>", name.local).map_err(|e| RheoError::HtmlGeneration {
                     count: 1,
@@ -389,26 +395,6 @@ fn serialize_node(handle: &Handle, output: &mut String) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn is_void_element(tag_name: &str) -> bool {
-    matches!(
-        tag_name,
-        "area"
-            | "base"
-            | "br"
-            | "col"
-            | "embed"
-            | "hr"
-            | "img"
-            | "input"
-            | "link"
-            | "meta"
-            | "param"
-            | "source"
-            | "track"
-            | "wbr"
-    )
 }
 
 // ─── Head injection utilities ─────────────────────────────────────────────────

@@ -39,7 +39,7 @@ pub use assets::AssetResolver;
 pub use build::{Build, BuildOptions};
 
 // Compile options and context
-pub use compile::RheoCompileOptions;
+pub use compile::{CompileUnit, RheoCompileOptions};
 
 // Configuration types
 pub use config::{AssetsField, PluginAssets, PluginSection, Spine};

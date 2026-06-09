@@ -189,7 +189,11 @@ impl HtmlPlugin {
         info!(output = %output.display(), "successfully compiled to HTML");
 
         Ok(CompiledHtmlVertebra {
-            path: ctx.options.input.clone().unwrap_or_default(),
+            path: ctx
+                .options
+                .input()
+                .map(Path::to_path_buf)
+                .unwrap_or_default(),
             document,
             vars: Default::default(),
         })

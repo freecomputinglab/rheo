@@ -178,8 +178,7 @@ impl Build {
                     .join(&self.project.name)
                     .with_extension(plugin.name());
 
-                let options =
-                    RheoCompileOptions::new(None::<PathBuf>, &output_path, &compilation_root, None);
+                let options = RheoCompileOptions::merged(&output_path, &compilation_root);
 
                 let ctx = PluginContext {
                     project: &self.project,
@@ -215,19 +214,14 @@ impl Build {
                 let plugin_library = plugin.typst_library().map(|s| s.to_string());
 
                 // Format-level context for the precompile/finalize lifecycle hooks
-                // (input == None, world == None).
+                // (no per-file input/world).
                 let format_output = plugin_output_dir
                     .join(&self.project.name)
                     .with_extension(plugin.name());
                 let format_ctx = PluginContext {
                     project: &self.project,
                     output_config: &self.output,
-                    options: RheoCompileOptions::new(
-                        None::<PathBuf>,
-                        &format_output,
-                        &self.project.root,
-                        None,
-                    ),
+                    options: RheoCompileOptions::merged(&format_output, &self.project.root),
                     spine: &spine,
                     config: plugin_section,
                     assets: &resolved_assets,
@@ -241,7 +235,7 @@ impl Build {
                 // second compilation pass.
                 let mut compiled: Vec<crate::plugins::CompiledHtmlVertebra> = Vec::new();
                 for typ_file in &files {
-                    let mut fresh_world = RheoWorld::new(
+                    let fresh_world = RheoWorld::new(
                         &self.project.root,
                         typ_file,
                         Some(plugin.name()),
@@ -250,7 +244,7 @@ impl Build {
                         self.font_dirs.clone(),
                     )?;
                     if let Some(vertebra) =
-                        compile_one_file(&mut fresh_world, typ_file, &pfc, &mut results)?
+                        compile_one_file(fresh_world, typ_file, &pfc, &mut results)?
                     {
                         compiled.push(vertebra);
                     }
@@ -306,7 +300,7 @@ struct PerFileCtx<'a> {
 /// recorded as failures rather than propagated (so other files in the batch still
 /// compile), yielding `Ok(None)`.
 fn compile_one_file(
-    world: &mut RheoWorld,
+    world: RheoWorld,
     typ_file: &Path,
     pfc: &PerFileCtx<'_>,
     results: &mut CompilationResults,
@@ -316,8 +310,7 @@ fn compile_one_file(
         .plugin_output_dir
         .join(&filename)
         .with_extension(pfc.plugin.name());
-    let options =
-        RheoCompileOptions::new(Some(typ_file), &output_path, &pfc.project.root, Some(world));
+    let options = RheoCompileOptions::per_file(typ_file, &output_path, world);
     let ctx = PluginContext {
         project: pfc.project,
         output_config: pfc.output_config,

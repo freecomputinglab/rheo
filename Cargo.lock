@@ -3232,7 +3232,6 @@ name = "rheo-epub"
 version = "0.3.1"
 dependencies = [
  "chrono",
- "html5ever",
  "iref",
  "itertools",
  "markup5ever_rcdom",
