@@ -30,7 +30,7 @@ serde_json = "1.0"
 paste = "1"
 
 # PDF metadata extraction
-lopdf = "0.35"
+lopdf = "0.41"
 sha2 = "0.10"
 
 # EPUB handling
