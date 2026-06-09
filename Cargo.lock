@@ -3158,7 +3158,7 @@ dependencies = [
 
 [[package]]
 name = "rheo"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "atty",
  "axum",
@@ -3193,7 +3193,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "atty",
  "chrono",
@@ -3229,7 +3229,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-epub"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "html5ever",
@@ -3249,7 +3249,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-html"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "atom_syndication",
  "axum",
@@ -3269,7 +3269,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-pdf"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "rheo-core",
  "thiserror 2.0.18",
@@ -3278,7 +3278,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-tests"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "html5ever",
  "lopdf",
@@ -4937,9 +4937,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.23.2"
+version = "1.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d258b83ceec21034727ecee8c382cfa6c3e133699b0742c64571814fb420c9f7"
+checksum = "144d6b123cef80b301b8f72a9e2ca4370ddec21950d0a103dd22c437006d2db7"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
