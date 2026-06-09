@@ -206,12 +206,7 @@ impl<'a> AssetResolver<'a> {
         source_root: &Path,
         dest_prefix: Option<&str>,
     ) -> Result<()> {
-        copy_glob_patterns(
-            patterns,
-            source_root,
-            self.plugin_output_dir,
-            dest_prefix,
-        )
+        copy_glob_patterns(patterns, source_root, self.plugin_output_dir, dest_prefix)
     }
 }
 

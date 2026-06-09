@@ -287,6 +287,18 @@ impl PluginSection {
         self.auto_detect_packages.unwrap_or(true)
     }
 
+    /// Deserialize the format-specific `extra` fields into a typed config struct.
+    ///
+    /// Plugins define a `#[derive(Deserialize, Default)]` struct for their own
+    /// keys and call `ctx.config.parse_extra::<MyConfig>()?` instead of hand-rolling
+    /// `extra.get("k").and_then(|v| v.as_str())` lookups. Unknown keys are ignored,
+    /// so each plugin only declares the fields it reads.
+    pub fn parse_extra<T: serde::de::DeserializeOwned>(&self) -> Result<T> {
+        toml::Value::Table(self.extra.clone())
+            .try_into()
+            .map_err(|e| crate::RheoError::project_config(format!("invalid plugin config: {e}")))
+    }
+
     /// Get a string value from the `[plugin.assets]` overrides, returning None if absent or not a string.
     /// Returns the first override found across all asset blocks.
     pub fn get_string(&self, key: &str) -> Option<&str> {

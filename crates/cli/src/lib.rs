@@ -1,6 +1,6 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use rheo_core::OpenHandle;
 use rheo_core::AssetResolver;
+use rheo_core::OpenHandle;
 use rheo_core::compile::RheoCompileOptions;
 use rheo_core::config::PluginSection;
 use rheo_core::manifest_version;
@@ -414,18 +414,11 @@ fn perform_compilation(
 
         let resolver = AssetResolver::new(&project.root, &plugin_output_dir);
 
-        let resolved_assets = resolver.resolve(
-            plugin.as_ref(),
-            plugin_section,
-            &manifest_blocks,
-        )?;
+        let resolved_assets =
+            resolver.resolve(plugin.as_ref(), plugin_section, &manifest_blocks)?;
 
         // Execute copy patterns — global, then manifest blocks, then user-declared blocks
-        resolver.copy_globs(
-            &project.config.copy,
-            &project.root,
-            None,
-        )?;
+        resolver.copy_globs(&project.config.copy, &project.root, None)?;
 
         for block in &manifest_blocks {
             resolver.copy_globs(
@@ -436,11 +429,7 @@ fn perform_compilation(
         }
 
         for block in plugin_section.asset_blocks() {
-            resolver.copy_globs(
-                &block.copy,
-                &project.root,
-                block.dest.as_deref(),
-            )?;
+            resolver.copy_globs(&block.copy, &project.root, block.dest.as_deref())?;
         }
 
         // Resolve spine options

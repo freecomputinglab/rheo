@@ -3256,6 +3256,7 @@ dependencies = [
  "chrono",
  "mime_guess",
  "rheo-core",
+ "serde",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

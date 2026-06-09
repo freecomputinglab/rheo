@@ -88,20 +88,20 @@ pub struct PluginContext<'a> {
     ///
     /// # Reading format-specific configuration
     ///
-    /// Plugins read format-specific fields from `config.extra` using serde JSON patterns:
+    /// Plugins define a typed config struct for their own keys and deserialize
+    /// the whole section in one call with [`PluginSection::parse_extra`]:
     ///
     /// ```ignore
-    /// // Read a string value
-    /// let identifier = section.extra.get("identifier")
-    ///     .and_then(|v| v.as_str())
-    ///     .map(String::from);
+    /// #[derive(serde::Deserialize, Default)]
+    /// struct EpubConfig {
+    ///     identifier: Option<String>,
+    ///     stylesheets: Vec<String>,
+    /// }
     ///
-    /// // Read an array of strings
-    /// let stylesheets: Vec<String> = section.extra.get("stylesheets")
-    ///     .and_then(|v| v.as_array())
-    ///     .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-    ///     .unwrap_or_default();
+    /// let cfg = ctx.config.parse_extra::<EpubConfig>()?;
     /// ```
+    ///
+    /// Unknown keys are ignored, so each plugin only declares the fields it reads.
     pub config: &'a PluginSection,
     /// Resolved additional input files declared by the plugin.
     ///

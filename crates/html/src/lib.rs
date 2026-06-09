@@ -3,8 +3,8 @@ mod server;
 
 use crate::feed::{AtomEntry, AtomFeed};
 use chrono::{DateTime, Utc};
-use rheo_core::PluginSection;
 use rheo_core::{compile_document_to_string, html_utils};
+use serde::Deserialize;
 
 /// Bundled default HTML stylesheet.
 /// Used when the project doesn't provide its own style.css.
@@ -139,7 +139,10 @@ impl FormatPlugin for HtmlPlugin {
         // serialized at most once. Head-links run before the feed link to match
         // the prior two-pass ordering (both insert after the last <meta>).
         let needs_head_links = !css_paths.is_empty() || !js_paths.is_empty();
-        let feed_link = feed_base_url(ctx.config)
+        let feed_link = ctx
+            .config
+            .parse_extra::<HtmlConfig>()?
+            .base_url()
             .map(|base| (format!("{base}/feed.xml"), ctx.project.name.clone()));
 
         let html_string = if needs_head_links || feed_link.is_some() {
@@ -175,7 +178,8 @@ impl HtmlPlugin {
     /// to a single invocation: the merged case (`input == None`) or the first
     /// spine vertebra.
     fn generate_feed(&self, ctx: &PluginContext<'_>) -> Result<()> {
-        let Some(base) = feed_base_url(ctx.config) else {
+        let cfg = ctx.config.parse_extra::<HtmlConfig>()?;
+        let Some(base) = cfg.base_url() else {
             debug!("no [html].feed_base_url set; skipping Atom feed");
             return Ok(());
         };
@@ -215,7 +219,10 @@ impl HtmlPlugin {
             title: ctx.project.name.clone(),
             updated: Utc::now(),
             self_href: format!("{base}/feed.xml"),
-            author: feed_author(ctx.config).unwrap_or_else(|| "Rheo".to_string()),
+            author: cfg
+                .feed_author
+                .clone()
+                .unwrap_or_else(|| "Rheo".to_string()),
             entries,
         };
 
@@ -267,32 +274,30 @@ fn feed_updated(v: &rheo_core::CompiledHtmlVertebra) -> Result<DateTime<Utc>> {
     Ok(DateTime::<Utc>::from(modified))
 }
 
-/// Read the `feed_base_url` key from a plugin section's config (mirrors epub's
-/// `parse_identifier`). Any trailing `/` is trimmed so callers can join paths
-/// with a single `/`. Returns `None` when the key is absent or not a string.
-pub fn feed_base_url(section: &PluginSection) -> Option<String> {
-    section
-        .extra
-        .get("feed_base_url")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim_end_matches('/').to_string())
+/// Typed view of the `[html]` section's format-specific keys.
+#[derive(Debug, Deserialize, Default)]
+struct HtmlConfig {
+    /// Base URL for the Atom feed; when set, `feed.xml` is emitted and an
+    /// autodiscovery `<link>` is injected into every page.
+    feed_base_url: Option<String>,
+    /// `atom:author` of the feed; defaults to `"Rheo"` when absent.
+    feed_author: Option<String>,
 }
 
-/// Read the `feed_author` key from a plugin section's config (mirrors
-/// `feed_base_url`). Used as the Atom feed's `<author><name>`. Returns `None`
-/// when the key is absent or not a string, in which case the caller defaults to
-/// `"Rheo"`.
-pub fn feed_author(section: &PluginSection) -> Option<String> {
-    section
-        .extra
-        .get("feed_author")
-        .and_then(|v| v.as_str())
-        .map(String::from)
+impl HtmlConfig {
+    /// The feed base URL with any trailing `/` trimmed, so callers can join
+    /// paths with a single `/`. `None` when `feed_base_url` is unset.
+    fn base_url(&self) -> Option<String> {
+        self.feed_base_url
+            .as_deref()
+            .map(|s| s.trim_end_matches('/').to_string())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rheo_core::PluginSection;
     use std::path::PathBuf;
 
     fn section_with(extra: toml::Table) -> PluginSection {
@@ -302,6 +307,12 @@ mod tests {
         }
     }
 
+    fn html_config(extra: toml::Table) -> HtmlConfig {
+        section_with(extra)
+            .parse_extra::<HtmlConfig>()
+            .expect("parse HtmlConfig")
+    }
+
     #[test]
     fn test_feed_base_url_trims_trailing_slash() {
         let mut extra = toml::Table::new();
@@ -309,25 +320,22 @@ mod tests {
             "feed_base_url".to_string(),
             toml::Value::String("https://example.com/".to_string()),
         );
-        let section = section_with(extra);
         assert_eq!(
-            feed_base_url(&section).as_deref(),
+            html_config(extra).base_url().as_deref(),
             Some("https://example.com")
         );
     }
 
     #[test]
     fn test_feed_base_url_absent() {
-        let section = section_with(toml::Table::new());
-        assert_eq!(feed_base_url(&section), None);
+        assert_eq!(html_config(toml::Table::new()).base_url(), None);
     }
 
     #[test]
-    fn test_feed_base_url_non_string() {
+    fn test_feed_base_url_non_string_errors() {
         let mut extra = toml::Table::new();
         extra.insert("feed_base_url".to_string(), toml::Value::Integer(42));
-        let section = section_with(extra);
-        assert_eq!(feed_base_url(&section), None);
+        assert!(section_with(extra).parse_extra::<HtmlConfig>().is_err());
     }
 
     #[test]
@@ -337,22 +345,22 @@ mod tests {
             "feed_author".to_string(),
             toml::Value::String("Ada Lovelace".to_string()),
         );
-        let section = section_with(extra);
-        assert_eq!(feed_author(&section).as_deref(), Some("Ada Lovelace"));
+        assert_eq!(
+            html_config(extra).feed_author.as_deref(),
+            Some("Ada Lovelace")
+        );
     }
 
     #[test]
     fn test_feed_author_absent() {
-        let section = section_with(toml::Table::new());
-        assert_eq!(feed_author(&section), None);
+        assert_eq!(html_config(toml::Table::new()).feed_author, None);
     }
 
     #[test]
-    fn test_feed_author_non_string() {
+    fn test_feed_author_non_string_errors() {
         let mut extra = toml::Table::new();
         extra.insert("feed_author".to_string(), toml::Value::Integer(42));
-        let section = section_with(extra);
-        assert_eq!(feed_author(&section), None);
+        assert!(section_with(extra).parse_extra::<HtmlConfig>().is_err());
     }
 
     #[test]

@@ -14,6 +14,7 @@ use rheo_core::{
     FormatPlugin, PluginContext, PluginSection, Result, RheoError, Spine, SpineOptions,
     compile_document_to_string, eco_format, eco_vec,
 };
+use serde::Deserialize;
 use std::{
     fmt::Write as _,
     fs::File,
@@ -58,8 +59,9 @@ impl FormatPlugin for EpubPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        let identifier = parse_identifier(ctx.config);
-        let date = parse_date(ctx.config);
+        let epub_config = ctx.config.parse_extra::<EpubConfig>()?;
+        let identifier = epub_config.identifier.clone();
+        let date = epub_config.date_utc();
 
         let spine_items = ctx.compile_spine_items_to_html(self)?;
         let mut items = spine_items
@@ -230,13 +232,13 @@ pub fn generate_package(
             });
     }
 
-    let package = builder.build().map_err(|e| {
-        RheoError::epub_generation(format!("Package validation failed: {}", e))
-    })?;
+    let package = builder
+        .build()
+        .map_err(|e| RheoError::epub_generation(format!("Package validation failed: {}", e)))?;
 
-    let xml = package.to_xml().map_err(|e| {
-        RheoError::epub_generation(format!("Package XML generation failed: {}", e))
-    })?;
+    let xml = package
+        .to_xml()
+        .map_err(|e| RheoError::epub_generation(format!("Package XML generation failed: {}", e)))?;
 
     Ok(xml)
 }
@@ -262,8 +264,9 @@ pub fn zip_epub(
     zip.write_all(EPUB_MEDIATYPE.as_bytes())
         .map_err(|e| RheoError::io(e, "writing mimetype"))?;
 
-    zip.add_directory("META-INF", opts)
-        .map_err(|e| RheoError::epub_generation(format!("failed to add META-INF directory: {}", e)))?;
+    zip.add_directory("META-INF", opts).map_err(|e| {
+        RheoError::epub_generation(format!("failed to add META-INF directory: {}", e))
+    })?;
     zip.start_file("META-INF/container.xml", opts)
         .map_err(|e| RheoError::epub_generation(format!("failed to start container.xml: {}", e)))?;
     zip.write_all(CONTAINER_XML.as_bytes())
@@ -284,36 +287,37 @@ pub fn zip_epub(
 
     for item in items {
         let filename = format!("EPUB/{}", item.href);
-        zip.start_file(&filename, opts)
-            .map_err(|e| RheoError::epub_generation(format!("failed to start file {}: {}", filename, e)))?;
+        zip.start_file(&filename, opts).map_err(|e| {
+            RheoError::epub_generation(format!("failed to start file {}: {}", filename, e))
+        })?;
         zip.write_all(item.xhtml.as_bytes())
             .map_err(|e| RheoError::io(e, format!("writing {}", filename)))?;
     }
 
-    zip.finish().map_err(|e| {
-        RheoError::epub_generation(format!("failed to finish EPUB zip: {}", e))
-    })?;
+    zip.finish()
+        .map_err(|e| RheoError::epub_generation(format!("failed to finish EPUB zip: {}", e)))?;
     Ok(())
 }
 
-fn parse_identifier(section: &PluginSection) -> Option<String> {
-    section
-        .extra
-        .get("identifier")
-        .and_then(|v| v.as_str())
-        .map(String::from)
+/// Typed view of the `[epub]` section's format-specific keys.
+#[derive(Debug, Deserialize, Default)]
+struct EpubConfig {
+    /// Dublin Core identifier; auto-generated when absent.
+    identifier: Option<String>,
+    /// Publication date; falls back to the current time when absent.
+    date: Option<toml::value::Datetime>,
 }
 
-fn parse_date(section: &PluginSection) -> Option<DateTime<Utc>> {
-    section
-        .extra
-        .get("date")
-        .and_then(|v| v.as_datetime())
-        .and_then(|dt| {
-            chrono::DateTime::parse_from_rfc3339(&dt.to_string())
+impl EpubConfig {
+    /// The configured publication date as a UTC timestamp, if both present and
+    /// a valid RFC 3339 datetime.
+    fn date_utc(&self) -> Option<DateTime<Utc>> {
+        self.date.as_ref().and_then(|dt| {
+            DateTime::parse_from_rfc3339(&dt.to_string())
                 .ok()
                 .map(|d| d.with_timezone(&Utc))
         })
+    }
 }
 
 pub struct EpubItem {

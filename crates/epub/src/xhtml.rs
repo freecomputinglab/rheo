@@ -2,8 +2,8 @@
 
 use html5ever::{ParseOpts, tendril::TendrilSink};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
-use rheo_core::{RheoError, Result};
 use rheo_core::typst_types::EcoString;
+use rheo_core::{Result, RheoError};
 use std::{fmt::Write, slice};
 
 /// Returns true if the given tag name is an HTML void element.
@@ -50,7 +50,10 @@ pub struct HtmlInfo {
 ///   See: https://github.com/servo/html5ever/issues?q=is%3Aopen+is%3Aissue+label%3Aweb-compat
 /// - Eventually the XHTML functionality should be removed once it is implemented in Typst.
 ///   See: https://github.com/typst/typst/issues/6446
-pub fn html_to_portable_xhtml(html_string: &str, heading_ids: &[EcoString]) -> Result<(String, HtmlInfo)> {
+pub fn html_to_portable_xhtml(
+    html_string: &str,
+    heading_ids: &[EcoString],
+) -> Result<(String, HtmlInfo)> {
     // TODO: should factor the XHTML-izing and portabl-izing code into separate functions.
 
     let dom = html5ever::parse_document(RcDom::default(), ParseOpts::default())
