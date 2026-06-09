@@ -109,6 +109,10 @@ pub struct PluginContext<'a> {
     /// The CLI copies each declared input from the project root to the output directory
     /// before calling `compile()`.
     pub assets: &'a HashMap<&'static str, Vec<Asset>>,
+    /// Additional font directories to search, resolved by the build (autoscan +
+    /// config + `--font-dir`). Threaded into worlds the plugin creates for
+    /// merged/spine compilation so custom fonts apply there too.
+    pub font_dirs: &'a [PathBuf],
 }
 
 impl<'a> PluginContext<'a> {
@@ -204,6 +208,7 @@ impl<'a> PluginContext<'a> {
                     plugin.name(),
                     plugin.link_strategy(),
                     plugin_library.clone(),
+                    self.font_dirs.to_vec(),
                 )?;
                 Ok(CompiledHtmlVertebra {
                     path: path.clone(),
@@ -275,6 +280,7 @@ impl<'a> PluginContext<'a> {
                 None,
                 plugin.link_strategy(),
                 plugin_library,
+                self.font_dirs.to_vec(),
             )?;
 
             debug!(output = %output_path.display(), "exporting to PDF");

@@ -1,23 +1,17 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use rheo_core::AssetResolver;
 use rheo_core::OpenHandle;
-use rheo_core::compile::RheoCompileOptions;
-use rheo_core::config::PluginSection;
+use rheo_core::build::{Build, BuildOptions, resolve_build_dir};
 use rheo_core::manifest_version;
 use rheo_core::output::OutputConfig;
 use rheo_core::project::ProjectConfig;
-use rheo_core::results::CompilationResults;
 use rheo_core::watch::{WatchEvent, watch_project};
-use rheo_core::world::RheoWorld;
-use rheo_core::{FormatPlugin, PluginContext, Result, RheoError, SpineOptions};
-use std::collections::HashMap;
+use rheo_core::{FormatPlugin, Result, RheoError};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 // Re-export logging functionality
 pub use rheo_core::logging;
-use rheo_core::plugins::Asset;
 
 /// Initialize logging with specified verbosity
 pub fn init_logging(verbose: bool, quiet: bool) -> Result<()> {
@@ -197,340 +191,6 @@ fn enabled_formats_from_matches(
         .collect()
 }
 
-/// Determine which format names to compile based on CLI flags and config defaults.
-///
-/// Priority:
-/// 1. CLI flags (any set → use only those)
-/// 2. Config `formats` list (non-empty → use that)
-/// 3. All plugins (fallback)
-fn determine_formats(
-    enabled_from_cli: Vec<String>,
-    config_defaults: &[String],
-    all: &[Box<dyn FormatPlugin>],
-) -> Vec<String> {
-    if !enabled_from_cli.is_empty() {
-        return enabled_from_cli;
-    }
-    if !config_defaults.is_empty() {
-        return config_defaults.to_vec();
-    }
-    all.iter().map(|p| p.name().to_string()).collect()
-}
-
-/// Filter `all_plugins()` to only those whose names appear in `formats`.
-fn plugins_for_formats(
-    formats: &[String],
-    all: Vec<Box<dyn FormatPlugin>>,
-) -> Vec<Box<dyn FormatPlugin>> {
-    all.into_iter()
-        .filter(|p| formats.iter().any(|f| f == p.name()))
-        .collect()
-}
-
-/// Pre-compiled setup context for compilation commands.
-struct CompilationContext {
-    project: ProjectConfig,
-    plugins: Vec<Box<dyn FormatPlugin>>,
-    output_config: OutputConfig,
-    font_dirs: Vec<PathBuf>,
-}
-
-/// Resolve a path relative to a base directory.
-fn resolve_path(base: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        base.join(path)
-    }
-}
-
-/// Resolve build directory with priority: CLI arg > config > default.
-fn resolve_build_dir(
-    project: &ProjectConfig,
-    cli_build_dir: Option<PathBuf>,
-) -> Result<Option<PathBuf>> {
-    if let Some(cli_path) = cli_build_dir {
-        let cwd =
-            std::env::current_dir().map_err(|e| RheoError::io(e, "getting current directory"))?;
-        debug!(dir = %cli_path.display(), "build directory");
-        Ok(Some(resolve_path(&cwd, &cli_path)))
-    } else if let Some(config_path) = &project.config.build_dir {
-        let resolved = resolve_path(&project.root, Path::new(config_path));
-        debug!(dir = %resolved.display(), "build directory");
-        Ok(Some(resolved))
-    } else {
-        Ok(None)
-    }
-}
-
-/// Resolve font directories with autoscan, config, and CLI precedence.
-///
-/// - Autoscan: if no `font_dirs` in config, auto-include `fonts/` at project root
-/// - Config replaces autoscan: if `font_dirs` is set, autoscan is skipped
-/// - CLI appends: `--font-dir` flags always append on top
-fn resolve_font_dirs(project: &ProjectConfig, cli_font_dirs: &[PathBuf]) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-
-    if project.config.font_dirs.is_empty() {
-        let autoscan_dir = project.root.join("fonts");
-        if autoscan_dir.is_dir() {
-            debug!(dir = %autoscan_dir.display(), "auto-discovered font directory");
-            dirs.push(autoscan_dir);
-        }
-    } else {
-        dirs.extend(project.config.resolve_font_dirs(&project.root));
-    }
-
-    let cwd = std::env::current_dir().unwrap();
-    for dir in cli_font_dirs {
-        dirs.push(resolve_path(&cwd, dir));
-    }
-
-    dirs
-}
-
-fn get_output_filename(typ_file: &std::path::Path) -> Result<String> {
-    typ_file
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| RheoError::project_config(format!("invalid .typ filename: {:?}", typ_file)))
-}
-
-fn get_files_for_plugin(
-    plugin: &dyn FormatPlugin,
-    project: &ProjectConfig,
-) -> Result<Vec<PathBuf>> {
-    match project.config.spine_for_plugin(plugin.name()) {
-        None => {
-            // No spine config: return all .typ files sorted lexicographically
-            let mut files = project.typ_files.clone();
-            files.sort();
-            Ok(files)
-        }
-        Some(spine) => {
-            // Spine config: return spine files in declared order
-            let content_dir = project
-                .config
-                .resolve_content_dir(&project.root)
-                .unwrap_or_else(|| project.root.clone());
-            let spine_options = SpineOptions {
-                title: spine.title.clone(),
-                vertebrae: spine.vertebrae.clone(),
-                merge: spine.merge.unwrap_or(false),
-            };
-            spine_options.generate(&content_dir)
-        }
-    }
-}
-
-/// Per-plugin invariants shared across all files in a single-plugin compilation pass.
-struct PerFileCtx<'a> {
-    plugin: &'a dyn FormatPlugin,
-    plugin_output_dir: &'a Path,
-    project: &'a ProjectConfig,
-    output_config: &'a OutputConfig,
-    spine: &'a SpineOptions,
-    plugin_section: &'a PluginSection,
-    resolved_assets: &'a HashMap<&'static str, Vec<Asset>>,
-}
-
-/// Compile one file with the given world, recording success/failure in `results`.
-///
-/// `get_output_filename` errors propagate; `plugin.compile()` errors are recorded
-/// as failures rather than propagated (so other files in the batch still compile).
-fn compile_one_file(
-    world: &mut RheoWorld,
-    typ_file: &Path,
-    pfc: &PerFileCtx<'_>,
-    results: &mut CompilationResults,
-) -> Result<()> {
-    let filename = get_output_filename(typ_file)?;
-    let output_path = pfc
-        .plugin_output_dir
-        .join(&filename)
-        .with_extension(pfc.plugin.name());
-    let options =
-        RheoCompileOptions::new(Some(typ_file), &output_path, &pfc.project.root, Some(world));
-    let ctx = PluginContext {
-        project: pfc.project,
-        output_config: pfc.output_config,
-        options,
-        spine: pfc.spine,
-        config: pfc.plugin_section,
-        assets: pfc.resolved_assets,
-    };
-    match pfc.plugin.compile(ctx) {
-        Ok(_) => results.record_success(pfc.plugin.name()),
-        Err(e) => {
-            error!(file = %typ_file.display(), error = %e, "{} compilation failed", pfc.plugin.name());
-            results.record_failure(pfc.plugin.name());
-        }
-    }
-    Ok(())
-}
-
-fn perform_compilation(
-    project: &ProjectConfig,
-    output_config: &OutputConfig,
-    plugins: &[Box<dyn FormatPlugin>],
-    mut world: Option<&mut RheoWorld>,
-    font_dirs: &[PathBuf],
-) -> Result<()> {
-    if project.typ_files.is_empty() {
-        return Err(RheoError::project_config("no .typ files found in project"));
-    }
-
-    let mut results = CompilationResults::new();
-    let default_section = PluginSection::default();
-
-    // Scan .typ files for package imports once — shared across all plugins
-    // for pre-warming and auto-detect.
-    let package_imports = rheo_core::plugins::scan_project_package_imports(&project.typ_files);
-
-    for plugin in plugins {
-        let plugin_output_dir = output_config.dir_for_plugin(plugin.name());
-        std::fs::create_dir_all(&plugin_output_dir).map_err(|e| {
-            RheoError::io(
-                e,
-                format!("creating output directory for {}", plugin.name()),
-            )
-        })?;
-
-        // Borrow the plugin section directly — no cloning
-        let plugin_section: &PluginSection = project
-            .config
-            .plugin_sections
-            .get(plugin.name())
-            .unwrap_or(&default_section);
-
-        // Pre-warm and auto-detect manifest package assets
-        let manifest_blocks = if plugin_section.auto_detect_packages_enabled() {
-            rheo_core::plugins::prewarm_packages(&package_imports);
-            rheo_core::plugins::detect_manifest_package_assets(&package_imports, plugin.name())
-        } else {
-            vec![]
-        };
-
-        let resolver = AssetResolver::new(&project.root, &plugin_output_dir);
-
-        let resolved_assets =
-            resolver.resolve(plugin.as_ref(), plugin_section, &manifest_blocks)?;
-
-        // Execute copy patterns — global, then manifest blocks, then user-declared blocks
-        resolver.copy_globs(&project.config.copy, &project.root, None)?;
-
-        for block in &manifest_blocks {
-            resolver.copy_globs(
-                &block.assets.copy,
-                &block.source_root,
-                block.assets.dest.as_deref(),
-            )?;
-        }
-
-        for block in plugin_section.asset_blocks() {
-            resolver.copy_globs(&block.copy, &project.root, block.dest.as_deref())?;
-        }
-
-        // Resolve spine options
-        let spine_cfg = plugin_section.spine.as_ref();
-        let spine = SpineOptions {
-            title: spine_cfg.and_then(|s| s.title.clone()),
-            vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
-            merge: spine_cfg
-                .and_then(|s| s.merge)
-                .unwrap_or(plugin.default_merge()),
-        };
-
-        // TODO: BuiltSpine here
-
-        // TODO: this is where it happens.
-        // `spine.merge = true` is the simple case, as plugin.compile is just called once.
-        if spine.merge {
-            let compilation_root = project
-                .config
-                .resolve_content_dir(&project.root)
-                .unwrap_or_else(|| project.root.clone());
-            let output_path = plugin_output_dir
-                .join(&project.name)
-                .with_extension(plugin.name());
-
-            let options =
-                RheoCompileOptions::new(None::<PathBuf>, &output_path, &compilation_root, None);
-
-            let ctx = PluginContext {
-                project,
-                output_config,
-                options,
-                spine: &spine,
-                config: plugin_section,
-                assets: &resolved_assets,
-            };
-
-            match plugin.compile(ctx) {
-                Ok(_) => {
-                    results.record_success(plugin.name());
-                }
-                Err(e) => {
-                    error!(error = %e, "{} generation failed", plugin.name());
-                    results.record_failure(plugin.name());
-                }
-            }
-        } else {
-            let files = get_files_for_plugin(plugin.as_ref(), project)?;
-            let pfc = PerFileCtx {
-                plugin: plugin.as_ref(),
-                plugin_output_dir: &plugin_output_dir,
-                project,
-                output_config,
-                spine: &spine,
-                plugin_section,
-                resolved_assets: &resolved_assets,
-            };
-
-            if let Some(ref mut existing_world) = world {
-                for typ_file in &files {
-                    existing_world.set_main(typ_file)?;
-                    compile_one_file(existing_world, typ_file, &pfc, &mut results)?;
-                }
-            } else {
-                // Collect plugin library code to inject
-                let plugin_library = plugin.typst_library().map(|s| s.to_string());
-
-                for typ_file in &files {
-                    let mut fresh_world = RheoWorld::new(
-                        &project.root,
-                        typ_file,
-                        Some(plugin.name()),
-                        plugin.link_strategy(),
-                        plugin_library.clone(),
-                        font_dirs.to_vec(),
-                    )?;
-                    compile_one_file(&mut fresh_world, typ_file, &pfc, &mut results)?;
-                }
-            }
-        }
-    }
-
-    let names: Vec<&str> = plugins.iter().map(|p| p.name()).collect();
-    results.log_summary(&names);
-
-    if results.has_failures() {
-        if names.iter().any(|name| results.get(name).succeeded > 0) {
-            Err(RheoError::project_config(
-                "some formats failed to compile".to_string(),
-            ))
-        } else {
-            Err(RheoError::project_config(
-                "all formats failed or no files were compiled".to_string(),
-            ))
-        }
-    } else {
-        info!("compilation complete");
-        Ok(())
-    }
-}
-
 /// Rewrites TOML section headers to be nested under a given prefix.
 ///
 /// `[spine]` becomes `[prefix.spine]` and `[[items]]` becomes `[[prefix.items]]`.
@@ -658,16 +318,19 @@ fn init_project(target_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Setup: load project, apply smart defaults (if no config file), resolve plugins + build dir.
-fn setup_compilation_context(
+/// Load the project, log a summary, and prepare a runnable [`Build`].
+///
+/// The CLI owns project loading and arg mapping; all orchestration lives in
+/// [`rheo_core::Build`].
+fn prepare_build(
     path: &Path,
     config_path: Option<&Path>,
     build_dir: Option<PathBuf>,
     enabled_from_cli: Vec<String>,
     cli_font_dirs: Vec<PathBuf>,
-) -> Result<CompilationContext> {
+) -> Result<Build> {
     info!(path = %path.display(), "loading project");
-    let mut project = ProjectConfig::from_path(path, config_path)?;
+    let project = ProjectConfig::from_path(path, config_path)?;
     let file_word = if project.typ_files.len() == 1 {
         "file"
     } else {
@@ -681,32 +344,12 @@ fn setup_compilation_context(
         file_word
     );
 
-    let all = all_plugins();
-    let formats = determine_formats(enabled_from_cli, &project.config.formats, &all);
-    let plugins = plugins_for_formats(&formats, all);
-
-    // Apply plugin smart defaults for all plugins
-    // Plugins check their own state and only fill in missing values
-    for plugin in &plugins {
-        let section = project
-            .config
-            .plugin_sections
-            .entry(plugin.name().to_string())
-            .or_default();
-        plugin.apply_defaults(section, &project.name);
-    }
-
-    let resolved_build_dir = resolve_build_dir(&project, build_dir)?;
-    let output_config = OutputConfig::new(&project.root, resolved_build_dir);
-
-    let font_dirs = resolve_font_dirs(&project, &cli_font_dirs);
-
-    Ok(CompilationContext {
-        project,
-        plugins,
-        output_config,
-        font_dirs,
-    })
+    let opts = BuildOptions {
+        formats: enabled_from_cli,
+        build_dir,
+        font_dirs: cli_font_dirs,
+    };
+    Build::prepare(project, all_plugins(), opts)
 }
 
 /// Main entry point using the builder-based dynamic CLI.
@@ -743,7 +386,7 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
     let all = all_plugins();
     let enabled = enabled_formats_from_matches(sub, &all);
 
-    let mut ctx = setup_compilation_context(
+    let mut build = prepare_build(
         &path,
         config_path.as_deref(),
         build_dir.clone(),
@@ -752,21 +395,15 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
     )?;
 
     // Initial compilation (best-effort; watch continues on failure)
-    if let Err(e) = perform_compilation(
-        &ctx.project,
-        &ctx.output_config,
-        &ctx.plugins,
-        None,
-        &ctx.font_dirs,
-    ) {
+    if let Err(e) = build.run() {
         warn!(error = %e, "initial compilation failed");
     }
 
     // Open outputs if --open requested; collect server handles for live reload
     let mut open_handles: Vec<OpenHandle> = Vec::new();
     if open {
-        for plugin in &ctx.plugins {
-            let out_dir = ctx.output_config.dir_for_plugin(plugin.name());
+        for plugin in build.plugins() {
+            let out_dir = build.output_config().dir_for_plugin(plugin.name());
             match plugin.open(&out_dir, plugin.name()) {
                 Ok(handle) => open_handles.push(handle),
                 Err(e) => warn!(error = %e, plugin = plugin.name(), "failed to open"),
@@ -774,26 +411,18 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         }
     }
 
-    let watch_project_cfg = ctx.project.clone();
-    let build_dir_canonical = ctx
-        .output_config
+    let watch_project_cfg = build.project().clone();
+    let build_dir_canonical = build
+        .output_config()
         .base
         .canonicalize()
-        .unwrap_or_else(|_| ctx.output_config.base.clone());
+        .unwrap_or_else(|_| build.output_config().base.clone());
 
     watch_project(&watch_project_cfg, &build_dir_canonical, move |event| {
         match event {
             WatchEvent::FilesChanged => {
                 info!("files changed, recompiling");
-                if perform_compilation(
-                    &ctx.project,
-                    &ctx.output_config,
-                    &ctx.plugins,
-                    None,
-                    &ctx.font_dirs,
-                )
-                .is_ok()
-                {
+                if build.run().is_ok() {
                     for handle in &open_handles {
                         if let OpenHandle::Server(server) = handle {
                             server.reload();
@@ -803,24 +432,16 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
             }
             WatchEvent::ConfigChanged => {
                 info!("config changed, reloading");
-                match setup_compilation_context(
+                match prepare_build(
                     &path,
                     config_path.as_deref(),
                     build_dir.clone(),
                     enabled.clone(),
                     cli_font_dirs.clone(),
                 ) {
-                    Ok(new_ctx) => {
-                        ctx = new_ctx;
-                        if perform_compilation(
-                            &ctx.project,
-                            &ctx.output_config,
-                            &ctx.plugins,
-                            None,
-                            &ctx.font_dirs,
-                        )
-                        .is_ok()
-                        {
+                    Ok(new_build) => {
+                        build = new_build;
+                        if build.run().is_ok() {
                             for handle in &open_handles {
                                 if let OpenHandle::Server(server) = handle {
                                     server.reload();
@@ -848,16 +469,8 @@ fn run_compile(sub: &ArgMatches) -> Result<()> {
     let all = all_plugins();
     let enabled = enabled_formats_from_matches(sub, &all);
 
-    let ctx =
-        setup_compilation_context(&path, config.as_deref(), build_dir, enabled, cli_font_dirs)?;
-
-    perform_compilation(
-        &ctx.project,
-        &ctx.output_config,
-        &ctx.plugins,
-        None,
-        &ctx.font_dirs,
-    )
+    let mut build = prepare_build(&path, config.as_deref(), build_dir, enabled, cli_font_dirs)?;
+    build.run().map(|_| ())
 }
 
 fn run_clean(sub: &ArgMatches) -> Result<()> {
@@ -878,54 +491,6 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_determine_formats_cli_flags_override_config() {
-        let all = all_plugins();
-        let config_defaults = vec!["pdf".to_string()];
-        let enabled = vec!["pdf".to_string()];
-
-        let formats = determine_formats(enabled, &config_defaults, &all);
-        assert_eq!(formats.len(), 1);
-        assert!(formats.contains(&"pdf".to_string()));
-    }
-
-    #[test]
-    fn test_determine_formats_uses_config_defaults_when_no_flags() {
-        let all = all_plugins();
-        let config_defaults = vec!["html".to_string()];
-        let enabled: Vec<String> = vec![];
-
-        let formats = determine_formats(enabled, &config_defaults, &all);
-        assert_eq!(formats.len(), 1);
-        assert!(formats.contains(&"html".to_string()));
-    }
-
-    #[test]
-    fn test_determine_formats_falls_back_to_all_when_empty() {
-        let all = all_plugins();
-        let config_defaults: Vec<String> = vec![];
-        let enabled: Vec<String> = vec![];
-
-        let formats = determine_formats(enabled, &config_defaults, &all);
-        // Should contain all plugin names
-        assert_eq!(formats.len(), all_plugins().len());
-        assert!(formats.contains(&"pdf".to_string()));
-        assert!(formats.contains(&"html".to_string()));
-        assert!(formats.contains(&"epub".to_string()));
-    }
-
-    #[test]
-    fn test_determine_formats_multiple_cli_flags() {
-        let all = all_plugins();
-        let config_defaults = vec!["epub".to_string()];
-        let enabled = vec!["pdf".to_string(), "html".to_string()];
-
-        let formats = determine_formats(enabled, &config_defaults, &all);
-        assert_eq!(formats.len(), 2);
-        assert!(formats.contains(&"pdf".to_string()));
-        assert!(formats.contains(&"html".to_string()));
-    }
 
     #[test]
     fn test_all_plugins_contains_three_formats() {

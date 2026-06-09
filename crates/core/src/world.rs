@@ -256,6 +256,7 @@ impl RheoWorld {
         format_name: &str,
         link_strategy: LinkStrategy,
         plugin_library: Option<String>,
+        font_dirs: Vec<PathBuf>,
     ) -> crate::Result<typst_html::HtmlDocument> {
         let world = Self::new(
             root,
@@ -263,7 +264,7 @@ impl RheoWorld {
             Some(format_name),
             link_strategy,
             plugin_library,
-            vec![],
+            font_dirs,
         )?;
         tracing::info!(input = %input.display(), "compiling to HTML");
         world.compile_html()
@@ -276,6 +277,7 @@ impl RheoWorld {
         format_name: Option<&str>,
         link_strategy: LinkStrategy,
         plugin_library: Option<String>,
+        font_dirs: Vec<PathBuf>,
     ) -> crate::Result<typst::layout::PagedDocument> {
         let world = Self::new(
             root,
@@ -283,7 +285,7 @@ impl RheoWorld {
             format_name,
             link_strategy,
             plugin_library,
-            vec![],
+            font_dirs,
         )?;
         tracing::info!(input = %input.display(), "compiling to PDF");
         world.compile_pdf()

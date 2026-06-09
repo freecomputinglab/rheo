@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod build;
 pub mod compile;
 pub mod config;
 pub mod constants;
@@ -35,6 +36,7 @@ pub use results::{CompilationResults, FormatResult};
 
 // Asset resolution
 pub use assets::AssetResolver;
+pub use build::{Build, BuildOptions};
 
 // Compile options and context
 pub use compile::RheoCompileOptions;
