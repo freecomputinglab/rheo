@@ -502,6 +502,7 @@ fn perform_compilation(
                         &project.root,
                         typ_file,
                         Some(plugin.name()),
+                        plugin.link_strategy(),
                         plugin_library.clone(),
                         font_dirs.to_vec(),
                     )?;

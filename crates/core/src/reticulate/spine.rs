@@ -1,5 +1,5 @@
 use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
-use crate::plugins::SpineOptions;
+use crate::plugins::{LinkStrategy, SpineOptions};
 use crate::reticulate::transformer::LinkTransformer;
 use crate::reticulate::types::RheoValue;
 use crate::{Result, RheoError, TYP_EXT};
@@ -36,12 +36,13 @@ impl BuiltSpine {
     /// * `root` - Project root directory
     /// * `spine_config` - Optional spine configuration (determines spine files)
     /// * `format_ext` - The extension to use for relative links.
-    /// * `merge_produces_pdf` - Whether the merged compile produces a PDF
+    /// * `strategy` - How relative `.typ` links are rewritten (extension vs PDF labels)
     /// * `merge` - Whether to merge spine files into a single source (caller decides)
     pub fn build(
         root: &Path,
         spine_config: Option<&SpineOptions>,
         format_ext: &str,
+        strategy: LinkStrategy,
         merge: bool,
     ) -> Result<BuiltSpine> {
         let spine_files = match spine_config {
@@ -53,13 +54,14 @@ impl BuiltSpine {
         // Merge when caller requests it (typically only PDF merged mode).
         // Other formats (epub, html) handle concatenation differently.
 
-        let transformer = if format_ext == "pdf" && spine_files.len() > 1 {
-            LinkTransformer::new(format_ext)
-                .with_spine(spine_files.to_vec())
-                .with_import_rewriting(merge)
-        } else {
-            LinkTransformer::new(format_ext).with_import_rewriting(merge)
-        };
+        // Paged formats attach the spine so cross-file links become labels;
+        // a single file has no cross-references, so it's skipped.
+        let mut transformer = LinkTransformer::new(format_ext)
+            .with_strategy(strategy)
+            .with_import_rewriting(merge);
+        if strategy == LinkStrategy::PagedLabels && spine_files.len() > 1 {
+            transformer = transformer.with_spine(spine_files.to_vec());
+        }
 
         let mut sources = Vec::new();
         let mut vars = Vec::new();
@@ -368,7 +370,14 @@ mod tests {
             ("b.typ", "= B, no vars"),
         ]);
         let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
-        let built = BuiltSpine::build(temp.path(), Some(&spine), "html", false).unwrap();
+        let built = BuiltSpine::build(
+            temp.path(),
+            Some(&spine),
+            "html",
+            LinkStrategy::ExtensionRewrite,
+            false,
+        )
+        .unwrap();
 
         assert_eq!(built.vars.len(), 2);
         assert_eq!(
@@ -382,7 +391,13 @@ mod tests {
     fn test_build_errors_on_non_string_rheo_var() {
         let temp = write_spine_dir(&[("a.typ", "#let rheo-x = 1\n= A")]);
         let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
-        let result = BuiltSpine::build(temp.path(), Some(&spine), "html", false);
+        let result = BuiltSpine::build(
+            temp.path(),
+            Some(&spine),
+            "html",
+            LinkStrategy::ExtensionRewrite,
+            false,
+        );
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();

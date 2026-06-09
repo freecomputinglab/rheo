@@ -166,8 +166,13 @@ impl<'a> PluginContext<'a> {
         plugin: &(impl FormatPlugin + ?Sized),
     ) -> Result<Vec<CompiledHtmlVertebra>> {
         let spine_root = self.spine_root();
-        let rheo_spine =
-            BuiltSpine::build(&spine_root, Some(self.spine), plugin.extension(), false)?;
+        let rheo_spine = BuiltSpine::build(
+            &spine_root,
+            Some(self.spine),
+            plugin.extension(),
+            plugin.link_strategy(),
+            false,
+        )?;
 
         let spine_paths = self.spine.generate(&spine_root)?;
 
@@ -197,6 +202,7 @@ impl<'a> PluginContext<'a> {
                     &self.project.root,
                     temp_path,
                     plugin.name(),
+                    plugin.link_strategy(),
                     plugin_library.clone(),
                 )?;
                 Ok(CompiledHtmlVertebra {
@@ -212,7 +218,13 @@ impl<'a> PluginContext<'a> {
     /// compiling HTML. Generic accessor for non-HTML formats.
     pub fn spine_vars(&self) -> Result<Vec<(PathBuf, HashMap<String, RheoValue>)>> {
         let spine_root = self.spine_root();
-        let rheo_spine = BuiltSpine::build(&spine_root, Some(self.spine), "html", false)?;
+        let rheo_spine = BuiltSpine::build(
+            &spine_root,
+            Some(self.spine),
+            "html",
+            LinkStrategy::ExtensionRewrite,
+            false,
+        )?;
         let spine_paths = self.spine.generate(&spine_root)?;
         Ok(spine_paths.into_iter().zip(rheo_spine.vars).collect())
     }
@@ -227,6 +239,7 @@ impl<'a> PluginContext<'a> {
                 &self.options.root,
                 Some(self.spine),
                 plugin.extension(),
+                plugin.link_strategy(),
                 self.spine.merge,
             )?;
 
@@ -256,8 +269,13 @@ impl<'a> PluginContext<'a> {
 
             // output_format=None because links already transformed to labels by RheoSpine
             let plugin_library = plugin.typst_library().map(|s| s.to_string());
-            let document =
-                RheoWorld::compile_pdf_file(&self.options.root, temp_path, None, plugin_library)?;
+            let document = RheoWorld::compile_pdf_file(
+                &self.options.root,
+                temp_path,
+                None,
+                plugin.link_strategy(),
+                plugin_library,
+            )?;
 
             debug!(output = %output_path.display(), "exporting to PDF");
             let pdf_bytes = document_to_pdf_bytes(&document)?;
@@ -297,6 +315,21 @@ pub enum CompilationTarget {
     Html,
     /// Compile to a paged (PDF) document.
     Pdf,
+}
+
+/// How a format plugin rewrites relative `.typ` links during compilation.
+///
+/// This is the single capability that distinguishes paged formats from web
+/// formats; it replaces the previous reliance on matching the literal `"pdf"`
+/// format name in link, spine, and compilation-target logic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkStrategy {
+    /// Rewrite the `.typ` extension to the format's own (e.g. `.html`, `.xhtml`).
+    /// Used by web formats (HTML, EPUB).
+    ExtensionRewrite,
+    /// In a merged document, convert in-spine links to internal labels; in a
+    /// single-file document, strip them. Used by paged formats (PDF).
+    PagedLabels,
 }
 
 /// A package expanded into synthetic asset blocks, carrying its resolved source root.
@@ -384,15 +417,24 @@ pub trait FormatPlugin: Send + Sync {
         self.name()
     }
 
+    /// How this plugin rewrites relative `.typ` links.
+    ///
+    /// Paged formats (PDF) override this to return [`LinkStrategy::PagedLabels`];
+    /// web formats (HTML, EPUB) inherit the [`LinkStrategy::ExtensionRewrite`]
+    /// default. This capability also drives [`Self::compilation_target`].
+    fn link_strategy(&self) -> LinkStrategy {
+        LinkStrategy::ExtensionRewrite
+    }
+
     /// The compilation target used by `PluginContext::compile()`.
     ///
-    /// Override this if your plugin's extension differs from its compilation target.
-    /// Default: "pdf" extension -> Pdf; everything else -> Html.
+    /// Derived from [`Self::link_strategy`]: paged formats compile to a PDF
+    /// document, web formats to HTML. Override only if a format needs a target
+    /// that doesn't match its link strategy.
     fn compilation_target(&self) -> CompilationTarget {
-        if self.extension() == "pdf" {
-            CompilationTarget::Pdf
-        } else {
-            CompilationTarget::Html
+        match self.link_strategy() {
+            LinkStrategy::PagedLabels => CompilationTarget::Pdf,
+            LinkStrategy::ExtensionRewrite => CompilationTarget::Html,
         }
     }
 
@@ -651,7 +693,10 @@ pub trait FormatPlugin: Send + Sync {
     ///
     /// ```ignore
     /// // ctx.options.world is None — build your own from ctx.options.root
-    /// let world = RheoWorld::new(ctx.options.root, &concatenated_file, Some("pdf"))?;
+    /// let world = RheoWorld::new(
+    ///     ctx.options.root, &concatenated_file, Some("pdf"),
+    ///     self.link_strategy(), None, vec![],
+    /// )?;
     /// let result = typst::compile::<PagedDocument>(&world)?;
     /// ```
     ///

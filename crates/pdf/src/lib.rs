@@ -1,4 +1,4 @@
-use rheo_core::{FormatPlugin, PluginContext, Result};
+use rheo_core::{FormatPlugin, LinkStrategy, PluginContext, Result};
 
 pub struct PdfPlugin;
 const PLUGIN_NAME: &str = "pdf";
@@ -6,6 +6,12 @@ const PLUGIN_NAME: &str = "pdf";
 impl FormatPlugin for PdfPlugin {
     fn name(&self) -> &'static str {
         PLUGIN_NAME
+    }
+
+    /// PDF is a paged format: merged compiles convert in-spine links to labels,
+    /// single-file compiles strip them.
+    fn link_strategy(&self) -> LinkStrategy {
+        LinkStrategy::PagedLabels
     }
 
     fn init_rheo_toml_section_template(&self) -> Option<&'static str> {

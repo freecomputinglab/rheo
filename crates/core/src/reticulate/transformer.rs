@@ -1,6 +1,7 @@
 use super::types::{LinkInfo, LinkTransform, RheoVar};
 use crate::constants::TYP_EXT;
 use crate::pdf_utils::sanitize_label_name;
+use crate::plugins::LinkStrategy;
 use crate::reticulate::validator::is_relative_typ_link;
 use crate::{Result, RheoError};
 use std::collections::HashMap;
@@ -17,9 +18,11 @@ pub struct TransformOutput {
 
 /// Link transformer that converts Typst links to format-specific targets.
 pub struct LinkTransformer {
-    // TODO: whether or not we build labels shouldn't be done based on a format name, but based on
-    // a flag set in the FormatPlugin indicating whether `merge = true` produces a PDF...
+    /// The output format's extension, used solely for the `.typ` -> `.{ext}`
+    /// rewrite under [`LinkStrategy::ExtensionRewrite`].
     format_name: String,
+    /// How relative `.typ` links are rewritten (extension rewrite vs PDF labels).
+    strategy: LinkStrategy,
     spine: Option<Vec<PathBuf>>,
     /// When true, rewrite relative import/include paths to be project-root-relative.
     /// Needed when sources will be compiled from a different directory (e.g. merged into
@@ -30,12 +33,22 @@ pub struct LinkTransformer {
 
 impl LinkTransformer {
     /// Create a new LinkTransformer for the specified output format name.
+    ///
+    /// Defaults to [`LinkStrategy::ExtensionRewrite`]; call
+    /// [`with_strategy`](Self::with_strategy) to use PDF labels instead.
     pub(crate) fn new(format_name: &str) -> Self {
         Self {
             format_name: format_name.to_string(),
+            strategy: LinkStrategy::ExtensionRewrite,
             spine: None,
             rewrite_imports: false,
         }
+    }
+
+    /// Set the link strategy (extension rewrite vs PDF labels).
+    pub fn with_strategy(mut self, strategy: LinkStrategy) -> Self {
+        self.strategy = strategy;
+        self
     }
 
     /// Set the spine for merged PDF compilation.
@@ -129,8 +142,8 @@ impl LinkTransformer {
     ) -> Result<Vec<(Range<usize>, LinkTransform)>> {
         let mut transformations = Vec::new();
 
-        let label_map: HashMap<String, String> = match (self.format_name.as_str(), &self.spine) {
-            ("pdf", Some(spine)) => build_label_map(spine),
+        let label_map: HashMap<String, String> = match (self.strategy, &self.spine) {
+            (LinkStrategy::PagedLabels, Some(spine)) => build_label_map(spine),
             _ => HashMap::new(),
         };
 
@@ -140,14 +153,14 @@ impl LinkTransformer {
             let stem = filename.strip_suffix(TYP_EXT).unwrap_or(filename);
 
             let transform = if is_relative_typ_link(url) {
-                match (self.format_name.as_str(), &self.spine) {
-                    ("pdf", None) => {
+                match (self.strategy, &self.spine) {
+                    (LinkStrategy::PagedLabels, None) => {
                         // Single PDF: remove links
                         LinkTransform::Remove {
                             body: link.body.clone(),
                         }
                     }
-                    ("pdf", Some(_)) => {
+                    (LinkStrategy::PagedLabels, Some(_)) => {
                         // Merged PDF: convert to labels, check if file is in spine
                         if !label_map.contains_key(stem) {
                             return Err(RheoError::project_config(format!(
@@ -161,8 +174,8 @@ impl LinkTransformer {
                         }
                     }
                     // Generic extension-based replacement: .typ → .{extension}
-                    (ext, _) => LinkTransform::ReplaceUrl {
-                        new_url: url.replace(TYP_EXT, &format!(".{}", ext)),
+                    (LinkStrategy::ExtensionRewrite, _) => LinkTransform::ReplaceUrl {
+                        new_url: url.replace(TYP_EXT, &format!(".{}", self.format_name)),
                     },
                 }
             } else {
@@ -237,7 +250,7 @@ mod tests {
     #[test]
     fn test_pdf_single_removes_typ_links() {
         let links = vec![make_link("./file.typ", "text", 0..10)];
-        let transformer = LinkTransformer::new("pdf");
+        let transformer = LinkTransformer::new("pdf").with_strategy(LinkStrategy::PagedLabels);
         let transforms = transformer
             .compute_transformations(&links, Path::new("test.typ"))
             .unwrap();
@@ -256,7 +269,7 @@ mod tests {
             make_link("http://example.com", "example2", 20..30),
             make_link("mailto:test@example.com", "email", 40..50),
         ];
-        let transformer = LinkTransformer::new("pdf");
+        let transformer = LinkTransformer::new("pdf").with_strategy(LinkStrategy::PagedLabels);
         let transforms = transformer
             .compute_transformations(&links, Path::new("test.typ"))
             .unwrap();
@@ -271,7 +284,9 @@ mod tests {
     fn test_pdf_merged_converts_to_labels() {
         let links = vec![make_link("./chapter2.typ", "next", 0..10)];
         let spine = vec![PathBuf::from("chapter1.typ"), PathBuf::from("chapter2.typ")];
-        let transformer = LinkTransformer::new("pdf").with_spine(spine);
+        let transformer = LinkTransformer::new("pdf")
+            .with_strategy(LinkStrategy::PagedLabels)
+            .with_spine(spine);
         let transforms = transformer
             .compute_transformations(&links, Path::new("chapter1.typ"))
             .unwrap();
@@ -289,7 +304,9 @@ mod tests {
     fn test_pdf_merged_errors_on_missing_spine_file() {
         let links = vec![make_link("./missing.typ", "missing", 0..10)];
         let spine = vec![PathBuf::from("chapter1.typ")];
-        let transformer = LinkTransformer::new("pdf").with_spine(spine);
+        let transformer = LinkTransformer::new("pdf")
+            .with_strategy(LinkStrategy::PagedLabels)
+            .with_spine(spine);
         let result = transformer.compute_transformations(&links, Path::new("chapter1.typ"));
 
         assert!(result.is_err());
