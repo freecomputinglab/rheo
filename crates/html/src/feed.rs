@@ -26,6 +26,8 @@ pub struct AtomFeed {
     pub updated: DateTime<Utc>,
     /// Target of the `rel="self"` link (the feed URL).
     pub self_href: String,
+    /// Feed-level author name, emitted as `<author><name>...</name></author>`.
+    pub author: String,
     pub entries: Vec<AtomEntry>,
 }
 
@@ -33,7 +35,7 @@ impl AtomFeed {
     /// Render this feed to an RFC 4287 Atom XML string.
     pub fn serialize(&self) -> String {
         let mut author = atom::Person::default();
-        author.set_name("Rheo");
+        author.set_name(self.author.clone());
 
         let entries = self
             .entries
@@ -103,6 +105,7 @@ mod tests {
             title: "My Blog".to_string(),
             updated: ts(),
             self_href: "https://example.com/feed.xml".to_string(),
+            author: "Ada Lovelace".to_string(),
             entries: vec![entry("post", "First Post")],
         };
         let xml = feed.serialize();
@@ -110,7 +113,7 @@ mod tests {
         assert!(xml.contains(r#"<feed xmlns="http://www.w3.org/2005/Atom">"#));
         assert!(xml.contains("<id>https://example.com/feed.xml</id>"));
         assert!(xml.contains("<title>My Blog</title>"));
-        assert!(xml.contains("<name>Rheo</name>"));
+        assert!(xml.contains("<name>Ada Lovelace</name>"));
         assert!(xml.contains(r#"rel="self""#));
         assert!(xml.contains(r#"href="https://example.com/feed.xml""#));
         // Entry
@@ -130,6 +133,7 @@ mod tests {
             title: "t".to_string(),
             updated: ts(),
             self_href: "self".to_string(),
+            author: "Rheo".to_string(),
             entries: vec![entry("a", "A"), entry("b", "B")],
         };
         let xml = feed.serialize();
@@ -143,6 +147,7 @@ mod tests {
             title: r#"Tom & Jerry <3"#.to_string(),
             updated: ts(),
             self_href: "self".to_string(),
+            author: "Rheo".to_string(),
             entries: vec![],
         };
         let xml = feed.serialize();

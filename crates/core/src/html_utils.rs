@@ -112,12 +112,28 @@ impl HtmlDom {
                 errors: "HTML document does not contain a <body> element".to_string(),
             }
         })?;
+        inner_html(&body)
+    }
 
-        let mut output = String::new();
-        for child in body.children.borrow().iter() {
-            serialize_node(child, &mut output)?;
+    /// Serialize the inner HTML of the feed content region for one page.
+    ///
+    /// Resolution order, first match wins:
+    /// 1. the first `<main>` element's inner HTML;
+    /// 2. the first element carrying the `rheo-feed-content` class;
+    /// 3. the whole `<body>` inner HTML.
+    ///
+    /// This lets authors scope feed entries to the article, excluding page
+    /// chrome (header/footer/nav), by wrapping the article in `<main>` (or an
+    /// element with class `rheo-feed-content`) and keeping the chrome outside
+    /// it. With no marker present it falls back to the full body.
+    pub fn feed_content_inner_html(&self) -> Result<String> {
+        if let Some(main) = find_element_by_tag(&self.dom.document, "main") {
+            return inner_html(&main);
         }
-        Ok(output)
+        if let Some(el) = find_element_by_class(&self.dom.document, "rheo-feed-content") {
+            return inner_html(&el);
+        }
+        self.body_inner_html()
     }
 
     #[cfg(test)]
@@ -277,6 +293,37 @@ fn find_element_by_tag(handle: &Handle, tag_name: &str) -> Option<Handle> {
     None
 }
 
+/// Find the first element (depth-first) whose `class` attribute contains
+/// `class` as a whitespace-separated token (not a substring match).
+fn find_element_by_class(handle: &Handle, class: &str) -> Option<Handle> {
+    if let NodeData::Element { attrs, .. } = &handle.data {
+        let matches = attrs.borrow().iter().any(|attr| {
+            attr.name.local.as_ref() == "class" && attr.value.split_whitespace().any(|c| c == class)
+        });
+        if matches {
+            return Some(handle.clone());
+        }
+    }
+
+    for child in handle.children.borrow().iter() {
+        if let Some(found) = find_element_by_class(child, class) {
+            return Some(found);
+        }
+    }
+
+    None
+}
+
+/// Serialize the inner HTML of an element: its children without the surrounding
+/// tag.
+fn inner_html(handle: &Handle) -> Result<String> {
+    let mut output = String::new();
+    for child in handle.children.borrow().iter() {
+        serialize_node(child, &mut output)?;
+    }
+    Ok(output)
+}
+
 fn serialize_node(handle: &Handle, output: &mut String) -> Result<()> {
     match &handle.data {
         NodeData::Document => {
@@ -433,6 +480,17 @@ pub fn inject_head_links(
 /// Returns an error if the HTML cannot be parsed or has no `<body>` element.
 pub fn extract_body_inner_html(html: &str) -> Result<String> {
     HtmlDom::parse(html)?.body_inner_html()
+}
+
+/// Extract the inner HTML of the feed content region. Resolves, first match
+/// wins: the first `<main>` element, else the first element with class
+/// `rheo-feed-content`, else the whole `<body>`. See
+/// [`HtmlDom::feed_content_inner_html`].
+///
+/// Returns an error if the HTML cannot be parsed or, when falling back, has no
+/// `<body>` element.
+pub fn extract_feed_content_html(html: &str) -> Result<String> {
+    HtmlDom::parse(html)?.feed_content_inner_html()
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -713,5 +771,44 @@ mod tests {
         let html = "<html><head></head><body></body></html>";
         let inner = extract_body_inner_html(html).unwrap();
         assert_eq!(inner, "");
+    }
+
+    // extract_feed_content_html tests
+
+    #[test]
+    fn test_feed_content_main_wins() {
+        let html = "<html><head></head><body><main><p>article</p></main><footer>chrome</footer></body></html>";
+        let inner = extract_feed_content_html(html).unwrap();
+        assert_eq!(inner, "<p>article</p>");
+    }
+
+    #[test]
+    fn test_feed_content_class_fallback() {
+        let html = "<html><head></head><body><div class=\"rheo-feed-content\"><p>a</p></div><nav>x</nav></body></html>";
+        let inner = extract_feed_content_html(html).unwrap();
+        assert_eq!(inner, "<p>a</p>");
+    }
+
+    #[test]
+    fn test_feed_content_class_among_many() {
+        // Whitespace-token membership, not substring: a multi-class attribute matches.
+        let html = "<html><head></head><body><div class=\"post rheo-feed-content wide\"><p>a</p></div></body></html>";
+        let inner = extract_feed_content_html(html).unwrap();
+        assert_eq!(inner, "<p>a</p>");
+    }
+
+    #[test]
+    fn test_feed_content_body_fallback() {
+        let html = "<html><head></head><body><h1>T</h1><p>Body</p></body></html>";
+        let inner = extract_feed_content_html(html).unwrap();
+        assert_eq!(inner, extract_body_inner_html(html).unwrap());
+        assert_eq!(inner, "<h1>T</h1><p>Body</p>");
+    }
+
+    #[test]
+    fn test_feed_content_main_precedence_over_class() {
+        let html = "<html><head></head><body><main><p>main</p></main><div class=\"rheo-feed-content\"><p>class</p></div></body></html>";
+        let inner = extract_feed_content_html(html).unwrap();
+        assert_eq!(inner, "<p>main</p>");
     }
 }

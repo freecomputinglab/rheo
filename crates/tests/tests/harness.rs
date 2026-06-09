@@ -1497,6 +1497,76 @@ fn test_atom_feed_and_rheo_vars() {
     );
 }
 
+/// Integration test for the configurable `[html] feed_author` key. The default
+/// (`<name>Rheo</name>`) is covered by `test_atom_feed_and_rheo_vars`; here we
+/// assert a custom author is used and that XML-special chars are escaped.
+#[test]
+fn test_atom_feed_author_configurable() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+    let build_dir = project_path.join("build");
+
+    std::fs::write(
+        project_path.join("a.typ"),
+        "#let rheo-feed-title = \"Article A\"\n\n= Article A\n\nContent A.\n",
+    )
+    .expect("Failed to write a.typ");
+
+    // feed_author with an ampersand exercises the atom crate's escaping.
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [html.spine]\n\
+             title = \"Test Blog\"\n\
+             vertebrae = [\"a.typ\"]\n\
+             \n\
+             [html]\n\
+             feed_base_url = \"https://example.com\"\n\
+             feed_author = \"Jane & Doe\"\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let feed_path = build_dir.join("html/feed.xml");
+    assert!(feed_path.exists(), "feed.xml not generated");
+    let feed = std::fs::read_to_string(&feed_path).expect("Failed to read feed.xml");
+
+    assert!(
+        feed.contains("<author><name>Jane &amp; Doe</name></author>"),
+        "feed author not configured/escaped: {feed}"
+    );
+    assert!(
+        !feed.contains("<name>Rheo</name>"),
+        "default author should be overridden"
+    );
+}
+
 /// Regression: feed generation resolves spine vertebrae against the configured
 /// `content_dir`, not the project root. With `content_dir` set, the per-file
 /// HTML compile path used to glob from the project root and fail with

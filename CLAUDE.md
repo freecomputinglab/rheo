@@ -43,6 +43,7 @@ copy = ["*.txt"]         # optional; glob patterns copied to every plugin output
 
 [html]
 feed_base_url = "https://example.com"  # optional; when set, emits build/html/feed.xml (Atom)
+feed_author = "Jane Doe"               # optional; atom:author of the feed (default "Rheo")
 
 [html.assets]
 copy = ["images/**"]     # optional; glob patterns copied to html output dir only
@@ -81,11 +82,13 @@ Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title 
 
 **Generic variable convention:** any top-level `#let rheo-<key> = "<string>"` in a vertebra is harvested during compilation. The value must be a string literal — a non-string RHS is a compile error. Plugins read these per-file with the `rheo-` prefix stripped (e.g. `rheo-feed-title` is available as `feed-title`).
 
-**Atom feed:** set `feed_base_url` under `[html]` to enable it. When set, the HTML build emits `build/html/feed.xml` (Atom 1.0) with one `<entry>` per vertebra that declares `rheo-feed-title`, and injects a `<link rel="alternate" type="application/atom+xml">` autodiscovery tag into every page's `<head>`. Without `feed_base_url`, no feed is emitted.
+**Atom feed:** set `feed_base_url` under `[html]` to enable it. When set, the HTML build emits `build/html/feed.xml` (Atom 1.0) with one `<entry>` per vertebra that declares `rheo-feed-title`, and injects a `<link rel="alternate" type="application/atom+xml">` autodiscovery tag into every page's `<head>`. Without `feed_base_url`, no feed is emitted. The feed's `atom:author` defaults to `Rheo`; set `[html] feed_author = "..."` to override it.
 
 Feed variables:
 - `rheo-feed-title` — entry title; **required** for a vertebra to appear in the feed.
 - `rheo-feed-updated` — entry timestamp (RFC 3339); optional, falls back to the source file's mtime.
+
+**Feed content region:** each entry's `<content>` is taken from the first `<main>` element, else the first element with class `rheo-feed-content`, else the whole `<body>`. To exclude page chrome (header/footer/nav) from feed entries, wrap the article in `<main>` (e.g. `html.elem("main", doc)`) and keep the chrome outside it. With no marker, the full body is used.
 
 ## Code Style
 
