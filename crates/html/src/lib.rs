@@ -270,10 +270,6 @@ fn feed_updated(v: &rheo_core::CompiledHtmlVertebra) -> Result<DateTime<Utc>> {
 /// Read the `feed_base_url` key from a plugin section's config (mirrors epub's
 /// `parse_identifier`). Any trailing `/` is trimmed so callers can join paths
 /// with a single `/`. Returns `None` when the key is absent or not a string.
-///
-/// NOTE: this is the interim reader; once `[{format}.options]` lands (rheo-uico)
-/// `feed_base_url` becomes a validated option read via
-/// `ctx.option_str("feed_base_url")`.
 pub fn feed_base_url(section: &PluginSection) -> Option<String> {
     section
         .extra
