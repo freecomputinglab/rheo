@@ -215,6 +215,7 @@ impl HtmlPlugin {
             title: ctx.project.name.clone(),
             updated: Utc::now(),
             self_href: format!("{base}/feed.xml"),
+            author: feed_author(ctx.config).unwrap_or_else(|| "Rheo".to_string()),
             entries,
         };
 
@@ -281,6 +282,18 @@ pub fn feed_base_url(section: &PluginSection) -> Option<String> {
         .map(|s| s.trim_end_matches('/').to_string())
 }
 
+/// Read the `feed_author` key from a plugin section's config (mirrors
+/// `feed_base_url`). Used as the Atom feed's `<author><name>`. Returns `None`
+/// when the key is absent or not a string, in which case the caller defaults to
+/// `"Rheo"`.
+pub fn feed_author(section: &PluginSection) -> Option<String> {
+    section
+        .extra
+        .get("feed_author")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,6 +332,31 @@ mod tests {
         extra.insert("feed_base_url".to_string(), toml::Value::Integer(42));
         let section = section_with(extra);
         assert_eq!(feed_base_url(&section), None);
+    }
+
+    #[test]
+    fn test_feed_author_present() {
+        let mut extra = toml::Table::new();
+        extra.insert(
+            "feed_author".to_string(),
+            toml::Value::String("Ada Lovelace".to_string()),
+        );
+        let section = section_with(extra);
+        assert_eq!(feed_author(&section).as_deref(), Some("Ada Lovelace"));
+    }
+
+    #[test]
+    fn test_feed_author_absent() {
+        let section = section_with(toml::Table::new());
+        assert_eq!(feed_author(&section), None);
+    }
+
+    #[test]
+    fn test_feed_author_non_string() {
+        let mut extra = toml::Table::new();
+        extra.insert("feed_author".to_string(), toml::Value::Integer(42));
+        let section = section_with(extra);
+        assert_eq!(feed_author(&section), None);
     }
 
     #[test]
