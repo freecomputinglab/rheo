@@ -193,7 +193,7 @@ impl HtmlPlugin {
 
             let updated = feed_updated(&v)?;
             let html = compile_document_to_string(&v.document)?;
-            let body = html_utils::extract_body_inner_html(&html)?;
+            let body = html_utils::extract_feed_content_html(&html)?;
             let stem = v
                 .path
                 .file_stem()

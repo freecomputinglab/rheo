@@ -87,6 +87,8 @@ Feed variables:
 - `rheo-feed-title` — entry title; **required** for a vertebra to appear in the feed.
 - `rheo-feed-updated` — entry timestamp (RFC 3339); optional, falls back to the source file's mtime.
 
+**Feed content region:** each entry's `<content>` is taken from the first `<main>` element, else the first element with class `rheo-feed-content`, else the whole `<body>`. To exclude page chrome (header/footer/nav) from feed entries, wrap the article in `<main>` (e.g. `html.elem("main", doc)`) and keep the chrome outside it. With no marker, the full body is used.
+
 ## Code Style
 
 - `cargo fmt` before committing
