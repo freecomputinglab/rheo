@@ -11,8 +11,8 @@ use serde::Deserialize;
 pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
-    AssetConfig, CompiledHtmlVertebra, FormatPlugin, OpenHandle, PluginContext, Result, RheoError,
-    RheoValue, ServerHandle,
+    AssetConfig, CompiledHtmlVertebra, FormatInitTemplate, FormatPlugin, OpenHandle,
+    PluginContext, Result, RheoError, RheoValue, ServerHandle,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -50,19 +50,18 @@ impl FormatPlugin for HtmlPlugin {
         PLUGIN_NAME
     }
 
-    fn init_template_files(&self) -> Vec<(&'static str, &'static str)> {
-        vec![
-            // The stylesheet included with the template mirrors the default stylesheet, so that
-            // users can build from it or start from scratch as they wish.
-            ("style.css", include_str!("templates/style.css")),
-            // A demonstrative JS file that just logs to console. See the examples/ directory for
-            // how to use Rheo with bundled JS.
-            ("index.js", include_str!("templates/index.js")),
-        ]
-    }
-
-    fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
-        Some(include_str!("templates/init/rheo_section.toml"))
+    fn format_init_template(&self) -> FormatInitTemplate {
+        FormatInitTemplate {
+            files: vec![
+                // The stylesheet included with the template mirrors the default stylesheet, so that
+                // users can build from it or start from scratch as they wish.
+                ("style.css", include_str!("templates/style.css")),
+                // A demonstrative JS file that just logs to console. See the examples/ directory for
+                // how to use Rheo with bundled JS.
+                ("index.js", include_str!("templates/index.js")),
+            ],
+            options_toml: Some(include_str!("templates/init/rheo_section.toml")),
+        }
     }
 
     fn open(&self, output_dir: &Path, _format_name: &str) -> Result<OpenHandle> {

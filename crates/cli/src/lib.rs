@@ -249,7 +249,8 @@ fn init_project(target_dir: &Path) -> Result<()> {
     let mut toml_content =
         rheo_core::init_templates::RHEO_TOML.replace("{{VERSION}}", manifest_version::CURRENT);
     for plugin in all_plugins() {
-        if let Some(section) = plugin.init_rheo_toml_section_template() {
+        let tmpl = plugin.format_init_template();
+        if let Some(section) = tmpl.options_toml {
             toml_content.push('\n');
             toml_content.push_str(&prefix_toml_headers(section, plugin.name()));
             toml_content.push('\n');
@@ -289,7 +290,8 @@ fn init_project(target_dir: &Path) -> Result<()> {
     let mut plugin_templates: std::collections::HashMap<&str, (&str, &str)> =
         std::collections::HashMap::new();
     for plugin in all_plugins() {
-        for (path, content) in plugin.init_template_files() {
+        let tmpl = plugin.format_init_template();
+        for (path, content) in tmpl.files {
             if let Some((existing_plugin, _)) = plugin_templates.get(path) {
                 return Err(RheoError::project_config(format!(
                     "template path conflict: both '{}' and '{}' plugins want to write '{}'",
