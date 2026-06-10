@@ -11,8 +11,8 @@ use serde::Deserialize;
 pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
-    AssetConfig, CompiledHtmlVertebra, FormatInitTemplate, FormatPlugin, OpenHandle,
-    PluginContext, Result, RheoError, RheoValue, ServerHandle,
+    AssetConfig, CompiledHtmlVertebra, FormatInitTemplate, FormatPlugin, OpenHandle, PluginContext,
+    Result, RheoError, RheoValue, ServerHandle,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
