@@ -1696,10 +1696,14 @@ fn test_rheo_var_non_string_error() {
         "Expected compilation to fail for non-string rheo-* var"
     );
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(
-        stderr.contains("all formats failed"),
-        "Expected compilation error, got:\n{}",
-        stderr
+        combined.contains("rheo-bad must be a string"),
+        "Expected non-string rheo-* var error, got:\n{}",
+        combined
     );
 }

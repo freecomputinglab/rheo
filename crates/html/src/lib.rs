@@ -3,17 +3,19 @@ mod server;
 
 use crate::feed::{AtomEntry, AtomFeed};
 use chrono::{DateTime, Utc};
-use rheo_core::PluginSection;
 use rheo_core::{compile_document_to_string, html_utils};
+use serde::Deserialize;
 
 /// Bundled default HTML stylesheet.
 /// Used when the project doesn't provide its own style.css.
 pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
-    AssetConfig, FormatPlugin, OpenHandle, PluginContext, Result, RheoError, ServerHandle,
+    AssetConfig, CompiledHtmlVertebra, FormatPlugin, OpenHandle, PluginContext, Result, RheoError,
+    RheoValue, ServerHandle,
 };
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 /// Reload callback type - called by watch loop after successful compilation.
@@ -103,7 +105,28 @@ impl FormatPlugin for HtmlPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        let html_string = ctx.compile_to_html_string()?;
+        self.render(&ctx)?;
+        Ok(())
+    }
+
+    fn compile_vertebra(&self, ctx: PluginContext<'_>) -> Result<Option<CompiledHtmlVertebra>> {
+        Ok(Some(self.render(&ctx)?))
+    }
+
+    /// Emit `build/html/feed.xml` once, after every page is compiled, from the
+    /// documents produced during the per-file loop — no second compilation pass.
+    fn finalize(&self, ctx: &PluginContext<'_>, compiled: &[CompiledHtmlVertebra]) -> Result<()> {
+        self.generate_feed(ctx, compiled)
+    }
+}
+
+impl HtmlPlugin {
+    /// Compile one source file to its final HTML output (with CSS/JS and feed
+    /// autodiscovery injection) and write it, returning the raw compiled document
+    /// so the Atom feed can reuse it without recompiling.
+    fn render(&self, ctx: &PluginContext<'_>) -> Result<CompiledHtmlVertebra> {
+        let document = ctx.compile_to_html_document()?;
+        let html_string = compile_document_to_string(&document)?;
 
         let css_assets = ctx.assets.get(&STYLESHEETS).filter(|v| !v.is_empty());
         let js_assets = ctx.assets.get(&SCRIPTS).filter(|v| !v.is_empty());
@@ -139,7 +162,10 @@ impl FormatPlugin for HtmlPlugin {
         // serialized at most once. Head-links run before the feed link to match
         // the prior two-pass ordering (both insert after the last <meta>).
         let needs_head_links = !css_paths.is_empty() || !js_paths.is_empty();
-        let feed_link = feed_base_url(ctx.config)
+        let feed_link = ctx
+            .config
+            .parse_extra::<HtmlConfig>()?
+            .base_url()
             .map(|base| (format!("{base}/feed.xml"), ctx.project.name.clone()));
 
         let html_string = if needs_head_links || feed_link.is_some() {
@@ -162,38 +188,50 @@ impl FormatPlugin for HtmlPlugin {
 
         info!(output = %output.display(), "successfully compiled to HTML");
 
-        self.generate_feed(&ctx)?;
-        Ok(())
+        Ok(CompiledHtmlVertebra {
+            path: ctx
+                .options
+                .input()
+                .map(Path::to_path_buf)
+                .unwrap_or_default(),
+            document,
+            vars: Default::default(),
+        })
     }
-}
 
-impl HtmlPlugin {
-    /// Emit `build/html/feed.xml` once per build, one `<entry>` per vertebra
-    /// that declares `rheo-feed-title`. Gated on `[html].feed_base_url` being set.
+    /// Emit `build/html/feed.xml`: one `<entry>` per compiled vertebra that
+    /// declares `rheo-feed-title`. Gated on `[html].feed_base_url` being set.
     ///
-    /// `compile` runs once per file (HTML merge=false), so generation is gated
-    /// to a single invocation: the merged case (`input == None`) or the first
-    /// spine vertebra.
-    fn generate_feed(&self, ctx: &PluginContext<'_>) -> Result<()> {
-        let Some(base) = feed_base_url(ctx.config) else {
+    /// `compiled` is every page produced by the per-file loop (spine order, vars
+    /// populated), so no vertebra is recompiled here.
+    fn generate_feed(
+        &self,
+        ctx: &PluginContext<'_>,
+        compiled: &[CompiledHtmlVertebra],
+    ) -> Result<()> {
+        let cfg = ctx.config.parse_extra::<HtmlConfig>()?;
+        let Some(base) = cfg.base_url() else {
             debug!("no [html].feed_base_url set; skipping Atom feed");
             return Ok(());
         };
 
-        let spine_paths = ctx.spine.generate(&ctx.spine_root())?;
-        if !is_feed_generation_invocation(ctx.options.input.as_deref(), spine_paths.first()) {
-            return Ok(());
-        }
+        // Harvest each vertebra's `rheo-*` vars (parse-only, no recompile) keyed
+        // by source path. Only done once a feed is actually configured.
+        let vars_by_path: HashMap<PathBuf, HashMap<String, RheoValue>> =
+            ctx.spine_vars()?.into_iter().collect();
 
         let mut entries = Vec::new();
-        for v in ctx.compile_spine_items_to_html(self)? {
-            let Some(title) = v.vars.get("feed-title").and_then(|val| val.as_str()) else {
+        for v in compiled {
+            let Some(vars) = vars_by_path.get(&v.path) else {
+                continue;
+            };
+            let Some(title) = vars.get("feed-title").and_then(|val| val.as_str()) else {
                 continue;
             };
 
-            let updated = feed_updated(&v)?;
+            let updated = feed_updated(&v.path, vars)?;
             let html = compile_document_to_string(&v.document)?;
-            let body = html_utils::extract_feed_content_html(&html)?;
+            let body = html_utils::HtmlDom::parse(&html)?.feed_content_inner_html()?;
             let stem = v
                 .path
                 .file_stem()
@@ -215,7 +253,10 @@ impl HtmlPlugin {
             title: ctx.project.name.clone(),
             updated: Utc::now(),
             self_href: format!("{base}/feed.xml"),
-            author: feed_author(ctx.config).unwrap_or_else(|| "Rheo".to_string()),
+            author: cfg
+                .feed_author
+                .clone()
+                .unwrap_or_else(|| "Rheo".to_string()),
             entries,
         };
 
@@ -230,76 +271,62 @@ impl HtmlPlugin {
     }
 }
 
-/// Whether this `compile` invocation is the one that should generate the feed:
-/// the merged case (no input) or the first spine vertebra. Paths are compared
-/// canonically, falling back to direct comparison if canonicalization fails.
-fn is_feed_generation_invocation(
-    input: Option<&Path>,
-    first_vertebra: Option<&std::path::PathBuf>,
-) -> bool {
-    let Some(input) = input else {
-        return true; // merged mode: single invocation
-    };
-    let Some(first) = first_vertebra else {
-        return false;
-    };
-    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    canon(input) == canon(first)
-}
-
-/// The entry's `updated` timestamp: `rheo-feed-updated` (RFC 3339) if present,
-/// else the source file's modification time.
-fn feed_updated(v: &rheo_core::CompiledHtmlVertebra) -> Result<DateTime<Utc>> {
-    if let Some(s) = v.vars.get("feed-updated").and_then(|val| val.as_str()) {
+/// The entry's `updated` timestamp: `rheo-feed-updated` (RFC 3339) if present in
+/// `vars`, else the source file's modification time.
+fn feed_updated(path: &Path, vars: &HashMap<String, RheoValue>) -> Result<DateTime<Utc>> {
+    if let Some(s) = vars.get("feed-updated").and_then(|val| val.as_str()) {
         return DateTime::parse_from_rfc3339(s)
             .map(|dt| dt.with_timezone(&Utc))
             .map_err(|_| {
                 RheoError::invalid_data(format!(
                     "{}: rheo-feed-updated must be an RFC 3339 datetime",
-                    v.path.display()
+                    path.display()
                 ))
             });
     }
 
-    let modified = std::fs::metadata(&v.path)
+    let modified = std::fs::metadata(path)
         .and_then(|m| m.modified())
-        .map_err(|e| RheoError::io(e, format!("reading mtime of {:?}", v.path)))?;
+        .map_err(|e| RheoError::io(e, format!("reading mtime of {:?}", path)))?;
     Ok(DateTime::<Utc>::from(modified))
 }
 
-/// Read the `feed_base_url` key from a plugin section's config (mirrors epub's
-/// `parse_identifier`). Any trailing `/` is trimmed so callers can join paths
-/// with a single `/`. Returns `None` when the key is absent or not a string.
-pub fn feed_base_url(section: &PluginSection) -> Option<String> {
-    section
-        .extra
-        .get("feed_base_url")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim_end_matches('/').to_string())
+/// Typed view of the `[html]` section's format-specific keys.
+#[derive(Debug, Deserialize, Default)]
+struct HtmlConfig {
+    /// Base URL for the Atom feed; when set, `feed.xml` is emitted and an
+    /// autodiscovery `<link>` is injected into every page.
+    feed_base_url: Option<String>,
+    /// `atom:author` of the feed; defaults to `"Rheo"` when absent.
+    feed_author: Option<String>,
 }
 
-/// Read the `feed_author` key from a plugin section's config (mirrors
-/// `feed_base_url`). Used as the Atom feed's `<author><name>`. Returns `None`
-/// when the key is absent or not a string, in which case the caller defaults to
-/// `"Rheo"`.
-pub fn feed_author(section: &PluginSection) -> Option<String> {
-    section
-        .extra
-        .get("feed_author")
-        .and_then(|v| v.as_str())
-        .map(String::from)
+impl HtmlConfig {
+    /// The feed base URL with any trailing `/` trimmed, so callers can join
+    /// paths with a single `/`. `None` when `feed_base_url` is unset.
+    fn base_url(&self) -> Option<String> {
+        self.feed_base_url
+            .as_deref()
+            .map(|s| s.trim_end_matches('/').to_string())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use rheo_core::PluginSection;
 
     fn section_with(extra: toml::Table) -> PluginSection {
         PluginSection {
             extra,
             ..Default::default()
         }
+    }
+
+    fn html_config(extra: toml::Table) -> HtmlConfig {
+        section_with(extra)
+            .parse_extra::<HtmlConfig>()
+            .expect("parse HtmlConfig")
     }
 
     #[test]
@@ -309,25 +336,22 @@ mod tests {
             "feed_base_url".to_string(),
             toml::Value::String("https://example.com/".to_string()),
         );
-        let section = section_with(extra);
         assert_eq!(
-            feed_base_url(&section).as_deref(),
+            html_config(extra).base_url().as_deref(),
             Some("https://example.com")
         );
     }
 
     #[test]
     fn test_feed_base_url_absent() {
-        let section = section_with(toml::Table::new());
-        assert_eq!(feed_base_url(&section), None);
+        assert_eq!(html_config(toml::Table::new()).base_url(), None);
     }
 
     #[test]
-    fn test_feed_base_url_non_string() {
+    fn test_feed_base_url_non_string_errors() {
         let mut extra = toml::Table::new();
         extra.insert("feed_base_url".to_string(), toml::Value::Integer(42));
-        let section = section_with(extra);
-        assert_eq!(feed_base_url(&section), None);
+        assert!(section_with(extra).parse_extra::<HtmlConfig>().is_err());
     }
 
     #[test]
@@ -337,52 +361,21 @@ mod tests {
             "feed_author".to_string(),
             toml::Value::String("Ada Lovelace".to_string()),
         );
-        let section = section_with(extra);
-        assert_eq!(feed_author(&section).as_deref(), Some("Ada Lovelace"));
+        assert_eq!(
+            html_config(extra).feed_author.as_deref(),
+            Some("Ada Lovelace")
+        );
     }
 
     #[test]
     fn test_feed_author_absent() {
-        let section = section_with(toml::Table::new());
-        assert_eq!(feed_author(&section), None);
+        assert_eq!(html_config(toml::Table::new()).feed_author, None);
     }
 
     #[test]
-    fn test_feed_author_non_string() {
+    fn test_feed_author_non_string_errors() {
         let mut extra = toml::Table::new();
         extra.insert("feed_author".to_string(), toml::Value::Integer(42));
-        let section = section_with(extra);
-        assert_eq!(feed_author(&section), None);
-    }
-
-    #[test]
-    fn test_feed_gate_merged_mode_generates() {
-        // No input (merged mode) → always the generating invocation.
-        assert!(is_feed_generation_invocation(None, None));
-        assert!(is_feed_generation_invocation(
-            None,
-            Some(&PathBuf::from("a.typ"))
-        ));
-    }
-
-    #[test]
-    fn test_feed_gate_first_vertebra_only() {
-        let first = PathBuf::from("chapters/a.typ");
-        assert!(is_feed_generation_invocation(
-            Some(Path::new("chapters/a.typ")),
-            Some(&first)
-        ));
-        assert!(!is_feed_generation_invocation(
-            Some(Path::new("chapters/b.typ")),
-            Some(&first)
-        ));
-    }
-
-    #[test]
-    fn test_feed_gate_no_spine_no_generation() {
-        assert!(!is_feed_generation_invocation(
-            Some(Path::new("a.typ")),
-            None
-        ));
+        assert!(section_with(extra).parse_extra::<HtmlConfig>().is_err());
     }
 }

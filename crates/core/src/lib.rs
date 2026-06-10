@@ -1,3 +1,5 @@
+pub mod assets;
+pub mod build;
 pub mod compile;
 pub mod config;
 pub mod constants;
@@ -32,16 +34,20 @@ pub use results::{CompilationResults, FormatResult};
 
 // === Plugin API re-exports ===
 
+// Asset resolution
+pub use assets::AssetResolver;
+pub use build::{Build, BuildOptions};
+
 // Compile options and context
-pub use compile::RheoCompileOptions;
+pub use compile::{CompileUnit, RheoCompileOptions};
 
 // Configuration types
 pub use config::{AssetsField, PluginAssets, PluginSection, Spine};
 
 // Plugin trait and context
 pub use plugins::{
-    AssetConfig, CompiledHtmlVertebra, FormatPlugin, OpenHandle, PackageAssets, PluginContext,
-    ResolvedPackage, ServerHandle, SpineOptions,
+    AssetConfig, CompiledHtmlVertebra, FormatPlugin, LinkStrategy, OpenHandle, PackageAssets,
+    PluginContext, ResolvedPackage, ServerHandle, SpineOptions,
 };
 pub use reticulate::types::RheoValue;
 

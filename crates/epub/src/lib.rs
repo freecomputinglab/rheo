@@ -14,6 +14,7 @@ use rheo_core::{
     FormatPlugin, PluginContext, PluginSection, Result, RheoError, Spine, SpineOptions,
     compile_document_to_string, eco_format, eco_vec,
 };
+use serde::Deserialize;
 use std::{
     fmt::Write as _,
     fs::File,
@@ -58,8 +59,9 @@ impl FormatPlugin for EpubPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        let identifier = parse_identifier(ctx.config);
-        let date = parse_date(ctx.config);
+        let epub_config = ctx.config.parse_extra::<EpubConfig>()?;
+        let identifier = epub_config.identifier.clone();
+        let date = epub_config.date_utc();
 
         let spine_items = ctx.compile_spine_items_to_html(self)?;
         let mut items = spine_items
@@ -230,15 +232,13 @@ pub fn generate_package(
             });
     }
 
-    let package = builder.build().map_err(|e| RheoError::EpubGeneration {
-        count: 1,
-        errors: format!("Package validation failed: {}", e),
-    })?;
+    let package = builder
+        .build()
+        .map_err(|e| RheoError::epub_generation(format!("Package validation failed: {}", e)))?;
 
-    let xml = package.to_xml().map_err(|e| RheoError::EpubGeneration {
-        count: 1,
-        errors: format!("Package XML generation failed: {}", e),
-    })?;
+    let xml = package
+        .to_xml()
+        .map_err(|e| RheoError::epub_generation(format!("Package XML generation failed: {}", e)))?;
 
     Ok(xml)
 }
@@ -260,84 +260,64 @@ pub fn zip_epub(
         "mimetype",
         opts.compression_method(zip::CompressionMethod::Stored),
     )
-    .map_err(|e| RheoError::EpubGeneration {
-        count: 1,
-        errors: format!("failed to start mimetype file: {}", e),
-    })?;
+    .map_err(|e| RheoError::epub_generation(format!("failed to start mimetype file: {}", e)))?;
     zip.write_all(EPUB_MEDIATYPE.as_bytes())
         .map_err(|e| RheoError::io(e, "writing mimetype"))?;
 
-    zip.add_directory("META-INF", opts)
-        .map_err(|e| RheoError::EpubGeneration {
-            count: 1,
-            errors: format!("failed to add META-INF directory: {}", e),
-        })?;
+    zip.add_directory("META-INF", opts).map_err(|e| {
+        RheoError::epub_generation(format!("failed to add META-INF directory: {}", e))
+    })?;
     zip.start_file("META-INF/container.xml", opts)
-        .map_err(|e| RheoError::EpubGeneration {
-            count: 1,
-            errors: format!("failed to start container.xml: {}", e),
-        })?;
+        .map_err(|e| RheoError::epub_generation(format!("failed to start container.xml: {}", e)))?;
     zip.write_all(CONTAINER_XML.as_bytes())
         .map_err(|e| RheoError::io(e, "writing container.xml"))?;
 
     zip.add_directory("EPUB", opts)
-        .map_err(|e| RheoError::EpubGeneration {
-            count: 1,
-            errors: format!("failed to add EPUB directory: {}", e),
-        })?;
+        .map_err(|e| RheoError::epub_generation(format!("failed to add EPUB directory: {}", e)))?;
 
     zip.start_file("EPUB/package.opf", opts)
-        .map_err(|e| RheoError::EpubGeneration {
-            count: 1,
-            errors: format!("failed to start package.opf: {}", e),
-        })?;
+        .map_err(|e| RheoError::epub_generation(format!("failed to start package.opf: {}", e)))?;
     zip.write_all(package_string.as_bytes())
         .map_err(|e| RheoError::io(e, "writing package.opf"))?;
 
     zip.start_file("EPUB/nav.xhtml", opts)
-        .map_err(|e| RheoError::EpubGeneration {
-            count: 1,
-            errors: format!("failed to start nav.xhtml: {}", e),
-        })?;
+        .map_err(|e| RheoError::epub_generation(format!("failed to start nav.xhtml: {}", e)))?;
     zip.write_all(nav_xhtml.as_bytes())
         .map_err(|e| RheoError::io(e, "writing nav.xhtml"))?;
 
     for item in items {
         let filename = format!("EPUB/{}", item.href);
-        zip.start_file(&filename, opts)
-            .map_err(|e| RheoError::EpubGeneration {
-                count: 1,
-                errors: format!("failed to start file {}: {}", filename, e),
-            })?;
+        zip.start_file(&filename, opts).map_err(|e| {
+            RheoError::epub_generation(format!("failed to start file {}: {}", filename, e))
+        })?;
         zip.write_all(item.xhtml.as_bytes())
             .map_err(|e| RheoError::io(e, format!("writing {}", filename)))?;
     }
 
-    zip.finish().map_err(|e| RheoError::EpubGeneration {
-        count: 1,
-        errors: format!("failed to finish EPUB zip: {}", e),
-    })?;
+    zip.finish()
+        .map_err(|e| RheoError::epub_generation(format!("failed to finish EPUB zip: {}", e)))?;
     Ok(())
 }
 
-fn parse_identifier(section: &PluginSection) -> Option<String> {
-    section
-        .extra
-        .get("identifier")
-        .and_then(|v| v.as_str())
-        .map(String::from)
+/// Typed view of the `[epub]` section's format-specific keys.
+#[derive(Debug, Deserialize, Default)]
+struct EpubConfig {
+    /// Dublin Core identifier; auto-generated when absent.
+    identifier: Option<String>,
+    /// Publication date; falls back to the current time when absent.
+    date: Option<toml::value::Datetime>,
 }
 
-fn parse_date(section: &PluginSection) -> Option<DateTime<Utc>> {
-    section
-        .extra
-        .get("date")
-        .and_then(|v| v.as_datetime())
-        .and_then(|dt| {
-            chrono::DateTime::parse_from_rfc3339(&dt.to_string())
+impl EpubConfig {
+    /// The configured publication date as a UTC timestamp, if both present and
+    /// a valid RFC 3339 datetime.
+    fn date_utc(&self) -> Option<DateTime<Utc>> {
+        self.date.as_ref().and_then(|dt| {
+            DateTime::parse_from_rfc3339(&dt.to_string())
                 .ok()
                 .map(|d| d.with_timezone(&Utc))
         })
+    }
 }
 
 pub struct EpubItem {
@@ -364,15 +344,12 @@ impl EpubItem {
     pub fn from_html_document(path: PathBuf, document: HtmlDocument) -> Result<Self> {
         let href =
             IriRefBuf::new(path.with_extension("xhtml").display().to_string()).map_err(|e| {
-                RheoError::EpubGeneration {
-                    count: 1,
-                    errors: format!("invalid href for EPUB item: {}", e),
-                }
+                RheoError::epub_generation(format!("invalid href for EPUB item: {}", e))
             })?;
         let (heading_ids, outline) = Self::outline(&document, &href);
 
         let html_string = compile_document_to_string(&document)?;
-        let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids);
+        let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids)?;
 
         Ok(EpubItem {
             href,

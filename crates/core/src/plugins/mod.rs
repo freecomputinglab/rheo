@@ -33,7 +33,7 @@ pub enum OpenHandle {
     None,
 }
 
-use crate::compile::RheoCompileOptions;
+use crate::compile::{CompileUnit, RheoCompileOptions};
 use crate::config::PluginAssets;
 use crate::reticulate::types::RheoValue;
 use crate::{BuiltSpine, Result, RheoError};
@@ -81,27 +81,27 @@ pub struct Asset {
 pub struct PluginContext<'a> {
     pub project: &'a ProjectConfig,
     pub output_config: &'a OutputConfig,
-    pub options: RheoCompileOptions<'a>,
+    pub options: RheoCompileOptions,
     /// Resolved spine options (title, vertebrae, merge flag).
     pub spine: &'a SpineOptions,
     /// Full parsed plugin section from rheo.toml (or default if not configured).
     ///
     /// # Reading format-specific configuration
     ///
-    /// Plugins read format-specific fields from `config.extra` using serde JSON patterns:
+    /// Plugins define a typed config struct for their own keys and deserialize
+    /// the whole section in one call with [`PluginSection::parse_extra`]:
     ///
     /// ```ignore
-    /// // Read a string value
-    /// let identifier = section.extra.get("identifier")
-    ///     .and_then(|v| v.as_str())
-    ///     .map(String::from);
+    /// #[derive(serde::Deserialize, Default)]
+    /// struct EpubConfig {
+    ///     identifier: Option<String>,
+    ///     stylesheets: Vec<String>,
+    /// }
     ///
-    /// // Read an array of strings
-    /// let stylesheets: Vec<String> = section.extra.get("stylesheets")
-    ///     .and_then(|v| v.as_array())
-    ///     .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-    ///     .unwrap_or_default();
+    /// let cfg = ctx.config.parse_extra::<EpubConfig>()?;
     /// ```
+    ///
+    /// Unknown keys are ignored, so each plugin only declares the fields it reads.
     pub config: &'a PluginSection,
     /// Resolved additional input files declared by the plugin.
     ///
@@ -109,6 +109,10 @@ pub struct PluginContext<'a> {
     /// The CLI copies each declared input from the project root to the output directory
     /// before calling `compile()`.
     pub assets: &'a HashMap<&'static str, Vec<Asset>>,
+    /// Additional font directories to search, resolved by the build (autoscan +
+    /// config + `--font-dir`). Threaded into worlds the plugin creates for
+    /// merged/spine compilation so custom fonts apply there too.
+    pub font_dirs: &'a [PathBuf],
 }
 
 impl<'a> PluginContext<'a> {
@@ -132,20 +136,28 @@ impl<'a> PluginContext<'a> {
             .unwrap_or_else(|| self.project.root.clone())
     }
 
-    pub fn compile_to_html_string(&'a self) -> Result<String> {
-        let world = self.options.world.as_ref().ok_or_else(|| {
-            RheoError::project_config(
-                "HTML per-file compile requires a world; this is a rheo bug (internal invariant violation)",
-            )
-        })?;
+    /// Compile the per-file world to an [`HtmlDocument`].
+    ///
+    /// The document is kept (rather than discarded after serialization) so a
+    /// plugin can both write the page and hand the document to [`FormatPlugin::finalize`]
+    /// — e.g. the HTML Atom feed builds its entries from these without a second
+    /// compilation pass.
+    pub fn compile_to_html_document(&self) -> Result<HtmlDocument> {
+        match &self.options.unit {
+            CompileUnit::PerFile { world, .. } => world.compile_html(),
+            CompileUnit::Merged { .. } => Err(RheoError::project_config(
+                "HTML output does not support merged mode (spine.merge); compile per-file",
+            )),
+        }
+    }
 
-        let document = world.compile_html()?;
-
+    pub fn compile_to_html_string(&self) -> Result<String> {
+        let document = self.compile_to_html_document()?;
         debug!(output = %self.options.output.display(), "exporting to HTML");
         compile_document_to_string(&document)
     }
 
-    pub fn compile_to_html(&'a self, _plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
+    pub fn compile_to_html(&self, _plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
         let html_string = self.compile_to_html_string()?;
 
         debug!(size = html_string.len(), "writing HTML file");
@@ -166,8 +178,13 @@ impl<'a> PluginContext<'a> {
         plugin: &(impl FormatPlugin + ?Sized),
     ) -> Result<Vec<CompiledHtmlVertebra>> {
         let spine_root = self.spine_root();
-        let rheo_spine =
-            BuiltSpine::build(&spine_root, Some(self.spine), plugin.extension(), false)?;
+        let rheo_spine = BuiltSpine::build(
+            &spine_root,
+            Some(self.spine),
+            plugin.extension(),
+            plugin.link_strategy(),
+            false,
+        )?;
 
         let spine_paths = self.spine.generate(&spine_root)?;
 
@@ -178,7 +195,7 @@ impl<'a> PluginContext<'a> {
             .zip(rheo_spine.source.iter())
             .zip(rheo_spine.vars.iter())
             .map(|((path, transformed_source), vars)| {
-                let temp_dir = path.parent().unwrap_or(&self.options.root);
+                let temp_dir = path.parent().unwrap_or(&self.project.root);
                 let mut temp_file = NamedTempFile::new_in(temp_dir)
                     .map_err(|e| RheoError::io(e, "creating temp file for spine item HTML"))?;
                 temp_file
@@ -197,7 +214,9 @@ impl<'a> PluginContext<'a> {
                     &self.project.root,
                     temp_path,
                     plugin.name(),
+                    plugin.link_strategy(),
                     plugin_library.clone(),
+                    self.font_dirs.to_vec(),
                 )?;
                 Ok(CompiledHtmlVertebra {
                     path: path.clone(),
@@ -212,81 +231,94 @@ impl<'a> PluginContext<'a> {
     /// compiling HTML. Generic accessor for non-HTML formats.
     pub fn spine_vars(&self) -> Result<Vec<(PathBuf, HashMap<String, RheoValue>)>> {
         let spine_root = self.spine_root();
-        let rheo_spine = BuiltSpine::build(&spine_root, Some(self.spine), "html", false)?;
+        let rheo_spine = BuiltSpine::build(
+            &spine_root,
+            Some(self.spine),
+            "html",
+            LinkStrategy::ExtensionRewrite,
+            false,
+        )?;
         let spine_paths = self.spine.generate(&spine_root)?;
         Ok(spine_paths.into_iter().zip(rheo_spine.vars).collect())
     }
 
     /// Compile to PDF using the full context. By modifying fields in the PluginContext before
     /// calling this, you can modify the default PDF behaviour.
-    pub fn compile_to_pdf(&'a self, plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
-        if self.spine.merge {
-            // TODO: make this a `build()` function on SpineOptions
-            // Build RheoSpine with AST-transformed sources (links → labels, metadata headings injected)
-            let rheo_spine = BuiltSpine::build(
-                &self.options.root,
-                Some(self.spine),
-                plugin.extension(),
-                self.spine.merge,
-            )?;
+    pub fn compile_to_pdf(&self, plugin: &(impl FormatPlugin + ?Sized)) -> Result<()> {
+        let output_path = &self.options.output;
+        match &self.options.unit {
+            CompileUnit::Merged { root } => {
+                // Build RheoSpine with AST-transformed sources (links → labels,
+                // metadata headings injected), concatenated into one temp file.
+                let rheo_spine = BuiltSpine::build(
+                    root,
+                    Some(self.spine),
+                    plugin.extension(),
+                    plugin.link_strategy(),
+                    true,
+                )?;
 
-            debug!(file_count = rheo_spine.source.len(), "built PDF spine");
+                debug!(file_count = rheo_spine.source.len(), "built PDF spine");
 
-            let concatenated_source = rheo_spine.source.first().ok_or_else(|| {
-                RheoError::project_config("merged PDF spine produced no source files")
-            })?;
-            debug!(
-                source_length = concatenated_source.len(),
-                "concatenated sources"
-            );
+                let concatenated_source = rheo_spine.source.first().ok_or_else(|| {
+                    RheoError::project_config("merged PDF spine produced no source files")
+                })?;
+                debug!(
+                    source_length = concatenated_source.len(),
+                    "concatenated sources"
+                );
 
-            // Create temporary file with concatenated source in root directory
-            let mut temp_file = NamedTempFile::new_in(&self.options.root)
-                .map_err(|e| RheoError::io(e, "creating temporary file for merged PDF"))?;
-            temp_file
-                .write_all(concatenated_source.as_bytes())
-                .map_err(|e| RheoError::io(e, "writing concatenated source to temporary file"))?;
-            temp_file
-                .flush()
-                .map_err(|e| RheoError::io(e, "flushing temporary file"))?;
+                // Create temporary file with concatenated source in root directory
+                let mut temp_file = NamedTempFile::new_in(root)
+                    .map_err(|e| RheoError::io(e, "creating temporary file for merged PDF"))?;
+                temp_file
+                    .write_all(concatenated_source.as_bytes())
+                    .map_err(|e| {
+                        RheoError::io(e, "writing concatenated source to temporary file")
+                    })?;
+                temp_file
+                    .flush()
+                    .map_err(|e| RheoError::io(e, "flushing temporary file"))?;
 
-            let output_path = &self.options.output;
-            let temp_path = temp_file.path();
-            debug!(temp_path = %temp_path.display(), "created temporary file");
+                let temp_path = temp_file.path();
+                debug!(temp_path = %temp_path.display(), "created temporary file");
 
-            // output_format=None because links already transformed to labels by RheoSpine
-            let plugin_library = plugin.typst_library().map(|s| s.to_string());
-            let document =
-                RheoWorld::compile_pdf_file(&self.options.root, temp_path, None, plugin_library)?;
+                // output_format=None because links already transformed to labels by RheoSpine
+                let plugin_library = plugin.typst_library().map(|s| s.to_string());
+                let document = RheoWorld::compile_pdf_file(
+                    root,
+                    temp_path,
+                    None,
+                    plugin.link_strategy(),
+                    plugin_library,
+                    self.font_dirs.to_vec(),
+                )?;
 
-            debug!(output = %output_path.display(), "exporting to PDF");
-            let pdf_bytes = document_to_pdf_bytes(&document)?;
+                debug!(output = %output_path.display(), "exporting to PDF");
+                let pdf_bytes = document_to_pdf_bytes(&document)?;
 
-            debug!(size = pdf_bytes.len(), "writing PDF file");
-            std::fs::write(output_path, &pdf_bytes)
-                .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output_path)))?;
+                debug!(size = pdf_bytes.len(), "writing PDF file");
+                std::fs::write(output_path, &pdf_bytes).map_err(|e| {
+                    RheoError::io(e, format!("writing PDF file to {:?}", output_path))
+                })?;
 
-            info!(output = %output_path.display(), "successfully compiled merged PDF");
-            Ok(())
-        } else {
-            let world = self.options.world.as_ref().ok_or_else(|| {
-                RheoError::project_config(
-                    "PDF per-file compile requires a world; this is a rheo bug (internal invariant violation)",
-                )
-            })?;
+                info!(output = %output_path.display(), "successfully compiled merged PDF");
+                Ok(())
+            }
+            CompileUnit::PerFile { world, .. } => {
+                let document = world.compile_pdf()?;
 
-            let document = world.compile_pdf()?;
-            let output = &self.options.output;
+                debug!(output = %output_path.display(), "exporting to PDF");
+                let pdf_bytes = document_to_pdf_bytes(&document)?;
 
-            debug!(output = %output.display(), "exporting to PDF");
-            let pdf_bytes = document_to_pdf_bytes(&document)?;
+                debug!(size = pdf_bytes.len(), "writing PDF file");
+                std::fs::write(output_path, &pdf_bytes).map_err(|e| {
+                    RheoError::io(e, format!("writing PDF file to {:?}", output_path))
+                })?;
 
-            debug!(size = pdf_bytes.len(), "writing PDF file");
-            std::fs::write(output, &pdf_bytes)
-                .map_err(|e| RheoError::io(e, format!("writing PDF file to {:?}", output)))?;
-
-            info!(output = %output.display(), "successfully compiled to PDF");
-            Ok(())
+                info!(output = %output_path.display(), "successfully compiled to PDF");
+                Ok(())
+            }
         }
     }
 }
@@ -297,6 +329,21 @@ pub enum CompilationTarget {
     Html,
     /// Compile to a paged (PDF) document.
     Pdf,
+}
+
+/// How a format plugin rewrites relative `.typ` links during compilation.
+///
+/// This is the single capability that distinguishes paged formats from web
+/// formats; it replaces the previous reliance on matching the literal `"pdf"`
+/// format name in link, spine, and compilation-target logic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkStrategy {
+    /// Rewrite the `.typ` extension to the format's own (e.g. `.html`, `.xhtml`).
+    /// Used by web formats (HTML, EPUB).
+    ExtensionRewrite,
+    /// In a merged document, convert in-spine links to internal labels; in a
+    /// single-file document, strip them. Used by paged formats (PDF).
+    PagedLabels,
 }
 
 /// A package expanded into synthetic asset blocks, carrying its resolved source root.
@@ -384,15 +431,24 @@ pub trait FormatPlugin: Send + Sync {
         self.name()
     }
 
+    /// How this plugin rewrites relative `.typ` links.
+    ///
+    /// Paged formats (PDF) override this to return [`LinkStrategy::PagedLabels`];
+    /// web formats (HTML, EPUB) inherit the [`LinkStrategy::ExtensionRewrite`]
+    /// default. This capability also drives [`Self::compilation_target`].
+    fn link_strategy(&self) -> LinkStrategy {
+        LinkStrategy::ExtensionRewrite
+    }
+
     /// The compilation target used by `PluginContext::compile()`.
     ///
-    /// Override this if your plugin's extension differs from its compilation target.
-    /// Default: "pdf" extension -> Pdf; everything else -> Html.
+    /// Derived from [`Self::link_strategy`]: paged formats compile to a PDF
+    /// document, web formats to HTML. Override only if a format needs a target
+    /// that doesn't match its link strategy.
     fn compilation_target(&self) -> CompilationTarget {
-        if self.extension() == "pdf" {
-            CompilationTarget::Pdf
-        } else {
-            CompilationTarget::Html
+        match self.link_strategy() {
+            LinkStrategy::PagedLabels => CompilationTarget::Pdf,
+            LinkStrategy::ExtensionRewrite => CompilationTarget::Html,
         }
     }
 
@@ -632,53 +688,76 @@ pub trait FormatPlugin: Send + Sync {
 
     /// Compile one file (per-file mode) or merged output (merged mode).
     ///
-    /// This is the core compilation method. The behavior depends on `ctx.spine.merge`:
+    /// This is the core compilation method. Which mode applies is encoded in
+    /// `ctx.options.unit` ([`CompileUnit`]), selected by the build from
+    /// [`default_merge`](Self::default_merge) / `spine.merge`:
     ///
-    /// ## Per-file mode (`merge == false`)
+    /// ## Per-file mode — [`CompileUnit::PerFile`]
     ///
-    /// Called once per `.typ` file in the project. Use `ctx.options.world` to compile:
+    /// Called once per `.typ` file. The unit carries the `input` path and a
+    /// pre-built `world`; compile through it, e.g. via
+    /// [`PluginContext::compile_to_html_document`].
     ///
-    /// ```ignore
-    /// let world = ctx.options.world.ok_or_else(|| {
-    ///     RheoError::project_config("plugin requires a world in per-file mode")
-    /// })?;
-    /// let result = typst::compile::<HtmlDocument>(world)?;
-    /// ```
+    /// ## Merged mode — [`CompileUnit::Merged`]
     ///
-    /// ## Merged mode (`merge == true`)
-    ///
-    /// Called once with all files concatenated. The plugin must build its own worlds:
+    /// Called once with all spine files merged. The unit carries the content
+    /// `root`; the plugin builds its own worlds:
     ///
     /// ```ignore
-    /// // ctx.options.world is None — build your own from ctx.options.root
-    /// let world = RheoWorld::new(ctx.options.root, &concatenated_file, Some("pdf"))?;
+    /// let CompileUnit::Merged { root } = &ctx.options.unit else { ... };
+    /// let world = RheoWorld::new(
+    ///     root, &concatenated_file, Some("pdf"),
+    ///     self.link_strategy(), None, vec![],
+    /// )?;
     /// let result = typst::compile::<PagedDocument>(&world)?;
     /// ```
     ///
-    /// # The merge ↔ world contract
-    ///
-    /// | Mode | `ctx.spine.merge` | `ctx.options.world` | `ctx.options.input` |
-    /// |------|-------------------|---------------------|---------------------|
-    /// | Per-file | `false` | `Some(world)` | `Some(path)` |
-    /// | Merged | `true` | `None` | `None` |
-    ///
-    /// Plugins in per-file mode must use the pre-configured world; plugins in merged
-    /// mode must create their own worlds using `ctx.options.root` as the content root.
-    ///
     /// # Error handling
     ///
-    /// Return errors as `Err(...)` — the CLI records failures and continues with other
-    /// files/plugins. Do not swallow errors silently.
+    /// Return errors as `Err(...)` — the build records failures and continues with
+    /// other files/plugins. Do not swallow errors silently.
     ///
     /// # Arguments
     ///
     /// * `ctx` - Compilation context with project config, options, spine, inputs, etc.
     fn compile(&self, ctx: PluginContext<'_>) -> crate::Result<()>;
-    // NOTE: the 'merge' attribute could be upraded to a parameter here, as this function operates
-    // very differently according to whether it is true of false
 
-    // TODO: because the case here is that compile is called for EVERY source file, we need a
-    // `precompile` entrypoint that can do things like asset copying when merge is not true.
+    /// Per-file compile that may return the compiled HTML document for formats
+    /// that aggregate all vertebrae in [`finalize`](Self::finalize) (e.g. the
+    /// HTML Atom feed). The default compiles and writes via [`compile`](Self::compile),
+    /// returning `None`; paged formats (PDF) keep the default.
+    ///
+    /// Called once per `.typ` file in per-file mode, in place of [`compile`](Self::compile).
+    fn compile_vertebra(
+        &self,
+        ctx: PluginContext<'_>,
+    ) -> crate::Result<Option<CompiledHtmlVertebra>> {
+        self.compile(ctx)?;
+        Ok(None)
+    }
+
+    /// Hook run once before the per-file loop (per-file mode only).
+    ///
+    /// Use for one-time setup that must not repeat per file. The default is a
+    /// no-op. `ctx` has `input == None` and `world == None`.
+    fn precompile(&self, _ctx: &PluginContext<'_>) -> crate::Result<()> {
+        Ok(())
+    }
+
+    /// Hook run once after the per-file loop (per-file mode only), receiving every
+    /// [`CompiledHtmlVertebra`] produced by [`compile_vertebra`](Self::compile_vertebra),
+    /// in spine order, with vars populated.
+    ///
+    /// Use to emit artifacts derived from all pages without recompiling — e.g. the
+    /// HTML Atom feed. The default is a no-op. `ctx` has `input == None` and
+    /// `world == None`.
+    fn finalize(
+        &self,
+        _ctx: &PluginContext<'_>,
+        _compiled: &[CompiledHtmlVertebra],
+    ) -> crate::Result<()> {
+        Ok(())
+    }
 }
 
 /// Open all files with a given extension in a folder using the OS default application.

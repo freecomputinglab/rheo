@@ -122,4 +122,28 @@ impl RheoError {
             message: message.into(),
         }
     }
+
+    /// Helper to create an EPUB generation error (single-error convenience).
+    pub fn epub_generation(msg: impl Into<String>) -> Self {
+        RheoError::EpubGeneration {
+            count: 1,
+            errors: msg.into(),
+        }
+    }
+
+    /// Helper to create a PDF generation error (single-error convenience).
+    pub fn pdf_generation(msg: impl Into<String>) -> Self {
+        RheoError::PdfGeneration {
+            count: 1,
+            errors: msg.into(),
+        }
+    }
+
+    /// Helper to create an HTML generation error (single-error convenience).
+    pub fn html_generation(msg: impl Into<String>) -> Self {
+        RheoError::HtmlGeneration {
+            count: 1,
+            errors: msg.into(),
+        }
+    }
 }

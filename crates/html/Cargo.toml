@@ -12,6 +12,7 @@ repository.workspace = true
 rheo-core = { workspace = true }
 toml = { workspace = true }
 chrono = { workspace = true }
+serde = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

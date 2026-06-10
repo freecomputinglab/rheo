@@ -8,6 +8,56 @@ use html5ever::{ParseOpts, tendril::TendrilSink};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use std::fmt::Write as _;
 
+// ─── Serialization mode and helpers ──────────────────────────────────────────
+
+/// Controls how the DOM is serialized.
+pub enum SerializeMode {
+    /// Standard HTML: void elements emit `<tag>`.
+    Html,
+    /// XHTML: void elements self-close `<tag/>`, attribute values fully escaped.
+    Xhtml,
+}
+
+/// Returns true if the given tag name is an HTML void element.
+pub fn is_void_element(tag_name: &str) -> bool {
+    matches!(
+        tag_name,
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
+    )
+}
+
+/// Escape text content for HTML/XHTML output.
+pub fn escape_text(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Escape an attribute value for HTML/XHTML output.
+pub fn escape_attr(value: &str, mode: &SerializeMode) -> String {
+    let escaped = value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    match mode {
+        SerializeMode::Html => escaped,
+        SerializeMode::Xhtml => escaped.replace('"', "&quot;"),
+    }
+}
+
 // ─── DOM types ───────────────────────────────────────────────────────────────
 
 /// Wrapper around html5ever's RcDom for type-safe DOM manipulation.
@@ -31,7 +81,7 @@ impl HtmlDom {
     /// Serialize the DOM tree back to an HTML string.
     pub fn serialize(&self) -> Result<String> {
         let mut output = String::new();
-        serialize_node(&self.dom.document, &mut output)?;
+        serialize_node(&self.dom.document, &mut output, &SerializeMode::Html)?;
         Ok(output)
     }
 
@@ -136,7 +186,7 @@ impl HtmlDom {
         self.body_inner_html()
     }
 
-    #[cfg(test)]
+    /// Returns a reference to the underlying DOM document root node.
     pub fn document_root(&self) -> &Handle {
         &self.dom.document
     }
@@ -148,97 +198,53 @@ pub struct Element {
 }
 
 impl Element {
-    /// Create an Atom autodiscovery `<link>` element:
-    /// `<link rel="alternate" type="application/atom+xml" title="..." href="...">`.
-    pub fn create_feed_link(href: &str, title: &str) -> Self {
+    /// Create a DOM element node with the given tag and attribute pairs.
+    fn create_element(tag: &str, attrs: &[(&str, &str)]) -> Self {
         use html5ever::tendril::StrTendril;
         use html5ever::{Attribute, LocalName, QualName, ns};
         use markup5ever_rcdom::Node;
         use std::cell::RefCell;
 
-        let attrs = vec![
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("rel")),
-                value: StrTendril::from("alternate"),
-            },
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("type")),
-                value: StrTendril::from("application/atom+xml"),
-            },
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("title")),
-                value: StrTendril::from(title),
-            },
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("href")),
-                value: StrTendril::from(href),
-            },
-        ];
+        let attrs: Vec<_> = attrs
+            .iter()
+            .map(|(k, v)| Attribute {
+                name: QualName::new(None, ns!(), LocalName::from(*k)),
+                value: StrTendril::from(*v),
+            })
+            .collect();
 
         let handle = Node::new(NodeData::Element {
-            name: QualName::new(None, ns!(html), LocalName::from("link")),
+            name: QualName::new(None, ns!(html), LocalName::from(tag)),
             attrs: RefCell::new(attrs),
             template_contents: RefCell::new(None),
             mathml_annotation_xml_integration_point: false,
         });
 
         Self { handle }
+    }
+
+    /// Create an Atom autodiscovery `<link>` element:
+    /// `<link rel="alternate" type="application/atom+xml" title="..." href="...">`.
+    pub fn create_feed_link(href: &str, title: &str) -> Self {
+        Self::create_element(
+            "link",
+            &[
+                ("rel", "alternate"),
+                ("type", "application/atom+xml"),
+                ("title", title),
+                ("href", href),
+            ],
+        )
     }
 
     /// Create a `<link rel="..." href="...">` element.
     pub fn create_link(rel: &str, href: &str) -> Self {
-        use html5ever::tendril::StrTendril;
-        use html5ever::{Attribute, LocalName, QualName, ns};
-        use markup5ever_rcdom::Node;
-        use std::cell::RefCell;
-
-        let attrs = vec![
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("rel")),
-                value: StrTendril::from(rel),
-            },
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("href")),
-                value: StrTendril::from(href),
-            },
-        ];
-
-        let handle = Node::new(NodeData::Element {
-            name: QualName::new(None, ns!(html), LocalName::from("link")),
-            attrs: RefCell::new(attrs),
-            template_contents: RefCell::new(None),
-            mathml_annotation_xml_integration_point: false,
-        });
-
-        Self { handle }
+        Self::create_element("link", &[("rel", rel), ("href", href)])
     }
 
     /// Create a `<script src="..."></script>` element.
     pub fn create_script(src: &str) -> Self {
-        use html5ever::tendril::StrTendril;
-        use html5ever::{Attribute, LocalName, QualName, ns};
-        use markup5ever_rcdom::Node;
-        use std::cell::RefCell;
-
-        let attrs = vec![
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("src")),
-                value: StrTendril::from(src),
-            },
-            Attribute {
-                name: QualName::new(None, ns!(), LocalName::from("defer")),
-                value: StrTendril::from(""),
-            },
-        ];
-
-        let handle = Node::new(NodeData::Element {
-            name: QualName::new(None, ns!(html), LocalName::from("script")),
-            attrs: RefCell::new(attrs),
-            template_contents: RefCell::new(None),
-            mathml_annotation_xml_integration_point: false,
-        });
-
-        Self { handle }
+        Self::create_element("script", &[("src", src), ("defer", "")])
     }
 
     /// Prepend a child element to this element.
@@ -319,16 +325,16 @@ fn find_element_by_class(handle: &Handle, class: &str) -> Option<Handle> {
 fn inner_html(handle: &Handle) -> Result<String> {
     let mut output = String::new();
     for child in handle.children.borrow().iter() {
-        serialize_node(child, &mut output)?;
+        serialize_node(child, &mut output, &SerializeMode::Html)?;
     }
     Ok(output)
 }
 
-fn serialize_node(handle: &Handle, output: &mut String) -> Result<()> {
+fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) -> Result<()> {
     match &handle.data {
         NodeData::Document => {
             for child in handle.children.borrow().iter() {
-                serialize_node(child, output)?;
+                serialize_node(child, output, mode)?;
             }
         }
         NodeData::Doctype { name, .. } => {
@@ -339,11 +345,7 @@ fn serialize_node(handle: &Handle, output: &mut String) -> Result<()> {
         }
         NodeData::Text { contents } => {
             let text = contents.borrow();
-            let escaped = text
-                .replace('&', "&amp;")
-                .replace('<', "&lt;")
-                .replace('>', "&gt;");
-            output.push_str(&escaped);
+            output.push_str(&escape_text(&text));
         }
         NodeData::Comment { contents } => {
             write!(output, "<!--{}-->", contents).map_err(|e| RheoError::HtmlGeneration {
@@ -358,7 +360,8 @@ fn serialize_node(handle: &Handle, output: &mut String) -> Result<()> {
             })?;
 
             for attr in attrs.borrow().iter() {
-                write!(output, " {}=\"{}\"", attr.name.local, attr.value).map_err(|e| {
+                let escaped_value = escape_attr(&attr.value, mode);
+                write!(output, " {}=\"{}\"", attr.name.local, escaped_value).map_err(|e| {
                     RheoError::HtmlGeneration {
                         count: 1,
                         errors: format!("failed to serialize attribute: {}", e),
@@ -367,11 +370,14 @@ fn serialize_node(handle: &Handle, output: &mut String) -> Result<()> {
             }
 
             if is_void_element(&name.local) {
-                output.push('>');
+                match mode {
+                    SerializeMode::Xhtml => output.push_str("/>"),
+                    SerializeMode::Html => output.push('>'),
+                }
             } else {
                 output.push('>');
                 for child in handle.children.borrow().iter() {
-                    serialize_node(child, output)?;
+                    serialize_node(child, output, mode)?;
                 }
                 write!(output, "</{}>", name.local).map_err(|e| RheoError::HtmlGeneration {
                     count: 1,
@@ -389,26 +395,6 @@ fn serialize_node(handle: &Handle, output: &mut String) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn is_void_element(tag_name: &str) -> bool {
-    matches!(
-        tag_name,
-        "area"
-            | "base"
-            | "br"
-            | "col"
-            | "embed"
-            | "hr"
-            | "img"
-            | "input"
-            | "link"
-            | "meta"
-            | "param"
-            | "source"
-            | "track"
-            | "wbr"
-    )
 }
 
 // ─── Head injection utilities ─────────────────────────────────────────────────
@@ -443,54 +429,6 @@ pub fn inject_inline_styles(html: &str, css_blocks: &[&str]) -> Result<String> {
             errors: "HTML document does not contain a </head> element".to_string(),
         })
     }
-}
-
-/// Inject an Atom autodiscovery `<link>` into the HTML `<head>`.
-///
-/// Inserts `<link rel="alternate" type="application/atom+xml" title="..." href="..."/>`
-/// after the last `<meta>` tag (or at position 0 if none).
-///
-/// Returns an error if the HTML cannot be parsed or has no `<head>` element.
-pub fn inject_feed_link(html: &str, href: &str, title: &str) -> Result<String> {
-    let mut dom = HtmlDom::parse(html)?;
-    dom.inject_feed_link(href, title)?;
-    dom.serialize()
-}
-
-/// Inject `<link>` and `<script>` elements into the HTML `<head>`.
-///
-/// Nodes are inserted after the last `<meta>` tag (or at position 0 if none),
-/// in order: fonts, stylesheets, scripts.
-///
-/// Returns an error if the HTML cannot be parsed or has no `<head>` element.
-pub fn inject_head_links(
-    html: &str,
-    fonts: &[&str],
-    stylesheets: &[&str],
-    scripts: &[&str],
-) -> Result<String> {
-    let mut dom = HtmlDom::parse(html)?;
-    dom.inject_head_links(fonts, stylesheets, scripts)?;
-    dom.serialize()
-}
-
-/// Extract the inner HTML of the `<body>` element: its children serialized,
-/// without the surrounding `<body>` tag.
-///
-/// Returns an error if the HTML cannot be parsed or has no `<body>` element.
-pub fn extract_body_inner_html(html: &str) -> Result<String> {
-    HtmlDom::parse(html)?.body_inner_html()
-}
-
-/// Extract the inner HTML of the feed content region. Resolves, first match
-/// wins: the first `<main>` element, else the first element with class
-/// `rheo-feed-content`, else the whole `<body>`. See
-/// [`HtmlDom::feed_content_inner_html`].
-///
-/// Returns an error if the HTML cannot be parsed or, when falling back, has no
-/// `<body>` element.
-pub fn extract_feed_content_html(html: &str) -> Result<String> {
-    HtmlDom::parse(html)?.feed_content_inner_html()
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -589,12 +527,14 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // inject_head_links tests
+    // inject_head_links tests (via HtmlDom)
 
     #[test]
     fn test_inject_head_links_basic() {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
-        let result = inject_head_links(html, &[], &["style.css"], &[]).unwrap();
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_head_links(&[], &["style.css"], &[]).unwrap();
+        let result = dom.serialize().unwrap();
 
         assert!(result.contains("<head>"));
         assert!(result.contains("<title>Test</title>"));
@@ -610,7 +550,10 @@ mod tests {
     #[test]
     fn test_inject_head_links_multiple_stylesheets() {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
-        let result = inject_head_links(html, &[], &["style.css", "custom.css"], &[]).unwrap();
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_head_links(&[], &["style.css", "custom.css"], &[])
+            .unwrap();
+        let result = dom.serialize().unwrap();
 
         assert!(result.contains(r#"<link rel="stylesheet" href="style.css">"#));
         assert!(result.contains(r#"<link rel="stylesheet" href="custom.css">"#));
@@ -624,7 +567,9 @@ mod tests {
     fn test_inject_head_links_with_fonts() {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
         let fonts = &["https://fonts.googleapis.com/css2?family=Inter"];
-        let result = inject_head_links(html, fonts, &["style.css"], &[]).unwrap();
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_head_links(fonts, &["style.css"], &[]).unwrap();
+        let result = dom.serialize().unwrap();
 
         assert!(result.contains(r#"<link rel="stylesheet" href="style.css">"#));
         assert!(result.contains(
@@ -647,7 +592,9 @@ mod tests {
 </head>
 <body></body>
 </html>"#;
-        let result = inject_head_links(html, &[], &["style.css"], &[]).unwrap();
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_head_links(&[], &["style.css"], &[]).unwrap();
+        let result = dom.serialize().unwrap();
 
         assert!(result.contains("<title>Test</title>"));
         assert!(result.contains(r#"<meta charset="UTF-8">"#));
@@ -668,17 +615,20 @@ mod tests {
     fn test_inject_head_links_no_head_element() {
         // html5ever automatically creates a <head> element per HTML5 spec
         let html = "<!DOCTYPE html><html><body></body></html>";
-        let result = inject_head_links(html, &[], &["style.css"], &[]);
+        let mut dom = HtmlDom::parse(html).unwrap();
+        let result = dom.inject_head_links(&[], &["style.css"], &[]);
 
         assert!(result.is_ok());
-        let html_output = result.unwrap();
+        let html_output = dom.serialize().unwrap();
         assert!(html_output.contains(r#"<link rel="stylesheet" href="style.css">"#));
     }
 
     #[test]
     fn test_inject_head_links_empty_lists() {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
-        let result = inject_head_links(html, &[], &[], &[]).unwrap();
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_head_links(&[], &[], &[]).unwrap();
+        let result = dom.serialize().unwrap();
 
         assert!(result.contains("<title>Test</title>"));
         assert!(!result.contains(r#"<link rel="stylesheet""#));
@@ -687,7 +637,9 @@ mod tests {
     #[test]
     fn test_inject_head_links_with_scripts() {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
-        let result = inject_head_links(html, &[], &[], &["index.js"]).unwrap();
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_head_links(&[], &[], &["index.js"]).unwrap();
+        let result = dom.serialize().unwrap();
 
         assert!(result.contains(r#"src="index.js""#));
         assert!(result.contains("defer"));
@@ -696,7 +648,10 @@ mod tests {
     #[test]
     fn test_inject_head_links_scripts_with_stylesheets() {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
-        let result = inject_head_links(html, &[], &["style.css"], &["index.js"]).unwrap();
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_head_links(&[], &["style.css"], &["index.js"])
+            .unwrap();
+        let result = dom.serialize().unwrap();
 
         assert!(result.contains(r#"src="index.js""#));
         assert!(result.contains("defer"));
@@ -706,17 +661,22 @@ mod tests {
     #[test]
     fn test_inject_head_links_no_scripts() {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
-        let result = inject_head_links(html, &[], &["style.css"], &[]).unwrap();
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_head_links(&[], &["style.css"], &[]).unwrap();
+        let result = dom.serialize().unwrap();
 
         assert!(!result.contains("<script"));
     }
 
-    // inject_feed_link tests
+    // inject_feed_link tests (via HtmlDom)
 
     #[test]
     fn test_inject_feed_link_basic() {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
-        let result = inject_feed_link(html, "https://example.com/feed.xml", "My Feed").unwrap();
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_feed_link("https://example.com/feed.xml", "My Feed")
+            .unwrap();
+        let result = dom.serialize().unwrap();
 
         assert!(result.contains(r#"<head>"#));
         assert!(result.contains(r#"type="application/atom+xml""#));
@@ -732,7 +692,9 @@ mod tests {
 <meta name="viewport" content="width=device-width">
 <title>Test</title>
 </head><body></body></html>"#;
-        let result = inject_feed_link(html, "/feed.xml", "Blog").unwrap();
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_feed_link("/feed.xml", "Blog").unwrap();
+        let result = dom.serialize().unwrap();
 
         let last_meta_pos = result.find(r#"<meta name="viewport""#).unwrap();
         let feed_link_pos = result.find("application/atom+xml").unwrap();
@@ -745,47 +707,53 @@ mod tests {
     #[test]
     fn test_inject_feed_link_no_head() {
         let html = "<!DOCTYPE html><html><body></body></html>";
-        let result = inject_feed_link(html, "/feed.xml", "Blog");
+        let mut dom = HtmlDom::parse(html).unwrap();
+        let result = dom.inject_feed_link("/feed.xml", "Blog");
         // html5ever creates a <head> automatically per HTML5 spec
         assert!(result.is_ok());
     }
 
-    // extract_body_inner_html tests
+    // body_inner_html tests (via HtmlDom)
 
     #[test]
-    fn test_extract_body_inner_html_basic() {
+    fn test_body_inner_html_basic() {
         let html = "<html><head></head><body><p>Hi</p></body></html>";
-        let inner = extract_body_inner_html(html).unwrap();
+        let dom = HtmlDom::parse(html).unwrap();
+        let inner = dom.body_inner_html().unwrap();
         assert_eq!(inner, "<p>Hi</p>");
     }
 
     #[test]
-    fn test_extract_body_inner_html_multiple_children() {
+    fn test_body_inner_html_multiple_children() {
         let html = "<html><head></head><body><h1>T</h1><p>Body</p></body></html>";
-        let inner = extract_body_inner_html(html).unwrap();
+        let dom = HtmlDom::parse(html).unwrap();
+        let inner = dom.body_inner_html().unwrap();
         assert_eq!(inner, "<h1>T</h1><p>Body</p>");
     }
 
     #[test]
-    fn test_extract_body_inner_html_empty_body() {
+    fn test_body_inner_html_empty_body() {
         let html = "<html><head></head><body></body></html>";
-        let inner = extract_body_inner_html(html).unwrap();
+        let dom = HtmlDom::parse(html).unwrap();
+        let inner = dom.body_inner_html().unwrap();
         assert_eq!(inner, "");
     }
 
-    // extract_feed_content_html tests
+    // feed_content_inner_html tests (via HtmlDom)
 
     #[test]
     fn test_feed_content_main_wins() {
         let html = "<html><head></head><body><main><p>article</p></main><footer>chrome</footer></body></html>";
-        let inner = extract_feed_content_html(html).unwrap();
+        let dom = HtmlDom::parse(html).unwrap();
+        let inner = dom.feed_content_inner_html().unwrap();
         assert_eq!(inner, "<p>article</p>");
     }
 
     #[test]
     fn test_feed_content_class_fallback() {
         let html = "<html><head></head><body><div class=\"rheo-feed-content\"><p>a</p></div><nav>x</nav></body></html>";
-        let inner = extract_feed_content_html(html).unwrap();
+        let dom = HtmlDom::parse(html).unwrap();
+        let inner = dom.feed_content_inner_html().unwrap();
         assert_eq!(inner, "<p>a</p>");
     }
 
@@ -793,22 +761,25 @@ mod tests {
     fn test_feed_content_class_among_many() {
         // Whitespace-token membership, not substring: a multi-class attribute matches.
         let html = "<html><head></head><body><div class=\"post rheo-feed-content wide\"><p>a</p></div></body></html>";
-        let inner = extract_feed_content_html(html).unwrap();
+        let dom = HtmlDom::parse(html).unwrap();
+        let inner = dom.feed_content_inner_html().unwrap();
         assert_eq!(inner, "<p>a</p>");
     }
 
     #[test]
     fn test_feed_content_body_fallback() {
         let html = "<html><head></head><body><h1>T</h1><p>Body</p></body></html>";
-        let inner = extract_feed_content_html(html).unwrap();
-        assert_eq!(inner, extract_body_inner_html(html).unwrap());
+        let dom = HtmlDom::parse(html).unwrap();
+        let inner = dom.feed_content_inner_html().unwrap();
+        assert_eq!(inner, dom.body_inner_html().unwrap());
         assert_eq!(inner, "<h1>T</h1><p>Body</p>");
     }
 
     #[test]
     fn test_feed_content_main_precedence_over_class() {
         let html = "<html><head></head><body><main><p>main</p></main><div class=\"rheo-feed-content\"><p>class</p></div></body></html>";
-        let inner = extract_feed_content_html(html).unwrap();
+        let dom = HtmlDom::parse(html).unwrap();
+        let inner = dom.feed_content_inner_html().unwrap();
         assert_eq!(inner, "<p>main</p>");
     }
 }

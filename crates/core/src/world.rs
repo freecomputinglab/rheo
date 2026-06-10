@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::plugins::LinkStrategy;
 use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
@@ -39,6 +40,8 @@ pub struct RheoWorld {
     /// Output format name for link transformations and polyfill injection.
     /// None = no transformation.
     format_name: Option<String>,
+    /// How relative `.typ` links are rewritten when `format_name` is set.
+    link_strategy: LinkStrategy,
     /// Plugin-contributed Typst library code, injected after core prelude.
     plugin_library: Option<String>,
 }
@@ -55,11 +58,13 @@ impl RheoWorld {
     /// * `root` - The root directory for resolving imports
     /// * `main_file` - The main .typ file to compile
     /// * `format_name` - Plugin name for link transformations (e.g. "pdf", "html", "epub"; None = no transformation)
+    /// * `link_strategy` - How relative `.typ` links are rewritten when `format_name` is set
     /// * `plugin_library` - Optional plugin-contributed Typst library code to inject after core prelude
     pub fn new(
         root: &Path,
         main_file: &Path,
         format_name: Option<&str>,
+        link_strategy: LinkStrategy,
         plugin_library: Option<String>,
         font_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
@@ -101,6 +106,7 @@ impl RheoWorld {
             slots: Mutex::new(HashMap::new()),
             package_storage,
             format_name: format_name.map(str::to_string),
+            link_strategy,
             plugin_library,
         })
     }
@@ -136,7 +142,7 @@ impl RheoWorld {
     fn transform_links(&self, text: &str, id: FileId, format_name: &str) -> FileResult<String> {
         use crate::reticulate::transformer::LinkTransformer;
 
-        let transformer = LinkTransformer::new(format_name);
+        let transformer = LinkTransformer::new(format_name).with_strategy(self.link_strategy);
         transformer
             .transform_source(text, id.vpath().as_rootless_path(), &self.root)
             .map_err(|e| FileError::Other(Some(e.to_string().into())))
@@ -248,9 +254,18 @@ impl RheoWorld {
         root: &Path,
         input: &Path,
         format_name: &str,
+        link_strategy: LinkStrategy,
         plugin_library: Option<String>,
+        font_dirs: Vec<PathBuf>,
     ) -> crate::Result<typst_html::HtmlDocument> {
-        let world = Self::new(root, input, Some(format_name), plugin_library, vec![])?;
+        let world = Self::new(
+            root,
+            input,
+            Some(format_name),
+            link_strategy,
+            plugin_library,
+            font_dirs,
+        )?;
         tracing::info!(input = %input.display(), "compiling to HTML");
         world.compile_html()
     }
@@ -260,9 +275,18 @@ impl RheoWorld {
         root: &Path,
         input: &Path,
         format_name: Option<&str>,
+        link_strategy: LinkStrategy,
         plugin_library: Option<String>,
+        font_dirs: Vec<PathBuf>,
     ) -> crate::Result<typst::layout::PagedDocument> {
-        let world = Self::new(root, input, format_name, plugin_library, vec![])?;
+        let world = Self::new(
+            root,
+            input,
+            format_name,
+            link_strategy,
+            plugin_library,
+            font_dirs,
+        )?;
         tracing::info!(input = %input.display(), "compiling to PDF");
         world.compile_pdf()
     }
