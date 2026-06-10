@@ -1,6 +1,7 @@
 use ntest::test_case;
 use rheo_core::{RheoConfig, project::ProjectConfig};
 use rheo_tests::helpers::{
+    cli::rheo_cli_command,
     comparison::{verify_epub_output, verify_html_output, verify_pdf_output},
     fixtures::TestCase,
     reference::{update_epub_references, update_html_references, update_pdf_references},
@@ -136,14 +137,7 @@ fn run_test_case(name: &str) {
     let build_dir = test_store.join("build");
 
     // Build compile command with format flags
-    let mut compile_args = vec![
-        "run",
-        "-p",
-        "rheo",
-        "--",
-        "compile",
-        project_path.to_str().unwrap(),
-    ];
+    let mut compile_args = vec!["compile", project_path.to_str().unwrap()];
 
     // Use isolated build directory
     compile_args.push("--build-dir");
@@ -164,7 +158,7 @@ fn run_test_case(name: &str) {
     }
 
     // Compile the project using rheo CLI logic
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args(&compile_args)
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
@@ -286,12 +280,8 @@ fn test_pdf_merge() {
     let build_dir = test_store.join("build");
 
     // Compile with PDF merge
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--pdf",
@@ -378,8 +368,8 @@ Content here.
     .expect("Failed to write chapter1.typ");
 
     // Try to compile - should fail or warn
-    let output = std::process::Command::new("cargo")
-        .args(["run", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
+    let output = rheo_cli_command()
+        .args(["compile", test_dir.to_str().unwrap(), "--pdf"])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
@@ -443,8 +433,8 @@ Content from dir2.
     .expect("Failed to write dir2/chapter.typ");
 
     // Try to compile - should fail with duplicate label error
-    let output = std::process::Command::new("cargo")
-        .args(["run", "--", "compile", test_dir.to_str().unwrap(), "--pdf"])
+    let output = rheo_cli_command()
+        .args(["compile", test_dir.to_str().unwrap(), "--pdf"])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
@@ -474,15 +464,8 @@ fn test_html_css_link_injection() {
     let project_path = test_case.project_path();
 
     // Clean and compile
-    let clean_output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
-            "clean",
-            project_path.to_str().unwrap(),
-        ])
+    let clean_output = rheo_cli_command()
+        .args(["clean", project_path.to_str().unwrap()])
         .output()
         .expect("Failed to run rheo clean");
 
@@ -493,16 +476,8 @@ fn test_html_css_link_injection() {
         );
     }
 
-    let output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
-            "compile",
-            project_path.to_str().unwrap(),
-            "--html",
-        ])
+    let output = rheo_cli_command()
+        .args(["compile", project_path.to_str().unwrap(), "--html"])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
@@ -563,8 +538,8 @@ fn test_html_css_link_injection() {
     );
 
     // Clean up
-    let clean_output = std::process::Command::new("cargo")
-        .args(["run", "--", "clean", project_path.to_str().unwrap()])
+    let clean_output = rheo_cli_command()
+        .args(["clean", project_path.to_str().unwrap()])
         .output()
         .expect("Failed to run rheo clean");
 
@@ -583,28 +558,13 @@ fn test_warning_formatting() {
     let test_dir = PathBuf::from("../../examples/blog_post");
 
     // Clean first
-    let _ = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
-            "clean",
-            test_dir.to_str().unwrap(),
-        ])
+    let _ = rheo_cli_command()
+        .args(["clean", test_dir.to_str().unwrap()])
         .output();
 
     // Compile - should succeed with warnings
-    let output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
-            "compile",
-            test_dir.to_str().unwrap(),
-            "--pdf",
-        ])
+    let output = rheo_cli_command()
+        .args(["compile", test_dir.to_str().unwrap(), "--pdf"])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .expect("Failed to run rheo compile");
@@ -630,15 +590,8 @@ fn test_warning_formatting() {
     );
 
     // Clean up
-    let _ = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
-            "clean",
-            test_dir.to_str().unwrap(),
-        ])
+    let _ = rheo_cli_command()
+        .args(["clean", test_dir.to_str().unwrap()])
         .output();
 }
 
@@ -676,12 +629,8 @@ fn test_asset_patterns() {
 
     let build_dir = project_path.join("build");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -755,12 +704,8 @@ fn test_asset_patterns_multiple_blocks() {
 
     let build_dir = project_path.join("build");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -822,12 +767,8 @@ fn test_asset_patterns_glob_recursive() {
 
     let build_dir = project_path.join("build");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -902,12 +843,8 @@ fn test_asset_patterns_dest_preserves_structure() {
 
     let build_dir = project_path.join("build");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -973,12 +910,8 @@ fn test_asset_dest_subdirectory() {
     .unwrap();
 
     let build_dir = project_path.join("build");
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -1034,15 +967,8 @@ fn test_rheo_init_and_compile() {
     }
 
     // Run `rheo init`
-    let init_output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
-            "init",
-            test_dir.to_str().unwrap(),
-        ])
+    let init_output = rheo_cli_command()
+        .args(["init", test_dir.to_str().unwrap()])
         .output()
         .expect("Failed to run rheo init");
 
@@ -1067,12 +993,8 @@ fn test_rheo_init_and_compile() {
 
     // Compile the initialized project
     let build_dir = test_dir.join("build");
-    let compile_output = std::process::Command::new("cargo")
+    let compile_output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             test_dir.to_str().unwrap(),
             "--build-dir",
@@ -1129,12 +1051,8 @@ fn test_asset_path_override() {
     )
     .expect("Failed to write rheo.toml");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -1203,12 +1121,8 @@ fn test_asset_path_override_subdirectory() {
     )
     .expect("Failed to write rheo.toml");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -1270,12 +1184,8 @@ fn test_asset_multiple_blocks_inject_all() {
     .unwrap();
 
     let build_dir = project_path.join("build");
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -1342,12 +1252,8 @@ fn test_merged_imports_missing_file() {
 
     let build_dir = project_path.join("build");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--pdf",
@@ -1419,12 +1325,8 @@ fn test_atom_feed_and_rheo_vars() {
     )
     .expect("Failed to write rheo.toml");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -1531,12 +1433,8 @@ fn test_atom_feed_author_configurable() {
     )
     .expect("Failed to write rheo.toml");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -1600,12 +1498,8 @@ fn test_atom_feed_title_configurable() {
     )
     .expect("Failed to write rheo.toml");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -1676,12 +1570,8 @@ fn test_atom_feed_title_spine_fallback() {
     )
     .expect("Failed to write rheo.toml");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -1749,12 +1639,8 @@ fn test_atom_feed_with_content_dir() {
     )
     .expect("Failed to write rheo.toml");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -1816,12 +1702,8 @@ fn test_rheo_var_non_string_error() {
     )
     .expect("Failed to write rheo.toml");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",

@@ -1,3 +1,4 @@
+pub mod cli;
 pub mod comparison;
 pub mod fixtures;
 pub mod markers;
