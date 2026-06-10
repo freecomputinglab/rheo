@@ -77,6 +77,17 @@ pub struct Asset {
     pub built_relative_path: String,
 }
 
+/// Template data contributed by a plugin for `rheo init`.
+///
+/// Returned by [`FormatPlugin::format_init_template`].
+#[derive(Debug, Clone, Default)]
+pub struct FormatInitTemplate {
+    /// `(relative_path, content)` pairs written verbatim by `rheo init`.
+    pub files: Vec<(&'static str, &'static str)>,
+    /// TOML snippet embedded under `[<plugin>.*]` in the generated `rheo.toml`.
+    pub options_toml: Option<&'static str>,
+}
+
 /// Context passed to plugin.compile() for each compilation unit.
 pub struct PluginContext<'a> {
     pub project: &'a ProjectConfig,
@@ -581,62 +592,13 @@ pub trait FormatPlugin: Send + Sync {
         vec![]
     }
 
-    /// Provide template files for `rheo init` to write to new projects.
+    /// Combined init template: files and TOML config section for `rheo init`.
     ///
-    /// This method allows plugins to contribute format-specific template files
-    /// (e.g., CSS for HTML, custom Typst includes) when initializing a new rheo project.
-    ///
-    /// # Return value
-    ///
-    /// A vector of `(relative_path, content)` tuples where:
-    /// - `relative_path` is the file path relative to the project root (e.g., `"style.css"`, `"content/example.typ"`)
-    /// - `content` is the file contents as a static string
-    ///
-    /// # Path conflicts
-    ///
-    /// If two plugins claim the same `relative_path`, rheo returns an error at init time.
-    /// Core templates take precedence over plugin templates (plugins can override core paths
-    /// only if the core explicitly provides empty placeholders).
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// fn init_template_files(&self) -> Vec<(&'static str, &'static str)> {
-    ///     vec![
-    ///         ("style.css", include_str!("templates/style.css")),
-    ///         ("content/html-example.typ", include_str!("templates/example.typ")),
-    ///     ]
-    /// }
-    /// ```
-    ///
-    /// # Default implementation
-    ///
-    /// Returns an empty vector (no template files contributed).
-    fn init_template_files(&self) -> Vec<(&'static str, &'static str)> {
-        vec![]
-    }
-
-    /// Provide a `rheo.toml` configuration section template for `rheo init`.
-    ///
-    /// The returned content should use section-relative headers (e.g. `[spine]`
-    /// rather than `[html.spine]`) — the `init` command automatically prefixes
-    /// each header with the plugin name when building the final `rheo.toml`.
-    ///
-    /// # Return value
-    ///
-    /// - `Some(content)` — TOML snippet to embed under `[<plugin_name>.*]` in the
-    ///   generated `rheo.toml`
-    /// - `None` — no config section contributed (default)
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
-    ///     Some(include_str!("templates/init/rheo_section.toml"))
-    /// }
-    /// ```
-    fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
-        None
+    /// The default returns an empty template (no files, no TOML section).
+    /// Override to contribute format-specific template files and/or a config
+    /// section snippet.
+    fn format_init_template(&self) -> FormatInitTemplate {
+        FormatInitTemplate::default()
     }
 
     /// Provide Typst library code to inject into all compiled files.

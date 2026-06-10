@@ -3,6 +3,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
+use super::cli::rheo_cli_command;
+
 /// Clone a public GitHub repo using `git clone --depth 1`.
 ///
 /// Destination: `crates/tests/store/compat/<name>/`.
@@ -90,15 +92,8 @@ pub fn run_compat(url: &str, name: &str) {
     let cloned_path = clone_repo(url, name);
     patch_rheo_version(&cloned_path);
 
-    let output = Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
-            "compile",
-            cloned_path.to_str().unwrap(),
-        ])
+    let output = rheo_cli_command()
+        .args(["compile", cloned_path.to_str().unwrap()])
         .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
         .output()
         .unwrap_or_else(|e| panic!("Failed to run rheo compile: {}", e));

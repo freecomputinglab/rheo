@@ -6,16 +6,6 @@ result-*
 
 # Beads runtime/ephemeral files
 .beads/
-.beads/bd.sock
-.beads/beads.db
-.beads/beads.db-shm
-.beads/beads.db-wal
-.beads/daemon.lock
-.beads/daemon.log
-.beads/daemon.pid
-.beads/.br_history/
-.beads/.write.lock
-.beads/last-touched
 .abacus/
 
 # Claude

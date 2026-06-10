@@ -11,8 +11,8 @@ use rheo_core::{
     DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain,
 };
 use rheo_core::{
-    FormatPlugin, PluginContext, PluginSection, Result, RheoError, Spine, SpineOptions,
-    compile_document_to_string, eco_format, eco_vec,
+    FormatInitTemplate, FormatPlugin, PluginContext, PluginSection, Result, RheoError, Spine,
+    SpineOptions, compile_document_to_string, eco_format, eco_vec,
 };
 use serde::Deserialize;
 use std::{
@@ -54,8 +54,11 @@ impl FormatPlugin for EpubPlugin {
         }
     }
 
-    fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
-        Some(include_str!("templates/init/rheo_section.toml"))
+    fn format_init_template(&self) -> FormatInitTemplate {
+        FormatInitTemplate {
+            files: vec![],
+            options_toml: Some(include_str!("templates/init/rheo_section.toml")),
+        }
     }
 
     fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {

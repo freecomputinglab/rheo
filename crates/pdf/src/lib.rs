@@ -1,4 +1,4 @@
-use rheo_core::{FormatPlugin, LinkStrategy, PluginContext, Result};
+use rheo_core::{FormatInitTemplate, FormatPlugin, LinkStrategy, PluginContext, Result};
 
 pub struct PdfPlugin;
 const PLUGIN_NAME: &str = "pdf";
@@ -14,8 +14,11 @@ impl FormatPlugin for PdfPlugin {
         LinkStrategy::PagedLabels
     }
 
-    fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
-        Some(include_str!("templates/init/rheo_section.toml"))
+    fn format_init_template(&self) -> FormatInitTemplate {
+        FormatInitTemplate {
+            files: vec![],
+            options_toml: Some(include_str!("templates/init/rheo_section.toml")),
+        }
     }
 
     fn typst_library(&self) -> Option<&'static str> {
