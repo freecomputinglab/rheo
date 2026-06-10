@@ -5,6 +5,7 @@ result
 result-*
 
 # Beads runtime/ephemeral files
+.beads/
 .beads/bd.sock
 .beads/beads.db
 .beads/beads.db-shm

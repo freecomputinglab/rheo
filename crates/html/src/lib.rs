@@ -162,11 +162,11 @@ impl HtmlPlugin {
         // serialized at most once. Head-links run before the feed link to match
         // the prior two-pass ordering (both insert after the last <meta>).
         let needs_head_links = !css_paths.is_empty() || !js_paths.is_empty();
-        let feed_link = ctx
-            .config
-            .parse_extra::<HtmlConfig>()?
+        let html_cfg = ctx.config.parse_extra::<HtmlConfig>()?;
+        let feed_title = html_cfg.resolve_title(ctx.spine.title.as_deref(), &ctx.project.name);
+        let feed_link = html_cfg
             .base_url()
-            .map(|base| (format!("{base}/feed.xml"), ctx.project.name.clone()));
+            .map(|base| (format!("{base}/feed.xml"), feed_title));
 
         let html_string = if needs_head_links || feed_link.is_some() {
             let mut dom = html_utils::HtmlDom::parse(&html_string)?;
@@ -250,7 +250,7 @@ impl HtmlPlugin {
 
         let feed = AtomFeed {
             id: format!("{base}/feed.xml"),
-            title: ctx.project.name.clone(),
+            title: cfg.resolve_title(ctx.spine.title.as_deref(), &ctx.project.name),
             updated: Utc::now(),
             self_href: format!("{base}/feed.xml"),
             author: cfg
@@ -299,6 +299,9 @@ struct HtmlConfig {
     feed_base_url: Option<String>,
     /// `atom:author` of the feed; defaults to `"Rheo"` when absent.
     feed_author: Option<String>,
+    /// `<title>` of the Atom feed and the autodiscovery `<link>`.
+    /// Falls back to the HTML spine title, then the project/directory name.
+    feed_title: Option<String>,
 }
 
 impl HtmlConfig {
@@ -308,6 +311,15 @@ impl HtmlConfig {
         self.feed_base_url
             .as_deref()
             .map(|s| s.trim_end_matches('/').to_string())
+    }
+
+    /// Resolve the feed title: `[html] feed_title` → spine title → project name.
+    fn resolve_title(&self, spine_title: Option<&str>, project_name: &str) -> String {
+        self.feed_title
+            .as_deref()
+            .or(spine_title)
+            .unwrap_or(project_name)
+            .to_string()
     }
 }
 
@@ -377,5 +389,49 @@ mod tests {
         let mut extra = toml::Table::new();
         extra.insert("feed_author".to_string(), toml::Value::Integer(42));
         assert!(section_with(extra).parse_extra::<HtmlConfig>().is_err());
+    }
+
+    #[test]
+    fn test_feed_title_present() {
+        let mut extra = toml::Table::new();
+        extra.insert(
+            "feed_title".to_string(),
+            toml::Value::String("My Feed".to_string()),
+        );
+        assert_eq!(html_config(extra).feed_title.as_deref(), Some("My Feed"));
+    }
+
+    #[test]
+    fn test_feed_title_absent() {
+        assert_eq!(html_config(toml::Table::new()).feed_title, None);
+    }
+
+    #[test]
+    fn test_resolve_title_feed_title_set() {
+        let mut extra = toml::Table::new();
+        extra.insert(
+            "feed_title".to_string(),
+            toml::Value::String("Feed Title".to_string()),
+        );
+        let cfg = html_config(extra);
+        assert_eq!(
+            cfg.resolve_title(Some("Spine Title"), "project"),
+            "Feed Title"
+        );
+    }
+
+    #[test]
+    fn test_resolve_title_spine_fallback() {
+        let cfg = html_config(toml::Table::new());
+        assert_eq!(
+            cfg.resolve_title(Some("Spine Title"), "project"),
+            "Spine Title"
+        );
+    }
+
+    #[test]
+    fn test_resolve_title_project_fallback() {
+        let cfg = html_config(toml::Table::new());
+        assert_eq!(cfg.resolve_title(None, "my-project"), "my-project");
     }
 }

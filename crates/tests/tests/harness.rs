@@ -1567,6 +1567,147 @@ fn test_atom_feed_author_configurable() {
     );
 }
 
+/// Integration test for the configurable `[html] feed_title` key. Asserts that
+/// `feed_title` overrides both the spine title and the project name in the
+/// feed's `<title>` and the autodiscovery `<link>` on each page.
+#[test]
+fn test_atom_feed_title_configurable() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+    let build_dir = project_path.join("build");
+
+    std::fs::write(
+        project_path.join("a.typ"),
+        "#let rheo-feed-title = \"Article A\"\n\n= Article A\n\nContent A.\n",
+    )
+    .expect("Failed to write a.typ");
+
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [html.spine]\n\
+             title = \"Spine Blog\"\n\
+             vertebrae = [\"a.typ\"]\n\
+             \n\
+             [html]\n\
+             feed_base_url = \"https://example.com\"\n\
+             feed_title = \"Custom Feed Title\"\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let feed_path = build_dir.join("html/feed.xml");
+    assert!(feed_path.exists(), "feed.xml not generated");
+    let feed = std::fs::read_to_string(&feed_path).expect("Failed to read feed.xml");
+
+    assert!(
+        feed.contains("<title>Custom Feed Title</title>"),
+        "feed title not set from feed_title: {feed}"
+    );
+    assert!(
+        !feed.contains("<title>Spine Blog</title>"),
+        "spine title should be overridden by feed_title"
+    );
+
+    // Autodiscovery link in the HTML page should also carry the custom title.
+    let html_path = build_dir.join("html/a.html");
+    let html = std::fs::read_to_string(&html_path).expect("Failed to read a.html");
+    assert!(
+        html.contains("title=\"Custom Feed Title\""),
+        "autodiscovery link title not set from feed_title: {html}"
+    );
+}
+
+/// When `[html] feed_title` is absent but `[html.spine] title` is set, the feed
+/// `<title>` and autodiscovery `<link>` fall back to the spine title.
+#[test]
+fn test_atom_feed_title_spine_fallback() {
+    let dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let project_path = dir.path();
+    let build_dir = project_path.join("build");
+
+    std::fs::write(
+        project_path.join("a.typ"),
+        "#let rheo-feed-title = \"Article A\"\n\n= Article A\n\nContent A.\n",
+    )
+    .expect("Failed to write a.typ");
+
+    // No feed_title — spine title should be used instead of project name.
+    std::fs::write(
+        project_path.join("rheo.toml"),
+        format!(
+            "version = \"{}\"\n\
+             formats = [\"html\"]\n\
+             \n\
+             [html.spine]\n\
+             title = \"Spine Blog\"\n\
+             vertebrae = [\"a.typ\"]\n\
+             \n\
+             [html]\n\
+             feed_base_url = \"https://example.com\"\n",
+            env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .expect("Failed to write rheo.toml");
+
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rheo",
+            "--",
+            "compile",
+            project_path.to_str().unwrap(),
+            "--html",
+            "--build-dir",
+            build_dir.to_str().unwrap(),
+        ])
+        .env("TYPST_IGNORE_SYSTEM_FONTS", "1")
+        .output()
+        .expect("Failed to run rheo compile");
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let feed_path = build_dir.join("html/feed.xml");
+    assert!(feed_path.exists(), "feed.xml not generated");
+    let feed = std::fs::read_to_string(&feed_path).expect("Failed to read feed.xml");
+
+    assert!(
+        feed.contains("<title>Spine Blog</title>"),
+        "feed title should fall back to spine title: {feed}"
+    );
+}
+
 /// Regression: feed generation resolves spine vertebrae against the configured
 /// `content_dir`, not the project root. With `content_dir` set, the per-file
 /// HTML compile path used to glob from the project root and fail with
