@@ -77,6 +77,21 @@ pub struct Asset {
     pub built_relative_path: String,
 }
 
+/// Template data contributed by a plugin for `rheo init`.
+///
+/// Combines the former `init_template_files` and
+/// `init_rheo_toml_section_template` into a single struct returned by
+/// [`FormatPlugin::format_init_template`].
+#[derive(Debug, Clone, Default)]
+pub struct FormatInitTemplate {
+    /// `(relative_path, content)` pairs written verbatim by `rheo init`.
+    /// Was `init_template_files`.
+    pub files: Vec<(&'static str, &'static str)>,
+    /// TOML snippet embedded under `[<plugin>.*]` in the generated `rheo.toml`.
+    /// Was `init_rheo_toml_section_template`.
+    pub options_toml: Option<&'static str>,
+}
+
 /// Context passed to plugin.compile() for each compilation unit.
 pub struct PluginContext<'a> {
     pub project: &'a ProjectConfig,
@@ -637,6 +652,15 @@ pub trait FormatPlugin: Send + Sync {
     /// ```
     fn init_rheo_toml_section_template(&self) -> Option<&'static str> {
         None
+    }
+
+    /// Combined init template: files and TOML config section for `rheo init`.
+    ///
+    /// Supersedes [`init_template_files`](Self::init_template_files) and
+    /// [`init_rheo_toml_section_template`](Self::init_rheo_toml_section_template).
+    /// The default returns an empty template (no files, no TOML section).
+    fn format_init_template(&self) -> FormatInitTemplate {
+        FormatInitTemplate::default()
     }
 
     /// Provide Typst library code to inject into all compiled files.
