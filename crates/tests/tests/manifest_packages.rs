@@ -1,4 +1,5 @@
 use rheo_core::plugins::detect_manifest_package_assets_in_dirs;
+use rheo_tests::helpers::cli::rheo_cli_command;
 
 #[test]
 fn detect_manifest_package_assets_reads_tool_rheo_section() {
@@ -124,12 +125,8 @@ Test document.
 
     let build_dir = project_path.join("build");
 
-    let output = std::process::Command::new("cargo")
+    let output = rheo_cli_command()
         .args([
-            "run",
-            "-p",
-            "rheo",
-            "--",
             "compile",
             project_path.to_str().unwrap(),
             "--html",
@@ -198,12 +195,8 @@ fn run_rheo_compile(
     build_dir: &std::path::Path,
     env_extra: Vec<(&str, &std::path::Path)>,
 ) -> std::process::Output {
-    let mut cmd = std::process::Command::new("cargo");
+    let mut cmd = rheo_cli_command();
     cmd.args([
-        "run",
-        "-p",
-        "rheo",
-        "--",
         "compile",
         project_path.to_str().unwrap(),
         "--html",
