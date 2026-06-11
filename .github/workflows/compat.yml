@@ -26,8 +26,15 @@ jobs:
       - name: Install @rheo packages
         uses: ./.github/actions/install-rheo-packages
 
+      - name: Clone rheo-tests as sibling
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/freecomputinglab/rheo-tests.git ../rheo-tests
+
       - name: Run compatibility tests
         run: cargo test --test compat
+        working-directory: ../rheo-tests
         env:
           RUN_COMPAT_TESTS: "1"
           TYPST_IGNORE_SYSTEM_FONTS: "1"
+          RHEO_MANIFEST: ${{ github.workspace }}/Cargo.toml
