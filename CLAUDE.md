@@ -10,9 +10,10 @@
 - `crates/html/` — HTML plugin (dev server, CSS/JS injection)
 - `crates/pdf/` — PDF plugin
 - `crates/epub/` — EPUB plugin
-- `crates/tests/` — Integration tests and harness
 - `src/typ/rheo.typ` — Core Typst template (auto-injected)
 - `build/` — Output dir (gitignored): `pdf/`, `html/`, `epub/`
+
+Integration tests and examples live in [freecomputinglab/rheo-tests](https://github.com/freecomputinglab/rheo-tests), cloned side-by-side at `../rheo-tests` for sibling path dependencies.
 
 ## Development Commands
 
@@ -26,7 +27,9 @@ cargo run -- clean <project-path>
 RUST_LOG=rheo=trace cargo run -- compile ... # debug logging
 
 # Tests
-cargo test                                    # run all tests
+cargo test                                    # run unit tests only
+# Integration tests run from ../rheo-tests with:
+RHEO_MANIFEST=../rheo/Cargo.toml cargo test --test harness
 See [TESTING.md](TESTING.md) for more test commands and options.
 cargo fmt && cargo clippy -- -D warnings
 ```
