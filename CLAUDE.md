@@ -114,6 +114,8 @@ Feed variables:
 **NEVER run `jj git push` (or any push) — the user always pushes themselves.**
 Prepare commits and bookmarks, then stop and let the user push.
 
+**NEVER run `git` commands, not even read-only ones** (`git log`, `git show`, `git status`, `git diff`). Always use the jj equivalents (`jj log`, `jj show`, `jj status`, `jj diff`, `jj file show`). This applies in sibling repos too (e.g. `../rheo-tests`).
+
 ```bash
 jj status / jj diff / jj log / jj show
 jj commit -m "message" / jj describe -m "message"
