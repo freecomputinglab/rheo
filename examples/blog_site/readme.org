@@ -1,3 +1,0 @@
-* Screening the Subject: Severance
-
-A port of the blog site: [[https://screening-the-subject.ohrg.org/]].

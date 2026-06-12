@@ -10,7 +10,9 @@ Rheo is a standalone CLI tool that includes a development server for rapid websi
 Compile all `.typ` files in a directory to PDF, HTML, and EPUB and recompile on change:
 
 ```bash
-rheo watch examples/blog_site --open
+# Clone the examples repo first
+git clone https://github.com/freecomputinglab/rheo-tests.git ../rheo-tests
+rheo watch ../rheo-tests/examples/blog_site --open
 ```
 
 The `--open` flag starts a development server at `http://localhost:3000` with automatic browser refresh.
@@ -19,10 +21,10 @@ Use additional flags for customization:
 
 ```bash
 # Custom config file location
-rheo compile examples/blog_site --config /path/to/custom.toml
+rheo compile ../rheo-tests/examples/blog_site --config /path/to/custom.toml
 
 # Custom build directory
-rheo compile examples/blog_site --build-dir /tmp/build
+rheo compile ../rheo-tests/examples/blog_site --build-dir /tmp/build
 ```
 
 See [the documentation](https://rheo.ohrg.org) for more information regarding which flags are available.
@@ -105,13 +107,15 @@ rheo compile my_project --pdf --html  # PDF and HTML
 Watch mode automatically recompiles files when they change, perfect for iterative development:
 
 ```bash
-rheo watch examples/blog_site
+# Clone the examples repo first
+git clone https://github.com/freecomputinglab/rheo-tests.git ../rheo-tests
+rheo watch ../rheo-tests/examples/blog_site
 ```
 
 Add the `--open` flag to launch a development server with automatic browser refresh:
 
 ```bash
-rheo watch examples/blog_site --open
+rheo watch ../rheo-tests/examples/blog_site --open
 ```
 
 The development server:

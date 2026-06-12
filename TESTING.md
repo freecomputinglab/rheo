@@ -1,10 +1,12 @@
 # Testing
 
-## Run All Tests
+Integration tests live in [freecomputinglab/rheo-tests](https://github.com/freecomputinglab/rheo-tests), cloned side-by-side at `../rheo-tests`. All integration test commands require `RHEO_MANIFEST=../rheo/Cargo.toml` to resolve path dependencies.
+
+## Run All Tests (Unit Tests Only)
 ```bash
 cargo test
 ```
-Runs unit tests, integration tests, compat tests (skip unless `RUN_COMPAT_TESTS=1`), and doc tests.
+Runs unit tests for all crates in the main repo. Integration tests run from the sibling rheo-tests clone.
 
 ## Run Individual Test Suites
 
@@ -21,26 +23,30 @@ cargo test --lib -p rheo
 
 ### Integration Tests (harness)
 ```bash
-cargo test -p rheo-tests --test harness
+cd ../rheo-tests
+RHEO_MANIFEST=../rheo/Cargo.toml cargo test --test harness
 ```
-Runs 42 integration tests against example projects and test cases.
+Runs integration tests against example projects and test cases.
 
 ### Compat Tests (skip by default)
 ```bash
-cargo test -p rheo-tests --test compat
+cd ../rheo-tests
+RHEO_MANIFEST=../rheo/Cargo.toml cargo test --test compat
 ```
-Runs 5 compatibility tests against external Rheo projects (skip immediately unless `RUN_COMPAT_TESTS=1`).
+Runs compatibility tests against external Rheo projects (skip immediately unless `RUN_COMPAT_TESTS=1`).
 
 ### Compat Tests (actually execute)
 ```bash
-RUN_COMPAT_TESTS=1 cargo test -p rheo-tests --test compat
+cd ../rheo-tests
+RUN_COMPAT_TESTS=1 RHEO_MANIFEST=../rheo/Cargo.toml cargo test --test compat
 ```
-Clones 5 external repos and compiles them (~7 seconds).
+Clones external repos and compiles them (~7 seconds).
 
 ## Format-Specific Tests
 ```bash
-RUN_HTML_TESTS=1 cargo test -p rheo-tests --test harness
-RUN_PDF_TESTS=1 cargo test -p rheo-tests --test harness
-RUN_EPUB_TESTS=1 cargo test -p rheo-tests --test harness
+cd ../rheo-tests
+RHEO_MANIFEST=../rheo/Cargo.toml RUN_HTML_TESTS=1 cargo test --test harness
+RHEO_MANIFEST=../rheo/Cargo.toml RUN_PDF_TESTS=1 cargo test --test harness
+RHEO_MANIFEST=../rheo/Cargo.toml RUN_EPUB_TESTS=1 cargo test --test harness
 ```
 Only run tests targeting HTML/PDF/EPUB formats respectively.

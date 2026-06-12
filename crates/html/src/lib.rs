@@ -56,8 +56,8 @@ impl FormatPlugin for HtmlPlugin {
                 // The stylesheet included with the template mirrors the default stylesheet, so that
                 // users can build from it or start from scratch as they wish.
                 ("style.css", include_str!("templates/style.css")),
-                // A demonstrative JS file that just logs to console. See the examples/ directory for
-                // how to use Rheo with bundled JS.
+                // A demonstrative JS file that just logs to console. Use JS files in your project
+                // to add client-side interactivity to Rheo output.
                 ("index.js", include_str!("templates/index.js")),
             ],
             options_toml: Some(include_str!("templates/init/rheo_section.toml")),

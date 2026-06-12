@@ -10,9 +10,10 @@
 - `crates/html/` — HTML plugin (dev server, CSS/JS injection)
 - `crates/pdf/` — PDF plugin
 - `crates/epub/` — EPUB plugin
-- `crates/tests/` — Integration tests and harness
 - `src/typ/rheo.typ` — Core Typst template (auto-injected)
 - `build/` — Output dir (gitignored): `pdf/`, `html/`, `epub/`
+
+Integration tests and examples live in [freecomputinglab/rheo-tests](https://github.com/freecomputinglab/rheo-tests), cloned side-by-side at `../rheo-tests` for sibling path dependencies.
 
 ## Development Commands
 
@@ -26,7 +27,9 @@ cargo run -- clean <project-path>
 RUST_LOG=rheo=trace cargo run -- compile ... # debug logging
 
 # Tests
-cargo test                                    # run all tests
+cargo test                                    # run unit tests only
+# Integration tests run from ../rheo-tests with:
+RHEO_MANIFEST=../rheo/Cargo.toml cargo test --test harness
 See [TESTING.md](TESTING.md) for more test commands and options.
 cargo fmt && cargo clippy -- -D warnings
 ```
@@ -110,6 +113,8 @@ Feed variables:
 
 **NEVER run `jj git push` (or any push) — the user always pushes themselves.**
 Prepare commits and bookmarks, then stop and let the user push.
+
+**NEVER run `git` commands, not even read-only ones** (`git log`, `git show`, `git status`, `git diff`). Always use the jj equivalents (`jj log`, `jj show`, `jj status`, `jj diff`, `jj file show`). This applies in sibling repos too (e.g. `../rheo-tests`).
 
 ```bash
 jj status / jj diff / jj log / jj show
