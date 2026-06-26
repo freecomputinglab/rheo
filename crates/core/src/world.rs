@@ -370,18 +370,7 @@ impl World for RheoWorld {
         let now = Local::now();
         let with_offset = match offset {
             None => now,
-            Some(duration) => {
-                // Decompose duration to get total seconds
-                let parts = duration.decompose();
-                // parts: [weeks, days, hours, minutes, seconds]
-                let total_seconds = parts[0] * 7 * 24 * 3600
-                    + parts[1] * 24 * 3600
-                    + parts[2] * 3600
-                    + parts[3] * 60
-                    + parts[4];
-                let duration = chrono::Duration::seconds(total_seconds);
-                now + duration
-            }
+            Some(duration) => now + chrono::Duration::seconds(duration.seconds() as i64),
         };
 
         Datetime::from_ymd(
