@@ -312,7 +312,11 @@ mod tests {
         fn assets(&self) -> Vec<AssetConfig> {
             self.declared_assets.clone()
         }
-        fn compile(&self, _ctx: PluginContext<'_>) -> Result<()> {
+        fn compile(
+            &self,
+            _ctx: PluginContext<'_>,
+            _outputs: &[crate::plugins::SpineOutput],
+        ) -> Result<()> {
             Ok(())
         }
     }

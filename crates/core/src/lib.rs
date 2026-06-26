@@ -39,16 +39,13 @@ pub use results::{CompilationResults, FormatResult};
 pub use assets::AssetResolver;
 pub use build::{Build, BuildOptions};
 
-// Compile options and context
-pub use compile::{CompileUnit, RheoCompileOptions};
-
 // Configuration types
 pub use config::{AssetsField, PluginAssets, PluginSection, Spine};
 
 // Plugin trait and context
 pub use plugins::{
-    AssetConfig, CompiledHtmlVertebra, FormatInitTemplate, FormatPlugin, LinkStrategy, OpenHandle,
-    PackageAssets, PluginContext, ResolvedPackage, ServerHandle, SpineOptions,
+    AssetConfig, FormatInitTemplate, FormatPlugin, OpenHandle, PackageAssets, PluginContext,
+    ResolvedPackage, ServerHandle, SpineLayoutKind, SpineOptions, SpineOutput,
 };
 pub use reticulate::types::RheoValue;
 

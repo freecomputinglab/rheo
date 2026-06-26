@@ -1,9 +1,7 @@
 pub mod feed;
 mod server;
 
-use crate::feed::{AtomEntry, AtomFeed};
-use chrono::{DateTime, Utc};
-use rheo_core::{compile_document_to_string, html_utils};
+use rheo_core::html_utils;
 use serde::Deserialize;
 
 /// Bundled default HTML stylesheet.
@@ -11,15 +9,13 @@ use serde::Deserialize;
 pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
-    AssetConfig, CompiledHtmlVertebra, FormatInitTemplate, FormatPlugin, OpenHandle, PluginContext,
-    Result, RheoError, RheoValue, ServerHandle,
+    AssetConfig, FormatInitTemplate, FormatPlugin, OpenHandle, PluginContext, Result, RheoError,
+    ServerHandle, SpineOutput,
 };
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tracing::{debug, info, warn};
 
 /// Reload callback type - called by watch loop after successful compilation.
-/// Defined here because it's only needed by the HTML plugin's development server.
 pub type ReloadCallback = Box<dyn Fn() + Send + Sync>;
 
 /// Server handle for HTML plugin's development server
@@ -53,11 +49,7 @@ impl FormatPlugin for HtmlPlugin {
     fn format_init_template(&self) -> FormatInitTemplate {
         FormatInitTemplate {
             files: vec![
-                // The stylesheet included with the template mirrors the default stylesheet, so that
-                // users can build from it or start from scratch as they wish.
                 ("style.css", include_str!("templates/style.css")),
-                // A demonstrative JS file that just logs to console. Use JS files in your project
-                // to add client-side interactivity to Rheo output.
                 ("index.js", include_str!("templates/index.js")),
             ],
             options_toml: Some(include_str!("templates/init/rheo_section.toml")),
@@ -103,216 +95,88 @@ impl FormatPlugin for HtmlPlugin {
         ]
     }
 
-    fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        self.render(&ctx)?;
-        Ok(())
-    }
-
-    fn compile_vertebra(&self, ctx: PluginContext<'_>) -> Result<Option<CompiledHtmlVertebra>> {
-        Ok(Some(self.render(&ctx)?))
-    }
-
-    /// Emit `build/html/feed.xml` once, after every page is compiled, from the
-    /// documents produced during the per-file loop — no second compilation pass.
-    fn finalize(&self, ctx: &PluginContext<'_>, compiled: &[CompiledHtmlVertebra]) -> Result<()> {
-        self.generate_feed(ctx, compiled)
-    }
-}
-
-impl HtmlPlugin {
-    /// Compile one source file to its final HTML output (with CSS/JS and feed
-    /// autodiscovery injection) and write it, returning the raw compiled document
-    /// so the Atom feed can reuse it without recompiling.
-    fn render(&self, ctx: &PluginContext<'_>) -> Result<CompiledHtmlVertebra> {
-        let document = ctx.compile_to_html_document()?;
-        let html_string = compile_document_to_string(&document)?;
-
+    fn compile(&self, ctx: PluginContext<'_>, outputs: &[SpineOutput]) -> Result<()> {
         let css_assets = ctx.assets.get(&STYLESHEETS).filter(|v| !v.is_empty());
         let js_assets = ctx.assets.get(&SCRIPTS).filter(|v| !v.is_empty());
 
-        let (css_paths, inline_styles): (Vec<&str>, &[&str]) = match css_assets {
-            Some(assets) => {
-                for a in assets {
-                    info!("Found CSS stylesheet: {}", a.resolved_path.display());
-                }
-                let paths = assets
+        let css_paths: Vec<String> = css_assets
+            .map(|assets| {
+                assets
                     .iter()
-                    .map(|a| a.built_relative_path.as_str())
-                    .collect();
-                (paths, &[])
-            }
-            None => {
-                info!("No stylesheet found, using default");
-                (Vec::new(), &[DEFAULT_STYLESHEET])
-            }
-        };
+                    .inspect(|a| info!("Found CSS stylesheet: {}", a.resolved_path.display()))
+                    .map(|a| a.built_relative_path.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let use_default_css = css_paths.is_empty();
 
-        let js_paths: Vec<&str> = js_assets
-            .map(|v| v.iter().map(|a| a.built_relative_path.as_str()).collect())
+        let js_paths: Vec<String> = js_assets
+            .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
             .unwrap_or_default();
 
-        // Inline styles are applied via string manipulation (see
-        // `inject_inline_styles`), so they happen before any DOM parse.
-        let html_string = html_utils::inject_inline_styles(&html_string, inline_styles)?;
-
-        // Single-parse invariant: the remaining per-page mutations
-        // (`inject_head_links` for stylesheets/scripts, then `inject_feed_link`
-        // for Atom autodiscovery) share ONE `HtmlDom`, so each page is parsed and
-        // serialized at most once. Head-links run before the feed link to match
-        // the prior two-pass ordering (both insert after the last <meta>).
-        let needs_head_links = !css_paths.is_empty() || !js_paths.is_empty();
         let html_cfg = ctx.config.parse_extra::<HtmlConfig>()?;
         let feed_title = html_cfg.resolve_title(ctx.spine.title.as_deref(), &ctx.project.name);
         let feed_link = html_cfg
             .base_url()
             .map(|base| (format!("{base}/feed.xml"), feed_title));
 
-        let html_string = if needs_head_links || feed_link.is_some() {
-            let mut dom = html_utils::HtmlDom::parse(&html_string)?;
-            if needs_head_links {
-                dom.inject_head_links(&[], &css_paths, &js_paths)?;
-            }
-            if let Some((href, title)) = &feed_link {
-                dom.inject_feed_link(href, title)?;
-            }
-            dom.serialize()?
-        } else {
-            html_string
-        };
+        for output in outputs {
+            let html_string = String::from_utf8(output.bytes.to_vec()).map_err(|e| {
+                RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e))
+            })?;
 
-        debug!(size = html_string.len(), "writing HTML file");
-        let output = &ctx.options.output;
-        std::fs::write(output, &html_string)
-            .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", output)))?;
-
-        info!(output = %output.display(), "successfully compiled to HTML");
-
-        Ok(CompiledHtmlVertebra {
-            path: ctx
-                .options
-                .input()
-                .map(Path::to_path_buf)
-                .unwrap_or_default(),
-            document,
-            vars: Default::default(),
-        })
-    }
-
-    /// Emit `build/html/feed.xml`: one `<entry>` per compiled vertebra that
-    /// declares `rheo-feed-title`. Gated on `[html].feed_base_url` being set.
-    ///
-    /// `compiled` is every page produced by the per-file loop (spine order, vars
-    /// populated), so no vertebra is recompiled here.
-    fn generate_feed(
-        &self,
-        ctx: &PluginContext<'_>,
-        compiled: &[CompiledHtmlVertebra],
-    ) -> Result<()> {
-        let cfg = ctx.config.parse_extra::<HtmlConfig>()?;
-        let Some(base) = cfg.base_url() else {
-            debug!("no [html].feed_base_url set; skipping Atom feed");
-            return Ok(());
-        };
-
-        // Harvest each vertebra's `rheo-*` vars (parse-only, no recompile) keyed
-        // by source path. Only done once a feed is actually configured.
-        let vars_by_path: HashMap<PathBuf, HashMap<String, RheoValue>> =
-            ctx.spine_vars()?.into_iter().collect();
-
-        let mut entries = Vec::new();
-        for v in compiled {
-            let Some(vars) = vars_by_path.get(&v.path) else {
-                continue;
-            };
-            let Some(title) = vars.get("feed-title").and_then(|val| val.as_str()) else {
-                continue;
+            // Inject default stylesheet as inline styles when no user CSS is provided.
+            let html_string = if use_default_css {
+                info!("No stylesheet found, using default");
+                html_utils::inject_inline_styles(&html_string, &[DEFAULT_STYLESHEET])?
+            } else {
+                html_string
             };
 
-            let updated = feed_updated(&v.path, vars)?;
-            let html = compile_document_to_string(&v.document)?;
-            let body = html_utils::HtmlDom::parse(&html)?.feed_content_inner_html()?;
-            let stem = v
-                .path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or_default();
-            let href = format!("{base}/{stem}.html");
+            let needs_head_links = !css_paths.is_empty() || !js_paths.is_empty();
+            let css_refs: Vec<&str> = css_paths.iter().map(|s| s.as_str()).collect();
+            let js_refs: Vec<&str> = js_paths.iter().map(|s| s.as_str()).collect();
 
-            entries.push(AtomEntry {
-                id: href.clone(),
-                title: title.to_string(),
-                updated,
-                content_html: body,
-                alternate_href: href,
-            });
+            let html_string = if needs_head_links || feed_link.is_some() {
+                let mut dom = html_utils::HtmlDom::parse(&html_string)?;
+                if needs_head_links {
+                    dom.inject_head_links(&[], &css_refs, &js_refs)?;
+                }
+                if let Some((href, title)) = &feed_link {
+                    dom.inject_feed_link(href, title)?;
+                }
+                dom.serialize()?
+            } else {
+                html_string
+            };
+
+            let out_path = ctx.output_dir.join(&output.output_path);
+            debug!(size = html_string.len(), "writing HTML file");
+            std::fs::write(&out_path, &html_string)
+                .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", out_path)))?;
+            info!(output = %out_path.display(), "successfully compiled to HTML");
         }
 
-        let feed = AtomFeed {
-            id: format!("{base}/feed.xml"),
-            title: cfg.resolve_title(ctx.spine.title.as_deref(), &ctx.project.name),
-            updated: Utc::now(),
-            self_href: format!("{base}/feed.xml"),
-            author: cfg
-                .feed_author
-                .clone()
-                .unwrap_or_else(|| "Rheo".to_string()),
-            entries,
-        };
-
-        let feed_path = ctx
-            .output_config
-            .dir_for_plugin(PLUGIN_NAME)
-            .join("feed.xml");
-        std::fs::write(&feed_path, feed.serialize())
-            .map_err(|e| RheoError::io(e, format!("writing Atom feed to {:?}", feed_path)))?;
-        info!(output = %feed_path.display(), "generated Atom feed");
         Ok(())
     }
-}
-
-/// The entry's `updated` timestamp: `rheo-feed-updated` (RFC 3339) if present in
-/// `vars`, else the source file's modification time.
-fn feed_updated(path: &Path, vars: &HashMap<String, RheoValue>) -> Result<DateTime<Utc>> {
-    if let Some(s) = vars.get("feed-updated").and_then(|val| val.as_str()) {
-        return DateTime::parse_from_rfc3339(s)
-            .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|_| {
-                RheoError::invalid_data(format!(
-                    "{}: rheo-feed-updated must be an RFC 3339 datetime",
-                    path.display()
-                ))
-            });
-    }
-
-    let modified = std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .map_err(|e| RheoError::io(e, format!("reading mtime of {:?}", path)))?;
-    Ok(DateTime::<Utc>::from(modified))
 }
 
 /// Typed view of the `[html]` section's format-specific keys.
 #[derive(Debug, Deserialize, Default)]
 struct HtmlConfig {
-    /// Base URL for the Atom feed; when set, `feed.xml` is emitted and an
-    /// autodiscovery `<link>` is injected into every page.
     feed_base_url: Option<String>,
-    /// `atom:author` of the feed; defaults to `"Rheo"` when absent.
+    #[allow(dead_code)]
     feed_author: Option<String>,
-    /// `<title>` of the Atom feed and the autodiscovery `<link>`.
-    /// Falls back to the HTML spine title, then the project/directory name.
     feed_title: Option<String>,
 }
 
 impl HtmlConfig {
-    /// The feed base URL with any trailing `/` trimmed, so callers can join
-    /// paths with a single `/`. `None` when `feed_base_url` is unset.
     fn base_url(&self) -> Option<String> {
         self.feed_base_url
             .as_deref()
             .map(|s| s.trim_end_matches('/').to_string())
     }
 
-    /// Resolve the feed title: `[html] feed_title` → spine title → project name.
     fn resolve_title(&self, spine_title: Option<&str>, project_name: &str) -> String {
         self.feed_title
             .as_deref()
