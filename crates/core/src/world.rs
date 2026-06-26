@@ -96,6 +96,7 @@ impl RheoWorld {
         }
 
         let mut font_store = FontStore::new();
+        font_store.extend(typst_kit::fonts::embedded());
         if include_system_fonts {
             font_store.extend(typst_kit::fonts::system());
         }
