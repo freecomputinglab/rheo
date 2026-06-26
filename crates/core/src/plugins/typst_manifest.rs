@@ -1,6 +1,7 @@
 use crate::config::PluginAssets;
 use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
 use crate::reticulate::parser::extract_package_imports;
+use crate::rheo_packages::RheoPackages;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -9,7 +10,6 @@ use typst::syntax::Source;
 use typst::syntax::package::PackageSpec;
 use typst_kit::downloader::SystemDownloader;
 use typst_kit::packages::SystemPackages;
-use crate::rheo_packages::RheoPackages;
 
 /// Build the standard Typst package search directories:
 /// `XDG_DATA_HOME/typst/packages`, `XDG_CACHE_HOME/typst/packages`,

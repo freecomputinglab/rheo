@@ -363,7 +363,10 @@ fn try_register_wrapper(let_binding: &SyntaxNode, map: &mut WrapperMap) {
     }
 
     let fn_name = idents[0].leaf_text().to_string();
-    let has_link_alias = idents.iter().skip(1).any(|c| c.leaf_text() == LINK_IDENT_ID);
+    let has_link_alias = idents
+        .iter()
+        .skip(1)
+        .any(|c| c.leaf_text() == LINK_IDENT_ID);
     if has_link_alias {
         map.insert(fn_name, 0);
     }

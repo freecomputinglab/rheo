@@ -8,8 +8,7 @@ use typst_kit::packages::FsPackages;
 use typst_library::diag::{PackageError, PackageResult};
 use typst_syntax::package::PackageSpec;
 
-const REGISTRY_URL: &str =
-    "https://github.com/freecomputinglab/rheo-packages/releases/download";
+const REGISTRY_URL: &str = "https://github.com/freecomputinglab/rheo-packages/releases/download";
 
 /// Downloads and caches packages from the @rheo namespace via GitHub Releases.
 ///
@@ -23,8 +22,7 @@ pub struct RheoPackages {
 impl RheoPackages {
     pub fn new(downloader: SystemDownloader) -> Self {
         Self {
-            cache: dirs::cache_dir()
-                .map(|d| FsPackages::new(d.join("typst/packages"))),
+            cache: dirs::cache_dir().map(|d| FsPackages::new(d.join("typst/packages"))),
             downloader,
         }
     }
@@ -65,9 +63,9 @@ impl RheoPackages {
         cache.store(spec, |tempdir| {
             let decompressed = GzDecoder::new(Cursor::new(data));
             let mut archive = tar::Archive::new(decompressed);
-            archive.unpack(tempdir).map_err(|e| {
-                PackageError::MalformedArchive(Some(eco_format!("{e}")))
-            })
+            archive
+                .unpack(tempdir)
+                .map_err(|e| PackageError::MalformedArchive(Some(eco_format!("{e}"))))
         })?;
 
         cache

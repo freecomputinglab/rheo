@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::plugins::LinkStrategy;
+use crate::rheo_packages::RheoPackages;
 use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
@@ -10,16 +11,15 @@ use parking_lot::Mutex;
 use tracing::warn;
 use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Datetime, Dict, IntoValue};
-use typst::syntax::{FileId, Lines, Source, RootedPath, VirtualPath, VirtualRoot};
+use typst::syntax::{FileId, Lines, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
 use typst_kit::downloader::SystemDownloader;
 use typst_kit::fonts::FontStore;
 use typst_kit::packages::SystemPackages;
-use crate::rheo_packages::RheoPackages;
-use typst_library::{Feature, Features};
 use typst_library::foundations::Duration;
+use typst_library::{Feature, Features};
 
 /// Build sys.inputs Dict for Typst compilation.
 fn build_inputs(format_name: Option<&str>) -> Dict {
@@ -75,7 +75,10 @@ impl RheoWorld {
         let main_path = crate::path_utils::canonicalize_path(main_file)?;
 
         let main_vpath = VirtualPath::virtualize(&root, &main_path).map_err(|e| {
-            RheoError::path(&main_path, &format!("main file must be within root directory: {}", e))
+            RheoError::path(
+                &main_path,
+                &format!("main file must be within root directory: {}", e),
+            )
         })?;
         let rooted_path = RootedPath::new(VirtualRoot::Project, main_vpath);
         let main = rooted_path.intern();
@@ -134,7 +137,10 @@ impl RheoWorld {
         let main_path = crate::path_utils::canonicalize_path(main_file)?;
 
         let main_vpath = VirtualPath::virtualize(&self.root, &main_path).map_err(|e| {
-            RheoError::path(&main_path, &format!("main file must be within root directory: {}", e))
+            RheoError::path(
+                &main_path,
+                &format!("main file must be within root directory: {}", e),
+            )
         })?;
         let rooted_path = RootedPath::new(VirtualRoot::Project, main_vpath);
         self.main = rooted_path.intern();
