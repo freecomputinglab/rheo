@@ -89,16 +89,10 @@ impl RheoWorld {
 
         let mut font_store = FontStore::new();
         if include_system_fonts {
-            #[cfg(feature = "embedded-fonts")]
-            {
-                font_store.extend(typst_kit::fonts::system());
-            }
+            font_store.extend(typst_kit::fonts::system());
         }
         for dir in &font_dirs {
-            #[cfg(feature = "scan-fonts")]
-            {
-                font_store.extend(typst_kit::fonts::scan(dir));
-            }
+            font_store.extend(typst_kit::fonts::scan(dir));
         }
 
         Ok(Self {

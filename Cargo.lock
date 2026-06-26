@@ -3799,7 +3799,9 @@ version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55a24650fc436d32deb55b49fd63f7bcad3a864c96f52587b9934c85e0092d6f"
 dependencies = [
+ "dirs",
  "ecow",
+ "fontdb",
  "once_cell",
  "parking_lot",
  "rustc-hash",
