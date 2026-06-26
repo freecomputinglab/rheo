@@ -83,7 +83,7 @@ impl RheoWorld {
         let rooted_path = RootedPath::new(VirtualRoot::Project, main_vpath);
         let main = rooted_path.intern();
 
-        let features: Features = [Feature::Html].into_iter().collect();
+        let features: Features = [Feature::Html, Feature::Bundle].into_iter().collect();
         let inputs = build_inputs(format_name);
         let library = Library::builder()
             .with_features(features)
@@ -252,6 +252,15 @@ impl RheoWorld {
 
         tracing::info!("compiling to PDF");
         let result = typst::compile::<typst_layout::PagedDocument>(self);
+        unwrap_compilation_result(Some(self), result, None::<fn(&_) -> bool>)
+    }
+
+    /// Compile the current main file to a multi-file bundle.
+    pub fn compile_bundle(&self) -> crate::Result<typst_bundle::Bundle> {
+        use crate::diagnostics::unwrap_compilation_result;
+
+        tracing::info!("compiling to bundle");
+        let result = typst::compile::<typst_bundle::Bundle>(self);
         unwrap_compilation_result(Some(self), result, None::<fn(&_) -> bool>)
     }
 

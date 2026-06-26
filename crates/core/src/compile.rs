@@ -83,3 +83,9 @@ pub fn document_to_pdf_bytes(document: &typst_layout::PagedDocument) -> crate::R
     typst_pdf::pdf(document, &PdfOptions::default())
         .map_err(|e| handle_export_errors(e, ExportErrorType::Pdf))
 }
+
+/// Export a bundle to its virtual filesystem (output-path -> bytes).
+pub fn export_bundle(bundle: &typst_bundle::Bundle) -> crate::Result<typst_bundle::VirtualFs> {
+    typst_bundle::export(bundle, &typst_bundle::BundleOptions::default())
+        .map_err(|e| handle_export_errors(e, ExportErrorType::Bundle))
+}
