@@ -178,9 +178,10 @@ impl RheoWorld {
             return fs_root.resolve(id.vpath());
         }
 
-        let path = id.vpath().realize(&self.root).map_err(|_| {
-            FileError::NotFound(id.vpath().get_with_slash().to_string().into())
-        })?;
+        let path = id
+            .vpath()
+            .realize(&self.root)
+            .map_err(|_| FileError::NotFound(id.vpath().get_with_slash().to_string().into()))?;
 
         if !path.exists() {
             // Fallback 1: Look for just the filename at project root.
@@ -404,7 +405,8 @@ impl<'a> Files<'a> for RheoWorld {
             format!("{package}{}", vpath.get_with_slash())
         } else {
             vpath
-                .realize(&self.root).ok()
+                .realize(&self.root)
+                .ok()
                 .and_then(|abs| pathdiff::diff_paths(abs, &self.root))
                 .as_deref()
                 .unwrap_or_else(|| Path::new(vpath.get_without_slash()))
