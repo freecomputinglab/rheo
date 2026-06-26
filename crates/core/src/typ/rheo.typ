@@ -22,8 +22,10 @@
 // Libertinus Serif is embedded in Typst, so we can rely on it always being available. Any subsequent font declarations will override this.
 #set text(font: "Libertinus Serif")
 
-// Synthesized cross-vertebra handle anchors are invisible figure elements.
-// Hide them and fix @ref display to show the vertebra title, not a figure counter.
+// Synthesized cross-vertebra handle anchors use labeled #figure elements.
+// #metadata and bare document labels are not referenceable in Typst 0.15 —
+// #figure is the only element that supports cross-document @handle resolution.
+// Hide them so they render nothing, and fix @ref display to the vertebra title.
 #show figure.where(kind: "rheo-handle"): none
 #show ref: it => {
   if it.element != none and it.element.func() == figure and it.element.kind == "rheo-handle" {

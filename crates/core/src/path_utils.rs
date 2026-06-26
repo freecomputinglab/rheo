@@ -57,6 +57,34 @@ impl PathExt for Path {
     }
 }
 
+/// Convert a `Path` to a forward-slash string (cross-platform safe for Typst source).
+pub fn to_forward_slash(p: &Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
+}
+
+/// Sanitize one label segment: keep alphanumeric, `-`, `_`; replace everything
+/// else with `_`. Safe for use in Typst label names.
+pub fn sanitize_handle_segment(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Escape text for use inside Typst square-bracket content `[…]`.
+/// Escapes `\`, `[`, `]`, `#`.
+pub fn escape_typst_content(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+        .replace('#', "\\#")
+}
+
 /// Canonicalize a path, wrapping errors in RheoError.
 pub fn canonicalize_path(path: &Path) -> Result<PathBuf> {
     path.canonicalize()

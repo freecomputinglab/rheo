@@ -19,7 +19,6 @@ pub mod reticulate;
 pub mod rheo_packages;
 pub mod typst_types;
 pub mod validation;
-pub mod virtual_main;
 pub mod watch;
 pub mod world;
 
