@@ -16,4 +16,10 @@ pub use typst::ecow::eco_vec;
 pub use typst::foundations::{NativeElement, StyleChain};
 
 // Re-export model types for document structure
-pub use typst::model::{HeadingElem, OutlineNode};
+pub use typst::model::{Document, HeadingElem, OutlineNode};
+
+// Re-export introspection trait (needed to call query() on HtmlIntrospector)
+pub use typst::introspection::Introspector;
+
+// Re-export Content for type annotations in plugin closures
+pub use typst::foundations::Content;

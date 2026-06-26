@@ -8,7 +8,8 @@ use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
 use rheo_core::{
-    DocumentTitle, EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain,
+    Content, Document, DocumentTitle, EcoString, HeadingElem, HtmlDocument, Introspector,
+    NativeElement, OutlineNode, StyleChain,
 };
 use rheo_core::{
     FormatInitTemplate, FormatPlugin, PluginContext, PluginSection, Result, RheoError, Spine,
@@ -169,7 +170,7 @@ pub fn generate_package(
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
 ) -> Result<String> {
-    let info = &items[0].document.info;
+    let info = items[0].document.info();
     let language = info.locale.unwrap_or_default().rfc_3066();
     let title = spine
         .title
@@ -364,10 +365,10 @@ impl EpubItem {
     }
 
     fn outline(doc: &HtmlDocument, href: &IriRef) -> (Vec<EcoString>, Vec<OutlineNode<EcoString>>) {
-        let elems = doc.introspector.query(&HeadingElem::ELEM.select());
+        let elems = doc.introspector().query(&HeadingElem::ELEM.select());
         let (nodes, heading_ids): (Vec<_>, Vec<_>) = elems
             .iter()
-            .map(|elem| {
+            .map(|elem: &Content| {
                 let heading = elem
                     .to_packed::<HeadingElem>()
                     .expect("must be heading b/c queried for headings");
@@ -394,7 +395,7 @@ impl EpubItem {
     }
 
     fn title(&self) -> EcoString {
-        match &self.document.info.title {
+        match &self.document.info().title {
             Some(title) => title.clone(),
             None => self.href.path().as_str().into(),
         }

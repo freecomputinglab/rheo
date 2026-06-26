@@ -66,8 +66,8 @@ pub use pdf_utils::DocumentTitle;
 
 // Typst types (commonly used by plugins)
 pub use typst_types::{
-    EcoString, HeadingElem, HtmlDocument, NativeElement, OutlineNode, StyleChain, eco_format,
-    eco_vec,
+    Content, Document, EcoString, HeadingElem, HtmlDocument, Introspector, NativeElement,
+    OutlineNode, StyleChain, eco_format, eco_vec,
 };
 
 /// Result type alias using RheoError
