@@ -77,7 +77,7 @@ impl RheoWorld {
         let main_vpath = VirtualPath::virtualize(&root, &main_path).map_err(|e| {
             RheoError::path(
                 &main_path,
-                &format!("main file must be within root directory: {}", e),
+                format!("main file must be within root directory: {}", e),
             )
         })?;
         let rooted_path = RootedPath::new(VirtualRoot::Project, main_vpath);
@@ -139,7 +139,7 @@ impl RheoWorld {
         let main_vpath = VirtualPath::virtualize(&self.root, &main_path).map_err(|e| {
             RheoError::path(
                 &main_path,
-                &format!("main file must be within root directory: {}", e),
+                format!("main file must be within root directory: {}", e),
             )
         })?;
         let rooted_path = RootedPath::new(VirtualRoot::Project, main_vpath);
@@ -158,18 +158,18 @@ impl RheoWorld {
 
         let transformer = LinkTransformer::new(format_name).with_strategy(self.link_strategy);
         transformer
-            .transform_source(text, id.vpath().as_rootless_path(), &self.root)
+            .transform_source(text, Path::new(id.vpath().get_without_slash()), &self.root)
             .map_err(|e| FileError::Other(Some(e.to_string().into())))
     }
 
     fn path_for_id(&self, id: FileId) -> FileResult<PathBuf> {
-        if id.vpath().as_rooted_path().starts_with("<") {
+        if id.vpath().get_with_slash().starts_with("<") {
             return Err(FileError::NotFound(
-                id.vpath().as_rooted_path().display().to_string().into(),
+                id.vpath().get_with_slash().to_string().into(),
             ));
         }
 
-        if let Some(spec) = id.package() {
+        if let VirtualRoot::Package(spec) = id.root() {
             let fs_root = if spec.namespace == "rheo" {
                 self.rheo_packages.obtain(spec).map_err(FileError::from)?
             } else {
@@ -178,8 +178,8 @@ impl RheoWorld {
             return fs_root.resolve(id.vpath());
         }
 
-        let path = id.vpath().resolve(&self.root).ok_or_else(|| {
-            FileError::NotFound(id.vpath().as_rooted_path().display().to_string().into())
+        let path = id.vpath().realize(&self.root).map_err(|_| {
+            FileError::NotFound(id.vpath().get_with_slash().to_string().into())
         })?;
 
         if !path.exists() {
@@ -188,12 +188,12 @@ impl RheoWorld {
             // file if the intended file doesn't exist. For example, if importing
             // `chapters/intro.typ` fails but `intro.typ` exists at root, this will
             // load the wrong file.
-            if let Some(filename) = id.vpath().as_rooted_path().file_name() {
+            if let Some(filename) = Path::new(id.vpath().get_with_slash()).file_name() {
                 let filename_path = self.root.join(filename);
                 if filename_path.exists() {
                     // Log a warning so this fallback is visible in verbose mode
                     warn!(
-                        requested = %id.vpath().as_rooted_path().display(),
+                        requested = %id.vpath().get_with_slash(),
                         loaded = %filename_path.display(),
                         "path resolution fallback: using filename from project root"
                     );
@@ -400,14 +400,14 @@ impl<'a> Files<'a> for RheoWorld {
 
     fn name(&'a self, id: FileId) -> std::result::Result<Self::Name, CodespanError> {
         let vpath = id.vpath();
-        Ok(if let Some(package) = id.package() {
-            format!("{package}{}", vpath.as_rooted_path().display())
+        Ok(if let VirtualRoot::Package(package) = id.root() {
+            format!("{package}{}", vpath.get_with_slash())
         } else {
             vpath
-                .resolve(&self.root)
+                .realize(&self.root).ok()
                 .and_then(|abs| pathdiff::diff_paths(abs, &self.root))
                 .as_deref()
-                .unwrap_or_else(|| vpath.as_rootless_path())
+                .unwrap_or_else(|| Path::new(vpath.get_without_slash()))
                 .to_string_lossy()
                 .into()
         })

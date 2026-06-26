@@ -26,9 +26,6 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Install @rheo packages
-        uses: ./.github/actions/install-rheo-packages
-
       - name: Clone rheo-tests as sibling
         shell: bash
         run: |
