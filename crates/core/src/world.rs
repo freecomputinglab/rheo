@@ -14,7 +14,9 @@ use typst::syntax::{FileId, Lines, Source, RootedPath, VirtualPath, VirtualRoot}
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
+use typst_kit::downloader::SystemDownloader;
 use typst_kit::fonts::FontStore;
+use typst_kit::packages::SystemPackages;
 use typst_library::{Feature, Features};
 use typst_library::foundations::Duration;
 
@@ -34,6 +36,7 @@ pub struct RheoWorld {
     library: LazyHash<Library>,
     book: LazyHash<FontBook>,
     font_store: FontStore,
+    package_storage: SystemPackages,
     slots: Mutex<HashMap<FileId, FileSlot>>,
     /// Output format name for link transformations and polyfill injection.
     /// None = no transformation.
@@ -95,12 +98,17 @@ impl RheoWorld {
             font_store.extend(typst_kit::fonts::scan(dir));
         }
 
+        let package_storage = SystemPackages::new(
+            SystemDownloader::new(concat!("rheo/", env!("CARGO_PKG_VERSION"))),
+        );
+
         Ok(Self {
             root,
             main,
             library: LazyHash::new(library),
             book: font_store.book().clone(),
             font_store,
+            package_storage,
             slots: Mutex::new(HashMap::new()),
             format_name: format_name.map(str::to_string),
             link_strategy,
@@ -152,12 +160,9 @@ impl RheoWorld {
             ));
         }
 
-        // For now, only resolve local files (not packages)
-        // Package support would require SystemPackages which needs async downloader
-        if id.package().is_some() {
-            return Err(FileError::NotFound(
-                id.vpath().as_rooted_path().display().to_string().into(),
-            ));
+        if let Some(spec) = id.package() {
+            let fs_root = self.package_storage.obtain(spec).map_err(FileError::from)?;
+            return fs_root.resolve(id.vpath());
         }
 
         let path = id.vpath().resolve(&self.root).ok_or_else(|| {
