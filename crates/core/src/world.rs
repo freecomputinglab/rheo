@@ -47,6 +47,9 @@ pub struct RheoWorld {
     link_strategy: LinkStrategy,
     /// Plugin-contributed Typst library code, injected after core prelude.
     plugin_library: Option<String>,
+    /// In-memory source for the main file. When set, the world serves this
+    /// content for the main FileId instead of reading from disk.
+    virtual_main_source: Option<String>,
 }
 
 struct FileSlot {
@@ -120,6 +123,57 @@ impl RheoWorld {
             format_name: format_name.map(str::to_string),
             link_strategy,
             plugin_library,
+            virtual_main_source: None,
+        })
+    }
+
+    /// Create a world whose main file is a synthesized in-memory source.
+    ///
+    /// Used for bundle compilation where the virtual main is synthesized by
+    /// `virtual_main::build_virtual_main` rather than read from disk.
+    pub fn new_with_virtual_main(
+        root: &Path,
+        virtual_main_source: String,
+        font_dirs: Vec<PathBuf>,
+    ) -> Result<Self> {
+        // The virtual main uses a synthetic path that doesn't exist on disk.
+        let main_vpath = typst::syntax::VirtualPath::new("rheo_spine.typ")
+            .expect("rheo_spine.typ is a valid virtual path");
+        let main = typst::syntax::RootedPath::new(typst::syntax::VirtualRoot::Project, main_vpath)
+            .intern();
+
+        let root = crate::path_utils::canonicalize_path(root)?;
+
+        let features: Features = [Feature::Html, Feature::Bundle].into_iter().collect();
+        let library = Library::builder().with_features(features).build();
+
+        let include_system_fonts = std::env::var("TYPST_IGNORE_SYSTEM_FONTS").is_err();
+        let mut font_store = FontStore::new();
+        font_store.extend(typst_kit::fonts::embedded());
+        if include_system_fonts {
+            font_store.extend(typst_kit::fonts::system());
+        }
+        for dir in &font_dirs {
+            font_store.extend(typst_kit::fonts::scan(dir));
+        }
+
+        let user_agent = concat!("rheo/", env!("CARGO_PKG_VERSION"));
+        let package_storage = SystemPackages::new(SystemDownloader::new(user_agent));
+        let rheo_packages = RheoPackages::new(SystemDownloader::new(user_agent));
+
+        Ok(Self {
+            root,
+            main,
+            library: LazyHash::new(library),
+            book: font_store.book().clone(),
+            font_store,
+            package_storage,
+            rheo_packages,
+            slots: Mutex::new(HashMap::new()),
+            format_name: None,
+            link_strategy: crate::plugins::LinkStrategy::ExtensionRewrite,
+            plugin_library: None,
+            virtual_main_source: Some(virtual_main_source),
         })
     }
 
@@ -333,8 +387,15 @@ impl World for RheoWorld {
             return Ok(source.clone());
         }
 
-        let path = self.path_for_id(id)?;
-        let mut text = fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
+        // Serve the synthesized virtual main from memory, bypassing disk.
+        let mut text = if id == self.main
+            && let Some(ref vm) = self.virtual_main_source
+        {
+            vm.clone()
+        } else {
+            let path = self.path_for_id(id)?;
+            fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?
+        };
 
         // Inject target() polyfill for all plugin formats.
         let target_polyfill = if self.format_name.is_some() {
