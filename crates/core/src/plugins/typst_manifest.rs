@@ -7,8 +7,6 @@ use std::str::FromStr;
 use tracing::warn;
 use typst::syntax::Source;
 use typst::syntax::package::PackageSpec;
-use typst_kit::download::Downloader;
-use typst_kit::package::PackageStorage;
 
 /// Build the standard Typst package search directories:
 /// `XDG_DATA_HOME/typst/packages`, `XDG_CACHE_HOME/typst/packages`,
@@ -157,15 +155,16 @@ pub fn detect_manifest_package_assets(
 ///
 /// Call this before `detect_manifest_package_assets` so that scan can see
 /// packages Typst would otherwise only download during compile.
+///
+/// Note: This is currently a no-op due to typst-kit 0.15.0 API changes.
+/// Package downloads now require async SystemPackages which needs
+/// re-architecture.
 pub fn prewarm_packages(import_paths: &[String]) {
     if import_paths.is_empty() {
         return;
     }
-    let storage = PackageStorage::new(
-        None,
-        None,
-        Downloader::new(concat!("rheo/", env!("CARGO_PKG_VERSION"))),
-    );
+    // TODO: Re-implement with SystemPackages and SystemDownloader
+    // For now, we skip prewarming and let the compiler download packages on-demand
     for spec_str in import_paths {
         let spec = match PackageSpec::from_str(spec_str) {
             Ok(s) => s,
@@ -174,14 +173,10 @@ pub fn prewarm_packages(import_paths: &[String]) {
         if spec.namespace != "preview" {
             continue;
         }
-        let mut progress = crate::world::PrintDownload::new(&spec);
-        if let Err(e) = storage.prepare_package(&spec, &mut progress) {
-            warn!(
-                spec = %spec_str,
-                error = ?e,
-                "package pre-warm failed; auto-detect may miss assets"
-            );
-        }
+        warn!(
+            spec = %spec_str,
+            "package pre-warm skipped (not yet implemented for typst 0.15)"
+        );
     }
 }
 

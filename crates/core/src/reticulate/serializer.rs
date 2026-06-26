@@ -84,7 +84,7 @@ pub fn find_code_block_ranges(source: &Source) -> Vec<Range<usize>> {
 
 /// Recursively collect byte ranges of all Raw nodes (code blocks and inline code)
 fn collect_raw_ranges(node: &SyntaxNode, ranges: &mut Vec<Range<usize>>, offset: usize) {
-    let node_len = node.text().len();
+    let node_len = node.leaf_text().len();
 
     // If this is a Raw node, add its byte range
     if node.kind() == SyntaxKind::Raw {
@@ -94,7 +94,7 @@ fn collect_raw_ranges(node: &SyntaxNode, ranges: &mut Vec<Range<usize>>, offset:
     // Recurse into children
     let mut child_offset = offset;
     for child in node.children() {
-        let child_len = child.text().len();
+        let child_len = child.leaf_text().len();
         collect_raw_ranges(child, ranges, child_offset);
         child_offset += child_len;
     }

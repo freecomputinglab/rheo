@@ -42,7 +42,7 @@ pub fn print_diagnostics(
             diagnostic
                 .hints
                 .iter()
-                .map(|s| (eco_format!("hint: {}", s)).into())
+                .map(|s| (eco_format!("hint: {}", s.v)).into())
                 .collect(),
         )
         .with_labels(label(world, diagnostic.span).into_iter().collect());
@@ -54,7 +54,7 @@ pub fn print_diagnostics(
             let message = point.v.to_string();
             let help = Diagnostic::help()
                 .with_message(message)
-                .with_labels(label(world, point.span).into_iter().collect());
+                .with_labels(label(world, point.span.into()).into_iter().collect());
 
             term::emit_to_write_style(&mut stderr, &config, world, &help)?;
         }
@@ -65,10 +65,12 @@ pub fn print_diagnostics(
 
 /// Create a label for a span.
 ///
-/// This converts a Typst span into a codespan-reporting label pointing
+/// This converts a Typst DiagSpan into a codespan-reporting label pointing
 /// to the primary location of an error or warning.
-fn label(world: &RheoWorld, span: typst::syntax::Span) -> Option<Label<typst::syntax::FileId>> {
-    Some(Label::primary(span.id()?, world.range(span)?))
+fn label(world: &RheoWorld, span: typst::syntax::DiagSpan) -> Option<Label<typst::syntax::FileId>> {
+    let id = span.id()?;
+    let range = world.range(span)?;
+    Some(Label::primary(id, range))
 }
 
 /// Process Typst compilation warnings.
@@ -231,7 +233,7 @@ mod tests {
     // Helper to create mock SourceDiagnostic for testing
     fn create_diagnostic(message: &str, severity: Severity) -> SourceDiagnostic {
         SourceDiagnostic {
-            span: Span::detached(),
+            span: Span::detached().into(),
             message: EcoString::from(message),
             severity,
             hints: eco_vec![],
