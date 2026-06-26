@@ -77,6 +77,10 @@ iref = { version = "4.0", features = ["serde"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 itertools = "0.14.0"
 
+# Compression / archive
+flate2 = { version = "1", features = ["zlib-rs"] }
+tar = "0.4"
+
 # Other dependencies
 ecow = "0.2"
 regex = "1.10"

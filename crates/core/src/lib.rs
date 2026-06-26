@@ -16,6 +16,7 @@ pub mod plugins;
 pub mod project;
 pub mod results;
 pub mod reticulate;
+pub mod rheo_packages;
 pub mod typst_types;
 pub mod validation;
 pub mod watch;

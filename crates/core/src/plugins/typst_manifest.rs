@@ -9,6 +9,7 @@ use typst::syntax::Source;
 use typst::syntax::package::PackageSpec;
 use typst_kit::downloader::SystemDownloader;
 use typst_kit::packages::SystemPackages;
+use crate::rheo_packages::RheoPackages;
 
 /// Build the standard Typst package search directories:
 /// `XDG_DATA_HOME/typst/packages`, `XDG_CACHE_HOME/typst/packages`,
@@ -164,18 +165,20 @@ pub fn prewarm_packages(import_paths: &[String]) {
     if import_paths.is_empty() {
         return;
     }
-    let storage = SystemPackages::new(
-        SystemDownloader::new(concat!("rheo/", env!("CARGO_PKG_VERSION"))),
-    );
+    let user_agent = concat!("rheo/", env!("CARGO_PKG_VERSION"));
+    let preview_storage = SystemPackages::new(SystemDownloader::new(user_agent));
+    let rheo_storage = RheoPackages::new(SystemDownloader::new(user_agent));
     for spec_str in import_paths {
         let spec = match PackageSpec::from_str(spec_str) {
             Ok(s) => s,
             Err(_) => continue,
         };
-        if spec.namespace != "preview" {
-            continue;
-        }
-        if let Err(e) = storage.obtain(&spec) {
+        let result = match spec.namespace.as_str() {
+            "preview" => preview_storage.obtain(&spec).map(|_| ()),
+            "rheo" => rheo_storage.obtain(&spec).map(|_| ()),
+            _ => continue,
+        };
+        if let Err(e) = result {
             warn!(
                 spec = %spec_str,
                 error = ?e,

@@ -17,6 +17,7 @@ use typst::{Library, LibraryExt, World};
 use typst_kit::downloader::SystemDownloader;
 use typst_kit::fonts::FontStore;
 use typst_kit::packages::SystemPackages;
+use crate::rheo_packages::RheoPackages;
 use typst_library::{Feature, Features};
 use typst_library::foundations::Duration;
 
@@ -37,6 +38,7 @@ pub struct RheoWorld {
     book: LazyHash<FontBook>,
     font_store: FontStore,
     package_storage: SystemPackages,
+    rheo_packages: RheoPackages,
     slots: Mutex<HashMap<FileId, FileSlot>>,
     /// Output format name for link transformations and polyfill injection.
     /// None = no transformation.
@@ -98,9 +100,9 @@ impl RheoWorld {
             font_store.extend(typst_kit::fonts::scan(dir));
         }
 
-        let package_storage = SystemPackages::new(
-            SystemDownloader::new(concat!("rheo/", env!("CARGO_PKG_VERSION"))),
-        );
+        let user_agent = concat!("rheo/", env!("CARGO_PKG_VERSION"));
+        let package_storage = SystemPackages::new(SystemDownloader::new(user_agent));
+        let rheo_packages = RheoPackages::new(SystemDownloader::new(user_agent));
 
         Ok(Self {
             root,
@@ -109,6 +111,7 @@ impl RheoWorld {
             book: font_store.book().clone(),
             font_store,
             package_storage,
+            rheo_packages,
             slots: Mutex::new(HashMap::new()),
             format_name: format_name.map(str::to_string),
             link_strategy,
@@ -161,7 +164,11 @@ impl RheoWorld {
         }
 
         if let Some(spec) = id.package() {
-            let fs_root = self.package_storage.obtain(spec).map_err(FileError::from)?;
+            let fs_root = if spec.namespace == "rheo" {
+                self.rheo_packages.obtain(spec).map_err(FileError::from)?
+            } else {
+                self.package_storage.obtain(spec).map_err(FileError::from)?
+            };
             return fs_root.resolve(id.vpath());
         }
 
