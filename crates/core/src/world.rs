@@ -255,13 +255,19 @@ impl RheoWorld {
         unwrap_compilation_result(Some(self), result, None::<fn(&_) -> bool>)
     }
 
-    /// Compile the current main file to a multi-file bundle.
+    /// Compile the spine to its per-file outputs.
+    ///
+    /// Internally this drives Typst's multi-file bundle target, but that is an
+    /// implementation detail: nothing user-facing references "bundle".
     pub fn compile_bundle(&self) -> crate::Result<typst_bundle::Bundle> {
         use crate::diagnostics::unwrap_compilation_result;
+        use typst::diag::SourceDiagnostic;
 
-        tracing::info!("compiling to bundle");
+        tracing::debug!("compiling spine via bundle target");
         let result = typst::compile::<typst_bundle::Bundle>(self);
-        unwrap_compilation_result(Some(self), result, None::<fn(&_) -> bool>)
+        // Suppress Typst's experimental-feature notice; bundle is internal-only.
+        let filter = |w: &SourceDiagnostic| !w.message.contains("bundle export is experimental");
+        unwrap_compilation_result(Some(self), result, Some(filter))
     }
 
     /// Create a new world and compile the given file to an HTML document.

@@ -180,7 +180,6 @@ where
 pub enum ExportErrorType {
     Pdf,
     Html,
-    Bundle,
 }
 
 impl ExportErrorType {
@@ -188,7 +187,6 @@ impl ExportErrorType {
         match self {
             ExportErrorType::Pdf => "PDF",
             ExportErrorType::Html => "HTML",
-            ExportErrorType::Bundle => "Bundle",
         }
     }
 }
@@ -219,10 +217,6 @@ pub fn handle_export_errors(
             errors: error_messages.join("\n"),
         },
         ExportErrorType::Html => RheoError::HtmlGeneration {
-            count: errors.len(),
-            errors: error_messages.join("\n"),
-        },
-        ExportErrorType::Bundle => RheoError::BundleGeneration {
             count: errors.len(),
             errors: error_messages.join("\n"),
         },

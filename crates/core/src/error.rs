@@ -32,10 +32,6 @@ pub enum RheoError {
     #[error("EPUB generation failed with {count} error(s):\n{errors}")]
     EpubGeneration { count: usize, errors: String },
 
-    /// Bundle export error
-    #[error("Bundle generation failed with {count} error(s):\n{errors}")]
-    BundleGeneration { count: usize, errors: String },
-
     /// Project configuration detection error
     #[error("Project configuration error: {message}")]
     ProjectConfig { message: String },
