@@ -1,14 +1,15 @@
 use crate::config::PluginAssets;
 use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
 use crate::reticulate::parser::extract_package_imports;
+use crate::rheo_packages::RheoPackages;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tracing::warn;
 use typst::syntax::Source;
 use typst::syntax::package::PackageSpec;
-use typst_kit::download::Downloader;
-use typst_kit::package::PackageStorage;
+use typst_kit::downloader::SystemDownloader;
+use typst_kit::packages::SystemPackages;
 
 /// Build the standard Typst package search directories:
 /// `XDG_DATA_HOME/typst/packages`, `XDG_CACHE_HOME/typst/packages`,
@@ -161,21 +162,20 @@ pub fn prewarm_packages(import_paths: &[String]) {
     if import_paths.is_empty() {
         return;
     }
-    let storage = PackageStorage::new(
-        None,
-        None,
-        Downloader::new(concat!("rheo/", env!("CARGO_PKG_VERSION"))),
-    );
+    let user_agent = concat!("rheo/", env!("CARGO_PKG_VERSION"));
+    let preview_storage = SystemPackages::new(SystemDownloader::new(user_agent));
+    let rheo_storage = RheoPackages::new(SystemDownloader::new(user_agent));
     for spec_str in import_paths {
         let spec = match PackageSpec::from_str(spec_str) {
             Ok(s) => s,
             Err(_) => continue,
         };
-        if spec.namespace != "preview" {
-            continue;
-        }
-        let mut progress = crate::world::PrintDownload::new(&spec);
-        if let Err(e) = storage.prepare_package(&spec, &mut progress) {
+        let result = match spec.namespace.as_str() {
+            "preview" => preview_storage.obtain(&spec).map(|_| ()),
+            "rheo" => rheo_storage.obtain(&spec).map(|_| ()),
+            _ => continue,
+        };
+        if let Err(e) = result {
             warn!(
                 spec = %spec_str,
                 error = ?e,

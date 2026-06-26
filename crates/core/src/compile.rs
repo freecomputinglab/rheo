@@ -72,11 +72,13 @@ impl RheoCompileOptions {
 
 /// Export an HtmlDocument to an HTML string.
 pub fn compile_document_to_string(document: &typst_html::HtmlDocument) -> crate::Result<String> {
-    typst_html::html(document).map_err(|e| handle_export_errors(e, ExportErrorType::Html))
+    use typst_html::HtmlOptions;
+    typst_html::html(document, &HtmlOptions::default())
+        .map_err(|e| handle_export_errors(e, ExportErrorType::Html))
 }
 
 /// Export a PagedDocument to PDF bytes.
-pub fn document_to_pdf_bytes(document: &typst::layout::PagedDocument) -> crate::Result<Vec<u8>> {
+pub fn document_to_pdf_bytes(document: &typst_layout::PagedDocument) -> crate::Result<Vec<u8>> {
     use typst_pdf::PdfOptions;
     typst_pdf::pdf(document, &PdfOptions::default())
         .map_err(|e| handle_export_errors(e, ExportErrorType::Pdf))

@@ -12,11 +12,15 @@
   outputs = { self, nixpkgs, flake-utils, typst, rust-overlay, crane }:
     flake-utils.lib.eachDefaultSystem (system:
       let
+        overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
-          inherit system;
+          inherit system overlays;
         };
 
-        # Create crane library with default stable rust
+        # Rust toolchain from rust-toolchain.toml (single source of truth)
+        rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+
+        # Create crane library with custom rust toolchain
         craneLib = crane.mkLib pkgs;
 
         # Source filtering to include Cargo files and resources in src/
@@ -36,7 +40,7 @@
         cargoArtifacts = craneLib.buildDepsOnly {
           inherit src;
           buildInputs = with pkgs; [ openssl ];
-          nativeBuildInputs = with pkgs; [ pkg-config perl ];
+          nativeBuildInputs = with pkgs; [ pkg-config perl rustToolchain ];
         };
       in
       {
@@ -50,17 +54,15 @@
           nativeBuildInputs = with pkgs; [
             pkg-config
             perl
+            rustToolchain
           ];
         };
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            # Rust toolchain
-            cargo
-            rustc
-            rustfmt
-            clippy
-            rust-analyzer
+            # Rust toolchain from rust-overlay
+            rustToolchain
+
             pkg-config
             openssl
 

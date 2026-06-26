@@ -135,7 +135,7 @@ fn collect_unresolvable_link(
     let Some(ident) = func_call.children().find(|n| n.kind() == SyntaxKind::Ident) else {
         return;
     };
-    if ident.text() != LINK_IDENT_ID {
+    if ident.leaf_text() != LINK_IDENT_ID {
         return;
     }
 
@@ -159,7 +159,7 @@ fn collect_unresolvable_link(
     let is_unresolvable = match first.kind() {
         SyntaxKind::Str => false,   // literal string — resolved
         SyntaxKind::Label => false, // label reference — valid non-string target
-        SyntaxKind::Ident => !url_bindings.contains_key(first.text().as_str()),
+        SyntaxKind::Ident => !url_bindings.contains_key(first.leaf_text().as_str()),
         _ => true, // FuncCall, BinaryOp, etc.
     };
 
@@ -182,9 +182,9 @@ fn parse_link_call(
 ) -> Option<LinkInfo> {
     let ident = node.children().find(|n| n.kind() == SyntaxKind::Ident)?;
 
-    let (url_param_index, is_wrapper) = if ident.text() == LINK_IDENT_ID {
+    let (url_param_index, is_wrapper) = if ident.leaf_text() == LINK_IDENT_ID {
         (0, false)
-    } else if let Some(&idx) = wrappers.get(ident.text().as_str()) {
+    } else if let Some(&idx) = wrappers.get(ident.leaf_text().as_str()) {
         (idx, true)
     } else {
         return None;
@@ -245,7 +245,7 @@ fn extract_nth_string_arg_with_node(args: &SyntaxNode, n: usize) -> Option<(Stri
         }
         if pos == n {
             if child.kind() == SyntaxKind::Str {
-                let text = child.text().trim_matches('"').to_string();
+                let text = child.leaf_text().trim_matches('"').to_string();
                 return Some((text, child));
             }
             return None; // n-th positional arg is not a string
@@ -269,7 +269,7 @@ fn extract_nth_ident_arg(args: &SyntaxNode, n: usize) -> Option<String> {
         }
         if pos == n {
             if child.kind() == SyntaxKind::Ident {
-                return Some(child.text().to_string());
+                return Some(child.leaf_text().to_string());
             }
             return None;
         }
@@ -297,7 +297,7 @@ fn extract_link_body(func_call: &SyntaxNode) -> Option<String> {
 fn extract_text_from_node(node: &SyntaxNode) -> Option<String> {
     // If this is a Text node, return its content
     if node.kind() == SyntaxKind::Text {
-        return Some(node.text().to_string());
+        return Some(node.leaf_text().to_string());
     }
 
     // If this is a Space node, return a space
@@ -362,8 +362,11 @@ fn try_register_wrapper(let_binding: &SyntaxNode, map: &mut WrapperMap) {
         return;
     }
 
-    let fn_name = idents[0].text().to_string();
-    let has_link_alias = idents.iter().skip(1).any(|c| c.text() == LINK_IDENT_ID);
+    let fn_name = idents[0].leaf_text().to_string();
+    let has_link_alias = idents
+        .iter()
+        .skip(1)
+        .any(|c| c.leaf_text() == LINK_IDENT_ID);
     if has_link_alias {
         map.insert(fn_name, 0);
     }
@@ -375,7 +378,7 @@ fn register_closure_wrapper(closure: &SyntaxNode, map: &mut WrapperMap) {
         Some(n) => n,
         None => return,
     };
-    let fn_name = fn_name_node.text().to_string();
+    let fn_name = fn_name_node.leaf_text().to_string();
 
     let Some(params_node) = closure.children().find(|c| c.kind() == SyntaxKind::Params) else {
         return;
@@ -384,7 +387,7 @@ fn register_closure_wrapper(closure: &SyntaxNode, map: &mut WrapperMap) {
     let param_names: Vec<String> = params_node
         .children()
         .filter(|c| c.kind() == SyntaxKind::Ident)
-        .map(|c| c.text().to_string())
+        .map(|c| c.leaf_text().to_string())
         .collect();
 
     let Some(link_call) = find_link_call(closure) else {
@@ -421,7 +424,7 @@ fn register_closure_wrapper(closure: &SyntaxNode, map: &mut WrapperMap) {
         return;
     }
 
-    let arg_name = first_arg.text();
+    let arg_name = first_arg.leaf_text();
     let Some(param_idx) = param_names.iter().position(|n| n == arg_name.as_str()) else {
         return;
     };
@@ -433,7 +436,7 @@ fn register_closure_wrapper(closure: &SyntaxNode, map: &mut WrapperMap) {
 fn find_link_call(node: &SyntaxNode) -> Option<&SyntaxNode> {
     if node.kind() == SyntaxKind::FuncCall {
         let ident = node.children().find(|c| c.kind() == SyntaxKind::Ident)?;
-        if ident.text() == LINK_IDENT_ID {
+        if ident.leaf_text() == LINK_IDENT_ID {
             return Some(node);
         }
     }
@@ -475,7 +478,7 @@ fn collect_url_bindings_from_node(
         // Find the binding name (first Ident) and the value (first Str after Eq)
         let name = children.iter().find(|c| c.kind() == SyntaxKind::Ident);
         let Some(name) = name else { return };
-        let binding_name = name.text().to_string();
+        let binding_name = name.leaf_text().to_string();
 
         // Look for a Str value — must be after the Eq token
         let mut after_eq = false;
@@ -485,7 +488,7 @@ fn collect_url_bindings_from_node(
                 continue;
             }
             if after_eq && child.kind() == SyntaxKind::Str {
-                let text = child.text().trim_matches('"').to_string();
+                let text = (*child).leaf_text().trim_matches('"').to_string();
                 if is_relative_typ_link(&text)
                     && let Some(offset) = calculate_node_offset(root, child)
                 {
@@ -549,7 +552,7 @@ fn parse_rheo_var(let_binding: &SyntaxNode, offset: usize, source: &Source) -> O
     let name = let_binding
         .children()
         .find(|c| c.kind() == SyntaxKind::Ident)?;
-    let key = name.text().strip_prefix("rheo-")?;
+    let key = name.leaf_text().strip_prefix("rheo-")?;
 
     // The value is the first meaningful node after `=` (skipping whitespace).
     let value = let_binding
@@ -558,7 +561,7 @@ fn parse_rheo_var(let_binding: &SyntaxNode, offset: usize, source: &Source) -> O
         .skip(1)
         .find(|c| c.kind() != SyntaxKind::Space)
         .filter(|c| c.kind() == SyntaxKind::Str)
-        .map(|c| RheoValue::Str(c.text().trim_matches('"').to_string()));
+        .map(|c| RheoValue::Str(c.leaf_text().trim_matches('"').to_string()));
 
     let line = source
         .lines()
@@ -578,7 +581,7 @@ fn parse_import_node(node: &SyntaxNode, root: &SyntaxNode) -> Option<ImportInfo>
     // Find the first Str child — that is the path argument
     let str_node = node.children().find(|n| n.kind() == SyntaxKind::Str)?;
 
-    let text = str_node.text();
+    let text = str_node.leaf_text();
     let path = text.trim_matches('"').to_string();
 
     let offset = calculate_node_offset(root, str_node)?;
