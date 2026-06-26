@@ -221,7 +221,6 @@ impl RheoWorld {
         if let Some(slot) = self.slots.lock().get(&id)
             && let Some(bytes) = &slot.file
         {
-            // Convert Bytes to string for Lines
             let text = std::str::from_utf8(bytes.as_slice()).unwrap_or("");
             return Lines::new(text.to_string());
         }

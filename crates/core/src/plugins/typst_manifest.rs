@@ -158,9 +158,6 @@ pub fn detect_manifest_package_assets(
 ///
 /// Call this before `detect_manifest_package_assets` so that scan can see
 /// packages Typst would otherwise only download during compile.
-///
-/// Call this before `detect_manifest_package_assets` so that scan can see
-/// packages Typst would otherwise only download during compile.
 pub fn prewarm_packages(import_paths: &[String]) {
     if import_paths.is_empty() {
         return;
