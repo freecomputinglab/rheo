@@ -436,8 +436,8 @@ mod tests {
         let layout = SpineLayout::OnePerVertebra { ext: "html".into() };
         let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
 
-        assert_eq!(spine.vertebrae[0].handle, "chapters:intro");
-        assert_eq!(spine.vertebrae[1].handle, "appendix:intro");
+        assert_eq!(spine.vertebrae[0].handle, "chapters-intro");
+        assert_eq!(spine.vertebrae[1].handle, "appendix-intro");
         assert!(
             spine.vertebrae[0]
                 .extra_handles

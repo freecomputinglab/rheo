@@ -239,19 +239,6 @@ impl Build {
             let resolved_assets =
                 resolver.resolve(plugin.as_ref(), plugin_section, &manifest_blocks)?;
 
-            // Execute copy patterns.
-            resolver.copy_globs(&self.project.config.copy, &self.project.root, None)?;
-            for block in &manifest_blocks {
-                resolver.copy_globs(
-                    &block.assets.copy,
-                    &block.source_root,
-                    block.assets.dest.as_deref(),
-                )?;
-            }
-            for block in plugin_section.asset_blocks() {
-                resolver.copy_globs(&block.copy, &self.project.root, block.dest.as_deref())?;
-            }
-
             // Resolve spine options.
             let spine_cfg = plugin_section.spine.as_ref();
             let spine = SpineOptions {
@@ -331,6 +318,30 @@ impl Build {
 
             match plugin.compile(ctx, &outputs) {
                 Ok(_) => {
+                    // Apply copy globs after bundle output is written so that
+                    // explicit copy patterns win over any colliding bundle output.
+                    resolver.copy_globs(
+                        &self.project.config.copy,
+                        &self.project.root,
+                        None,
+                        true,
+                    )?;
+                    for block in &manifest_blocks {
+                        resolver.copy_globs(
+                            &block.assets.copy,
+                            &block.source_root,
+                            block.assets.dest.as_deref(),
+                            true,
+                        )?;
+                    }
+                    for block in plugin_section.asset_blocks() {
+                        resolver.copy_globs(
+                            &block.copy,
+                            &self.project.root,
+                            block.dest.as_deref(),
+                            true,
+                        )?;
+                    }
                     results.record_success(plugin.name());
                     info!(plugin = plugin.name(), "compilation succeeded");
                 }
