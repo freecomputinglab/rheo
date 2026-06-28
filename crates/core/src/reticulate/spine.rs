@@ -1,176 +1,14 @@
 use crate::path_utils::{escape_typst_content, sanitize_handle_segment, to_forward_slash};
-use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
+use crate::pdf_utils::DocumentTitle;
 use crate::plugins::SpineOptions;
 use crate::reticulate::parser;
 use crate::reticulate::types::RheoValue;
 use crate::{Result, RheoError, TYP_EXT};
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use std::fs;
 use std::path::{Path, PathBuf};
 use typst::syntax::Source;
 use walkdir::WalkDir;
-
-/// A legacy spine with rheo-* variable harvesting.
-///
-/// **DEPRECATED:** Use `VirtualSpine` for new bundle compilation. This struct
-/// exists for backward compatibility with the old per-file compilation path.
-#[derive(Debug, Clone)]
-#[deprecated(note = "Use VirtualSpine for bundle compilation")]
-pub struct BuiltSpine {
-    /// The name of the file or website that the spine will generate.
-    pub title: Option<String>,
-
-    /// Whether or not the source has been merged into a single file.
-    /// This is only true for PDF merged mode.
-    pub is_merged: bool,
-
-    /// Source files (unchanged — no link transformation).
-    /// Always length 1 if `is_merged`.
-    pub source: Vec<String>,
-
-    /// Validated `rheo-*` vars (prefix stripped) per vertebra, aligned with the
-    /// original `spine_files` order — one map per original file even when
-    /// `is_merged` collapses `source` to length 1.
-    pub vars: Vec<HashMap<String, RheoValue>>,
-}
-
-impl BuiltSpine {
-    /// Build a BuiltSpine with rheo-* variable harvesting.
-    ///
-    /// This is the legacy spine builder used for the old per-file compilation
-    /// path. New code should use `VirtualSpine::build()` instead.
-    ///
-    /// # Arguments
-    /// * `root` - Project root directory
-    /// * `spine_config` - Optional spine configuration (determines spine files)
-    /// * `_format_ext` - DEPRECATED: extension no longer used (kept for API compatibility)
-    /// * `_strategy` - DEPRECATED: link strategy no longer used (kept for API compatibility)
-    /// * `merge` - Whether to merge spine files into a single source (caller decides)
-    #[deprecated(note = "Use VirtualSpine::build for new bundle compilation")]
-    pub fn build(
-        root: &Path,
-        spine_config: Option<&SpineOptions>,
-        _format_ext: &str,
-        _strategy: &str,
-        merge: bool,
-    ) -> Result<BuiltSpine> {
-        let spine_files = match spine_config {
-            Some(spine) => spine.generate(root)?,
-            None => collect_one_typst_file(root)?,
-        };
-        check_duplicate_filenames(&spine_files)?;
-
-        // Harvest rheo-* variables from each spine file. Link transformation removed —
-        // bundle compilation (VirtualSpine) uses Typst @ref for cross-file references.
-
-        let mut sources = Vec::new();
-        let mut vars = Vec::new();
-
-        for spine_file in &spine_files {
-            let source = fs::read_to_string(spine_file).map_err(|e| {
-                RheoError::project_config(format!(
-                    "failed to read spine file '{}': {}",
-                    spine_file.display(),
-                    e
-                ))
-            })?;
-
-            // Harvest rheo-* variables from source
-            let source_obj = typst::syntax::Source::detached(&source);
-            let extracted = parser::extract_nodes(&source_obj);
-            let transformed_source = source.clone();
-
-            // A `None` value means the RHS was an unsupported kind. Only string
-            // literals are supported for now, so report it as such.
-            let mut file_vars = HashMap::new();
-            for v in extracted.rheo_vars {
-                match v.value {
-                    Some(value) => {
-                        file_vars.insert(v.key, value);
-                    }
-                    None => {
-                        return Err(RheoError::invalid_data(format!(
-                            "{}:{}: rheo-{} must be a string",
-                            spine_file.display(),
-                            v.line,
-                            v.key
-                        )));
-                    }
-                }
-            }
-            vars.push(file_vars);
-
-            let final_source = if merge {
-                let (label, doc_title) = extract_label_and_title(&source, spine_file)?;
-                format!(
-                    "#metadata(\"{}\") <{}>\n{}\n\n",
-                    doc_title, label, transformed_source
-                )
-            } else {
-                transformed_source
-            };
-
-            sources.push(final_source);
-        }
-
-        let final_sources = if merge {
-            vec![sources.join("\n\n")]
-        } else {
-            sources
-        };
-
-        let title = spine_config.and_then(|s| s.title.clone());
-
-        Ok(BuiltSpine {
-            title,
-            is_merged: merge,
-            source: final_sources,
-            vars,
-        })
-    }
-}
-
-fn extract_label_and_title(source: &str, spine_file: &Path) -> Result<(String, String)> {
-    let filename = spine_file.file_name().ok_or_else(|| {
-        RheoError::project_config(format!(
-            "invalid filename in spine: '{}'",
-            spine_file.display()
-        ))
-    })?;
-
-    let filename_str = filename.to_string_lossy();
-    let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
-    let label = sanitize_label_name(stem);
-    let title = DocumentTitle::from_source(source, stem).extract();
-
-    Ok((label, title))
-}
-
-fn check_duplicate_filenames(spine_files: &[PathBuf]) -> Result<()> {
-    let mut seen: HashMap<String, &PathBuf> = HashMap::new();
-
-    for spine_file in spine_files {
-        if let Some(filename) = spine_file.file_name() {
-            let key = filename.to_string_lossy().into_owned();
-            match seen.entry(key) {
-                Entry::Occupied(e) => {
-                    return Err(RheoError::project_config(format!(
-                        "duplicate filename in spine: '{}' appears at both '{}' and '{}'",
-                        filename.to_string_lossy(),
-                        e.get().display(),
-                        spine_file.display()
-                    )));
-                }
-                Entry::Vacant(e) => {
-                    e.insert(spine_file);
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
 
 fn collect_typst_files(root: &Path) -> Vec<PathBuf> {
     WalkDir::new(root)
@@ -184,18 +22,6 @@ fn collect_typst_files(root: &Path) -> Vec<PathBuf> {
                 .unwrap_or(false)
         })
         .collect()
-}
-
-fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
-    let typst_files = collect_typst_files(root);
-
-    match typst_files.len() {
-        0 => Err(RheoError::project_config("need at least one .typ file")),
-        1 => Ok(typst_files),
-        _ => Err(RheoError::project_config(
-            "multiple .typ files found, specify spine configuration",
-        )),
-    }
 }
 
 fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
@@ -570,59 +396,6 @@ mod tests {
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files.len(), 2);
-    }
-
-    fn write_spine_dir(files: &[(&str, &str)]) -> TempDir {
-        let temp = TempDir::new().unwrap();
-        for (name, contents) in files {
-            fs::write(temp.path().join(name), contents).unwrap();
-        }
-        temp
-    }
-
-    #[test]
-    fn test_build_collects_rheo_vars_per_file() {
-        let temp = write_spine_dir(&[
-            ("a.typ", "#let rheo-feed-title = \"Alpha\"\n= A"),
-            ("b.typ", "= B, no vars"),
-        ]);
-        let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
-        let built = BuiltSpine::build(
-            temp.path(),
-            Some(&spine),
-            "html", // DEPRECATED: unused
-            "html", // DEPRECATED: link strategy removed
-            false,
-        )
-        .unwrap();
-
-        assert_eq!(built.vars.len(), 2);
-        assert_eq!(
-            built.vars[0].get("feed-title"),
-            Some(&RheoValue::Str("Alpha".to_string()))
-        );
-        assert!(built.vars[1].is_empty());
-    }
-
-    #[test]
-    fn test_build_errors_on_non_string_rheo_var() {
-        let temp = write_spine_dir(&[("a.typ", "#let rheo-x = 1\n= A")]);
-        let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
-        let result = BuiltSpine::build(
-            temp.path(),
-            Some(&spine),
-            "html", // DEPRECATED: unused
-            "html", // DEPRECATED: link strategy removed
-            false,
-        );
-
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("a.typ"), "message missing path: {msg}");
-        assert!(
-            msg.contains("rheo-x must be a string"),
-            "message missing reason: {msg}"
-        );
     }
 
     // ── VirtualSpine tests ──────────────────────────────────────────────────

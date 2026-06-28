@@ -83,29 +83,3 @@ pub struct RheoVar {
     /// 1-based source line of the binding, for error messages.
     pub line: usize,
 }
-
-/// Link transformation operation (DEPRECATED).
-///
-/// The new bundle compilation path handles cross-file references via Typst @ref,
-/// making static link transformation obsolete. This enum is retained for backward
-/// compatibility only.
-#[deprecated(note = "Use VirtualSpine + Typst @ref for cross-file references")]
-#[derive(Debug, Clone)]
-pub enum LinkTransform {
-    /// Remove link, keep only body text
-    Remove { body: String },
-
-    /// Replace URL with new value
-    ReplaceUrl { new_url: String },
-
-    /// Replace URL with label
-    ReplaceUrlWithLabel { new_label: String },
-
-    /// Keep original (no transformation)
-    KeepOriginal,
-
-    /// Replace only the quoted string literal at `byte_range` with `new_value`
-    /// (re-quoted).  Used for wrapper-function call sites where only the URL
-    /// argument should change, not the surrounding call syntax.
-    ReplaceStringLiteralInPlace { new_value: String },
-}

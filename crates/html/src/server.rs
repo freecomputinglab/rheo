@@ -323,12 +323,6 @@ fn directory_listing(html_dir: &Path, path: &str) -> Response {
         .unwrap()
 }
 
-/// Update the server's VirtualFs with new content (for live-reload on recompile)
-pub async fn update_virtual_fs(state: &ServerState, new_fs: typst_bundle::VirtualFs) {
-    let mut virtual_fs = state.virtual_fs.write().await;
-    *virtual_fs = Some(new_fs);
-}
-
 /// Open a URL in the default browser
 pub fn open_browser(url: &str) -> Result<()> {
     info!(url = %url, "opening browser");

@@ -125,7 +125,8 @@ impl Build {
         let default_section = PluginSection::default();
 
         // Scan .typ files for package imports once — shared across all plugins.
-        let _package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
+        let _package_imports =
+            crate::plugins::scan_project_package_imports(&self.project.typ_files);
 
         let content_dir = self
             .project

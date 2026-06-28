@@ -55,9 +55,6 @@ pub use compile::{compile_document_to_string, document_to_pdf_bytes};
 // World (Typst compilation context)
 pub use world::RheoWorld;
 
-// Re-export reticulate module for spine building
-pub use reticulate::spine::BuiltSpine;
-
 // PDF utilities
 pub use pdf_utils::DocumentTitle;
 

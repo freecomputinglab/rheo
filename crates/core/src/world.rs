@@ -182,16 +182,6 @@ impl RheoWorld {
         Ok(())
     }
 
-    /// Transform links in source text based on output format name (DEPRECATED).
-    ///
-    /// The new bundle compilation path handles cross-file references via Typst @ref,
-    /// making link transformation unnecessary. This method is kept for backward
-    /// compatibility but returns the source unchanged.
-    #[deprecated(note = "No replacement needed for bundle compilation")]
-    fn transform_links(&self, text: &str, _id: FileId, _format_name: &str) -> FileResult<String> {
-        Ok(text.to_string())
-    }
-
     fn path_for_id(&self, id: FileId) -> FileResult<PathBuf> {
         if id.vpath().get_with_slash().starts_with("<") {
             return Err(FileError::NotFound(
@@ -375,11 +365,6 @@ impl World for RheoWorld {
             text = format!("{}{}", template_inject, text);
         } else if !target_polyfill.is_empty() {
             text = format!("{}{}", target_polyfill, text);
-        }
-
-        // Apply link transformations for ALL .typ files if output format is set.
-        if let Some(ref name) = self.format_name {
-            text = self.transform_links(&text, id, name)?;
         }
 
         let source = Source::new(id, text);
