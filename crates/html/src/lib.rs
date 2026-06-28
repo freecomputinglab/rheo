@@ -118,7 +118,7 @@ impl FormatPlugin for HtmlPlugin {
         let feed_title = html_cfg.resolve_title(ctx.spine.title.as_deref(), &ctx.project.name);
         let feed_link = html_cfg
             .base_url()
-            .map(|base| (format!("{base}/feed.xml"), feed_title));
+            .map(|base| (format!("{base}/feed.xml"), feed_title.clone()));
 
         for output in outputs {
             let html_string = String::from_utf8(output.bytes.to_vec()).map_err(|e| {
@@ -157,15 +157,19 @@ impl FormatPlugin for HtmlPlugin {
             info!(output = %out_path.display(), "successfully compiled to HTML");
         }
 
+        // Generate Atom feed if feed_base_url is configured.
+        if let Some(base_url) = html_cfg.base_url() {
+            feed::generate_feed(ctx, outputs, &base_url, &feed_title, &html_cfg)?;
+        }
+
         Ok(())
     }
 }
 
 /// Typed view of the `[html]` section's format-specific keys.
 #[derive(Debug, Deserialize, Default)]
-struct HtmlConfig {
+pub struct HtmlConfig {
     feed_base_url: Option<String>,
-    #[allow(dead_code)]
     feed_author: Option<String>,
     feed_title: Option<String>,
 }

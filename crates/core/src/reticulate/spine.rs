@@ -1,6 +1,7 @@
 use crate::path_utils::{escape_typst_content, sanitize_handle_segment, to_forward_slash};
 use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
 use crate::plugins::{LinkStrategy, SpineOptions};
+use crate::reticulate::parser;
 use crate::reticulate::transformer::LinkTransformer;
 use crate::reticulate::types::RheoValue;
 use crate::{Result, RheoError, TYP_EXT};
@@ -8,6 +9,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fs;
 use std::path::{Path, PathBuf};
+use typst::syntax::Source;
 use walkdir::WalkDir;
 
 /// A spine with relative linking transformations.
@@ -267,6 +269,8 @@ pub struct Vertebra {
     pub extra_handles: Vec<String>,
     /// Document title for `#document title:` and `@handle` display text.
     pub title: String,
+    /// Harvested `rheo-*` variables from this vertebra's source file.
+    pub vars: std::collections::HashMap<String, RheoValue>,
 }
 
 impl Vertebra {
@@ -355,12 +359,33 @@ impl VirtualSpine {
                 let title = DocumentTitle::from_source(&source, &stem).extract();
                 let rel_path = to_forward_slash(file.strip_prefix(project_root).unwrap_or(file));
 
+                // Harvest rheo-* variables from the source file.
+                let source_obj = Source::detached(&source);
+                let extracted = parser::extract_nodes(&source_obj);
+                let mut vars = HashMap::new();
+                for v in extracted.rheo_vars {
+                    match v.value {
+                        Some(value) => {
+                            vars.insert(v.key, value);
+                        }
+                        None => {
+                            return Err(RheoError::invalid_data(format!(
+                                "{}:{}: rheo-{} must be a string",
+                                file.display(),
+                                v.line,
+                                v.key
+                            )));
+                        }
+                    }
+                }
+
                 Ok(Vertebra {
                     rel_path,
                     output_path,
                     handle,
                     extra_handles,
                     title,
+                    vars,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -659,6 +684,7 @@ mod tests {
             handle: "intro".into(),
             extra_handles: vec!["intro.typ".into()],
             title: "Introduction".into(),
+            vars: HashMap::new(),
         };
         let spine = VirtualSpine {
             vertebrae: vec![v],
@@ -683,6 +709,7 @@ mod tests {
                     handle: "a".into(),
                     extra_handles: vec![],
                     title: "A".into(),
+                    vars: HashMap::new(),
                 },
                 Vertebra {
                     rel_path: "content/b.typ".into(),
@@ -690,6 +717,7 @@ mod tests {
                     handle: "b".into(),
                     extra_handles: vec![],
                     title: "B".into(),
+                    vars: HashMap::new(),
                 },
             ],
             layout: SpineLayout::SingleCombined {

@@ -7,6 +7,7 @@
 
 use atom_syndication as atom;
 use chrono::{DateTime, Utc};
+use rheo_core::{PluginContext, RheoError, SpineOutput, html_utils};
 
 /// A single `<entry>` in the feed.
 pub struct AtomEntry {
@@ -76,6 +77,98 @@ fn link(rel: &str, href: &str) -> atom::Link {
     l.set_rel(rel);
     l.set_href(href.to_string());
     l
+}
+
+/// Generate Atom feed from spine outputs when feed_base_url is configured.
+///
+/// Only vertebrae with `rheo-feed-title` produce feed entries.
+pub fn generate_feed(
+    ctx: PluginContext<'_>,
+    outputs: &[SpineOutput],
+    base_url: &str,
+    feed_title: &str,
+    html_cfg: &super::HtmlConfig,
+) -> Result<(), RheoError> {
+    let feed_author = html_cfg.feed_author.as_deref().unwrap_or("Rheo");
+
+    let mut entries = Vec::new();
+    let mut max_updated = DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+
+    for output in outputs {
+        // Extract rheo-feed-title from vars.
+        let title = match output.vars.get("feed-title").and_then(|v| v.as_str()) {
+            Some(t) => t.to_string(),
+            None => continue,
+        };
+
+        // Extract rheo-feed-updated, falling back to file mtime.
+        let updated = if let Some(ts) = output.vars.get("feed-updated").and_then(|v| v.as_str()) {
+            DateTime::parse_from_rfc3339(ts)
+                .map(|dt| dt.with_timezone(&Utc))
+                .map_err(|e| RheoError::invalid_data(format!("invalid rheo-feed-updated: {}", e)))?
+        } else {
+            // Fall back to output file mtime.
+            let out_path = ctx.output_dir.join(&output.output_path);
+            std::fs::metadata(&out_path)
+                .map_err(|e| {
+                    RheoError::io(e, format!("reading metadata for {}", out_path.display()))
+                })?
+                .modified()
+                .map_err(|e| RheoError::io(e, format!("reading mtime for {}", out_path.display())))?
+                .into()
+        };
+
+        // Track max updated timestamp for feed-level <updated>.
+        if updated > max_updated {
+            max_updated = updated;
+        }
+
+        // Extract feed content from compiled HTML.
+        let html_string = String::from_utf8(output.bytes.to_vec()).map_err(|e| {
+            RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e))
+        })?;
+        let dom = html_utils::HtmlDom::parse(&html_string)?;
+        let content_html = dom.feed_content_inner_html()?;
+
+        // Build entry URL: base_url + "/" + output_path (e.g. "https://example.com/chapter1.html").
+        let alternate_href = format!("{}/{}", base_url.trim_end_matches('/'), output.output_path);
+
+        // Build entry ID: use the URL as the ID (simplest approach).
+        let id = alternate_href.clone();
+
+        entries.push(AtomEntry {
+            id,
+            title,
+            updated,
+            content_html,
+            alternate_href,
+        });
+    }
+
+    // Skip feed generation if no entries.
+    let entry_count = entries.len();
+    if entry_count == 0 {
+        return Ok(());
+    }
+
+    let feed = AtomFeed {
+        id: format!("{}/feed.xml", base_url.trim_end_matches('/')),
+        title: feed_title.to_string(),
+        updated: max_updated,
+        self_href: format!("{}/feed.xml", base_url.trim_end_matches('/')),
+        author: feed_author.to_string(),
+        entries,
+    };
+
+    let feed_xml = feed.serialize();
+    let feed_path = ctx.output_dir.join("feed.xml");
+    std::fs::write(&feed_path, feed_xml)
+        .map_err(|e| RheoError::io(e, format!("writing feed to {}", feed_path.display())))?;
+    tracing::info!(feed = %feed_path.display(), entries = entry_count, "generated Atom feed");
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -80,6 +80,8 @@ pub struct SpineOutput {
     pub output_path: String,
     /// Raw bytes from the Typst compiler.
     pub bytes: Bytes,
+    /// Harvested `rheo-*` variables from the vertebra's source file.
+    pub vars: std::collections::HashMap<String, crate::reticulate::types::RheoValue>,
 }
 
 /// How the plugin wants the spine laid out for compilation.

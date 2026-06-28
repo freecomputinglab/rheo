@@ -209,11 +209,23 @@ impl Build {
             // Flatten VirtualFs entries into plugin-facing SpineOutput list.
             // VirtualPath::get_with_slash() gives the path string (e.g. "/intro.html").
             // Strip the leading "/" to produce a relative filename.
+            // Match each output back to its Vertebra to include harvested rheo-vars.
             let outputs: Vec<SpineOutput> = virtual_fs
                 .into_iter()
-                .map(|(vpath, bytes)| SpineOutput {
-                    output_path: vpath.get_with_slash().trim_start_matches('/').to_string(),
-                    bytes,
+                .map(|(vpath, bytes)| {
+                    let output_path = vpath.get_with_slash().trim_start_matches('/').to_string();
+                    // Find the corresponding Vertebra to get its vars.
+                    let vars = virtual_spine
+                        .vertebrae
+                        .iter()
+                        .find(|v| v.output_path == output_path)
+                        .map(|v| v.vars.clone())
+                        .unwrap_or_default();
+                    SpineOutput {
+                        output_path,
+                        bytes,
+                        vars,
+                    }
                 })
                 .collect();
 
