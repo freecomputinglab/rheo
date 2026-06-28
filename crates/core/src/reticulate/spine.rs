@@ -1,8 +1,7 @@
 use crate::path_utils::{escape_typst_content, sanitize_handle_segment, to_forward_slash};
 use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
-use crate::plugins::{LinkStrategy, SpineOptions};
+use crate::plugins::SpineOptions;
 use crate::reticulate::parser;
-use crate::reticulate::transformer::LinkTransformer;
 use crate::reticulate::types::RheoValue;
 use crate::{Result, RheoError, TYP_EXT};
 use std::collections::HashMap;
@@ -12,8 +11,12 @@ use std::path::{Path, PathBuf};
 use typst::syntax::Source;
 use walkdir::WalkDir;
 
-/// A spine with relative linking transformations.
+/// A legacy spine with rheo-* variable harvesting.
+///
+/// **DEPRECATED:** Use `VirtualSpine` for new bundle compilation. This struct
+/// exists for backward compatibility with the old per-file compilation path.
 #[derive(Debug, Clone)]
+#[deprecated(note = "Use VirtualSpine for bundle compilation")]
 pub struct BuiltSpine {
     /// The name of the file or website that the spine will generate.
     pub title: Option<String>,
@@ -22,7 +25,7 @@ pub struct BuiltSpine {
     /// This is only true for PDF merged mode.
     pub is_merged: bool,
 
-    /// Reticulated (relative link transformed) source files.
+    /// Source files (unchanged — no link transformation).
     /// Always length 1 if `is_merged`.
     pub source: Vec<String>,
 
@@ -33,19 +36,23 @@ pub struct BuiltSpine {
 }
 
 impl BuiltSpine {
-    /// Build a RheoSpine with AST-based link transformation for all output formats.
+    /// Build a BuiltSpine with rheo-* variable harvesting.
+    ///
+    /// This is the legacy spine builder used for the old per-file compilation
+    /// path. New code should use `VirtualSpine::build()` instead.
     ///
     /// # Arguments
     /// * `root` - Project root directory
     /// * `spine_config` - Optional spine configuration (determines spine files)
-    /// * `format_ext` - The extension to use for relative links.
-    /// * `strategy` - How relative `.typ` links are rewritten (extension vs PDF labels)
+    /// * `_format_ext` - DEPRECATED: extension no longer used (kept for API compatibility)
+    /// * `_strategy` - DEPRECATED: link strategy no longer used (kept for API compatibility)
     /// * `merge` - Whether to merge spine files into a single source (caller decides)
+    #[deprecated(note = "Use VirtualSpine::build for new bundle compilation")]
     pub fn build(
         root: &Path,
         spine_config: Option<&SpineOptions>,
-        format_ext: &str,
-        strategy: LinkStrategy,
+        _format_ext: &str,
+        _strategy: &str,
         merge: bool,
     ) -> Result<BuiltSpine> {
         let spine_files = match spine_config {
@@ -54,17 +61,8 @@ impl BuiltSpine {
         };
         check_duplicate_filenames(&spine_files)?;
 
-        // Merge when caller requests it (typically only PDF merged mode).
-        // Other formats (epub, html) handle concatenation differently.
-
-        // Paged formats attach the spine so cross-file links become labels;
-        // a single file has no cross-references, so it's skipped.
-        let mut transformer = LinkTransformer::new(format_ext)
-            .with_strategy(strategy)
-            .with_import_rewriting(merge);
-        if strategy == LinkStrategy::PagedLabels && spine_files.len() > 1 {
-            transformer = transformer.with_spine(spine_files.to_vec());
-        }
+        // Harvest rheo-* variables from each spine file. Link transformation removed —
+        // bundle compilation (VirtualSpine) uses Typst @ref for cross-file references.
 
         let mut sources = Vec::new();
         let mut vars = Vec::new();
@@ -78,13 +76,15 @@ impl BuiltSpine {
                 ))
             })?;
 
-            let output = transformer.transform_with_vars(&source, spine_file, root)?;
-            let transformed_source = output.source;
+            // Harvest rheo-* variables from source
+            let source_obj = typst::syntax::Source::detached(&source);
+            let extracted = parser::extract_nodes(&source_obj);
+            let transformed_source = source.clone();
 
             // A `None` value means the RHS was an unsupported kind. Only string
             // literals are supported for now, so report it as such.
             let mut file_vars = HashMap::new();
-            for v in output.rheo_vars {
+            for v in extracted.rheo_vars {
                 match v.value {
                     Some(value) => {
                         file_vars.insert(v.key, value);
@@ -328,12 +328,12 @@ impl VirtualSpine {
                 let is_collision = basename_count.get(&basename).copied().unwrap_or(0) > 1;
 
                 let handle = if is_collision {
-                    // Path-qualified: "chapters/intro" → "chapters:intro".
+                    // Path-qualified: "chapters/intro" → "chapters-intro".
                     rel_stem
                         .split('/')
                         .map(sanitize_handle_segment)
                         .collect::<Vec<_>>()
-                        .join(":")
+                        .join("-")
                 } else {
                     sanitized_base.clone()
                 };
@@ -590,8 +590,8 @@ mod tests {
         let built = BuiltSpine::build(
             temp.path(),
             Some(&spine),
-            "html",
-            LinkStrategy::ExtensionRewrite,
+            "html", // DEPRECATED: unused
+            "html", // DEPRECATED: link strategy removed
             false,
         )
         .unwrap();
@@ -611,8 +611,8 @@ mod tests {
         let result = BuiltSpine::build(
             temp.path(),
             Some(&spine),
-            "html",
-            LinkStrategy::ExtensionRewrite,
+            "html", // DEPRECATED: unused
+            "html", // DEPRECATED: link strategy removed
             false,
         );
 

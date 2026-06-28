@@ -1,7 +1,18 @@
+//! Typst AST node extraction and analysis.
+//!
+//! This module extracts rheo variables and package imports from parsed Typst source.
+//! Link extraction is deprecated — the new bundle compilation path handles cross-file
+//! references via Typst @ref, making static link transformation obsolete.
+
 use std::ops::Range;
 use typst::syntax::Span;
 
-/// Information about a link extracted from the AST
+/// Information about a link extracted from the AST (DEPRECATED).
+///
+/// The new bundle compilation path handles cross-file references via Typst @ref,
+/// making static link extraction obsolete. This type is retained for backward compatibility
+/// but link extraction functionality has been removed.
+#[deprecated(note = "Use VirtualSpine + Typst @ref for cross-file references")]
 #[derive(Debug, Clone)]
 pub struct LinkInfo {
     /// The URL from the link (e.g., "./chapter2.typ")
@@ -22,7 +33,11 @@ pub struct LinkInfo {
     pub is_wrapper_call: bool,
 }
 
-/// Information about an import/include extracted from the AST
+/// Information about an import/include extracted from the AST (DEPRECATED).
+///
+/// The new bundle compilation path handles imports via Typst's native mechanisms,
+/// making static import extraction obsolete for most cases. This type is retained for
+/// package import extraction which is still needed.
 #[derive(Debug, Clone)]
 pub struct ImportInfo {
     /// The raw path string (e.g. "./utils.typ" or "@preview/foo:0.1.0")
@@ -69,7 +84,12 @@ pub struct RheoVar {
     pub line: usize,
 }
 
-/// Link transformation operation
+/// Link transformation operation (DEPRECATED).
+///
+/// The new bundle compilation path handles cross-file references via Typst @ref,
+/// making static link transformation obsolete. This enum is retained for backward
+/// compatibility only.
+#[deprecated(note = "Use VirtualSpine + Typst @ref for cross-file references")]
 #[derive(Debug, Clone)]
 pub enum LinkTransform {
     /// Remove link, keep only body text

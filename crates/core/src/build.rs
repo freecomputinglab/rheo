@@ -95,6 +95,99 @@ impl Build {
         &self.output
     }
 
+    /// Compile the project and return VirtualFs for watch mode (HTML only).
+    ///
+    /// This is a specialized method for watch mode that returns the raw VirtualFs
+    /// from bundle compilation instead of writing files to disk. The VirtualFs
+    /// can be served directly by the dev server for faster live reload.
+    ///
+    /// Only supports HTML format currently.
+    pub fn compile_for_watch(&mut self) -> Result<Option<typst_bundle::VirtualFs>> {
+        if self.project.typ_files.is_empty() {
+            return Err(RheoError::project_config("no .typ files found in project"));
+        }
+
+        // Only HTML plugin for now
+        let html_plugin = self
+            .plugins
+            .iter()
+            .find(|p| p.name() == "html")
+            .ok_or_else(|| RheoError::project_config("HTML plugin not enabled"))?;
+
+        let plugin_output_dir = self.output.dir_for_plugin(html_plugin.name());
+        std::fs::create_dir_all(&plugin_output_dir).map_err(|e| {
+            RheoError::io(
+                e,
+                format!("creating output directory for {}", html_plugin.name()),
+            )
+        })?;
+
+        let default_section = PluginSection::default();
+
+        // Scan .typ files for package imports once — shared across all plugins.
+        let _package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
+
+        let content_dir = self
+            .project
+            .config
+            .resolve_content_dir(&self.project.root)
+            .unwrap_or_else(|| self.project.root.clone());
+
+        let plugin_section: &PluginSection = self
+            .project
+            .config
+            .plugin_sections
+            .get(html_plugin.name())
+            .unwrap_or(&default_section);
+
+        // Resolve spine options.
+        let spine_cfg = plugin_section.spine.as_ref();
+        let spine = SpineOptions {
+            title: spine_cfg.and_then(|s| s.title.clone()),
+            vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
+            merge: spine_cfg.and_then(|s| s.merge).unwrap_or(false),
+        };
+
+        let _ctx = PluginContext {
+            project: &self.project,
+            output_config: &self.output,
+            output_dir: &plugin_output_dir,
+            spine: &spine,
+            config: plugin_section,
+            assets: &Default::default(), // Unused in watch mode
+            font_dirs: &self.font_dirs,
+        };
+
+        // Build VirtualSpine from plugin's declared layout + project context.
+        let layout = spine_layout_for(
+            html_plugin.spine_layout_kind(),
+            html_plugin.as_ref(),
+            &self.project.name,
+        );
+        let spine_files = spine.generate(&content_dir)?;
+
+        debug!(
+            plugin = html_plugin.name(),
+            files = spine_files.len(),
+            "building virtual spine for watch mode"
+        );
+
+        let virtual_spine =
+            VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout)?;
+        virtual_spine.check_output_collisions()?;
+
+        let spine_source = virtual_spine.source();
+        debug!(plugin = html_plugin.name(), "created virtual spine source");
+
+        // Single Typst bundle compile for this plugin.
+        let world =
+            RheoWorld::new_for_bundle(&self.project.root, spine_source, self.font_dirs.clone())?;
+        let bundle = world.compile_bundle()?;
+        let virtual_fs = export_bundle(&bundle)?;
+
+        Ok(Some(virtual_fs))
+    }
+
     /// Compile the project across all selected plugins.
     ///
     /// Returns the per-format [`CompilationResults`] on full success. If any

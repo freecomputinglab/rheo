@@ -137,19 +137,6 @@ pub struct PluginContext<'a> {
     pub font_dirs: &'a [PathBuf],
 }
 
-/// How a format plugin rewrites relative `.typ` links during compilation.
-///
-/// Used internally by the reticulate link-rewriting pipeline (to be removed in
-/// a future cleanup bead once the bundle path fully replaces the old per-file path).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinkStrategy {
-    /// Rewrite the `.typ` extension to the format's own (e.g. `.html`, `.xhtml`).
-    ExtensionRewrite,
-    /// In a merged document, convert in-spine links to internal labels; in a
-    /// single-file document, strip them.
-    PagedLabels,
-}
-
 /// Parse `@namespace/name:version` into its components. Returns None on malformed input.
 pub fn parse_package_spec(spec: &str) -> Option<(&str, &str, &str)> {
     let without_at = spec.strip_prefix('@')?;

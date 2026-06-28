@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::plugins::LinkStrategy;
 use crate::rheo_packages::RheoPackages;
 use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
@@ -40,11 +39,9 @@ pub struct RheoWorld {
     package_storage: SystemPackages,
     rheo_packages: RheoPackages,
     slots: Mutex<HashMap<FileId, FileSlot>>,
-    /// Output format name for link transformations and polyfill injection.
-    /// None = no transformation.
+    /// Output format name for polyfill injection.
+    /// None = no polyfill.
     format_name: Option<String>,
-    /// How relative `.typ` links are rewritten when `format_name` is set.
-    link_strategy: LinkStrategy,
     /// Plugin-contributed Typst library code, injected after core prelude.
     plugin_library: Option<String>,
     /// In-memory source for the main file. When set, the world serves this
@@ -63,7 +60,6 @@ impl RheoWorld {
         root: &Path,
         main_file: &Path,
         format_name: Option<&str>,
-        link_strategy: LinkStrategy,
         plugin_library: Option<String>,
         font_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
@@ -95,7 +91,6 @@ impl RheoWorld {
             rheo_packages,
             slots: Mutex::new(HashMap::new()),
             format_name: format_name.map(str::to_string),
-            link_strategy,
             plugin_library,
             virtual_main_source: None,
         })
@@ -133,7 +128,6 @@ impl RheoWorld {
             rheo_packages,
             slots: Mutex::new(HashMap::new()),
             format_name: None,
-            link_strategy: LinkStrategy::ExtensionRewrite,
             plugin_library: None,
             virtual_main_source: Some(virtual_main_source),
         })
@@ -188,14 +182,14 @@ impl RheoWorld {
         Ok(())
     }
 
-    /// Transform links in source text based on output format name.
-    fn transform_links(&self, text: &str, id: FileId, format_name: &str) -> FileResult<String> {
-        use crate::reticulate::transformer::LinkTransformer;
-
-        let transformer = LinkTransformer::new(format_name).with_strategy(self.link_strategy);
-        transformer
-            .transform_source(text, Path::new(id.vpath().get_without_slash()), &self.root)
-            .map_err(|e| FileError::Other(Some(e.to_string().into())))
+    /// Transform links in source text based on output format name (DEPRECATED).
+    ///
+    /// The new bundle compilation path handles cross-file references via Typst @ref,
+    /// making link transformation unnecessary. This method is kept for backward
+    /// compatibility but returns the source unchanged.
+    #[deprecated(note = "No replacement needed for bundle compilation")]
+    fn transform_links(&self, text: &str, _id: FileId, _format_name: &str) -> FileResult<String> {
+        Ok(text.to_string())
     }
 
     fn path_for_id(&self, id: FileId) -> FileResult<PathBuf> {
@@ -310,18 +304,10 @@ impl RheoWorld {
         root: &Path,
         input: &Path,
         format_name: &str,
-        link_strategy: LinkStrategy,
         plugin_library: Option<String>,
         font_dirs: Vec<PathBuf>,
     ) -> crate::Result<typst_html::HtmlDocument> {
-        let world = Self::new(
-            root,
-            input,
-            Some(format_name),
-            link_strategy,
-            plugin_library,
-            font_dirs,
-        )?;
+        let world = Self::new(root, input, Some(format_name), plugin_library, font_dirs)?;
         tracing::info!(input = %input.display(), "compiling to HTML");
         world.compile_html()
     }
@@ -331,18 +317,10 @@ impl RheoWorld {
         root: &Path,
         input: &Path,
         format_name: Option<&str>,
-        link_strategy: LinkStrategy,
         plugin_library: Option<String>,
         font_dirs: Vec<PathBuf>,
     ) -> crate::Result<typst_layout::PagedDocument> {
-        let world = Self::new(
-            root,
-            input,
-            format_name,
-            link_strategy,
-            plugin_library,
-            font_dirs,
-        )?;
+        let world = Self::new(root, input, format_name, plugin_library, font_dirs)?;
         tracing::info!(input = %input.display(), "compiling to PDF");
         world.compile_pdf()
     }

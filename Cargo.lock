@@ -2839,6 +2839,8 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "typst",
+ "typst-bundle",
  "webbrowser",
 ]
 

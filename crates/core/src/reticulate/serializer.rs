@@ -1,81 +1,31 @@
-use super::types::LinkTransform;
+//! Source code serialization utilities (DEPRECATED link transformation)
+//!
+//! This module previously contained link transformation logic for the old per-file
+//! compilation path. The new bundle compilation path (VirtualSpine + Typst @ref)
+//! handles cross-file references natively, making link transformation obsolete.
+//!
+//! The code block finding utilities are retained for potential future use.
+
 use std::ops::Range;
 use typst::syntax::{Source, SyntaxKind, SyntaxNode};
 
-/// Apply link transformations to source code
+/// Apply link transformations to source code (DEPRECATED).
 ///
-/// Applies transformations by replacing text at specified byte ranges.
-/// Transformations that overlap with code blocks are filtered out.
-/// Replacements are applied back-to-front to preserve byte offsets.
-///
-/// # Arguments
-/// * `source` - Original source text
-/// * `transformations` - List of (byte_range, transform) tuples
-/// * `code_block_ranges` - Byte ranges of code blocks to protect
+/// The new bundle compilation path handles cross-file references via Typst @ref,
+/// making link transformation unnecessary. This function returns the source unchanged.
+#[deprecated(note = "No replacement needed for bundle compilation")]
 pub fn apply_transformations(
     source: &str,
-    transformations: &[(Range<usize>, LinkTransform)],
-    code_block_ranges: &[Range<usize>],
+    _transformations: &[(Range<usize>, crate::reticulate::types::LinkTransform)],
+    _code_block_ranges: &[Range<usize>],
 ) -> String {
-    // Filter out transformations that overlap with code blocks
-    let mut active_transforms: Vec<_> = transformations
-        .iter()
-        .filter(|(range, _)| !overlaps_with_any(range, code_block_ranges))
-        .collect();
-
-    // Sort by byte range (back-to-front for stable offsets)
-    active_transforms.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
-
-    // Build result string by applying transformations
-    let mut result = source.to_string();
-
-    for (range, transform) in active_transforms {
-        // Get the original link text
-        let original = &source[range.clone()];
-
-        // Compute replacement text based on transformation
-        let replacement = match transform {
-            LinkTransform::Remove { body } => {
-                // Just the body text in brackets: [body]
-                format!("[{}]", body)
-            }
-            LinkTransform::ReplaceUrl { new_url } => {
-                // Bare string literal (import/include): just re-quote
-                if original.starts_with('"') {
-                    format!("\"{}\"", new_url)
-                } else {
-                    // Full link expression: preserve surrounding syntax
-                    replace_url_in_link(original, new_url, false)
-                }
-            }
-            LinkTransform::ReplaceUrlWithLabel { new_label } => {
-                // Replace URL but keep the rest of the syntax
-                // Original: #link("old.typ")[body]
-                // New:      #link(<label>)[body]
-                replace_url_in_link(original, new_label, true)
-            }
-            LinkTransform::ReplaceStringLiteralInPlace { new_value } => {
-                // byte_range covers the Str node including surrounding quotes
-                format!("\"{}\"", new_value)
-            }
-
-            LinkTransform::KeepOriginal => {
-                // No change
-                original.to_string()
-            }
-        };
-
-        // Replace in result (safe because we're going back-to-front)
-        result.replace_range(range.clone(), &replacement);
-    }
-
-    result
+    source.to_string()
 }
 
 /// Find all code block ranges in the source using AST traversal
 ///
 /// Returns byte ranges of all Raw nodes (code blocks and inline code).
-/// Links within these ranges should be preserved unchanged.
+/// This function is retained for potential future use.
 pub fn find_code_block_ranges(source: &Source) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     collect_raw_ranges(source.root(), &mut ranges, 0);
@@ -110,37 +60,6 @@ fn overlaps_with_any(range: &Range<usize>, code_ranges: &[Range<usize>]) -> bool
 /// Check if two ranges overlap
 fn ranges_overlap(a: &Range<usize>, b: &Range<usize>) -> bool {
     a.start < b.end && b.start < a.end
-}
-
-/// Replace the URL in a link while preserving the rest
-///
-/// Handles both syntaxes:
-/// - `#link("url")[body]` → `#link("new_url")[body]`
-/// - `#link("url", body)` → `#link("new_url", body)`
-fn replace_url_in_link(original: &str, new_url: &str, is_label: bool) -> String {
-    // Find the opening quote after #link(
-    if let Some(quote_start) = original.find('(') {
-        let after_paren = &original[quote_start + 1..];
-
-        // Find the first quote
-        if let Some(first_quote) = after_paren.find('"') {
-            let before_url =
-                &original[..quote_start + 1 + first_quote + (if is_label { 0 } else { 1 })];
-
-            // Find the closing quote
-            let after_first_quote = &after_paren[first_quote + 1..];
-            if let Some(closing_quote) = after_first_quote.find('"') {
-                let after_url =
-                    &after_first_quote[closing_quote + (if is_label { 1 } else { 0 })..];
-
-                // Reconstruct: #link("new_url")[body] or #link("new_url", body)
-                return format!("{}{}{}", before_url, new_url, after_url);
-            }
-        }
-    }
-
-    // Fallback: return original if parsing failed
-    original.to_string()
 }
 
 #[cfg(test)]

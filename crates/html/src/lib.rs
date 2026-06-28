@@ -18,12 +18,16 @@ use tracing::{debug, info, warn};
 /// Reload callback type - called by watch loop after successful compilation.
 pub type ReloadCallback = Box<dyn Fn() + Send + Sync>;
 
+/// VirtualFs update callback - called by watch loop after recompile with new VirtualFs
+pub type VirtualFsUpdateCallback = Box<dyn Fn(typst_bundle::VirtualFs) + Send + Sync>;
+
 /// Server handle for HTML plugin's development server
 pub struct HtmlServerHandle {
     pub runtime: tokio::runtime::Runtime,
     pub server_task: tokio::task::JoinHandle<()>,
     pub url: String,
     pub reload_callback: ReloadCallback,
+    pub virtual_fs_update_callback: Option<VirtualFsUpdateCallback>,
 }
 
 impl ServerHandle for HtmlServerHandle {
@@ -76,6 +80,7 @@ impl FormatPlugin for HtmlPlugin {
             server_task,
             url,
             reload_callback,
+            virtual_fs_update_callback: None,
         };
         Ok(OpenHandle::Server(Box::new(handle)))
     }
