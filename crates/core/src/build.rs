@@ -141,8 +141,7 @@ impl Build {
         // in-memory entry page injects the same head links as the on-disk build.
         // Without this the VirtualFs index lacks package CSS/JS and renders
         // unstyled.
-        let package_imports =
-            crate::plugins::scan_project_package_imports(&self.project.typ_files);
+        let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
         let manifest_blocks = if plugin_section.auto_detect_packages_enabled() {
             crate::plugins::prewarm_packages(&package_imports);
             crate::plugins::detect_manifest_package_assets(&package_imports, html_plugin.name())
