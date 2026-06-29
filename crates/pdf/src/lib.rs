@@ -19,6 +19,12 @@ impl FormatPlugin for PdfPlugin {
         TypstFormat::Pdf
     }
 
+    /// PDF compiles to the paged target; leave `target()` as Typst's native
+    /// `"paged"` rather than injecting a rheo override.
+    fn rheo_target(&self) -> Option<&'static str> {
+        None
+    }
+
     fn format_init_template(&self) -> FormatInitTemplate {
         FormatInitTemplate {
             files: vec![],

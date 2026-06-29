@@ -103,6 +103,7 @@ impl RheoWorld {
     pub fn new_for_bundle(
         root: &Path,
         virtual_main_source: String,
+        format_name: Option<&str>,
         font_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
         let root = crate::path_utils::canonicalize_path(root)?;
@@ -114,6 +115,7 @@ impl RheoWorld {
 
         let library = Library::builder()
             .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
+            .with_inputs(build_inputs(format_name))
             .build();
 
         let (font_store, package_storage, rheo_packages) = Self::init_resources(&font_dirs);
@@ -127,7 +129,7 @@ impl RheoWorld {
             package_storage,
             rheo_packages,
             slots: Mutex::new(HashMap::new()),
-            format_name: None,
+            format_name: format_name.map(str::to_string),
             plugin_library: None,
             virtual_main_source: Some(virtual_main_source),
         })
