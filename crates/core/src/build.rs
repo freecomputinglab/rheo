@@ -95,24 +95,24 @@ impl Build {
         &self.output
     }
 
-    /// Compile the project and return VirtualFs for watch mode (HTML only).
+    /// Compile HTML to an in-memory VirtualFs for the dev server.
     ///
-    /// This is a specialized method for watch mode that returns the raw VirtualFs
-    /// from bundle compilation instead of writing files to disk. The VirtualFs
-    /// can be served directly by the dev server for faster live reload.
+    /// Resolves assets (CSS/JS), copies them to the plugin output dir so the
+    /// dev server can fall back to disk for them, compiles the Typst bundle, and
+    /// injects CSS/JS `<link>`/`<script>` tags into each HTML entry before
+    /// returning the VirtualFs. Typst's comemo layer caches unchanged sources, so
+    /// this second compile after `run()` is near-instant on unchanged content.
     ///
-    /// Only supports HTML format currently.
+    /// Returns `None` when the HTML plugin is not selected.
     pub fn compile_for_watch(&mut self) -> Result<Option<typst_bundle::VirtualFs>> {
         if self.project.typ_files.is_empty() {
             return Err(RheoError::project_config("no .typ files found in project"));
         }
 
-        // Only HTML plugin for now
-        let html_plugin = self
-            .plugins
-            .iter()
-            .find(|p| p.name() == "html")
-            .ok_or_else(|| RheoError::project_config("HTML plugin not enabled"))?;
+        let html_plugin = match self.plugins.iter().find(|p| p.name() == "html") {
+            Some(p) => p,
+            None => return Ok(None),
+        };
 
         let plugin_output_dir = self.output.dir_for_plugin(html_plugin.name());
         std::fs::create_dir_all(&plugin_output_dir).map_err(|e| {
@@ -123,10 +123,6 @@ impl Build {
         })?;
 
         let default_section = PluginSection::default();
-
-        // Scan .typ files for package imports once — shared across all plugins.
-        let _package_imports =
-            crate::plugins::scan_project_package_imports(&self.project.typ_files);
 
         let content_dir = self
             .project
@@ -141,6 +137,22 @@ impl Build {
             .get(html_plugin.name())
             .unwrap_or(&default_section);
 
+        // Resolve assets — copies CSS/JS to disk so the dev server can serve them
+        // as fallback for requests not satisfied by the VirtualFs.
+        let resolver = AssetResolver::new(&self.project.root, &plugin_output_dir);
+        let resolved_assets = resolver
+            .resolve(html_plugin.as_ref(), plugin_section, &[])
+            .unwrap_or_default();
+
+        let css_paths: Vec<String> = resolved_assets
+            .get("css_stylesheet")
+            .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
+            .unwrap_or_default();
+        let js_paths: Vec<String> = resolved_assets
+            .get("js_scripts")
+            .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
+            .unwrap_or_default();
+
         // Resolve spine options.
         let spine_cfg = plugin_section.spine.as_ref();
         let spine = SpineOptions {
@@ -149,17 +161,7 @@ impl Build {
             merge: spine_cfg.and_then(|s| s.merge).unwrap_or(false),
         };
 
-        let _ctx = PluginContext {
-            project: &self.project,
-            output_config: &self.output,
-            output_dir: &plugin_output_dir,
-            spine: &spine,
-            config: plugin_section,
-            assets: &Default::default(), // Unused in watch mode
-            font_dirs: &self.font_dirs,
-        };
-
-        // Build VirtualSpine from plugin's declared layout + project context.
+        // Build VirtualSpine + compile.
         let layout = spine_layout_for(
             html_plugin.spine_layout_kind(),
             html_plugin.as_ref(),
@@ -178,15 +180,36 @@ impl Build {
         virtual_spine.check_output_collisions()?;
 
         let spine_source = virtual_spine.source();
-        debug!(plugin = html_plugin.name(), "created virtual spine source");
 
-        // Single Typst bundle compile for this plugin.
         let world =
             RheoWorld::new_for_bundle(&self.project.root, spine_source, self.font_dirs.clone())?;
         let bundle = world.compile_bundle()?;
         let virtual_fs = export_bundle(&bundle)?;
 
-        Ok(Some(virtual_fs))
+        // Inject CSS/JS link tags into each HTML entry in memory.
+        let needs_injection = !css_paths.is_empty() || !js_paths.is_empty();
+        if needs_injection {
+            let css_refs: Vec<&str> = css_paths.iter().map(|s| s.as_str()).collect();
+            let js_refs: Vec<&str> = js_paths.iter().map(|s| s.as_str()).collect();
+            let injected: Result<typst_bundle::VirtualFs> = virtual_fs
+                .into_iter()
+                .map(|(vpath, bytes)| {
+                    let path_str = vpath.get_with_slash().trim_start_matches('/').to_string();
+                    if path_str.ends_with(".html") {
+                        let html = String::from_utf8_lossy(&bytes);
+                        let mut dom = crate::html_utils::HtmlDom::parse(&html)?;
+                        dom.inject_head_links(&[], &css_refs, &js_refs)?;
+                        let modified = dom.serialize()?;
+                        Ok((vpath, typst::foundations::Bytes::new(modified.into_bytes())))
+                    } else {
+                        Ok((vpath, bytes))
+                    }
+                })
+                .collect();
+            Ok(Some(injected?))
+        } else {
+            Ok(Some(virtual_fs))
+        }
     }
 
     /// Compile the project across all selected plugins.

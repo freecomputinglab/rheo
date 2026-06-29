@@ -18,16 +18,13 @@ use tracing::{debug, info, warn};
 /// Reload callback type - called by watch loop after successful compilation.
 pub type ReloadCallback = Box<dyn Fn() + Send + Sync>;
 
-/// VirtualFs update callback - called by watch loop after recompile with new VirtualFs
-pub type VirtualFsUpdateCallback = Box<dyn Fn(typst_bundle::VirtualFs) + Send + Sync>;
-
 /// Server handle for HTML plugin's development server
 pub struct HtmlServerHandle {
     pub runtime: tokio::runtime::Runtime,
     pub server_task: tokio::task::JoinHandle<()>,
     pub url: String,
     pub reload_callback: ReloadCallback,
-    pub virtual_fs_update_callback: Option<VirtualFsUpdateCallback>,
+    pub vfs_arc: std::sync::Arc<tokio::sync::RwLock<Option<typst_bundle::VirtualFs>>>,
 }
 
 impl ServerHandle for HtmlServerHandle {
@@ -36,6 +33,12 @@ impl ServerHandle for HtmlServerHandle {
     }
     fn reload(&self) {
         (self.reload_callback)();
+    }
+    fn update_virtual_fs(&self, vfs: typst_bundle::VirtualFs) {
+        let arc = self.vfs_arc.clone();
+        self.runtime.spawn(async move {
+            *arc.write().await = Some(vfs);
+        });
     }
 }
 
@@ -64,7 +67,7 @@ impl FormatPlugin for HtmlPlugin {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| RheoError::io(e, "creating tokio runtime"))?;
 
-        let (server_task, reload_tx, url) = runtime
+        let (server_task, reload_tx, url, vfs_arc) = runtime
             .block_on(async { server::start_server(output_dir.to_path_buf(), 3000).await })?;
 
         if let Err(e) = server::open_browser(&url) {
@@ -80,7 +83,7 @@ impl FormatPlugin for HtmlPlugin {
             server_task,
             url,
             reload_callback,
-            virtual_fs_update_callback: None,
+            vfs_arc,
         };
         Ok(OpenHandle::Server(Box::new(handle)))
     }

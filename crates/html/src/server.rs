@@ -29,30 +29,41 @@ pub struct ServerState {
 
 /// Start the web server on a given port
 ///
-/// Returns a tuple of (server_handle, reload_sender, server_url)
+/// Returns a tuple of (server_handle, reload_sender, server_url, vfs_arc)
 pub async fn start_server(
     html_dir: PathBuf,
     port: u16,
-) -> Result<(tokio::task::JoinHandle<()>, broadcast::Sender<()>, String)> {
+) -> Result<(
+    tokio::task::JoinHandle<()>,
+    broadcast::Sender<()>,
+    String,
+    Arc<RwLock<Option<typst_bundle::VirtualFs>>>,
+)> {
     start_server_with_virtual_fs(html_dir, port, None).await
 }
 
 /// Start the web server with optional in-memory virtual file system
 ///
 /// If `virtual_fs` is Some, serves HTML files from memory instead of disk.
-/// Returns a tuple of (server_handle, reload_sender, server_url)
+/// Returns a tuple of (server_handle, reload_sender, server_url, vfs_arc)
 pub async fn start_server_with_virtual_fs(
     html_dir: PathBuf,
     port: u16,
     virtual_fs: Option<typst_bundle::VirtualFs>,
-) -> Result<(tokio::task::JoinHandle<()>, broadcast::Sender<()>, String)> {
+) -> Result<(
+    tokio::task::JoinHandle<()>,
+    broadcast::Sender<()>,
+    String,
+    Arc<RwLock<Option<typst_bundle::VirtualFs>>>,
+)> {
     // Create broadcast channel for reload events
     let (reload_tx, _) = broadcast::channel(100);
 
+    let vfs_arc = Arc::new(RwLock::new(virtual_fs));
     let state = ServerState {
         reload_tx: reload_tx.clone(),
         html_dir: html_dir.clone(),
-        virtual_fs: Arc::new(RwLock::new(virtual_fs)),
+        virtual_fs: vfs_arc.clone(),
     };
 
     // Build router
@@ -77,7 +88,7 @@ pub async fn start_server_with_virtual_fs(
         }
     });
 
-    Ok((server_handle, reload_tx, server_url))
+    Ok((server_handle, reload_tx, server_url, vfs_arc))
 }
 
 /// SSE handler for live reload events
@@ -157,12 +168,13 @@ async fn static_handler(State(state): State<ServerState>, uri: axum::http::Uri) 
                 .unwrap();
         }
 
-        // File not found in VirtualFs
-        return (StatusCode::NOT_FOUND, "404 Not Found").into_response();
+        // File not found in VirtualFs — fall back to disk (CSS/JS assets etc.)
+        drop(virtual_fs);
+    } else {
+        drop(virtual_fs);
     }
 
     // Disk mode: serve from html_dir
-    drop(virtual_fs);
 
     // Determine the file to serve
     let file_path = if path.is_empty() || path.ends_with('/') {

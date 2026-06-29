@@ -411,6 +411,23 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
                 Err(e) => warn!(error = %e, plugin = plugin.name(), "failed to open"),
             }
         }
+        // Push initial in-memory VirtualFs to the HTML dev server so it serves
+        // HTML from memory rather than re-reading disk on each request.
+        // compile_for_watch() reuses comemo-cached Typst state from build.run(),
+        // so this second compile is near-instant.
+        if let Some(OpenHandle::Server(server)) = open_handles
+            .iter()
+            .find(|h| matches!(h, OpenHandle::Server(_)))
+        {
+            match build.compile_for_watch() {
+                Ok(Some(vfs)) => {
+                    server.update_virtual_fs(vfs);
+                    debug!("initial VirtualFs pushed to dev server");
+                }
+                Ok(None) => {}
+                Err(e) => warn!(error = %e, "initial VirtualFs compile failed, serving from disk"),
+            }
+        }
     }
 
     let watch_project_cfg = build.project().clone();
@@ -425,9 +442,22 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
             WatchEvent::FilesChanged => {
                 info!("files changed, recompiling");
                 if build.run().is_ok() {
+                    // Update HTML dev server VirtualFs before triggering browser reload.
                     for handle in &open_handles {
                         if let OpenHandle::Server(server) = handle {
+                            match build.compile_for_watch() {
+                                Ok(Some(vfs)) => {
+                                    let t = std::time::Instant::now();
+                                    server.update_virtual_fs(vfs);
+                                    debug!(ms = t.elapsed().as_millis(), "VirtualFs updated");
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    warn!(error = %e, "VirtualFs compile failed, reload will serve stale content")
+                                }
+                            }
                             server.reload();
+                            break; // only one server handle expected
                         }
                     }
                 }
@@ -446,7 +476,15 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
                         if build.run().is_ok() {
                             for handle in &open_handles {
                                 if let OpenHandle::Server(server) = handle {
+                                    match build.compile_for_watch() {
+                                        Ok(Some(vfs)) => server.update_virtual_fs(vfs),
+                                        Ok(None) => {}
+                                        Err(e) => {
+                                            warn!(error = %e, "VirtualFs compile failed after config reload")
+                                        }
+                                    }
                                     server.reload();
+                                    break;
                                 }
                             }
                         }

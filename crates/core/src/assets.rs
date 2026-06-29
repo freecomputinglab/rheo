@@ -1105,7 +1105,10 @@ mod tests {
             .unwrap();
 
         let written = std::fs::read(output_dir.join("logo.png")).unwrap();
-        assert_eq!(written, copy_content, "copy glob should overwrite bundle output");
+        assert_eq!(
+            written, copy_content,
+            "copy glob should overwrite bundle output"
+        );
     }
 
     #[test]

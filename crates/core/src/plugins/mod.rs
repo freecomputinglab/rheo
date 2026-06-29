@@ -18,6 +18,8 @@ pub use typst_manifest::{
 pub trait ServerHandle: Send + Sync {
     fn url(&self) -> &str;
     fn reload(&self);
+    /// Push a new in-memory file system to the server (no-op by default).
+    fn update_virtual_fs(&self, _vfs: typst_bundle::VirtualFs) {}
 }
 
 /// Handle returned by FormatPlugin::open() for managing the opened resource
