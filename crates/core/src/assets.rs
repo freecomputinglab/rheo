@@ -336,7 +336,7 @@ mod tests {
         fn compile(
             &self,
             _ctx: PluginContext<'_>,
-            _outputs: &[crate::plugins::SpineOutput],
+            _outputs: &[crate::plugins::CastVertebra],
         ) -> Result<()> {
             Ok(())
         }

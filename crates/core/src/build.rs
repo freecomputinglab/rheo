@@ -9,7 +9,7 @@ use crate::assets::AssetResolver;
 use crate::compile::export_bundle;
 use crate::config::PluginSection;
 use crate::output::OutputConfig;
-use crate::plugins::{FormatPlugin, PluginContext, SpineOptions, SpineOutput, spine_layout_for};
+use crate::plugins::{FormatPlugin, PluginContext, SpineOptions, CastVertebra, spine_layout_for};
 use crate::project::{ProjectConfig, ProjectMode};
 use crate::results::CompilationResults;
 use crate::reticulate::spine::VirtualSpine;
@@ -305,11 +305,11 @@ impl Build {
             let bundle = world.compile_bundle()?;
             let virtual_fs = export_bundle(&bundle)?;
 
-            // Flatten VirtualFs entries into plugin-facing SpineOutput list.
+            // Flatten VirtualFs entries into plugin-facing CastVertebra list.
             // VirtualPath::get_with_slash() gives the path string (e.g. "/intro.html").
             // Strip the leading "/" to produce a relative filename.
             // Match each output back to its Vertebra to include harvested rheo-vars.
-            let outputs: Vec<SpineOutput> = virtual_fs
+            let outputs: Vec<CastVertebra> = virtual_fs
                 .into_iter()
                 .map(|(vpath, bytes)| {
                     let output_path = vpath.get_with_slash().trim_start_matches('/').to_string();
@@ -320,9 +320,10 @@ impl Build {
                         .find(|v| v.output_path == output_path)
                         .map(|v| v.vars.clone())
                         .unwrap_or_default();
-                    SpineOutput {
+                    CastVertebra {
                         output_path,
                         bytes,
+                        format: plugin.typst_format(),
                         vars,
                     }
                 })
@@ -499,7 +500,7 @@ mod tests {
         fn name(&self) -> &'static str {
             self.0
         }
-        fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[SpineOutput]) -> crate::Result<()> {
+        fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[CastVertebra]) -> crate::Result<()> {
             Ok(())
         }
     }

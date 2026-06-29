@@ -10,7 +10,7 @@ use itertools::Itertools;
 use rheo_core::{DocumentTitle, EcoString, OutlineNode};
 use rheo_core::{
     FormatInitTemplate, FormatPlugin, PluginContext, PluginSection, Result, RheoError, Spine,
-    SpineLayoutKind, SpineOptions, SpineOutput, eco_format, eco_vec,
+    SpineLayoutKind, SpineOptions, CastVertebra, eco_format, eco_vec,
 };
 use serde::Deserialize;
 use std::{
@@ -59,7 +59,7 @@ impl FormatPlugin for EpubPlugin {
         }
     }
 
-    fn compile(&self, ctx: PluginContext<'_>, outputs: &[SpineOutput]) -> Result<()> {
+    fn compile(&self, ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
         let epub_config = ctx.config.parse_extra::<EpubConfig>()?;
         let identifier = epub_config.identifier.clone();
         let date = epub_config.date_utc();

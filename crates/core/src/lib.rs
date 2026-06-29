@@ -45,12 +45,13 @@ pub use config::{AssetsField, PluginAssets, PluginSection, Spine};
 // Plugin trait and context
 pub use plugins::{
     AssetConfig, FormatInitTemplate, FormatPlugin, OpenHandle, PackageAssets, PluginContext,
-    ResolvedPackage, ServerHandle, SpineLayoutKind, SpineOptions, SpineOutput, TypstFormat,
+    ResolvedPackage, ServerHandle, SpineLayoutKind, SpineOptions, CastVertebra, TypstFormat,
 };
 pub use reticulate::types::RheoValue;
 
 // HTML/PDF export utilities
 pub use compile::{compile_document_to_string, document_to_pdf_bytes};
+pub use html_utils::HtmlDom;
 
 // World (Typst compilation context)
 pub use world::RheoWorld;

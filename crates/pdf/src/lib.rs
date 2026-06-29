@@ -1,6 +1,6 @@
 use rheo_core::{
     FormatInitTemplate, FormatPlugin, PluginContext, Result, RheoError, SpineLayoutKind,
-    SpineOutput, TypstFormat,
+    CastVertebra, TypstFormat,
 };
 
 pub struct PdfPlugin;
@@ -30,7 +30,7 @@ impl FormatPlugin for PdfPlugin {
         Some(include_str!("lib.typ"))
     }
 
-    fn compile(&self, ctx: PluginContext<'_>, outputs: &[SpineOutput]) -> Result<()> {
+    fn compile(&self, ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
         let output = outputs
             .first()
             .ok_or_else(|| RheoError::project_config("PDF compilation produced no output"))?;

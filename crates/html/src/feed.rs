@@ -7,7 +7,7 @@
 
 use atom_syndication as atom;
 use chrono::{DateTime, Utc};
-use rheo_core::{PluginContext, RheoError, SpineOutput, html_utils};
+use rheo_core::{PluginContext, RheoError, CastVertebra, html_utils};
 
 /// A single `<entry>` in the feed.
 pub struct AtomEntry {
@@ -84,7 +84,7 @@ fn link(rel: &str, href: &str) -> atom::Link {
 /// Only vertebrae with `rheo-feed-title` produce feed entries.
 pub fn generate_feed(
     ctx: PluginContext<'_>,
-    outputs: &[SpineOutput],
+    outputs: &[CastVertebra],
     base_url: &str,
     feed_title: &str,
     html_cfg: &super::HtmlConfig,

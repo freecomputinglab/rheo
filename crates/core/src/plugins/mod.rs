@@ -74,13 +74,27 @@ pub struct FormatInitTemplate {
 ///
 /// Each item maps an output filename (relative to the plugin output dir) to the
 /// raw bytes emitted by the compiler (e.g. HTML string bytes, PDF bytes).
-pub struct SpineOutput {
+pub struct CastVertebra {
     /// Output filename relative to the plugin output dir (e.g., `"chapter1.html"`).
     pub output_path: String,
     /// Raw bytes from the Typst compiler.
     pub bytes: Bytes,
+    /// Typst compile target this output was produced with.
+    pub format: TypstFormat,
     /// Harvested `rheo-*` variables from the vertebra's source file.
     pub vars: std::collections::HashMap<String, crate::reticulate::types::RheoValue>,
+}
+
+impl CastVertebra {
+    /// Parse this output as an HTML DOM.
+    ///
+    /// Returns an error if `format` is not `TypstFormat::Html`.
+    pub fn html(&self) -> crate::Result<crate::html_utils::HtmlDom> {
+        if self.format != TypstFormat::Html {
+            return Err(crate::RheoError::invalid_data("output is not HTML-shaped"));
+        }
+        crate::html_utils::HtmlDom::parse(&String::from_utf8_lossy(&self.bytes))
+    }
 }
 
 /// Typst export target — the format argument passed to `#document(…, format: "…")`.
@@ -290,7 +304,7 @@ pub trait FormatPlugin: Send + Sync {
     ///
     /// Return errors as `Err(...)` — the build records failures and continues with
     /// other plugins. Do not swallow errors silently.
-    fn compile(&self, ctx: PluginContext<'_>, outputs: &[SpineOutput]) -> crate::Result<()>;
+    fn compile(&self, ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> crate::Result<()>;
 }
 
 /// Open all files with a given extension in a folder using the OS default application.

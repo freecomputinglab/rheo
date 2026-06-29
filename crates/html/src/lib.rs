@@ -1,7 +1,6 @@
 pub mod feed;
 mod server;
 
-use rheo_core::html_utils;
 use serde::Deserialize;
 
 /// Bundled default HTML stylesheet.
@@ -10,7 +9,7 @@ pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
     AssetConfig, FormatInitTemplate, FormatPlugin, OpenHandle, PluginContext, Result, RheoError,
-    ServerHandle, SpineOutput,
+    ServerHandle, CastVertebra,
 };
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -103,7 +102,7 @@ impl FormatPlugin for HtmlPlugin {
         ]
     }
 
-    fn compile(&self, ctx: PluginContext<'_>, outputs: &[SpineOutput]) -> Result<()> {
+    fn compile(&self, ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
         let css_assets = ctx.assets.get(&STYLESHEETS).filter(|v| !v.is_empty());
         let js_assets = ctx.assets.get(&SCRIPTS).filter(|v| !v.is_empty());
 
@@ -128,17 +127,13 @@ impl FormatPlugin for HtmlPlugin {
             .base_url()
             .map(|base| (format!("{base}/feed.xml"), feed_title.clone()));
 
+        let needs_head_links = !css_paths.is_empty() || !js_paths.is_empty();
+        let css_refs: Vec<&str> = css_paths.iter().map(|s| s.as_str()).collect();
+        let js_refs: Vec<&str> = js_paths.iter().map(|s| s.as_str()).collect();
+
         for output in outputs {
-            let html_string = String::from_utf8(output.bytes.to_vec()).map_err(|e| {
-                RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e))
-            })?;
-
-            let needs_head_links = !css_paths.is_empty() || !js_paths.is_empty();
-            let css_refs: Vec<&str> = css_paths.iter().map(|s| s.as_str()).collect();
-            let js_refs: Vec<&str> = js_paths.iter().map(|s| s.as_str()).collect();
-
             let html_string = if use_default_css || needs_head_links || feed_link.is_some() {
-                let mut dom = html_utils::HtmlDom::parse(&html_string)?;
+                let mut dom = output.html()?;
                 if use_default_css {
                     info!("No stylesheet found, using default");
                     dom.inject_inline_styles(&[DEFAULT_STYLESHEET])?;
@@ -151,7 +146,8 @@ impl FormatPlugin for HtmlPlugin {
                 }
                 dom.serialize()?
             } else {
-                html_string
+                String::from_utf8(output.bytes.to_vec())
+                    .map_err(|e| RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e)))?
             };
 
             let out_path = ctx.output_dir.join(&output.output_path);
