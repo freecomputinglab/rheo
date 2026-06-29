@@ -186,8 +186,12 @@ impl Build {
 
         let spine_source = virtual_spine.source();
 
-        let world =
-            RheoWorld::new_for_bundle(&self.project.root, spine_source, self.font_dirs.clone())?;
+        let world = RheoWorld::new_for_bundle(
+            &self.project.root,
+            spine_source,
+            html_plugin.rheo_target(),
+            self.font_dirs.clone(),
+        )?;
         let bundle = world.compile_bundle()?;
         let virtual_fs = export_bundle(&bundle)?;
 
@@ -317,6 +321,7 @@ impl Build {
             let world = RheoWorld::new_for_bundle(
                 &self.project.root,
                 spine_source,
+                plugin.rheo_target(),
                 self.font_dirs.clone(),
             )?;
             let bundle = world.compile_bundle()?;

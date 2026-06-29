@@ -269,6 +269,20 @@ pub trait FormatPlugin: Send + Sync {
         TypstFormat::Html
     }
 
+    /// The value injected as `sys.inputs.rheo-target`, surfaced to documents via
+    /// the `target()` polyfill.
+    ///
+    /// This keeps formats that share a Typst export target distinguishable: EPUB
+    /// and HTML both compile via the `html` target, but report `"epub"` and
+    /// `"html"` respectively, so packages can branch on the rheo output format.
+    ///
+    /// Returning `None` injects nothing, leaving `target()` to fall back to
+    /// Typst's `std.target()` — used by PDF, which wants the native `"paged"`.
+    /// Defaults to `Some(name())`.
+    fn rheo_target(&self) -> Option<&'static str> {
+        Some(self.name())
+    }
+
     /// Set plugin-specific smart defaults when no rheo.toml section exists.
     fn apply_defaults(&self, _section: &mut PluginSection, _project_name: &str) {}
 
