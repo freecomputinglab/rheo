@@ -94,9 +94,6 @@ pub struct Vertebra {
     pub handle: String,
     /// Additional handle aliases; always includes the `<stem.typ>` escape form.
     pub extra_handles: Vec<String>,
-    /// Whether this vertebra's stem collides with another's, making the bare
-    /// handle ambiguous and forcing the path-qualified handle.
-    pub is_collision: bool,
     /// Document title for `#document title:` and `@handle` display text.
     pub title: String,
     /// Harvested `rheo-*` variables from this vertebra's source file.
@@ -138,38 +135,28 @@ impl VirtualSpine {
             .map(|f| to_forward_slash(&f.strip_prefix(content_dir).unwrap_or(f).with_extension("")))
             .collect();
 
-        // Count bare basenames to detect collisions.
-        let mut basename_count: HashMap<String, usize> = HashMap::new();
-        for rs in &rel_stems {
-            let basename = rs.split('/').next_back().unwrap_or(rs).to_string();
-            *basename_count.entry(basename).or_insert(0) += 1;
-        }
-
         let vertebrae = files
             .iter()
             .zip(rel_stems.iter())
             .map(|(file, rel_stem)| {
-                let basename = rel_stem
-                    .split('/')
-                    .next_back()
-                    .unwrap_or(rel_stem)
-                    .to_string();
-                let sanitized_base = sanitize_handle_segment(&basename);
-                let is_collision = basename_count.get(&basename).copied().unwrap_or(0) > 1;
+                let segments: Vec<&str> = rel_stem.split('/').collect();
+                let sanitized_base =
+                    sanitize_handle_segment(segments.last().copied().unwrap_or(rel_stem));
 
-                let handle = if is_collision {
-                    // Path-qualified: "chapters/intro" → "chapters-intro".
-                    rel_stem
-                        .split('/')
-                        .map(sanitize_handle_segment)
+                // Canonical handle: bare stem for root-level files, path-prefixed
+                // with ':' separator for nested files ("a/notes" → "a:notes").
+                let handle = if segments.len() > 1 {
+                    segments
+                        .iter()
+                        .map(|s| sanitize_handle_segment(s))
                         .collect::<Vec<_>>()
-                        .join("-")
+                        .join(":")
                 } else {
                     sanitized_base.clone()
                 };
 
-                // <stem.typ> escape form is always included as a secondary alias.
-                let extra_handles = vec![format!("{sanitized_base}.typ")];
+                // Escape form mirrors the canonical handle with ".typ" appended.
+                let extra_handles = vec![format!("{handle}.typ")];
 
                 let output_path = match &layout {
                     SpineLayout::OnePerVertebra { ext, .. } => {
@@ -214,7 +201,6 @@ impl VirtualSpine {
                     output_path,
                     handle,
                     extra_handles,
-                    is_collision,
                     title,
                     vars,
                 })
@@ -442,30 +428,30 @@ mod tests {
     }
 
     #[test]
-    fn stem_collision_produces_path_qualified_handle() {
+    fn nested_files_get_colon_qualified_handle() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let content = root.join("content");
-        let chaps = content.join("chapters");
-        let app = content.join("appendix");
-        fs::create_dir_all(&chaps).unwrap();
-        fs::create_dir_all(&app).unwrap();
-        fs::write(chaps.join("intro.typ"), "").unwrap();
-        fs::write(app.join("intro.typ"), "").unwrap();
+        let a = content.join("a");
+        let b = content.join("b");
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        fs::write(a.join("notes.typ"), "").unwrap();
+        fs::write(b.join("notes.typ"), "").unwrap();
 
-        let files = vec![chaps.join("intro.typ"), app.join("intro.typ")];
+        let files = vec![a.join("notes.typ"), b.join("notes.typ")];
         let layout = SpineLayout::OnePerVertebra {
             ext: "html".into(),
             format: "html".into(),
         };
         let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
 
-        assert_eq!(spine.vertebrae[0].handle, "chapters-intro");
-        assert_eq!(spine.vertebrae[1].handle, "appendix-intro");
+        assert_eq!(spine.vertebrae[0].handle, "a:notes");
+        assert_eq!(spine.vertebrae[1].handle, "b:notes");
         assert!(
             spine.vertebrae[0]
                 .extra_handles
-                .contains(&"intro.typ".to_string())
+                .contains(&"a:notes.typ".to_string())
         );
         assert_ne!(
             spine.vertebrae[0].output_path,
@@ -480,7 +466,6 @@ mod tests {
             output_path: "intro.html".into(),
             handle: "intro".into(),
             extra_handles: vec!["intro.typ".into()],
-            is_collision: false,
             title: "Introduction".into(),
             vars: HashMap::new(),
         };
@@ -509,8 +494,7 @@ mod tests {
                     output_path: "doc.pdf".into(),
                     handle: "a".into(),
                     extra_handles: vec![],
-                    is_collision: false,
-                    title: "A".into(),
+                            title: "A".into(),
                     vars: HashMap::new(),
                 },
                 Vertebra {
@@ -518,8 +502,7 @@ mod tests {
                     output_path: "doc.pdf".into(),
                     handle: "b".into(),
                     extra_handles: vec![],
-                    is_collision: false,
-                    title: "B".into(),
+                            title: "B".into(),
                     vars: HashMap::new(),
                 },
             ],
@@ -544,8 +527,7 @@ mod tests {
                     output_path: "book.pdf".into(),
                     handle: "a".into(),
                     extra_handles: vec![],
-                    is_collision: false,
-                    title: "A".into(),
+                            title: "A".into(),
                     vars: Default::default(),
                 },
                 Vertebra {
@@ -553,8 +535,7 @@ mod tests {
                     output_path: "book.pdf".into(),
                     handle: "b".into(),
                     extra_handles: vec![],
-                    is_collision: false,
-                    title: "B".into(),
+                            title: "B".into(),
                     vars: Default::default(),
                 },
             ],

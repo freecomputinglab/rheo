@@ -74,9 +74,9 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
 ///
 /// Handles are taken from `VirtualSpine::build` (`crates/core/src/reticulate/
 /// spine.rs`), which is collision-aware: the primary handle is bare (`<intro>`)
-/// when the stem is unique, and path-qualified (`<chapters-intro>`) on a
-/// cross-directory collision. The `<stem.typ>` escape alias is basename-based
-/// and therefore ambiguous on collision, so it is never used as a target.
+/// when the stem is unique, and path-qualified with `:` separator (`<chapters:intro>`)
+/// for nested files. The `<stem.typ>` escape alias is ambiguous when stems collide,
+/// so it is never used as a rewrite target.
 fn migrate_link_syntax(project: &ProjectConfig, apply: bool) -> Result<()> {
     let content_dir = resolve_effective_content_dir(project);
     let typ_files = collect_typ_files(&content_dir);
@@ -92,10 +92,10 @@ fn migrate_link_syntax(project: &ProjectConfig, apply: bool) -> Result<()> {
     let spine = VirtualSpine::build(&typ_files, &content_dir, &project.root, layout)?;
 
     // Canonical absolute source path -> label to emit.
-    // The primary handle is always unique: bare (`intro`) when the stem is
-    // unique, path-qualified (`chapters-intro`) on a cross-directory collision.
-    // The `<stem.typ>` escape alias is basename-based and therefore AMBIGUOUS on
-    // collision (both files share it), so it is never used as a rewrite target.
+    // The primary handle is always unique: bare (`intro`) for root-level files,
+    // path-qualified with ':' (`chapters:intro`) for nested files.
+    // The `<stem.typ>` escape alias is basename-based and AMBIGUOUS on
+    // stem collision, so it is never used as a rewrite target.
     let mut handle_map: HashMap<PathBuf, String> = HashMap::new();
     for v in &spine.vertebrae {
         let abs = project.root.join(&v.rel_path);
@@ -370,9 +370,9 @@ mod tests {
         migrate_link_syntax(&project, true).unwrap();
 
         let rewritten = fs::read_to_string(content.join("intro.typ")).unwrap();
-        // Nested collision member -> path-qualified primary handle `chapters-intro`,
+        // Nested collision member -> path-qualified primary handle `chapters:intro`,
         // never the ambiguous escape form `<intro.typ>`.
-        assert!(rewritten.contains("#link(<chapters-intro>)[nested]"));
+        assert!(rewritten.contains("#link(<chapters:intro>)[nested]"));
         assert!(!rewritten.contains("<intro.typ>"));
     }
 }
