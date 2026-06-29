@@ -45,26 +45,40 @@ pub fn extract_nodes(source: &Source) -> ExtractedNodes {
     }
 }
 
-/// Walk the AST and return all `<label>` names defined in the source.
+/// Walk the AST and return all `<label>` names **defined** in the source.
+///
+/// Only collects labels that appear in markup context (attached to content).
+/// Labels inside function call arguments (`#link(<label>)`) are references,
+/// not definitions, and are excluded.
 ///
 /// Strips the surrounding `<` and `>` to yield bare label name strings.
 pub fn collect_user_labels(source: &Source) -> Vec<String> {
     let root = typst::syntax::parse(source.text());
     let mut labels = Vec::new();
-    collect_labels_at(&root, &mut labels);
+    collect_labels_at(&root, &mut labels, false);
     labels
 }
 
-fn collect_labels_at(node: &SyntaxNode, out: &mut Vec<String>) {
-    if node.kind() == SyntaxKind::Label {
-        let text = node.leaf_text();
-        let name = text.trim_start_matches('<').trim_end_matches('>');
-        if !name.is_empty() {
-            out.push(name.to_string());
+fn collect_labels_at(node: &SyntaxNode, out: &mut Vec<String>, in_code: bool) {
+    match node.kind() {
+        SyntaxKind::Label if !in_code => {
+            let text = node.leaf_text();
+            let name = text.trim_start_matches('<').trim_end_matches('>');
+            if !name.is_empty() {
+                out.push(name.to_string());
+            }
         }
+        // These node kinds introduce a code context where labels are references.
+        SyntaxKind::Args | SyntaxKind::CodeBlock | SyntaxKind::Code => {
+            for child in node.children() {
+                collect_labels_at(child, out, true);
+            }
+            return;
+        }
+        _ => {}
     }
     for child in node.children() {
-        collect_labels_at(child, out);
+        collect_labels_at(child, out, in_code);
     }
 }
 

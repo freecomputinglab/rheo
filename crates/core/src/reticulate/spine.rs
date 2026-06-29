@@ -232,8 +232,8 @@ impl VirtualSpine {
             .into_iter()
             .map(|fi| {
                 // Canonical: skip if claimed by user or already emitted.
-                let emit_handle = !all_user_labels.contains(&fi.handle)
-                    && !seen_canonicals.contains(&fi.handle);
+                let emit_handle =
+                    !all_user_labels.contains(&fi.handle) && !seen_canonicals.contains(&fi.handle);
                 seen_canonicals.insert(fi.handle.clone());
 
                 // Escape: must be unique — error on collision.
@@ -315,7 +315,7 @@ impl VirtualSpine {
                     title: v.title.clone(),
                     anchors: v
                         .emit_handle
-                        .then(|| &v.handle)
+                        .then_some(&v.handle)
                         .into_iter()
                         .chain(v.extra_handles.iter())
                         .map(|label| BundleAnchor {
