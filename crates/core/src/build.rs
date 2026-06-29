@@ -135,9 +135,23 @@ impl Build {
 
         // Resolve assets — copies CSS/JS to disk so the dev server can serve them
         // as fallback for requests not satisfied by the VirtualFs.
+        //
+        // Mirror `run()`: detect package-provided assets (e.g. a sidebar
+        // package's stylesheet and script declared in its `typst.toml`) so the
+        // in-memory entry page injects the same head links as the on-disk build.
+        // Without this the VirtualFs index lacks package CSS/JS and renders
+        // unstyled.
+        let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
+        let manifest_blocks = if plugin_section.auto_detect_packages_enabled() {
+            crate::plugins::prewarm_packages(&package_imports);
+            crate::plugins::detect_manifest_package_assets(&package_imports, html_plugin.name())
+        } else {
+            vec![]
+        };
+
         let resolver = AssetResolver::new(&self.project.root, &plugin_output_dir);
         let resolved_assets = resolver
-            .resolve(html_plugin.as_ref(), plugin_section, &[])
+            .resolve(html_plugin.as_ref(), plugin_section, &manifest_blocks)
             .unwrap_or_default();
 
         let css_paths: Vec<String> = resolved_assets
