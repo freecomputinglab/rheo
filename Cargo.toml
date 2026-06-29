@@ -66,7 +66,7 @@ dirs = "6"
 tokio = { version = "1", features = ["rt", "sync", "time", "signal", "rt-multi-thread", "macros"] }
 axum = "0.8"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "trace"] }
+tower-http = { version = "0.7", features = ["fs", "trace"] }
 webbrowser = "1.0"
 tokio-stream = { version = "0.1", features = ["sync"] }
 
@@ -76,7 +76,7 @@ html5ever = "0.39"
 markup5ever_rcdom = "0.39"
 iref = { version = "4.0", features = ["serde"] }
 uuid = { version = "1.18.1", features = ["v4"] }
-itertools = "0.14.0"
+itertools = "0.15"
 
 # Compression / archive
 flate2 = { version = "1", features = ["zlib-rs"] }

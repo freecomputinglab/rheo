@@ -164,7 +164,13 @@ impl Build {
         );
         let spine_files = match self.project.mode {
             ProjectMode::SingleFile => vec![self.project.typ_files[0].clone()],
-            ProjectMode::Directory => spine.generate(&content_dir)?,
+            ProjectMode::Directory => {
+                let explicit_content_dir =
+                    self.project.config.resolve_content_dir(&self.project.root);
+                let generate_root =
+                    explicit_content_dir.as_deref().unwrap_or(&self.project.root);
+                spine.generate(generate_root)?
+            }
         };
 
         debug!(
@@ -280,7 +286,16 @@ impl Build {
             );
             let spine_files = match self.project.mode {
                 ProjectMode::SingleFile => vec![self.project.typ_files[0].clone()],
-                ProjectMode::Directory => spine.generate(&content_dir)?,
+                ProjectMode::Directory => {
+                    // When content_dir is explicit in config, vertebrae patterns are
+                    // relative to it. When auto-detected or absent, vertebrae are
+                    // project-root-relative (users write "content/**" explicitly).
+                    let explicit_content_dir =
+                        self.project.config.resolve_content_dir(&self.project.root);
+                    let generate_root =
+                        explicit_content_dir.as_deref().unwrap_or(&self.project.root);
+                    spine.generate(generate_root)?
+                }
             };
 
             debug!(

@@ -170,9 +170,9 @@ impl VirtualSpine {
 
                 let output_path = match &layout {
                     SpineLayout::OnePerVertebra { ext, .. } => {
-                        // Flat output — directory separators become '_'.
-                        let sanitized = sanitize_handle_segment(&rel_stem.replace('/', "_"));
-                        format!("{sanitized}.{ext}")
+                        // Use the handle as the output stem — bare when unique,
+                        // path-qualified ("chapters-intro") on collision.
+                        format!("{handle}.{ext}")
                     }
                     SpineLayout::SingleCombined { output_name, .. } => output_name.clone(),
                 };
