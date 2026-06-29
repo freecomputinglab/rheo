@@ -325,7 +325,6 @@ mod tests {
         SpineOptions {
             title: Some("Test".to_string()),
             vertebrae,
-            merge: false,
         }
     }
 
@@ -354,7 +353,6 @@ mod tests {
                 "chapters/*.typ".to_string(),
                 "appendix.typ".to_string(),
             ],
-            merge: false,
         };
         let result = spine.generate(temp.path());
         assert!(result.is_ok());

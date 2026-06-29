@@ -1,5 +1,4 @@
 use crate::config::PluginSection;
-use crate::output::OutputConfig;
 use crate::project::ProjectConfig;
 use crate::reticulate::spine::SpineLayout;
 use std::collections::HashMap;
@@ -39,8 +38,6 @@ use crate::config::PluginAssets;
 pub struct SpineOptions {
     pub title: Option<String>,
     pub vertebrae: Vec<String>,
-    /// true = merged output, false = per-file output
-    pub merge: bool,
 }
 
 /// Declares an additional non-Typst input file needed from the project directory.
@@ -128,7 +125,6 @@ pub enum SpineLayoutKind {
 /// Context passed to plugin.compile() for each compilation unit.
 pub struct PluginContext<'a> {
     pub project: &'a ProjectConfig,
-    pub output_config: &'a OutputConfig,
     /// Plugin output directory (e.g., `build/html/`). Write outputs here.
     pub output_dir: &'a PathBuf,
     /// Resolved spine options (title, vertebrae patterns).

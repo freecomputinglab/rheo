@@ -47,13 +47,6 @@ impl ValidateConfig for Spine {
     fn validate(&self) -> Result<()> {
         validate_vertebrae(&self.vertebrae)?;
 
-        // A spine with merge=true requires a title
-        if self.merge == Some(true) && self.title.is_none() {
-            return Err(RheoError::project_config(
-                "spine.title is required when merge=true",
-            ));
-        }
-
         Ok(())
     }
 }
@@ -93,39 +86,6 @@ mod tests {
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("invalid glob pattern"));
-    }
-
-    #[test]
-    fn test_universal_spine_merge_true_requires_title() {
-        let spine = Spine {
-            title: None,
-            vertebrae: vec!["*.typ".to_string()],
-            merge: Some(true),
-        };
-        let result = spine.validate();
-        assert!(result.is_err());
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains("title is required when merge=true"));
-    }
-
-    #[test]
-    fn test_universal_spine_merge_true_with_title_ok() {
-        let spine = Spine {
-            title: Some("My Book".to_string()),
-            vertebrae: vec!["*.typ".to_string()],
-            merge: Some(true),
-        };
-        assert!(spine.validate().is_ok());
-    }
-
-    #[test]
-    fn test_universal_spine_merge_false_no_title_ok() {
-        let spine = Spine {
-            title: None,
-            vertebrae: vec!["*.typ".to_string()],
-            merge: Some(false),
-        };
-        assert!(spine.validate().is_ok());
     }
 
     #[test]

@@ -154,7 +154,6 @@ impl Build {
         let spine = SpineOptions {
             title: spine_cfg.and_then(|s| s.title.clone()),
             vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
-            merge: spine_cfg.and_then(|s| s.merge).unwrap_or(false),
         };
 
         // Build VirtualSpine + compile.
@@ -262,12 +261,10 @@ impl Build {
             let spine = SpineOptions {
                 title: spine_cfg.and_then(|s| s.title.clone()),
                 vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
-                merge: spine_cfg.and_then(|s| s.merge).unwrap_or(false),
             };
 
             let ctx = PluginContext {
                 project: &self.project,
-                output_config: &self.output,
                 output_dir: &plugin_output_dir,
                 spine: &spine,
                 config: plugin_section,
