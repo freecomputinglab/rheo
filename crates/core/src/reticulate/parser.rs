@@ -26,6 +26,8 @@ fn collect_package_imports(node: &SyntaxNode, root: &SyntaxNode, out: &mut Vec<S
 pub struct ExtractedNodes {
     /// Top-level `#let rheo-<key> = "..."` bindings harvested from the source.
     pub rheo_vars: Vec<RheoVar>,
+    /// All `<label>` names defined in the source (angle brackets stripped).
+    pub user_labels: Vec<String>,
 }
 
 /// Extract rheo-* variables from Typst source.
@@ -36,7 +38,34 @@ pub struct ExtractedNodes {
 pub fn extract_nodes(source: &Source) -> ExtractedNodes {
     let root = typst::syntax::parse(source.text());
     let rheo_vars = collect_rheo_vars(&root, source);
-    ExtractedNodes { rheo_vars }
+    let user_labels = collect_user_labels(source);
+    ExtractedNodes {
+        rheo_vars,
+        user_labels,
+    }
+}
+
+/// Walk the AST and return all `<label>` names defined in the source.
+///
+/// Strips the surrounding `<` and `>` to yield bare label name strings.
+pub fn collect_user_labels(source: &Source) -> Vec<String> {
+    let root = typst::syntax::parse(source.text());
+    let mut labels = Vec::new();
+    collect_labels_at(&root, &mut labels);
+    labels
+}
+
+fn collect_labels_at(node: &SyntaxNode, out: &mut Vec<String>) {
+    if node.kind() == SyntaxKind::Label {
+        let text = node.leaf_text();
+        let name = text.trim_start_matches('<').trim_end_matches('>');
+        if !name.is_empty() {
+            out.push(name.to_string());
+        }
+    }
+    for child in node.children() {
+        collect_labels_at(child, out);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +270,29 @@ mod tests {
         assert_eq!(imports.len(), 2);
         assert_eq!(imports[0], "@preview/foo:1.0.0");
         assert_eq!(imports[1], "@preview/bar:2.0.0");
+    }
+
+    #[test]
+    fn test_collect_user_labels() {
+        let source = Source::detached(
+            r#"= Introduction <intro>
+
+Some text. <fig:chart>
+
+#figure([], caption: [Chart]) <fig:chart>
+
+== Section <sec-one>"#,
+        );
+        let mut labels = collect_user_labels(&source);
+        labels.sort();
+        assert_eq!(labels, vec!["fig:chart", "fig:chart", "intro", "sec-one"]);
+    }
+
+    #[test]
+    fn test_collect_user_labels_empty() {
+        let source = Source::detached("= No labels here\n\nJust text.");
+        let labels = collect_user_labels(&source);
+        assert!(labels.is_empty());
     }
 
     #[test]
