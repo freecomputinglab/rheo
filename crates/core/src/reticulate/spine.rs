@@ -220,7 +220,13 @@ impl VirtualSpine {
     }
 
     /// Validate that no two vertebrae produce the same output path.
+    ///
+    /// Skipped for `SingleCombined` layouts where all vertebrae intentionally share
+    /// the same output path (e.g. every vertebra produces "book.pdf").
     pub fn check_output_collisions(&self) -> Result<()> {
+        if !matches!(self.layout, SpineLayout::OnePerVertebra { .. }) {
+            return Ok(());
+        }
         let mut seen: HashMap<&str, usize> = HashMap::new();
         for (i, v) in self.vertebrae.iter().enumerate() {
             if let Some(prev) = seen.insert(v.output_path.as_str(), i) {
@@ -502,5 +508,33 @@ mod tests {
         assert!(src.contains("#include \"content/a.typ\""));
         assert!(src.contains("#include \"content/b.typ\""));
         assert!(!src.contains("rheo-handle"));
+    }
+
+    #[test]
+    fn single_combined_collision_check_passes() {
+        let spine = VirtualSpine {
+            vertebrae: vec![
+                Vertebra {
+                    rel_path: "a.typ".into(),
+                    output_path: "book.pdf".into(),
+                    handle: "a".into(),
+                    extra_handles: vec![],
+                    title: "A".into(),
+                    vars: Default::default(),
+                },
+                Vertebra {
+                    rel_path: "b.typ".into(),
+                    output_path: "book.pdf".into(),
+                    handle: "b".into(),
+                    extra_handles: vec![],
+                    title: "B".into(),
+                    vars: Default::default(),
+                },
+            ],
+            layout: SpineLayout::SingleCombined {
+                output_name: "book.pdf".into(),
+            },
+        };
+        assert!(spine.check_output_collisions().is_ok());
     }
 }
