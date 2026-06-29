@@ -1,7 +1,7 @@
 use crate::path_utils::{sanitize_handle_segment, to_forward_slash};
-use crate::reticulate::bundle_source::BundleSource;
 use crate::pdf_utils::DocumentTitle;
 use crate::plugins::SpineOptions;
+use crate::reticulate::bundle_source::BundleSource;
 use crate::reticulate::parser;
 use crate::reticulate::types::RheoValue;
 use crate::{Result, RheoError, TYP_EXT};
@@ -424,7 +424,10 @@ mod tests {
         fs::write(content.join("closing.typ"), "= Closing\n").unwrap();
 
         let files = vec![content.join("intro.typ"), content.join("closing.typ")];
-        let layout = SpineLayout::OnePerVertebra { ext: "html".into(), format: "html".into() };
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
         let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
 
         assert_eq!(spine.vertebrae[0].handle, "intro");
@@ -447,7 +450,10 @@ mod tests {
         fs::write(app.join("intro.typ"), "").unwrap();
 
         let files = vec![chaps.join("intro.typ"), app.join("intro.typ")];
-        let layout = SpineLayout::OnePerVertebra { ext: "html".into(), format: "html".into() };
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
         let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
 
         assert_eq!(spine.vertebrae[0].handle, "chapters-intro");
@@ -475,7 +481,10 @@ mod tests {
         };
         let spine = VirtualSpine {
             vertebrae: vec![v],
-            layout: SpineLayout::OnePerVertebra { ext: "html".into(), format: "html".into() },
+            layout: SpineLayout::OnePerVertebra {
+                ext: "html".into(),
+                format: "html".into(),
+            },
         };
         let src = spine.source();
         assert!(src.contains("#document(\"intro.html\", format: \"html\""));

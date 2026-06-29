@@ -1,6 +1,6 @@
 use rheo_core::{
-    FormatInitTemplate, FormatPlugin, PluginContext, Result, RheoError, SpineLayoutKind,
-    CastVertebra, TypstFormat,
+    CastVertebra, FormatInitTemplate, FormatPlugin, PluginContext, Result, RheoError,
+    SpineLayoutKind, TypstFormat,
 };
 
 pub struct PdfPlugin;

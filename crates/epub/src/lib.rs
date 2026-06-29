@@ -7,11 +7,11 @@ use xhtml::HtmlInfo;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
-use rheo_core::{DocumentTitle, EcoString, OutlineNode};
 use rheo_core::{
-    FormatInitTemplate, FormatPlugin, PluginContext, PluginSection, Result, RheoError, Spine,
-    SpineLayoutKind, SpineOptions, CastVertebra, eco_format, eco_vec,
+    CastVertebra, FormatInitTemplate, FormatPlugin, PluginContext, PluginSection, Result,
+    RheoError, Spine, SpineLayoutKind, SpineOptions, eco_format, eco_vec,
 };
+use rheo_core::{DocumentTitle, EcoString, OutlineNode};
 use serde::Deserialize;
 use std::{
     fmt::Write as _,

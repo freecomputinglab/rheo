@@ -8,8 +8,8 @@ use serde::Deserialize;
 pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
 use rheo_core::{
-    AssetConfig, FormatInitTemplate, FormatPlugin, OpenHandle, PluginContext, Result, RheoError,
-    ServerHandle, CastVertebra,
+    AssetConfig, CastVertebra, FormatInitTemplate, FormatPlugin, OpenHandle, PluginContext, Result,
+    RheoError, ServerHandle,
 };
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -146,8 +146,9 @@ impl FormatPlugin for HtmlPlugin {
                 }
                 dom.serialize()?
             } else {
-                String::from_utf8(output.bytes.to_vec())
-                    .map_err(|e| RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e)))?
+                String::from_utf8(output.bytes.to_vec()).map_err(|e| {
+                    RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e))
+                })?
             };
 
             let out_path = ctx.output_dir.join(&output.output_path);

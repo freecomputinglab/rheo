@@ -4,7 +4,10 @@
 //! the html plugin and any other crate that needs to post-process HTML output.
 
 use crate::{Result, RheoError};
-use html5ever::{Attribute, LocalName, ParseOpts, QualName, ns, tendril::{StrTendril, TendrilSink}};
+use html5ever::{
+    Attribute, LocalName, ParseOpts, QualName, ns,
+    tendril::{StrTendril, TendrilSink},
+};
 use markup5ever_rcdom::{Handle, Node, NodeData, RcDom};
 use std::cell::RefCell;
 use std::fmt::Write as _;
@@ -412,8 +415,8 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
                 }
             } else {
                 output.push('>');
-                let is_raw = matches!(mode, SerializeMode::Html)
-                    && is_raw_text_element(name.local.as_ref());
+                let is_raw =
+                    matches!(mode, SerializeMode::Html) && is_raw_text_element(name.local.as_ref());
                 for child in handle.children.borrow().iter() {
                     if is_raw && let NodeData::Text { contents } = &child.data {
                         output.push_str(&contents.borrow());
