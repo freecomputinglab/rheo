@@ -4,8 +4,9 @@
 //! the html plugin and any other crate that needs to post-process HTML output.
 
 use crate::{Result, RheoError};
-use html5ever::{ParseOpts, tendril::TendrilSink};
-use markup5ever_rcdom::{Handle, NodeData, RcDom};
+use html5ever::{Attribute, LocalName, ParseOpts, QualName, ns, tendril::{StrTendril, TendrilSink}};
+use markup5ever_rcdom::{Handle, Node, NodeData, RcDom};
+use std::cell::RefCell;
 use std::fmt::Write as _;
 
 // ─── Serialization mode and helpers ──────────────────────────────────────────
@@ -16,6 +17,15 @@ pub enum SerializeMode {
     Html,
     /// XHTML: void elements self-close `<tag/>`, attribute values fully escaped.
     Xhtml,
+}
+
+/// Returns true if the given tag name is an HTML raw-text element.
+///
+/// Raw-text elements (`style`, `script`) must have their text content serialized
+/// verbatim — no entity escaping. CSS selectors like `p > span` would otherwise
+/// become `p &gt; span`.
+pub fn is_raw_text_element(tag: &str) -> bool {
+    matches!(tag, "style" | "script")
 }
 
 /// Returns true if the given tag name is an HTML void element.
@@ -104,6 +114,27 @@ impl HtmlDom {
 
         let insert_pos = head.last_meta_index().map(|i| i + 1).unwrap_or(0);
         head.insert_child_at(insert_pos, Element::create_feed_link(href, title));
+        Ok(())
+    }
+
+    /// Embed CSS content directly into the HTML `<head>` as `<style>` elements.
+    ///
+    /// Each block in `css_blocks` becomes one `<style>` element appended to `<head>`.
+    /// Text is stored verbatim — the raw-text serializer ensures `>` and `&` in CSS
+    /// selectors are not entity-escaped.
+    pub fn inject_inline_styles(&mut self, css_blocks: &[&str]) -> Result<()> {
+        if css_blocks.is_empty() {
+            return Ok(());
+        }
+        let head = self
+            .find_element("head")
+            .ok_or_else(|| RheoError::HtmlGeneration {
+                count: 1,
+                errors: "HTML document does not contain a <head> element".to_string(),
+            })?;
+        for css in css_blocks {
+            head.insert_child_at(usize::MAX, Element::create_style(css));
+        }
         Ok(())
     }
 
@@ -200,11 +231,6 @@ pub struct Element {
 impl Element {
     /// Create a DOM element node with the given tag and attribute pairs.
     fn create_element(tag: &str, attrs: &[(&str, &str)]) -> Self {
-        use html5ever::tendril::StrTendril;
-        use html5ever::{Attribute, LocalName, QualName, ns};
-        use markup5ever_rcdom::Node;
-        use std::cell::RefCell;
-
         let attrs: Vec<_> = attrs
             .iter()
             .map(|(k, v)| Attribute {
@@ -245,6 +271,16 @@ impl Element {
     /// Create a `<script src="..."></script>` element.
     pub fn create_script(src: &str) -> Self {
         Self::create_element("script", &[("src", src), ("defer", "")])
+    }
+
+    /// Create a `<style>` element containing `css` as a raw text child.
+    pub fn create_style(css: &str) -> Self {
+        let elem = Self::create_element("style", &[]);
+        let text = Node::new(NodeData::Text {
+            contents: RefCell::new(StrTendril::from(css)),
+        });
+        elem.handle.children.borrow_mut().push(text);
+        elem
     }
 
     /// Prepend a child element to this element.
@@ -376,8 +412,14 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
                 }
             } else {
                 output.push('>');
+                let is_raw = matches!(mode, SerializeMode::Html)
+                    && is_raw_text_element(name.local.as_ref());
                 for child in handle.children.borrow().iter() {
-                    serialize_node(child, output, mode)?;
+                    if is_raw && let NodeData::Text { contents } = &child.data {
+                        output.push_str(&contents.borrow());
+                    } else {
+                        serialize_node(child, output, mode)?;
+                    }
                 }
                 write!(output, "</{}>", name.local).map_err(|e| RheoError::HtmlGeneration {
                     count: 1,
@@ -504,7 +546,7 @@ mod tests {
         assert!(serialized.contains("<link rel=\"stylesheet\" href=\"style.css\">"));
     }
 
-    // inject_inline_styles tests
+    // inject_inline_styles tests (free fn — kept for backwards compat)
 
     #[test]
     fn test_inject_inline_styles_basic() {
@@ -525,6 +567,49 @@ mod tests {
         let html = "<html><body></body></html>";
         let result = inject_inline_styles(html, &["body {}"]);
         assert!(result.is_err());
+    }
+
+    // HtmlDom::inject_inline_styles tests
+
+    #[test]
+    fn test_dom_inject_inline_styles_basic() {
+        let html = "<!DOCTYPE html><html><head></head><body></body></html>";
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_inline_styles(&["body { color: red; }"]).unwrap();
+        let result = dom.serialize().unwrap();
+        assert!(result.contains("<style>body { color: red; }</style>"));
+    }
+
+    #[test]
+    fn test_dom_inject_inline_styles_raw_chars_unescaped() {
+        let html = "<!DOCTYPE html><html><head></head><body></body></html>";
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_inline_styles(&["p > span { content: \"a & b\"; }"])
+            .unwrap();
+        let result = dom.serialize().unwrap();
+        assert!(result.contains("p > span { content: \"a & b\"; }"));
+        assert!(!result.contains("&gt;"));
+        assert!(!result.contains("&amp;"));
+    }
+
+    #[test]
+    fn test_dom_inject_inline_styles_empty() {
+        let html = "<!DOCTYPE html><html><head></head><body></body></html>";
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_inline_styles(&[]).unwrap();
+        let result = dom.serialize().unwrap();
+        assert!(!result.contains("<style>"));
+    }
+
+    #[test]
+    fn test_dom_inject_inline_styles_multi_block() {
+        let html = "<!DOCTYPE html><html><head></head><body></body></html>";
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_inline_styles(&["a { color: red; }", "p > span { display: none; }"])
+            .unwrap();
+        let result = dom.serialize().unwrap();
+        assert!(result.contains("<style>a { color: red; }</style>"));
+        assert!(result.contains("<style>p > span { display: none; }</style>"));
     }
 
     // inject_head_links tests (via HtmlDom)

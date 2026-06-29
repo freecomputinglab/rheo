@@ -133,20 +133,16 @@ impl FormatPlugin for HtmlPlugin {
                 RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e))
             })?;
 
-            // Inject default stylesheet as inline styles when no user CSS is provided.
-            let html_string = if use_default_css {
-                info!("No stylesheet found, using default");
-                html_utils::inject_inline_styles(&html_string, &[DEFAULT_STYLESHEET])?
-            } else {
-                html_string
-            };
-
             let needs_head_links = !css_paths.is_empty() || !js_paths.is_empty();
             let css_refs: Vec<&str> = css_paths.iter().map(|s| s.as_str()).collect();
             let js_refs: Vec<&str> = js_paths.iter().map(|s| s.as_str()).collect();
 
-            let html_string = if needs_head_links || feed_link.is_some() {
+            let html_string = if use_default_css || needs_head_links || feed_link.is_some() {
                 let mut dom = html_utils::HtmlDom::parse(&html_string)?;
+                if use_default_css {
+                    info!("No stylesheet found, using default");
+                    dom.inject_inline_styles(&[DEFAULT_STYLESHEET])?;
+                }
                 if needs_head_links {
                     dom.inject_head_links(&[], &css_refs, &js_refs)?;
                 }
