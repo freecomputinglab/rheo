@@ -288,7 +288,9 @@ impl VirtualSpine {
     ///
     /// For `OnePerVertebra` each vertebra becomes a `#document(output-path)[...]` containing
     /// a labeled `#figure` handle anchor followed by a real `#include`.
-    /// For `SingleCombined` all includes are wrapped in one `#document`.
+    /// For `SingleCombined` all vertebrae are wrapped in one `#document`, each with its
+    /// own handle anchors emitted immediately before its `#include` so cross-references
+    /// resolve to the correct location within the combined output.
     ///
     /// The handle anchor uses `#figure` rather than `#metadata` or a bare label.
     /// `#metadata(none) <label>` fails at compile time ("cannot reference metadata");
@@ -303,7 +305,24 @@ impl VirtualSpine {
 
     /// Build the structured `BundleSource` representation of this spine.
     pub fn bundle_source(&self) -> BundleSource {
-        use crate::reticulate::bundle_source::{BundleAnchor, BundleDocument};
+        use crate::reticulate::bundle_source::{BundleAnchor, BundleDocument, BundleSegment};
+
+        // A vertebra's handle anchors: the canonical `<handle>` (when emitted) plus
+        // the `<handle.typ>` escape aliases. Emitted before the vertebra's include so
+        // cross-references resolve to the right location in the output.
+        let segment_for = |v: &Vertebra| BundleSegment {
+            anchors: v
+                .emit_handle
+                .then_some(&v.handle)
+                .into_iter()
+                .chain(v.extra_handles.iter())
+                .map(|label| BundleAnchor {
+                    label: label.clone(),
+                    title: v.title.clone(),
+                })
+                .collect(),
+            include: v.rel_path.clone(),
+        };
 
         let documents = match &self.layout {
             SpineLayout::OnePerVertebra { format, .. } => self
@@ -313,17 +332,7 @@ impl VirtualSpine {
                     output_path: v.output_path.clone(),
                     format: format.clone(),
                     title: v.title.clone(),
-                    anchors: v
-                        .emit_handle
-                        .then_some(&v.handle)
-                        .into_iter()
-                        .chain(v.extra_handles.iter())
-                        .map(|label| BundleAnchor {
-                            label: label.clone(),
-                            title: v.title.clone(),
-                        })
-                        .collect(),
-                    includes: vec![v.rel_path.clone()],
+                    segments: vec![segment_for(v)],
                 })
                 .collect(),
             SpineLayout::SingleCombined {
@@ -340,8 +349,7 @@ impl VirtualSpine {
                     output_path: output_name.clone(),
                     format: format.clone(),
                     title,
-                    anchors: vec![],
-                    includes: self.vertebrae.iter().map(|v| v.rel_path.clone()).collect(),
+                    segments: self.vertebrae.iter().map(segment_for).collect(),
                 }]
             }
         };
@@ -575,7 +583,11 @@ mod tests {
         assert!(src.contains("#document(\"doc.pdf\", format: \"pdf\""));
         assert!(src.contains("#include \"content/a.typ\""));
         assert!(src.contains("#include \"content/b.typ\""));
-        assert!(!src.contains("rheo-handle"));
+        // Synthesized handle anchors are now injected into the combined document so
+        // cross-vertebra `@handle` references resolve.
+        assert!(src.contains("rheo-handle"));
+        assert!(src.contains("<a>"));
+        assert!(src.contains("<b>"));
     }
 
     #[test]

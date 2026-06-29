@@ -8,15 +8,22 @@ pub struct BundleAnchor {
     pub title: String,
 }
 
+/// One vertebra within a `BundleDocument`: its handle anchors followed by its include.
+pub struct BundleSegment {
+    /// Handle anchors (`#figure` elements) emitted before this segment's include.
+    pub anchors: Vec<BundleAnchor>,
+    /// `#include` path for this vertebra.
+    pub include: String,
+}
+
 /// One Typst `#document(…)[…]` block within a bundle compile.
 pub struct BundleDocument {
     pub output_path: String,
     pub format: String,
     pub title: String,
-    /// Handle anchors (`#figure` elements) emitted before the includes.
-    pub anchors: Vec<BundleAnchor>,
-    /// `#include` paths, in order.
-    pub includes: Vec<String>,
+    /// Vertebra segments, in order. Each segment's anchors are emitted immediately
+    /// before its include so cross-references resolve to the right location.
+    pub segments: Vec<BundleSegment>,
 }
 
 /// The synthesized Typst source passed to `RheoWorld::compile_bundle`.
@@ -35,16 +42,16 @@ impl fmt::Display for BundleSource {
                 "#document(\"{}\", format: \"{}\", title: [{escaped_title}])[",
                 doc.output_path, doc.format
             )?;
-            for anchor in &doc.anchors {
-                let escaped = escape_typst_content(&anchor.title);
-                writeln!(
-                    f,
-                    "  #figure([{escaped}], kind: \"rheo-handle\", supplement: none) <{}>",
-                    anchor.label
-                )?;
-            }
-            for include in &doc.includes {
-                writeln!(f, "  #include \"{include}\"")?;
+            for segment in &doc.segments {
+                for anchor in &segment.anchors {
+                    let escaped = escape_typst_content(&anchor.title);
+                    writeln!(
+                        f,
+                        "  #figure([{escaped}], kind: \"rheo-handle\", supplement: none) <{}>",
+                        anchor.label
+                    )?;
+                }
+                writeln!(f, "  #include \"{}\"", segment.include)?;
             }
             writeln!(f, "]")?;
             writeln!(f)?;
