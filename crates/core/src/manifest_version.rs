@@ -5,13 +5,18 @@ use std::fmt;
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
 /// Newtype wrapper around semver::Version for type-safe manifest versioning
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ManifestVersion(semver::Version);
 
 impl ManifestVersion {
     /// Returns the current supported manifest version
     pub fn current() -> Self {
         Self(semver::Version::parse(CURRENT).expect("CURRENT constant must be valid semver"))
+    }
+
+    /// Parse a semver string into a `ManifestVersion`.
+    pub fn parse(s: &str) -> std::result::Result<Self, semver::Error> {
+        semver::Version::parse(s).map(Self)
     }
 }
 

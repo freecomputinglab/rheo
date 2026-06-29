@@ -13,6 +13,8 @@ use tracing::{debug, info, warn};
 // Re-export logging functionality
 pub use rheo_core::logging;
 
+mod migrate;
+
 /// Initialize logging with specified verbosity
 pub fn init_logging(verbose: bool, quiet: bool) -> Result<()> {
     let verbosity = if quiet {
@@ -64,6 +66,7 @@ fn build_cli() -> Command {
         .subcommand(build_watch_command(&plugins))
         .subcommand(build_clean_command())
         .subcommand(build_init_command())
+        .subcommand(build_migrate_command())
         .subcommand_required(true)
         .arg_required_else_help(true)
 }
@@ -176,6 +179,23 @@ fn build_init_command() -> Command {
                 .required(true)
                 .index(1)
                 .help("Path to the new project directory"),
+        )
+}
+
+fn build_migrate_command() -> Command {
+    Command::new("migrate")
+        .about("Migrate an older Rheo project to the latest version (experimental)")
+        .arg(
+            Arg::new("path")
+                .required(true)
+                .index(1)
+                .help("Path to project directory"),
+        )
+        .arg(
+            Arg::new("apply")
+                .long("apply")
+                .action(ArgAction::SetTrue)
+                .help("Apply migrations (default is a dry run that writes nothing)"),
         )
 }
 
@@ -367,6 +387,7 @@ pub fn run() -> Result<()> {
         Some(("compile", sub)) => run_compile(sub),
         Some(("watch", sub)) => run_watch(sub),
         Some(("clean", sub)) => run_clean(sub),
+        Some(("migrate", sub)) => run_migrate(sub),
         Some(("init", sub)) => {
             let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
             init_project(&path)
@@ -526,6 +547,13 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
     output_config.clean()?;
     info!(project = %project.name, "build artifacts removed");
     Ok(())
+}
+
+fn run_migrate(sub: &ArgMatches) -> Result<()> {
+    let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
+    let apply = sub.get_flag("apply");
+    info!(path = %path.display(), apply, "migrating project");
+    migrate::migrate_project(&path, apply)
 }
 
 #[cfg(test)]
