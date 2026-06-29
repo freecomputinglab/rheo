@@ -467,7 +467,7 @@ pub fn resolve_build_dir(
 /// If `content_dir` is set in config, use it. Otherwise, if `project.root/content/`
 /// exists and all `.typ` files in the project are under it, treat it as the implicit
 /// content root so that file stems are relative to `content/` (not the project root).
-fn resolve_effective_content_dir(project: &ProjectConfig) -> PathBuf {
+pub fn resolve_effective_content_dir(project: &ProjectConfig) -> PathBuf {
     if let Some(dir) = project.config.resolve_content_dir(&project.root) {
         return dir;
     }

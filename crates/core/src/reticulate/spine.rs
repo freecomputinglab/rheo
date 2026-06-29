@@ -94,6 +94,9 @@ pub struct Vertebra {
     pub handle: String,
     /// Additional handle aliases; always includes the `<stem.typ>` escape form.
     pub extra_handles: Vec<String>,
+    /// Whether this vertebra's stem collides with another's, making the bare
+    /// handle ambiguous and forcing the path-qualified handle.
+    pub is_collision: bool,
     /// Document title for `#document title:` and `@handle` display text.
     pub title: String,
     /// Harvested `rheo-*` variables from this vertebra's source file.
@@ -211,6 +214,7 @@ impl VirtualSpine {
                     output_path,
                     handle,
                     extra_handles,
+                    is_collision,
                     title,
                     vars,
                 })
@@ -476,6 +480,7 @@ mod tests {
             output_path: "intro.html".into(),
             handle: "intro".into(),
             extra_handles: vec!["intro.typ".into()],
+            is_collision: false,
             title: "Introduction".into(),
             vars: HashMap::new(),
         };
@@ -504,6 +509,7 @@ mod tests {
                     output_path: "doc.pdf".into(),
                     handle: "a".into(),
                     extra_handles: vec![],
+                    is_collision: false,
                     title: "A".into(),
                     vars: HashMap::new(),
                 },
@@ -512,6 +518,7 @@ mod tests {
                     output_path: "doc.pdf".into(),
                     handle: "b".into(),
                     extra_handles: vec![],
+                    is_collision: false,
                     title: "B".into(),
                     vars: HashMap::new(),
                 },
@@ -537,6 +544,7 @@ mod tests {
                     output_path: "book.pdf".into(),
                     handle: "a".into(),
                     extra_handles: vec![],
+                    is_collision: false,
                     title: "A".into(),
                     vars: Default::default(),
                 },
@@ -545,6 +553,7 @@ mod tests {
                     output_path: "book.pdf".into(),
                     handle: "b".into(),
                     extra_handles: vec![],
+                    is_collision: false,
                     title: "B".into(),
                     vars: Default::default(),
                 },

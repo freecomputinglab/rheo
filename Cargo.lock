@@ -2743,6 +2743,7 @@ dependencies = [
  "opener",
  "parking_lot",
  "pathdiff",
+ "regex",
  "rheo-core",
  "rheo-epub",
  "rheo-html",
