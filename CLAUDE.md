@@ -84,17 +84,22 @@ Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title 
 
 ## Cross-file references
 
-rheo assigns each vertebra a label based on its filename stem relative to the content directory. Link to it with standard Typst anchor syntax:
+rheo assigns each vertebra a canonical label derived from its path relative to the content directory. Link to it with standard Typst anchor syntax:
 
 ```typst
 #link(<intro>)[Link text]
+#link(<chapters:intro>)[nested page]
 ```
 
-**Bare handle (unique stems):** `content/intro.typ` → label `<intro>`. Use `#link(<intro>)[text]`.
+**Root-level files** (`content/intro.typ`) get a bare label: `<intro>`.
 
-**Path-qualified handle (stem collisions):** If both `content/intro.typ` and `content/chapters/intro.typ` exist, rheo generates path-qualified labels using `-` as separator: `<intro>` for the root-level file, `<chapters-intro>` for the nested one.
+**Nested files** use `:` as path separator: `content/chapters/intro.typ` → `<chapters:intro>`. `:` and `.` are valid Typst label characters; `/` is not.
 
-**Escape form:** `<stem.typ>` (e.g., `<intro.typ>`) is always available as an alias — same label, `.typ` suffix included.
+**Escape form:** `<handle.typ>` is always available as an alias (e.g. `<intro.typ>`, `<chapters:intro.typ>`). Useful when the canonical label is taken by a user-authored label.
+
+**Canonical-skip rule:** if a user-authored label in the project already uses the canonical name, rheo silently skips injecting it — the vertebra is still reachable via its escape form.
+
+**Escape-collision error:** if the escape label (`<handle.typ>`) collides with any user-authored label or another vertebra's escape label, the build fails with an error naming the offending file and label.
 
 ## Spine configuration and merge deprecation
 
