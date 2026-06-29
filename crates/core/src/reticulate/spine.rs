@@ -5,7 +5,7 @@ use crate::reticulate::bundle_source::BundleSource;
 use crate::reticulate::parser;
 use crate::reticulate::types::RheoValue;
 use crate::{Result, RheoError, TYP_EXT};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use typst::syntax::Source;
@@ -94,6 +94,9 @@ pub struct Vertebra {
     pub handle: String,
     /// Additional handle aliases; always includes the `<stem.typ>` escape form.
     pub extra_handles: Vec<String>,
+    /// Whether the canonical `<handle>` label should be emitted as a bundle anchor.
+    /// False when a user-authored label already occupies the canonical name.
+    pub emit_handle: bool,
     /// Document title for `#document title:` and `@handle` display text.
     pub title: String,
     /// Harvested `rheo-*` variables from this vertebra's source file.
@@ -135,13 +138,23 @@ impl VirtualSpine {
             .map(|f| to_forward_slash(&f.strip_prefix(content_dir).unwrap_or(f).with_extension("")))
             .collect();
 
-        let vertebrae = files
+        // First pass: parse each file, compute handles, collect user labels.
+        struct FileInfo {
+            file: PathBuf,
+            handle: String,
+            escape: String,
+            output_path: String,
+            rel_path: String,
+            title: String,
+            vars: HashMap<String, RheoValue>,
+            user_labels: Vec<String>,
+        }
+
+        let file_infos: Result<Vec<FileInfo>> = files
             .iter()
             .zip(rel_stems.iter())
             .map(|(file, rel_stem)| {
                 let segments: Vec<&str> = rel_stem.split('/').collect();
-                let sanitized_base =
-                    sanitize_handle_segment(segments.last().copied().unwrap_or(rel_stem));
 
                 // Canonical handle: bare stem for root-level files, path-prefixed
                 // with ':' separator for nested files ("a/notes" → "a:notes").
@@ -152,18 +165,13 @@ impl VirtualSpine {
                         .collect::<Vec<_>>()
                         .join(":")
                 } else {
-                    sanitized_base.clone()
+                    sanitize_handle_segment(segments[0])
                 };
 
-                // Escape form mirrors the canonical handle with ".typ" appended.
-                let extra_handles = vec![format!("{handle}.typ")];
+                let escape = format!("{handle}.typ");
 
                 let output_path = match &layout {
-                    SpineLayout::OnePerVertebra { ext, .. } => {
-                        // Use the handle as the output stem — bare when unique,
-                        // path-qualified ("chapters-intro") on collision.
-                        format!("{handle}.{ext}")
-                    }
+                    SpineLayout::OnePerVertebra { ext, .. } => format!("{handle}.{ext}"),
                     SpineLayout::SingleCombined { output_name, .. } => output_name.clone(),
                 };
 
@@ -176,9 +184,9 @@ impl VirtualSpine {
                 let title = DocumentTitle::from_source(&source, &stem).extract();
                 let rel_path = to_forward_slash(file.strip_prefix(project_root).unwrap_or(file));
 
-                // Harvest rheo-* variables from the source file.
                 let source_obj = Source::detached(&source);
                 let extracted = parser::extract_nodes(&source_obj);
+                let user_labels = extracted.user_labels;
                 let mut vars = HashMap::new();
                 for v in extracted.rheo_vars {
                     match v.value {
@@ -196,18 +204,64 @@ impl VirtualSpine {
                     }
                 }
 
-                Ok(Vertebra {
-                    rel_path,
-                    output_path,
+                Ok(FileInfo {
+                    file: file.clone(),
                     handle,
-                    extra_handles,
+                    escape,
+                    output_path,
+                    rel_path,
                     title,
                     vars,
+                    user_labels,
                 })
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect();
+        let file_infos = file_infos?;
 
-        Ok(Self { vertebrae, layout })
+        // Union of all user-authored labels across the entire spine.
+        let all_user_labels: HashSet<String> = file_infos
+            .iter()
+            .flat_map(|fi| fi.user_labels.iter().cloned())
+            .collect();
+
+        // Second pass: assign emit_handle and check escape uniqueness.
+        let mut seen_canonicals: HashSet<String> = HashSet::new();
+        let mut seen_escapes: HashSet<String> = HashSet::new();
+
+        let vertebrae: Result<Vec<Vertebra>> = file_infos
+            .into_iter()
+            .map(|fi| {
+                // Canonical: skip if claimed by user or already emitted.
+                let emit_handle = !all_user_labels.contains(&fi.handle)
+                    && !seen_canonicals.contains(&fi.handle);
+                seen_canonicals.insert(fi.handle.clone());
+
+                // Escape: must be unique — error on collision.
+                if all_user_labels.contains(&fi.escape) || seen_escapes.contains(&fi.escape) {
+                    return Err(RheoError::invalid_data(format!(
+                        "{}: escape label <{}> collides with another label in the project",
+                        fi.file.display(),
+                        fi.escape
+                    )));
+                }
+                seen_escapes.insert(fi.escape.clone());
+
+                Ok(Vertebra {
+                    rel_path: fi.rel_path,
+                    output_path: fi.output_path,
+                    handle: fi.handle,
+                    extra_handles: vec![fi.escape],
+                    emit_handle,
+                    title: fi.title,
+                    vars: fi.vars,
+                })
+            })
+            .collect();
+
+        Ok(Self {
+            vertebrae: vertebrae?,
+            layout,
+        })
     }
 
     /// Validate that no two vertebrae produce the same output path.
@@ -259,7 +313,10 @@ impl VirtualSpine {
                     output_path: v.output_path.clone(),
                     format: format.clone(),
                     title: v.title.clone(),
-                    anchors: std::iter::once(&v.handle)
+                    anchors: v
+                        .emit_handle
+                        .then(|| &v.handle)
+                        .into_iter()
                         .chain(v.extra_handles.iter())
                         .map(|label| BundleAnchor {
                             label: label.clone(),
@@ -466,6 +523,7 @@ mod tests {
             output_path: "intro.html".into(),
             handle: "intro".into(),
             extra_handles: vec!["intro.typ".into()],
+            emit_handle: true,
             title: "Introduction".into(),
             vars: HashMap::new(),
         };
@@ -494,7 +552,8 @@ mod tests {
                     output_path: "doc.pdf".into(),
                     handle: "a".into(),
                     extra_handles: vec![],
-                            title: "A".into(),
+                    emit_handle: true,
+                    title: "A".into(),
                     vars: HashMap::new(),
                 },
                 Vertebra {
@@ -502,7 +561,8 @@ mod tests {
                     output_path: "doc.pdf".into(),
                     handle: "b".into(),
                     extra_handles: vec![],
-                            title: "B".into(),
+                    emit_handle: true,
+                    title: "B".into(),
                     vars: HashMap::new(),
                 },
             ],
@@ -527,7 +587,8 @@ mod tests {
                     output_path: "book.pdf".into(),
                     handle: "a".into(),
                     extra_handles: vec![],
-                            title: "A".into(),
+                    emit_handle: true,
+                    title: "A".into(),
                     vars: Default::default(),
                 },
                 Vertebra {
@@ -535,7 +596,8 @@ mod tests {
                     output_path: "book.pdf".into(),
                     handle: "b".into(),
                     extra_handles: vec![],
-                            title: "B".into(),
+                    emit_handle: true,
+                    title: "B".into(),
                     vars: Default::default(),
                 },
             ],
@@ -545,5 +607,56 @@ mod tests {
             },
         };
         assert!(spine.check_output_collisions().is_ok());
+    }
+
+    #[test]
+    fn canonical_skipped_when_user_label_conflicts() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        // Source file hand-authors the same label as rheo would synthesize.
+        fs::write(content.join("intro.typ"), "= Intro <intro>\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+
+        assert_eq!(spine.vertebrae[0].handle, "intro");
+        // Canonical was user-claimed → not emitted.
+        assert!(!spine.vertebrae[0].emit_handle);
+        // Escape label still present.
+        assert!(
+            spine.vertebrae[0]
+                .extra_handles
+                .contains(&"intro.typ".to_string())
+        );
+    }
+
+    #[test]
+    fn escape_label_collision_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        // intro.typ hand-authors <intro.typ>, which is the escape alias for intro.typ itself.
+        fs::write(content.join("intro.typ"), "= Intro <intro.typ>\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let result = VirtualSpine::build(&files, &content, root, layout);
+        match result {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(msg.contains("intro.typ"), "error should name label: {msg}");
+            }
+            Ok(_) => panic!("expected escape collision error"),
+        }
     }
 }
