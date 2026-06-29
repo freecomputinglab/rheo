@@ -124,11 +124,7 @@ impl Build {
 
         let default_section = PluginSection::default();
 
-        let content_dir = self
-            .project
-            .config
-            .resolve_content_dir(&self.project.root)
-            .unwrap_or_else(|| self.project.root.clone());
+        let content_dir = resolve_effective_content_dir(&self.project);
 
         let plugin_section: &PluginSection = self
             .project
@@ -231,11 +227,7 @@ impl Build {
         // Scan .typ files for package imports once — shared across all plugins.
         let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
 
-        let content_dir = self
-            .project
-            .config
-            .resolve_content_dir(&self.project.root)
-            .unwrap_or_else(|| self.project.root.clone());
+        let content_dir = resolve_effective_content_dir(&self.project);
 
         for plugin in &self.plugins {
             let plugin_output_dir = self.output.dir_for_plugin(plugin.name());
@@ -453,6 +445,26 @@ pub fn resolve_build_dir(
     } else {
         Ok(None)
     }
+}
+
+/// Resolve the effective content directory for a project.
+///
+/// If `content_dir` is set in config, use it. Otherwise, if `project.root/content/`
+/// exists and all `.typ` files in the project are under it, treat it as the implicit
+/// content root so that file stems are relative to `content/` (not the project root).
+fn resolve_effective_content_dir(project: &ProjectConfig) -> PathBuf {
+    if let Some(dir) = project.config.resolve_content_dir(&project.root) {
+        return dir;
+    }
+    let candidate = project.root.join("content");
+    if candidate.is_dir()
+        && !project.typ_files.is_empty()
+        && project.typ_files.iter().all(|f| f.starts_with(&candidate))
+    {
+        debug!(content_dir = %candidate.display(), "auto-detected content directory");
+        return candidate;
+    }
+    project.root.clone()
 }
 
 /// Resolve font directories with autoscan, config, and CLI precedence.
