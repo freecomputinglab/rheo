@@ -4,6 +4,17 @@
 //! Migration is version-aware: the project's `version` field in `rheo.toml` is
 //! compared against the current Rheo version, and the set of migrations that
 //! span that gap is applied. See `freecomputinglab/rheo#139`.
+//!
+//! # Handle separator change (pre-release)
+//!
+//! During the pre-release development of the `#link(<handle>)` feature, the
+//! path separator for nested-file handles changed from `-` to `:` (e.g.
+//! `<chapters-intro>` → `<chapters:intro>`). No automatic rewrite is provided
+//! for this change: `-` is also a valid label character used in ordinary
+//! single-segment stems (e.g. `<title-page>`), making the two forms
+//! indistinguishable without full project context. Projects that adopted the
+//! old `-` scheme during that pre-release window must update their links
+//! manually; `rheo migrate --dry-run` shows the new canonical handles.
 
 use regex::{Captures, Regex};
 use rheo_core::build::resolve_effective_content_dir;
