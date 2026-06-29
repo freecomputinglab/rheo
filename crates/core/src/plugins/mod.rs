@@ -86,6 +86,30 @@ pub struct SpineOutput {
     pub vars: std::collections::HashMap<String, crate::reticulate::types::RheoValue>,
 }
 
+/// Typst export target — the format argument passed to `#document(…, format: "…")`.
+///
+/// Distinct from `FormatPlugin::extension()`, which controls output filenames and
+/// `@ref` anchors. EPUB uses `.xhtml` as its extension but compiles via the `html`
+/// Typst target; PDF uses the `pdf` target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypstFormat {
+    Pdf,
+    Html,
+    Png,
+    Svg,
+}
+
+impl TypstFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pdf => "pdf",
+            Self::Html => "html",
+            Self::Png => "png",
+            Self::Svg => "svg",
+        }
+    }
+}
+
 /// How the plugin wants the spine laid out for compilation.
 ///
 /// Core uses this to synthesize the virtual main Typst source, which drives one
@@ -226,6 +250,15 @@ pub trait FormatPlugin: Send + Sync {
         SpineLayoutKind::OnePerVertebra
     }
 
+    /// Typst export target emitted as the `format:` argument of `#document(…)`.
+    ///
+    /// Distinct from `extension()` (output filename / `@ref` anchor). Override when
+    /// the output extension differs from the Typst compile target (e.g. EPUB uses
+    /// `.xhtml` filenames but compiles via the `html` target).
+    fn typst_format(&self) -> TypstFormat {
+        TypstFormat::Html
+    }
+
     /// Set plugin-specific smart defaults when no rheo.toml section exists.
     fn apply_defaults(&self, _section: &mut PluginSection, _project_name: &str) {}
 
@@ -286,17 +319,20 @@ pub(crate) fn open_all_files_in_folder(folder: PathBuf, ext: &str) -> crate::Res
 }
 
 /// Build a [`SpineLayout`] from a [`SpineLayoutKind`] and project context.
-pub fn spine_layout_for(
+pub(crate) fn spine_layout_for(
     kind: SpineLayoutKind,
     plugin: &dyn FormatPlugin,
     project_name: &str,
 ) -> SpineLayout {
+    let format = plugin.typst_format().as_str().to_string();
     match kind {
         SpineLayoutKind::OnePerVertebra => SpineLayout::OnePerVertebra {
             ext: plugin.extension().to_string(),
+            format,
         },
         SpineLayoutKind::SingleCombined => SpineLayout::SingleCombined {
             output_name: format!("{}.{}", project_name, plugin.extension()),
+            format,
         },
     }
 }

@@ -1,4 +1,5 @@
-use crate::path_utils::{escape_typst_content, sanitize_handle_segment, to_forward_slash};
+use crate::path_utils::{sanitize_handle_segment, to_forward_slash};
+use crate::reticulate::bundle_source::BundleSource;
 use crate::pdf_utils::DocumentTitle;
 use crate::plugins::SpineOptions;
 use crate::reticulate::parser;
@@ -78,9 +79,9 @@ impl SpineOptions {
 /// How a spine is compiled into output files under the bundle path.
 pub enum SpineLayout {
     /// One output file per vertebra (e.g. HTML: "intro.html", "closing.html").
-    OnePerVertebra { ext: String },
+    OnePerVertebra { ext: String, format: String },
     /// All vertebrae in one combined output (e.g. PDF: "doc.pdf").
-    SingleCombined { output_name: String },
+    SingleCombined { output_name: String, format: String },
 }
 
 /// Resolved metadata for one vertebra in a bundle compile.
@@ -168,12 +169,12 @@ impl VirtualSpine {
                 let extra_handles = vec![format!("{sanitized_base}.typ")];
 
                 let output_path = match &layout {
-                    SpineLayout::OnePerVertebra { ext } => {
+                    SpineLayout::OnePerVertebra { ext, .. } => {
                         // Flat output — directory separators become '_'.
                         let sanitized = sanitize_handle_segment(&rel_stem.replace('/', "_"));
                         format!("{sanitized}.{ext}")
                     }
-                    SpineLayout::SingleCombined { output_name } => output_name.clone(),
+                    SpineLayout::SingleCombined { output_name, .. } => output_name.clone(),
                 };
 
                 let source = fs::read_to_string(file).unwrap_or_default();
@@ -253,43 +254,52 @@ impl VirtualSpine {
     /// cross-document `@handle` resolution. The corresponding `#show figure.where(kind:
     /// "rheo-handle"): none` in rheo.typ suppresses its rendering.
     pub fn source(&self) -> String {
-        let mut out = String::new();
+        self.bundle_source().to_string()
+    }
 
-        match &self.layout {
-            SpineLayout::OnePerVertebra { .. } => {
-                for v in &self.vertebrae {
-                    let escaped = escape_typst_content(&v.title);
-                    out.push_str(&format!(
-                        "#document(\"{}\", title: [{escaped}])[\n",
-                        v.output_path,
-                    ));
-                    // All handle aliases carry the title so @ref renders it as link text.
-                    for label in std::iter::once(&v.handle).chain(v.extra_handles.iter()) {
-                        out.push_str(&format!(
-                            "  #figure([{escaped}], kind: \"rheo-handle\", supplement: none) <{label}>\n",
-                        ));
-                    }
-                    out.push_str(&format!("  #include \"{}\"\n]\n\n", v.rel_path));
-                }
-            }
-            SpineLayout::SingleCombined { output_name } => {
+    /// Build the structured `BundleSource` representation of this spine.
+    pub fn bundle_source(&self) -> BundleSource {
+        use crate::reticulate::bundle_source::{BundleAnchor, BundleDocument};
+
+        let documents = match &self.layout {
+            SpineLayout::OnePerVertebra { format, .. } => self
+                .vertebrae
+                .iter()
+                .map(|v| BundleDocument {
+                    output_path: v.output_path.clone(),
+                    format: format.clone(),
+                    title: v.title.clone(),
+                    anchors: std::iter::once(&v.handle)
+                        .chain(v.extra_handles.iter())
+                        .map(|label| BundleAnchor {
+                            label: label.clone(),
+                            title: v.title.clone(),
+                        })
+                        .collect(),
+                    includes: vec![v.rel_path.clone()],
+                })
+                .collect(),
+            SpineLayout::SingleCombined {
+                output_name,
+                format,
+            } => {
                 let title = self
                     .vertebrae
                     .first()
                     .map(|v| v.title.as_str())
-                    .unwrap_or("Document");
-                out.push_str(&format!(
-                    "#document(\"{output_name}\", title: [{}])[\n",
-                    escape_typst_content(title),
-                ));
-                for v in &self.vertebrae {
-                    out.push_str(&format!("  #include \"{}\"\n", v.rel_path));
-                }
-                out.push_str("]\n");
+                    .unwrap_or("Document")
+                    .to_string();
+                vec![BundleDocument {
+                    output_path: output_name.clone(),
+                    format: format.clone(),
+                    title,
+                    anchors: vec![],
+                    includes: self.vertebrae.iter().map(|v| v.rel_path.clone()).collect(),
+                }]
             }
-        }
+        };
 
-        out
+        BundleSource { documents }
     }
 }
 
@@ -416,7 +426,7 @@ mod tests {
         fs::write(content.join("closing.typ"), "= Closing\n").unwrap();
 
         let files = vec![content.join("intro.typ"), content.join("closing.typ")];
-        let layout = SpineLayout::OnePerVertebra { ext: "html".into() };
+        let layout = SpineLayout::OnePerVertebra { ext: "html".into(), format: "html".into() };
         let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
 
         assert_eq!(spine.vertebrae[0].handle, "intro");
@@ -439,7 +449,7 @@ mod tests {
         fs::write(app.join("intro.typ"), "").unwrap();
 
         let files = vec![chaps.join("intro.typ"), app.join("intro.typ")];
-        let layout = SpineLayout::OnePerVertebra { ext: "html".into() };
+        let layout = SpineLayout::OnePerVertebra { ext: "html".into(), format: "html".into() };
         let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
 
         assert_eq!(spine.vertebrae[0].handle, "chapters-intro");
@@ -467,10 +477,10 @@ mod tests {
         };
         let spine = VirtualSpine {
             vertebrae: vec![v],
-            layout: SpineLayout::OnePerVertebra { ext: "html".into() },
+            layout: SpineLayout::OnePerVertebra { ext: "html".into(), format: "html".into() },
         };
         let src = spine.source();
-        assert!(src.contains("#document(\"intro.html\""));
+        assert!(src.contains("#document(\"intro.html\", format: \"html\""));
         assert!(src.contains("rheo-handle"));
         assert!(src.contains("[Introduction]"));
         assert!(src.contains("<intro>"));
@@ -501,10 +511,11 @@ mod tests {
             ],
             layout: SpineLayout::SingleCombined {
                 output_name: "doc.pdf".into(),
+                format: "pdf".into(),
             },
         };
         let src = spine.source();
-        assert!(src.contains("#document(\"doc.pdf\""));
+        assert!(src.contains("#document(\"doc.pdf\", format: \"pdf\""));
         assert!(src.contains("#include \"content/a.typ\""));
         assert!(src.contains("#include \"content/b.typ\""));
         assert!(!src.contains("rheo-handle"));
@@ -533,6 +544,7 @@ mod tests {
             ],
             layout: SpineLayout::SingleCombined {
                 output_name: "book.pdf".into(),
+                format: "pdf".into(),
             },
         };
         assert!(spine.check_output_collisions().is_ok());

@@ -45,7 +45,7 @@ pub use config::{AssetsField, PluginAssets, PluginSection, Spine};
 // Plugin trait and context
 pub use plugins::{
     AssetConfig, FormatInitTemplate, FormatPlugin, OpenHandle, PackageAssets, PluginContext,
-    ResolvedPackage, ServerHandle, SpineLayoutKind, SpineOptions, SpineOutput,
+    ResolvedPackage, ServerHandle, SpineLayoutKind, SpineOptions, SpineOutput, TypstFormat,
 };
 pub use reticulate::types::RheoValue;
 

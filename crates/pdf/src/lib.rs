@@ -1,6 +1,6 @@
 use rheo_core::{
     FormatInitTemplate, FormatPlugin, PluginContext, Result, RheoError, SpineLayoutKind,
-    SpineOutput,
+    SpineOutput, TypstFormat,
 };
 
 pub struct PdfPlugin;
@@ -13,6 +13,10 @@ impl FormatPlugin for PdfPlugin {
 
     fn spine_layout_kind(&self) -> SpineLayoutKind {
         SpineLayoutKind::SingleCombined
+    }
+
+    fn typst_format(&self) -> TypstFormat {
+        TypstFormat::Pdf
     }
 
     fn format_init_template(&self) -> FormatInitTemplate {
