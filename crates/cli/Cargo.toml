@@ -38,6 +38,7 @@ chrono = { workspace = true }
 # Serialization
 serde = { workspace = true }
 toml = { workspace = true }
+toml_edit = { workspace = true }
 semver = { workspace = true }
 
 # Development server
@@ -54,6 +55,7 @@ thiserror = { workspace = true }
 # Patterns
 globset = { workspace = true }
 glob = { workspace = true }
+regex = { workspace = true }
 
 # System paths
 dirs = { workspace = true }

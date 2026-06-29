@@ -1,173 +1,15 @@
-use crate::pdf_utils::{DocumentTitle, sanitize_label_name};
-use crate::plugins::{LinkStrategy, SpineOptions};
-use crate::reticulate::transformer::LinkTransformer;
+use crate::path_utils::{sanitize_handle_segment, to_forward_slash};
+use crate::pdf_utils::DocumentTitle;
+use crate::plugins::SpineOptions;
+use crate::reticulate::bundle_source::BundleSource;
+use crate::reticulate::parser;
 use crate::reticulate::types::RheoValue;
 use crate::{Result, RheoError, TYP_EXT};
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use typst::syntax::Source;
 use walkdir::WalkDir;
-
-/// A spine with relative linking transformations.
-#[derive(Debug, Clone)]
-pub struct BuiltSpine {
-    /// The name of the file or website that the spine will generate.
-    pub title: Option<String>,
-
-    /// Whether or not the source has been merged into a single file.
-    /// This is only true for PDF merged mode.
-    pub is_merged: bool,
-
-    /// Reticulated (relative link transformed) source files.
-    /// Always length 1 if `is_merged`.
-    pub source: Vec<String>,
-
-    /// Validated `rheo-*` vars (prefix stripped) per vertebra, aligned with the
-    /// original `spine_files` order — one map per original file even when
-    /// `is_merged` collapses `source` to length 1.
-    pub vars: Vec<HashMap<String, RheoValue>>,
-}
-
-impl BuiltSpine {
-    /// Build a RheoSpine with AST-based link transformation for all output formats.
-    ///
-    /// # Arguments
-    /// * `root` - Project root directory
-    /// * `spine_config` - Optional spine configuration (determines spine files)
-    /// * `format_ext` - The extension to use for relative links.
-    /// * `strategy` - How relative `.typ` links are rewritten (extension vs PDF labels)
-    /// * `merge` - Whether to merge spine files into a single source (caller decides)
-    pub fn build(
-        root: &Path,
-        spine_config: Option<&SpineOptions>,
-        format_ext: &str,
-        strategy: LinkStrategy,
-        merge: bool,
-    ) -> Result<BuiltSpine> {
-        let spine_files = match spine_config {
-            Some(spine) => spine.generate(root)?,
-            None => collect_one_typst_file(root)?,
-        };
-        check_duplicate_filenames(&spine_files)?;
-
-        // Merge when caller requests it (typically only PDF merged mode).
-        // Other formats (epub, html) handle concatenation differently.
-
-        // Paged formats attach the spine so cross-file links become labels;
-        // a single file has no cross-references, so it's skipped.
-        let mut transformer = LinkTransformer::new(format_ext)
-            .with_strategy(strategy)
-            .with_import_rewriting(merge);
-        if strategy == LinkStrategy::PagedLabels && spine_files.len() > 1 {
-            transformer = transformer.with_spine(spine_files.to_vec());
-        }
-
-        let mut sources = Vec::new();
-        let mut vars = Vec::new();
-
-        for spine_file in &spine_files {
-            let source = fs::read_to_string(spine_file).map_err(|e| {
-                RheoError::project_config(format!(
-                    "failed to read spine file '{}': {}",
-                    spine_file.display(),
-                    e
-                ))
-            })?;
-
-            let output = transformer.transform_with_vars(&source, spine_file, root)?;
-            let transformed_source = output.source;
-
-            // A `None` value means the RHS was an unsupported kind. Only string
-            // literals are supported for now, so report it as such.
-            let mut file_vars = HashMap::new();
-            for v in output.rheo_vars {
-                match v.value {
-                    Some(value) => {
-                        file_vars.insert(v.key, value);
-                    }
-                    None => {
-                        return Err(RheoError::invalid_data(format!(
-                            "{}:{}: rheo-{} must be a string",
-                            spine_file.display(),
-                            v.line,
-                            v.key
-                        )));
-                    }
-                }
-            }
-            vars.push(file_vars);
-
-            let final_source = if merge {
-                let (label, doc_title) = extract_label_and_title(&source, spine_file)?;
-                format!(
-                    "#metadata(\"{}\") <{}>\n{}\n\n",
-                    doc_title, label, transformed_source
-                )
-            } else {
-                transformed_source
-            };
-
-            sources.push(final_source);
-        }
-
-        let final_sources = if merge {
-            vec![sources.join("\n\n")]
-        } else {
-            sources
-        };
-
-        let title = spine_config.and_then(|s| s.title.clone());
-
-        Ok(BuiltSpine {
-            title,
-            is_merged: merge,
-            source: final_sources,
-            vars,
-        })
-    }
-}
-
-fn extract_label_and_title(source: &str, spine_file: &Path) -> Result<(String, String)> {
-    let filename = spine_file.file_name().ok_or_else(|| {
-        RheoError::project_config(format!(
-            "invalid filename in spine: '{}'",
-            spine_file.display()
-        ))
-    })?;
-
-    let filename_str = filename.to_string_lossy();
-    let stem = filename_str.strip_suffix(TYP_EXT).unwrap_or(&filename_str);
-    let label = sanitize_label_name(stem);
-    let title = DocumentTitle::from_source(source, stem).extract();
-
-    Ok((label, title))
-}
-
-fn check_duplicate_filenames(spine_files: &[PathBuf]) -> Result<()> {
-    let mut seen: HashMap<String, &PathBuf> = HashMap::new();
-
-    for spine_file in spine_files {
-        if let Some(filename) = spine_file.file_name() {
-            let key = filename.to_string_lossy().into_owned();
-            match seen.entry(key) {
-                Entry::Occupied(e) => {
-                    return Err(RheoError::project_config(format!(
-                        "duplicate filename in spine: '{}' appears at both '{}' and '{}'",
-                        filename.to_string_lossy(),
-                        e.get().display(),
-                        spine_file.display()
-                    )));
-                }
-                Entry::Vacant(e) => {
-                    e.insert(spine_file);
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
 
 fn collect_typst_files(root: &Path) -> Vec<PathBuf> {
     WalkDir::new(root)
@@ -181,18 +23,6 @@ fn collect_typst_files(root: &Path) -> Vec<PathBuf> {
                 .unwrap_or(false)
         })
         .collect()
-}
-
-fn collect_one_typst_file(root: &Path) -> Result<Vec<PathBuf>> {
-    let typst_files = collect_typst_files(root);
-
-    match typst_files.len() {
-        0 => Err(RheoError::project_config("need at least one .typ file")),
-        1 => Ok(typst_files),
-        _ => Err(RheoError::project_config(
-            "multiple .typ files found, specify spine configuration",
-        )),
-    }
 }
 
 fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
@@ -244,6 +74,290 @@ impl SpineOptions {
     }
 }
 
+// ── Bundle spine: VirtualSpine, Vertebra, SpineLayout ────────────────────────
+
+/// How a spine is compiled into output files under the bundle path.
+pub enum SpineLayout {
+    /// One output file per vertebra (e.g. HTML: "intro.html", "closing.html").
+    OnePerVertebra { ext: String, format: String },
+    /// All vertebrae in one combined output (e.g. PDF: "doc.pdf").
+    SingleCombined { output_name: String, format: String },
+}
+
+/// Resolved metadata for one vertebra in a bundle compile.
+pub struct Vertebra {
+    /// Path relative to the project root, forward-slash separated (for `#include`).
+    pub rel_path: String,
+    /// Output path key in VirtualFs (e.g. "intro.html").
+    pub output_path: String,
+    /// Primary synthesized cross-vertebra handle label (e.g. "intro" or "chapters:intro").
+    pub handle: String,
+    /// Additional handle aliases; always includes the `<stem.typ>` escape form.
+    pub extra_handles: Vec<String>,
+    /// Whether the canonical `<handle>` label should be emitted as a bundle anchor.
+    /// False when a user-authored label already occupies the canonical name.
+    pub emit_handle: bool,
+    /// Document title for `#document title:` and `@handle` display text.
+    pub title: String,
+    /// Harvested `rheo-*` variables from this vertebra's source file.
+    pub vars: std::collections::HashMap<String, RheoValue>,
+}
+
+impl Vertebra {
+    /// Return `true` if this vertebra's output path collides with `other`.
+    pub fn collides_with(&self, other: &Vertebra) -> bool {
+        self.output_path == other.output_path
+    }
+}
+
+/// A resolved spine ready for bundle compilation.
+///
+/// Constructed via `VirtualSpine::build`; call `source()` to get the synthesized
+/// Typst source that drives `RheoWorld::compile_bundle`.
+pub struct VirtualSpine {
+    pub vertebrae: Vec<Vertebra>,
+    pub layout: SpineLayout,
+}
+
+impl VirtualSpine {
+    /// Resolve a list of spine files into a `VirtualSpine` with computed handles,
+    /// output paths, and titles.
+    ///
+    /// `content_dir` is the project content root; stems are computed relative to it
+    /// so `content/chapters/intro.typ` yields handle `intro` (or `chapters:intro`
+    /// on a cross-directory stem collision). Pass `project_root` for `#include` paths.
+    pub fn build(
+        files: &[PathBuf],
+        content_dir: &Path,
+        project_root: &Path,
+        layout: SpineLayout,
+    ) -> Result<Self> {
+        // Stem relative to content_dir (no extension, forward-slash).
+        let rel_stems: Vec<String> = files
+            .iter()
+            .map(|f| to_forward_slash(&f.strip_prefix(content_dir).unwrap_or(f).with_extension("")))
+            .collect();
+
+        // First pass: parse each file, compute handles, collect user labels.
+        struct FileInfo {
+            file: PathBuf,
+            handle: String,
+            escape: String,
+            output_path: String,
+            rel_path: String,
+            title: String,
+            vars: HashMap<String, RheoValue>,
+            user_labels: Vec<String>,
+        }
+
+        let file_infos: Result<Vec<FileInfo>> = files
+            .iter()
+            .zip(rel_stems.iter())
+            .map(|(file, rel_stem)| {
+                let segments: Vec<&str> = rel_stem.split('/').collect();
+
+                // Canonical handle: bare stem for root-level files, path-prefixed
+                // with ':' separator for nested files ("a/notes" → "a:notes").
+                let handle = if segments.len() > 1 {
+                    segments
+                        .iter()
+                        .map(|s| sanitize_handle_segment(s))
+                        .collect::<Vec<_>>()
+                        .join(":")
+                } else {
+                    sanitize_handle_segment(segments[0])
+                };
+
+                let escape = format!("{handle}.typ");
+
+                let output_path = match &layout {
+                    SpineLayout::OnePerVertebra { ext, .. } => format!("{handle}.{ext}"),
+                    SpineLayout::SingleCombined { output_name, .. } => output_name.clone(),
+                };
+
+                let source = fs::read_to_string(file).unwrap_or_default();
+                let stem = file
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let title = DocumentTitle::from_source(&source, &stem).extract();
+                let rel_path = to_forward_slash(file.strip_prefix(project_root).unwrap_or(file));
+
+                let source_obj = Source::detached(&source);
+                let extracted = parser::extract_nodes(&source_obj);
+                let user_labels = extracted.user_labels;
+                let mut vars = HashMap::new();
+                for v in extracted.rheo_vars {
+                    match v.value {
+                        Some(value) => {
+                            vars.insert(v.key, value);
+                        }
+                        None => {
+                            return Err(RheoError::invalid_data(format!(
+                                "{}:{}: rheo-{} must be a string",
+                                file.display(),
+                                v.line,
+                                v.key
+                            )));
+                        }
+                    }
+                }
+
+                Ok(FileInfo {
+                    file: file.clone(),
+                    handle,
+                    escape,
+                    output_path,
+                    rel_path,
+                    title,
+                    vars,
+                    user_labels,
+                })
+            })
+            .collect();
+        let file_infos = file_infos?;
+
+        // Union of all user-authored labels across the entire spine.
+        let all_user_labels: HashSet<String> = file_infos
+            .iter()
+            .flat_map(|fi| fi.user_labels.iter().cloned())
+            .collect();
+
+        // Second pass: assign emit_handle and check escape uniqueness.
+        let mut seen_canonicals: HashSet<String> = HashSet::new();
+        let mut seen_escapes: HashSet<String> = HashSet::new();
+
+        let vertebrae: Result<Vec<Vertebra>> = file_infos
+            .into_iter()
+            .map(|fi| {
+                // Canonical: skip if claimed by user or already emitted.
+                let emit_handle =
+                    !all_user_labels.contains(&fi.handle) && !seen_canonicals.contains(&fi.handle);
+                seen_canonicals.insert(fi.handle.clone());
+
+                // Escape: must be unique — error on collision.
+                if all_user_labels.contains(&fi.escape) || seen_escapes.contains(&fi.escape) {
+                    return Err(RheoError::invalid_data(format!(
+                        "{}: escape label <{}> collides with another label in the project",
+                        fi.file.display(),
+                        fi.escape
+                    )));
+                }
+                seen_escapes.insert(fi.escape.clone());
+
+                Ok(Vertebra {
+                    rel_path: fi.rel_path,
+                    output_path: fi.output_path,
+                    handle: fi.handle,
+                    extra_handles: vec![fi.escape],
+                    emit_handle,
+                    title: fi.title,
+                    vars: fi.vars,
+                })
+            })
+            .collect();
+
+        Ok(Self {
+            vertebrae: vertebrae?,
+            layout,
+        })
+    }
+
+    /// Validate that no two vertebrae produce the same output path.
+    ///
+    /// Skipped for `SingleCombined` layouts where all vertebrae intentionally share
+    /// the same output path (e.g. every vertebra produces "book.pdf").
+    pub fn check_output_collisions(&self) -> Result<()> {
+        if !matches!(self.layout, SpineLayout::OnePerVertebra { .. }) {
+            return Ok(());
+        }
+        let mut seen: HashMap<&str, usize> = HashMap::new();
+        for (i, v) in self.vertebrae.iter().enumerate() {
+            if let Some(prev) = seen.insert(v.output_path.as_str(), i) {
+                return Err(RheoError::project_config(format!(
+                    "spine output path collision: '{}' produced by vertebra {} and {}",
+                    v.output_path, prev, i
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Synthesize the virtual main Typst source that drives `RheoWorld::compile_bundle`.
+    ///
+    /// For `OnePerVertebra` each vertebra becomes a `#document(output-path)[...]` containing
+    /// a labeled `#figure` handle anchor followed by a real `#include`.
+    /// For `SingleCombined` all vertebrae are wrapped in one `#document`, each with its
+    /// own handle anchors emitted immediately before its `#include` so cross-references
+    /// resolve to the correct location within the combined output.
+    ///
+    /// The handle anchor uses `#figure` rather than `#metadata` or a bare label.
+    /// `#metadata(none) <label>` fails at compile time ("cannot reference metadata");
+    /// `<label>` after a `#document` block labels the document element itself, which
+    /// Typst also refuses to reference ("cannot reference document"). A labeled
+    /// `#figure([title], kind: "rheo-handle", …)` is the only mechanism that allows
+    /// cross-document `@handle` resolution. The corresponding `#show figure.where(kind:
+    /// "rheo-handle"): none` in rheo.typ suppresses its rendering.
+    pub fn source(&self) -> String {
+        self.bundle_source().to_string()
+    }
+
+    /// Build the structured `BundleSource` representation of this spine.
+    pub fn bundle_source(&self) -> BundleSource {
+        use crate::reticulate::bundle_source::{BundleAnchor, BundleDocument, BundleSegment};
+
+        // A vertebra's handle anchors: the canonical `<handle>` (when emitted) plus
+        // the `<handle.typ>` escape aliases. Emitted before the vertebra's include so
+        // cross-references resolve to the right location in the output.
+        let segment_for = |v: &Vertebra| BundleSegment {
+            anchors: v
+                .emit_handle
+                .then_some(&v.handle)
+                .into_iter()
+                .chain(v.extra_handles.iter())
+                .map(|label| BundleAnchor {
+                    label: label.clone(),
+                    title: v.title.clone(),
+                })
+                .collect(),
+            include: v.rel_path.clone(),
+        };
+
+        let documents = match &self.layout {
+            SpineLayout::OnePerVertebra { format, .. } => self
+                .vertebrae
+                .iter()
+                .map(|v| BundleDocument {
+                    output_path: v.output_path.clone(),
+                    format: format.clone(),
+                    title: v.title.clone(),
+                    segments: vec![segment_for(v)],
+                })
+                .collect(),
+            SpineLayout::SingleCombined {
+                output_name,
+                format,
+            } => {
+                let title = self
+                    .vertebrae
+                    .first()
+                    .map(|v| v.title.as_str())
+                    .unwrap_or("Document")
+                    .to_string();
+                vec![BundleDocument {
+                    output_path: output_name.clone(),
+                    format: format.clone(),
+                    title,
+                    segments: self.vertebrae.iter().map(segment_for).collect(),
+                }]
+            }
+        };
+
+        BundleSource { documents }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,7 +380,6 @@ mod tests {
         SpineOptions {
             title: Some("Test".to_string()),
             vertebrae,
-            merge: false,
         }
     }
 
@@ -295,7 +408,6 @@ mod tests {
                 "chapters/*.typ".to_string(),
                 "appendix.typ".to_string(),
             ],
-            merge: false,
         };
         let result = spine.generate(temp.path());
         assert!(result.is_ok());
@@ -355,56 +467,208 @@ mod tests {
         assert_eq!(files.len(), 2);
     }
 
-    fn write_spine_dir(files: &[(&str, &str)]) -> TempDir {
-        let temp = TempDir::new().unwrap();
-        for (name, contents) in files {
-            fs::write(temp.path().join(name), contents).unwrap();
-        }
-        temp
+    // ── VirtualSpine tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn unique_stems_get_bare_handle() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro\n").unwrap();
+        fs::write(content.join("closing.typ"), "= Closing\n").unwrap();
+
+        let files = vec![content.join("intro.typ"), content.join("closing.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+
+        assert_eq!(spine.vertebrae[0].handle, "intro");
+        assert_eq!(spine.vertebrae[0].extra_handles, vec!["intro.typ"]);
+        assert_eq!(spine.vertebrae[0].output_path, "intro.html");
+        assert_eq!(spine.vertebrae[1].handle, "closing");
+        assert_eq!(spine.vertebrae[1].output_path, "closing.html");
     }
 
     #[test]
-    fn test_build_collects_rheo_vars_per_file() {
-        let temp = write_spine_dir(&[
-            ("a.typ", "#let rheo-feed-title = \"Alpha\"\n= A"),
-            ("b.typ", "= B, no vars"),
-        ]);
-        let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
-        let built = BuiltSpine::build(
-            temp.path(),
-            Some(&spine),
-            "html",
-            LinkStrategy::ExtensionRewrite,
-            false,
-        )
-        .unwrap();
+    fn nested_files_get_colon_qualified_handle() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        let a = content.join("a");
+        let b = content.join("b");
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        fs::write(a.join("notes.typ"), "").unwrap();
+        fs::write(b.join("notes.typ"), "").unwrap();
 
-        assert_eq!(built.vars.len(), 2);
-        assert_eq!(
-            built.vars[0].get("feed-title"),
-            Some(&RheoValue::Str("Alpha".to_string()))
-        );
-        assert!(built.vars[1].is_empty());
-    }
+        let files = vec![a.join("notes.typ"), b.join("notes.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
 
-    #[test]
-    fn test_build_errors_on_non_string_rheo_var() {
-        let temp = write_spine_dir(&[("a.typ", "#let rheo-x = 1\n= A")]);
-        let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
-        let result = BuiltSpine::build(
-            temp.path(),
-            Some(&spine),
-            "html",
-            LinkStrategy::ExtensionRewrite,
-            false,
-        );
-
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("a.typ"), "message missing path: {msg}");
+        assert_eq!(spine.vertebrae[0].handle, "a:notes");
+        assert_eq!(spine.vertebrae[1].handle, "b:notes");
         assert!(
-            msg.contains("rheo-x must be a string"),
-            "message missing reason: {msg}"
+            spine.vertebrae[0]
+                .extra_handles
+                .contains(&"a:notes.typ".to_string())
         );
+        assert_ne!(
+            spine.vertebrae[0].output_path,
+            spine.vertebrae[1].output_path
+        );
+    }
+
+    #[test]
+    fn virtual_main_html_shape() {
+        let v = Vertebra {
+            rel_path: "content/intro.typ".into(),
+            output_path: "intro.html".into(),
+            handle: "intro".into(),
+            extra_handles: vec!["intro.typ".into()],
+            emit_handle: true,
+            title: "Introduction".into(),
+            vars: HashMap::new(),
+        };
+        let spine = VirtualSpine {
+            vertebrae: vec![v],
+            layout: SpineLayout::OnePerVertebra {
+                ext: "html".into(),
+                format: "html".into(),
+            },
+        };
+        let src = spine.source();
+        assert!(src.contains("#document(\"intro.html\", format: \"html\""));
+        assert!(src.contains("rheo-handle"));
+        assert!(src.contains("[Introduction]"));
+        assert!(src.contains("<intro>"));
+        assert!(src.contains("<intro.typ>"));
+        assert!(src.contains("#include \"content/intro.typ\""));
+    }
+
+    #[test]
+    fn virtual_main_pdf_shape() {
+        let spine = VirtualSpine {
+            vertebrae: vec![
+                Vertebra {
+                    rel_path: "content/a.typ".into(),
+                    output_path: "doc.pdf".into(),
+                    handle: "a".into(),
+                    extra_handles: vec![],
+                    emit_handle: true,
+                    title: "A".into(),
+                    vars: HashMap::new(),
+                },
+                Vertebra {
+                    rel_path: "content/b.typ".into(),
+                    output_path: "doc.pdf".into(),
+                    handle: "b".into(),
+                    extra_handles: vec![],
+                    emit_handle: true,
+                    title: "B".into(),
+                    vars: HashMap::new(),
+                },
+            ],
+            layout: SpineLayout::SingleCombined {
+                output_name: "doc.pdf".into(),
+                format: "pdf".into(),
+            },
+        };
+        let src = spine.source();
+        assert!(src.contains("#document(\"doc.pdf\", format: \"pdf\""));
+        assert!(src.contains("#include \"content/a.typ\""));
+        assert!(src.contains("#include \"content/b.typ\""));
+        // Synthesized handle anchors are now injected into the combined document so
+        // cross-vertebra `@handle` references resolve.
+        assert!(src.contains("rheo-handle"));
+        assert!(src.contains("<a>"));
+        assert!(src.contains("<b>"));
+    }
+
+    #[test]
+    fn single_combined_collision_check_passes() {
+        let spine = VirtualSpine {
+            vertebrae: vec![
+                Vertebra {
+                    rel_path: "a.typ".into(),
+                    output_path: "book.pdf".into(),
+                    handle: "a".into(),
+                    extra_handles: vec![],
+                    emit_handle: true,
+                    title: "A".into(),
+                    vars: Default::default(),
+                },
+                Vertebra {
+                    rel_path: "b.typ".into(),
+                    output_path: "book.pdf".into(),
+                    handle: "b".into(),
+                    extra_handles: vec![],
+                    emit_handle: true,
+                    title: "B".into(),
+                    vars: Default::default(),
+                },
+            ],
+            layout: SpineLayout::SingleCombined {
+                output_name: "book.pdf".into(),
+                format: "pdf".into(),
+            },
+        };
+        assert!(spine.check_output_collisions().is_ok());
+    }
+
+    #[test]
+    fn canonical_skipped_when_user_label_conflicts() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        // Source file hand-authors the same label as rheo would synthesize.
+        fs::write(content.join("intro.typ"), "= Intro <intro>\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+
+        assert_eq!(spine.vertebrae[0].handle, "intro");
+        // Canonical was user-claimed → not emitted.
+        assert!(!spine.vertebrae[0].emit_handle);
+        // Escape label still present.
+        assert!(
+            spine.vertebrae[0]
+                .extra_handles
+                .contains(&"intro.typ".to_string())
+        );
+    }
+
+    #[test]
+    fn escape_label_collision_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        // intro.typ hand-authors <intro.typ>, which is the escape alias for intro.typ itself.
+        fs::write(content.join("intro.typ"), "= Intro <intro.typ>\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let result = VirtualSpine::build(&files, &content, root, layout);
+        match result {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(msg.contains("intro.typ"), "error should name label: {msg}");
+            }
+            Ok(_) => panic!("expected escape collision error"),
+        }
     }
 }

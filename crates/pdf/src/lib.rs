@@ -1,4 +1,7 @@
-use rheo_core::{FormatInitTemplate, FormatPlugin, LinkStrategy, PluginContext, Result};
+use rheo_core::{
+    CastVertebra, FormatInitTemplate, FormatPlugin, PluginContext, Result, RheoError,
+    SpineLayoutKind, TypstFormat,
+};
 
 pub struct PdfPlugin;
 const PLUGIN_NAME: &str = "pdf";
@@ -8,10 +11,12 @@ impl FormatPlugin for PdfPlugin {
         PLUGIN_NAME
     }
 
-    /// PDF is a paged format: merged compiles convert in-spine links to labels,
-    /// single-file compiles strip them.
-    fn link_strategy(&self) -> LinkStrategy {
-        LinkStrategy::PagedLabels
+    fn spine_layout_kind(&self) -> SpineLayoutKind {
+        SpineLayoutKind::SingleCombined
+    }
+
+    fn typst_format(&self) -> TypstFormat {
+        TypstFormat::Pdf
     }
 
     fn format_init_template(&self) -> FormatInitTemplate {
@@ -25,7 +30,14 @@ impl FormatPlugin for PdfPlugin {
         Some(include_str!("lib.typ"))
     }
 
-    fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
-        ctx.compile(self)
+    fn compile(&self, ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
+        let output = outputs
+            .first()
+            .ok_or_else(|| RheoError::project_config("PDF compilation produced no output"))?;
+        let out_path = ctx.output_dir.join(&output.output_path);
+        std::fs::write(&out_path, output.bytes.as_slice())
+            .map_err(|e| RheoError::io(e, format!("writing PDF to {:?}", out_path)))?;
+        tracing::info!(output = %out_path.display(), "successfully compiled to PDF");
+        Ok(())
     }
 }

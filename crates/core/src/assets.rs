@@ -200,13 +200,23 @@ impl<'a> AssetResolver<'a> {
 
     /// Expand glob patterns against `source_root` and copy matching files into
     /// the plugin output directory (optionally under `dest_prefix`).
+    ///
+    /// When `warn_on_overwrite` is true, logs a warning for each destination file
+    /// that already exists (meaning a bundle output is being overwritten by a copy glob).
     pub fn copy_globs(
         &self,
         patterns: &[String],
         source_root: &Path,
         dest_prefix: Option<&str>,
+        warn_on_overwrite: bool,
     ) -> Result<()> {
-        copy_glob_patterns(patterns, source_root, self.plugin_output_dir, dest_prefix)
+        copy_glob_patterns(
+            patterns,
+            source_root,
+            self.plugin_output_dir,
+            dest_prefix,
+            warn_on_overwrite,
+        )
     }
 }
 
@@ -252,11 +262,15 @@ fn copy_each(
 
 /// Expand glob patterns against `source_root` and copy matching files into
 /// `plugin_output_dir` (optionally under `dest_prefix`).
+///
+/// When `warn_on_overwrite` is true, logs a warning for each destination file
+/// that already exists before it is overwritten.
 fn copy_glob_patterns(
     patterns: &[String],
     source_root: &Path,
     plugin_output_dir: &Path,
     dest_prefix: Option<&str>,
+    warn_on_overwrite: bool,
 ) -> Result<()> {
     for pattern in patterns {
         let abs_pattern = source_root.join(pattern).display().to_string();
@@ -278,6 +292,13 @@ fn copy_glob_patterns(
                         format!("creating directory for copy of {}", rel.display()),
                     )
                 })?;
+            }
+            if warn_on_overwrite && dest.exists() {
+                warn!(
+                    src = %entry.display(),
+                    dest = %dest.display(),
+                    "copy glob overwrites existing bundle output"
+                );
             }
             std::fs::copy(&entry, &dest).map_err(|e| RheoError::AssetCopy {
                 source: entry.clone(),
@@ -312,7 +333,11 @@ mod tests {
         fn assets(&self) -> Vec<AssetConfig> {
             self.declared_assets.clone()
         }
-        fn compile(&self, _ctx: PluginContext<'_>) -> Result<()> {
+        fn compile(
+            &self,
+            _ctx: PluginContext<'_>,
+            _outputs: &[crate::plugins::CastVertebra],
+        ) -> Result<()> {
             Ok(())
         }
     }
@@ -1057,5 +1082,50 @@ mod tests {
             "expected package default css in output, got: {:?}",
             paths
         );
+    }
+
+    #[test]
+    fn test_copy_globs_wins_over_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        // Simulate a bundle output already written to output_dir.
+        let bundle_content = b"bundle-output";
+        std::fs::write(output_dir.join("logo.png"), bundle_content).unwrap();
+
+        // User's source file with different content — should win.
+        let copy_content = b"copy-wins";
+        std::fs::write(project_root.join("logo.png"), copy_content).unwrap();
+
+        let resolver = AssetResolver::new(project_root, &output_dir);
+        resolver
+            .copy_globs(&["logo.png".into()], project_root, None, true)
+            .unwrap();
+
+        let written = std::fs::read(output_dir.join("logo.png")).unwrap();
+        assert_eq!(
+            written, copy_content,
+            "copy glob should overwrite bundle output"
+        );
+    }
+
+    #[test]
+    fn test_copy_globs_no_warn_when_dest_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::write(project_root.join("style.css"), b"body {}").unwrap();
+
+        let resolver = AssetResolver::new(project_root, &output_dir);
+        // Should succeed without panicking even with warn_on_overwrite=true.
+        resolver
+            .copy_globs(&["style.css".into()], project_root, None, true)
+            .unwrap();
+
+        assert!(output_dir.join("style.css").exists());
     }
 }

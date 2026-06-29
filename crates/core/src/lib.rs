@@ -39,27 +39,22 @@ pub use results::{CompilationResults, FormatResult};
 pub use assets::AssetResolver;
 pub use build::{Build, BuildOptions};
 
-// Compile options and context
-pub use compile::{CompileUnit, RheoCompileOptions};
-
 // Configuration types
 pub use config::{AssetsField, PluginAssets, PluginSection, Spine};
 
 // Plugin trait and context
 pub use plugins::{
-    AssetConfig, CompiledHtmlVertebra, FormatInitTemplate, FormatPlugin, LinkStrategy, OpenHandle,
-    PackageAssets, PluginContext, ResolvedPackage, ServerHandle, SpineOptions,
+    AssetConfig, CastVertebra, FormatInitTemplate, FormatPlugin, OpenHandle, PackageAssets,
+    PluginContext, ResolvedPackage, ServerHandle, SpineLayoutKind, SpineOptions, TypstFormat,
 };
 pub use reticulate::types::RheoValue;
 
 // HTML/PDF export utilities
 pub use compile::{compile_document_to_string, document_to_pdf_bytes};
+pub use html_utils::HtmlDom;
 
 // World (Typst compilation context)
 pub use world::RheoWorld;
-
-// Re-export reticulate module for spine building
-pub use reticulate::spine::BuiltSpine;
 
 // PDF utilities
 pub use pdf_utils::DocumentTitle;

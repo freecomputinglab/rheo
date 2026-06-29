@@ -20,6 +20,10 @@ thiserror = { workspace = true }
 # Logging
 tracing = { workspace = true }
 
+# Typst (for VirtualFs types in watch mode)
+typst = { workspace = true }
+typst-bundle = { workspace = true }
+
 # Development server
 tokio = { workspace = true }
 axum = { workspace = true }

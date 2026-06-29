@@ -6,15 +6,15 @@
 //! to [`BuildOptions`] and calls [`Build::prepare`] then [`Build::run`].
 
 use crate::assets::AssetResolver;
-use crate::compile::RheoCompileOptions;
+use crate::compile::export_bundle;
 use crate::config::PluginSection;
 use crate::output::OutputConfig;
-use crate::plugins::{Asset, FormatPlugin, PluginContext, SpineOptions};
-use crate::project::ProjectConfig;
+use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, SpineOptions, spine_layout_for};
+use crate::project::{ProjectConfig, ProjectMode};
 use crate::results::CompilationResults;
+use crate::reticulate::spine::VirtualSpine;
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info};
 
@@ -95,6 +95,128 @@ impl Build {
         &self.output
     }
 
+    /// Compile HTML to an in-memory VirtualFs for the dev server.
+    ///
+    /// Resolves assets (CSS/JS), copies them to the plugin output dir so the
+    /// dev server can fall back to disk for them, compiles the Typst bundle, and
+    /// injects CSS/JS `<link>`/`<script>` tags into each HTML entry before
+    /// returning the VirtualFs. Typst's comemo layer caches unchanged sources, so
+    /// this second compile after `run()` is near-instant on unchanged content.
+    ///
+    /// Returns `None` when the HTML plugin is not selected.
+    pub fn compile_for_watch(&mut self) -> Result<Option<typst_bundle::VirtualFs>> {
+        if self.project.typ_files.is_empty() {
+            return Err(RheoError::project_config("no .typ files found in project"));
+        }
+
+        let html_plugin = match self.plugins.iter().find(|p| p.name() == "html") {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        let plugin_output_dir = self.output.dir_for_plugin(html_plugin.name());
+        std::fs::create_dir_all(&plugin_output_dir).map_err(|e| {
+            RheoError::io(
+                e,
+                format!("creating output directory for {}", html_plugin.name()),
+            )
+        })?;
+
+        let default_section = PluginSection::default();
+
+        let content_dir = resolve_effective_content_dir(&self.project);
+
+        let plugin_section: &PluginSection = self
+            .project
+            .config
+            .plugin_sections
+            .get(html_plugin.name())
+            .unwrap_or(&default_section);
+
+        // Resolve assets — copies CSS/JS to disk so the dev server can serve them
+        // as fallback for requests not satisfied by the VirtualFs.
+        let resolver = AssetResolver::new(&self.project.root, &plugin_output_dir);
+        let resolved_assets = resolver
+            .resolve(html_plugin.as_ref(), plugin_section, &[])
+            .unwrap_or_default();
+
+        let css_paths: Vec<String> = resolved_assets
+            .get("css_stylesheet")
+            .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
+            .unwrap_or_default();
+        let js_paths: Vec<String> = resolved_assets
+            .get("js_scripts")
+            .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
+            .unwrap_or_default();
+
+        // Resolve spine options.
+        let spine_cfg = plugin_section.spine.as_ref();
+        let spine = SpineOptions {
+            title: spine_cfg.and_then(|s| s.title.clone()),
+            vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
+        };
+
+        // Build VirtualSpine + compile.
+        let layout = spine_layout_for(
+            html_plugin.spine_layout_kind(),
+            html_plugin.as_ref(),
+            &self.project.name,
+        );
+        let spine_files = match self.project.mode {
+            ProjectMode::SingleFile => vec![self.project.typ_files[0].clone()],
+            ProjectMode::Directory => {
+                let explicit_content_dir =
+                    self.project.config.resolve_content_dir(&self.project.root);
+                let generate_root = explicit_content_dir
+                    .as_deref()
+                    .unwrap_or(&self.project.root);
+                spine.generate(generate_root)?
+            }
+        };
+
+        debug!(
+            plugin = html_plugin.name(),
+            files = spine_files.len(),
+            "building virtual spine for watch mode"
+        );
+
+        let virtual_spine =
+            VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout)?;
+        virtual_spine.check_output_collisions()?;
+
+        let spine_source = virtual_spine.source();
+
+        let world =
+            RheoWorld::new_for_bundle(&self.project.root, spine_source, self.font_dirs.clone())?;
+        let bundle = world.compile_bundle()?;
+        let virtual_fs = export_bundle(&bundle)?;
+
+        // Inject CSS/JS link tags into each HTML entry in memory.
+        let needs_injection = !css_paths.is_empty() || !js_paths.is_empty();
+        if needs_injection {
+            let css_refs: Vec<&str> = css_paths.iter().map(|s| s.as_str()).collect();
+            let js_refs: Vec<&str> = js_paths.iter().map(|s| s.as_str()).collect();
+            let injected: Result<typst_bundle::VirtualFs> = virtual_fs
+                .into_iter()
+                .map(|(vpath, bytes)| {
+                    let path_str = vpath.get_with_slash().trim_start_matches('/').to_string();
+                    if path_str.ends_with(".html") {
+                        let html = String::from_utf8_lossy(&bytes);
+                        let mut dom = crate::html_utils::HtmlDom::parse(&html)?;
+                        dom.inject_head_links(&[], &css_refs, &js_refs)?;
+                        let modified = dom.serialize()?;
+                        Ok((vpath, typst::foundations::Bytes::new(modified.into_bytes())))
+                    } else {
+                        Ok((vpath, bytes))
+                    }
+                })
+                .collect();
+            Ok(Some(injected?))
+        } else {
+            Ok(Some(virtual_fs))
+        }
+    }
+
     /// Compile the project across all selected plugins.
     ///
     /// Returns the per-format [`CompilationResults`] on full success. If any
@@ -108,9 +230,10 @@ impl Build {
         let mut results = CompilationResults::new();
         let default_section = PluginSection::default();
 
-        // Scan .typ files for package imports once — shared across all plugins
-        // for pre-warming and auto-detect.
+        // Scan .typ files for package imports once — shared across all plugins.
         let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
+
+        let content_dir = resolve_effective_content_dir(&self.project);
 
         for plugin in &self.plugins {
             let plugin_output_dir = self.output.dir_for_plugin(plugin.name());
@@ -121,7 +244,6 @@ impl Build {
                 )
             })?;
 
-            // Borrow the plugin section directly — no cloning
             let plugin_section: &PluginSection = self
                 .project
                 .config
@@ -129,7 +251,7 @@ impl Build {
                 .get(plugin.name())
                 .unwrap_or(&default_section);
 
-            // Pre-warm and auto-detect manifest package assets
+            // Pre-warm and auto-detect manifest package assets.
             let manifest_blocks = if plugin_section.auto_detect_packages_enabled() {
                 crate::plugins::prewarm_packages(&package_imports);
                 crate::plugins::detect_manifest_package_assets(&package_imports, plugin.name())
@@ -138,125 +260,129 @@ impl Build {
             };
 
             let resolver = AssetResolver::new(&self.project.root, &plugin_output_dir);
-
             let resolved_assets =
                 resolver.resolve(plugin.as_ref(), plugin_section, &manifest_blocks)?;
 
-            // Execute copy patterns — global, then manifest blocks, then user-declared blocks
-            resolver.copy_globs(&self.project.config.copy, &self.project.root, None)?;
-
-            for block in &manifest_blocks {
-                resolver.copy_globs(
-                    &block.assets.copy,
-                    &block.source_root,
-                    block.assets.dest.as_deref(),
-                )?;
-            }
-
-            for block in plugin_section.asset_blocks() {
-                resolver.copy_globs(&block.copy, &self.project.root, block.dest.as_deref())?;
-            }
-
-            // Resolve spine options
+            // Resolve spine options.
             let spine_cfg = plugin_section.spine.as_ref();
             let spine = SpineOptions {
                 title: spine_cfg.and_then(|s| s.title.clone()),
                 vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
-                merge: spine_cfg
-                    .and_then(|s| s.merge)
-                    .unwrap_or(plugin.default_merge()),
             };
 
-            if spine.merge {
-                // Merged mode: the plugin is called once and builds its own worlds.
-                let compilation_root = self
-                    .project
-                    .config
-                    .resolve_content_dir(&self.project.root)
-                    .unwrap_or_else(|| self.project.root.clone());
-                let output_path = plugin_output_dir
-                    .join(&self.project.name)
-                    .with_extension(plugin.name());
+            let ctx = PluginContext {
+                project: &self.project,
+                output_dir: &plugin_output_dir,
+                spine: &spine,
+                config: plugin_section,
+                assets: &resolved_assets,
+                font_dirs: &self.font_dirs,
+            };
 
-                let options = RheoCompileOptions::merged(&output_path, &compilation_root);
-
-                let ctx = PluginContext {
-                    project: &self.project,
-                    output_config: &self.output,
-                    options,
-                    spine: &spine,
-                    config: plugin_section,
-                    assets: &resolved_assets,
-                    font_dirs: &self.font_dirs,
-                };
-
-                match plugin.compile(ctx) {
-                    Ok(_) => results.record_success(plugin.name()),
-                    Err(e) => {
-                        error!(error = %e, "{} generation failed", plugin.name());
-                        results.record_failure(plugin.name());
-                    }
+            // Build VirtualSpine from plugin's declared layout + project context.
+            let layout = spine_layout_for(
+                plugin.spine_layout_kind(),
+                plugin.as_ref(),
+                &self.project.name,
+            );
+            let spine_files = match self.project.mode {
+                ProjectMode::SingleFile => vec![self.project.typ_files[0].clone()],
+                ProjectMode::Directory => {
+                    // When content_dir is explicit in config, vertebrae patterns are
+                    // relative to it. When auto-detected or absent, vertebrae are
+                    // project-root-relative (users write "content/**" explicitly).
+                    let explicit_content_dir =
+                        self.project.config.resolve_content_dir(&self.project.root);
+                    let generate_root = explicit_content_dir
+                        .as_deref()
+                        .unwrap_or(&self.project.root);
+                    spine.generate(generate_root)?
                 }
-            } else {
-                // Per-file mode: one compile (and one fresh world) per .typ file.
-                let files = get_files_for_plugin(plugin.as_ref(), &self.project)?;
-                let pfc = PerFileCtx {
-                    plugin: plugin.as_ref(),
-                    plugin_output_dir: &plugin_output_dir,
-                    project: &self.project,
-                    output_config: &self.output,
-                    spine: &spine,
-                    plugin_section,
-                    resolved_assets: &resolved_assets,
-                    font_dirs: &self.font_dirs,
-                };
+            };
 
-                let plugin_library = plugin.typst_library().map(|s| s.to_string());
+            debug!(
+                plugin = plugin.name(),
+                files = spine_files.len(),
+                "building virtual spine"
+            );
 
-                // Format-level context for the precompile/finalize lifecycle hooks
-                // (no per-file input/world).
-                let format_output = plugin_output_dir
-                    .join(&self.project.name)
-                    .with_extension(plugin.name());
-                let format_ctx = PluginContext {
-                    project: &self.project,
-                    output_config: &self.output,
-                    options: RheoCompileOptions::merged(&format_output, &self.project.root),
-                    spine: &spine,
-                    config: plugin_section,
-                    assets: &resolved_assets,
-                    font_dirs: &self.font_dirs,
-                };
+            let virtual_spine =
+                VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout)?;
+            virtual_spine.check_output_collisions()?;
 
-                plugin.precompile(&format_ctx)?;
+            let spine_source = virtual_spine.source();
+            debug!(plugin = plugin.name(), "created virtual spine source");
 
-                // Collect any compiled HTML documents produced per file so the
-                // finalize hook can aggregate them (e.g. the Atom feed) without a
-                // second compilation pass.
-                let mut compiled: Vec<crate::plugins::CompiledHtmlVertebra> = Vec::new();
-                for typ_file in &files {
-                    let fresh_world = RheoWorld::new(
+            // Single Typst bundle compile for this plugin.
+            let world = RheoWorld::new_for_bundle(
+                &self.project.root,
+                spine_source,
+                self.font_dirs.clone(),
+            )?;
+            let bundle = world.compile_bundle()?;
+            let virtual_fs = export_bundle(&bundle)?;
+
+            // Flatten VirtualFs entries into plugin-facing CastVertebra list.
+            // VirtualPath::get_with_slash() gives the path string (e.g. "/intro.html").
+            // Strip the leading "/" to produce a relative filename.
+            // Match each output back to its Vertebra to include harvested rheo-vars.
+            let outputs: Vec<CastVertebra> = virtual_fs
+                .into_iter()
+                .map(|(vpath, bytes)| {
+                    let output_path = vpath.get_with_slash().trim_start_matches('/').to_string();
+                    // Find the corresponding Vertebra to get its vars.
+                    let vars = virtual_spine
+                        .vertebrae
+                        .iter()
+                        .find(|v| v.output_path == output_path)
+                        .map(|v| v.vars.clone())
+                        .unwrap_or_default();
+                    CastVertebra {
+                        output_path,
+                        bytes,
+                        format: plugin.typst_format(),
+                        vars,
+                    }
+                })
+                .collect();
+
+            debug!(
+                plugin = plugin.name(),
+                outputs = outputs.len(),
+                "spine compile produced outputs"
+            );
+
+            match plugin.compile(ctx, &outputs) {
+                Ok(_) => {
+                    // Apply copy globs after bundle output is written so that
+                    // explicit copy patterns win over any colliding bundle output.
+                    resolver.copy_globs(
+                        &self.project.config.copy,
                         &self.project.root,
-                        typ_file,
-                        Some(plugin.name()),
-                        plugin.link_strategy(),
-                        plugin_library.clone(),
-                        self.font_dirs.clone(),
+                        None,
+                        true,
                     )?;
-                    if let Some(vertebra) =
-                        compile_one_file(fresh_world, typ_file, &pfc, &mut results)?
-                    {
-                        compiled.push(vertebra);
+                    for block in &manifest_blocks {
+                        resolver.copy_globs(
+                            &block.assets.copy,
+                            &block.source_root,
+                            block.assets.dest.as_deref(),
+                            true,
+                        )?;
                     }
+                    for block in plugin_section.asset_blocks() {
+                        resolver.copy_globs(
+                            &block.copy,
+                            &self.project.root,
+                            block.dest.as_deref(),
+                            true,
+                        )?;
+                    }
+                    results.record_success(plugin.name());
+                    info!(plugin = plugin.name(), "compilation succeeded");
                 }
-
-                // Hand the compiled documents to the finalize hook. Per-vertebra
-                // `rheo-*` vars (if a plugin needs them) are harvested by the hook
-                // itself, so projects that don't use finalize do no extra work.
-                // A finalize error is recorded as a format failure (like a compile
-                // error) rather than aborting the other formats.
-                if let Err(e) = plugin.finalize(&format_ctx, &compiled) {
-                    error!(error = %e, "{} finalize failed", plugin.name());
+                Err(e) => {
+                    error!(error = %e, "{} generation failed", plugin.name());
                     results.record_failure(plugin.name());
                 }
             }
@@ -278,93 +404,6 @@ impl Build {
 
         info!("compilation complete");
         Ok(results)
-    }
-}
-
-/// Per-plugin invariants shared across all files in a single-plugin compilation pass.
-struct PerFileCtx<'a> {
-    plugin: &'a dyn FormatPlugin,
-    plugin_output_dir: &'a Path,
-    project: &'a ProjectConfig,
-    output_config: &'a OutputConfig,
-    spine: &'a SpineOptions,
-    plugin_section: &'a PluginSection,
-    resolved_assets: &'a HashMap<&'static str, Vec<Asset>>,
-    font_dirs: &'a [PathBuf],
-}
-
-/// Compile one file with the given world, recording success/failure in `results`
-/// and returning any [`CompiledHtmlVertebra`] the plugin produced (for `finalize`).
-///
-/// `get_output_filename` errors propagate; `plugin.compile_vertebra()` errors are
-/// recorded as failures rather than propagated (so other files in the batch still
-/// compile), yielding `Ok(None)`.
-fn compile_one_file(
-    world: RheoWorld,
-    typ_file: &Path,
-    pfc: &PerFileCtx<'_>,
-    results: &mut CompilationResults,
-) -> Result<Option<crate::plugins::CompiledHtmlVertebra>> {
-    let filename = get_output_filename(typ_file)?;
-    let output_path = pfc
-        .plugin_output_dir
-        .join(&filename)
-        .with_extension(pfc.plugin.name());
-    let options = RheoCompileOptions::per_file(typ_file, &output_path, world);
-    let ctx = PluginContext {
-        project: pfc.project,
-        output_config: pfc.output_config,
-        options,
-        spine: pfc.spine,
-        config: pfc.plugin_section,
-        assets: pfc.resolved_assets,
-        font_dirs: pfc.font_dirs,
-    };
-    match pfc.plugin.compile_vertebra(ctx) {
-        Ok(vertebra) => {
-            results.record_success(pfc.plugin.name());
-            Ok(vertebra)
-        }
-        Err(e) => {
-            error!(file = %typ_file.display(), error = %e, "{} compilation failed", pfc.plugin.name());
-            results.record_failure(pfc.plugin.name());
-            Ok(None)
-        }
-    }
-}
-
-fn get_output_filename(typ_file: &Path) -> Result<String> {
-    typ_file
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| RheoError::project_config(format!("invalid .typ filename: {:?}", typ_file)))
-}
-
-/// Resolve which .typ files a plugin compiles: its spine (in declared order) if
-/// configured, else all project .typ files sorted lexicographically.
-fn get_files_for_plugin(
-    plugin: &dyn FormatPlugin,
-    project: &ProjectConfig,
-) -> Result<Vec<PathBuf>> {
-    match project.config.spine_for_plugin(plugin.name()) {
-        None => {
-            let mut files = project.typ_files.clone();
-            files.sort();
-            Ok(files)
-        }
-        Some(spine) => {
-            let content_dir = project
-                .config
-                .resolve_content_dir(&project.root)
-                .unwrap_or_else(|| project.root.clone());
-            let spine_options = SpineOptions {
-                title: spine.title.clone(),
-                vertebrae: spine.vertebrae.clone(),
-                merge: spine.merge.unwrap_or(false),
-            };
-            spine_options.generate(&content_dir)
-        }
     }
 }
 
@@ -405,9 +444,6 @@ fn resolve_path(base: &Path, path: &Path) -> PathBuf {
 }
 
 /// Resolve the build directory with priority: CLI arg > config > default (`None`).
-///
-/// The CLI override is resolved against the current working directory; the config
-/// value against the project root.
 pub fn resolve_build_dir(
     project: &ProjectConfig,
     cli_build_dir: Option<PathBuf>,
@@ -426,11 +462,27 @@ pub fn resolve_build_dir(
     }
 }
 
-/// Resolve font directories with autoscan, config, and CLI precedence.
+/// Resolve the effective content directory for a project.
 ///
-/// - Autoscan: if no `font_dirs` in config, auto-include `fonts/` at project root
-/// - Config replaces autoscan: if `font_dirs` is set, autoscan is skipped
-/// - CLI appends: `--font-dir` flags always append on top
+/// If `content_dir` is set in config, use it. Otherwise, if `project.root/content/`
+/// exists and all `.typ` files in the project are under it, treat it as the implicit
+/// content root so that file stems are relative to `content/` (not the project root).
+pub fn resolve_effective_content_dir(project: &ProjectConfig) -> PathBuf {
+    if let Some(dir) = project.config.resolve_content_dir(&project.root) {
+        return dir;
+    }
+    let candidate = project.root.join("content");
+    if candidate.is_dir()
+        && !project.typ_files.is_empty()
+        && project.typ_files.iter().all(|f| f.starts_with(&candidate))
+    {
+        debug!(content_dir = %candidate.display(), "auto-detected content directory");
+        return candidate;
+    }
+    project.root.clone()
+}
+
+/// Resolve font directories with autoscan, config, and CLI precedence.
 fn resolve_font_dirs(project: &ProjectConfig, cli_font_dirs: &[PathBuf]) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
@@ -460,13 +512,12 @@ mod tests {
         all.iter().map(|p| p.name().to_string()).collect()
     }
 
-    /// A minimal plugin stand-in for format-selection tests (no compilation).
     struct FakePlugin(&'static str);
     impl FormatPlugin for FakePlugin {
         fn name(&self) -> &'static str {
             self.0
         }
-        fn compile(&self, _ctx: PluginContext<'_>) -> Result<()> {
+        fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[CastVertebra]) -> crate::Result<()> {
             Ok(())
         }
     }

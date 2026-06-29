@@ -82,6 +82,35 @@ Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title 
 
 **Font directory resolution:** Without `font_dirs` in config, `fonts/` at project root is auto-discovered. Setting `font_dirs` replaces autoscan (include `"fonts"` explicitly if desired). `--font-dir` CLI flag always appends.
 
+## Cross-file references
+
+rheo assigns each vertebra a canonical label derived from its path relative to the content directory. Link to it with standard Typst anchor syntax:
+
+```typst
+#link(<intro>)[Link text]
+#link(<chapters:intro>)[nested page]
+```
+
+**Root-level files** (`content/intro.typ`) get a bare label: `<intro>`.
+
+**Nested files** use `:` as path separator: `content/chapters/intro.typ` → `<chapters:intro>`. `:` and `.` are valid Typst label characters; `/` is not.
+
+**Escape form:** `<handle.typ>` is always available as an alias (e.g. `<intro.typ>`, `<chapters:intro.typ>`). Useful when the canonical label is taken by a user-authored label.
+
+**Canonical-skip rule:** if a user-authored label in the project already uses the canonical name, rheo silently skips injecting it — the vertebra is still reachable via its escape form.
+
+**Escape-collision error:** if the escape label (`<handle.typ>`) collides with any user-authored label or another vertebra's escape label, the build fails with an error naming the offending file and label.
+
+## Spine configuration and merge deprecation
+
+**Spine vertebrae:** The `vertebrae` array in `[pdf.spine]` or `[epub.spine]` specifies which source files to include and in what order. Glob patterns are supported (e.g., `chapters/**/*.typ`).
+
+**Merge deprecation (BREAKING):** The `merge = true` flag is **deprecated as a cross-cutting setting** across all formats. In this version:
+- PDF now defaults to producing a single combined PDF (previous behavior required `merge = true`)
+- HTML and EPUB ignore the merge setting (they always produce per-page outputs)
+
+The `merge` flag will return in a future release as a **PDF-only option** for more explicit control over PDF concatenation. If you relied on `merge = true` behavior, update your configs to remove the flag — PDF now combines by default.
+
 ## rheo-* variables and the Atom feed
 
 **Generic variable convention:** any top-level `#let rheo-<key> = "<string>"` in a vertebra is harvested during compilation. The value must be a string literal — a non-string RHS is a compile error. Plugins read these per-file with the `rheo-` prefix stripped (e.g. `rheo-feed-title` is available as `feed-title`).

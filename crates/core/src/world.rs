@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::plugins::LinkStrategy;
 use crate::rheo_packages::RheoPackages;
 use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
@@ -18,8 +17,8 @@ use typst::{Library, LibraryExt, World};
 use typst_kit::downloader::SystemDownloader;
 use typst_kit::fonts::FontStore;
 use typst_kit::packages::SystemPackages;
+use typst_library::Feature;
 use typst_library::foundations::Duration;
-use typst_library::{Feature, Features};
 
 /// Build sys.inputs Dict for Typst compilation.
 fn build_inputs(format_name: Option<&str>) -> Dict {
@@ -40,13 +39,14 @@ pub struct RheoWorld {
     package_storage: SystemPackages,
     rheo_packages: RheoPackages,
     slots: Mutex<HashMap<FileId, FileSlot>>,
-    /// Output format name for link transformations and polyfill injection.
-    /// None = no transformation.
+    /// Output format name for polyfill injection.
+    /// None = no polyfill.
     format_name: Option<String>,
-    /// How relative `.typ` links are rewritten when `format_name` is set.
-    link_strategy: LinkStrategy,
     /// Plugin-contributed Typst library code, injected after core prelude.
     plugin_library: Option<String>,
+    /// In-memory source for the main file. When set, the world serves this
+    /// content for the main FileId instead of reading from disk.
+    virtual_main_source: Option<String>,
 }
 
 struct FileSlot {
@@ -55,19 +55,11 @@ struct FileSlot {
 }
 
 impl RheoWorld {
-    /// Create a new world for compiling the given file.
-    ///
-    /// # Arguments
-    /// * `root` - The root directory for resolving imports
-    /// * `main_file` - The main .typ file to compile
-    /// * `format_name` - Plugin name for link transformations (e.g. "pdf", "html", "epub"; None = no transformation)
-    /// * `link_strategy` - How relative `.typ` links are rewritten when `format_name` is set
-    /// * `plugin_library` - Optional plugin-contributed Typst library code to inject after core prelude
+    /// Create a new world for compiling a single file.
     pub fn new(
         root: &Path,
         main_file: &Path,
         format_name: Option<&str>,
-        link_strategy: LinkStrategy,
         plugin_library: Option<String>,
         font_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
@@ -80,47 +72,84 @@ impl RheoWorld {
                 format!("main file must be within root directory: {}", e),
             )
         })?;
-        let rooted_path = RootedPath::new(VirtualRoot::Project, main_vpath);
-        let main = rooted_path.intern();
+        let main = RootedPath::new(VirtualRoot::Project, main_vpath).intern();
 
-        let features: Features = [Feature::Html].into_iter().collect();
-        let inputs = build_inputs(format_name);
         let library = Library::builder()
-            .with_features(features)
-            .with_inputs(inputs)
+            .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
+            .with_inputs(build_inputs(format_name))
             .build();
 
-        let include_system_fonts = std::env::var("TYPST_IGNORE_SYSTEM_FONTS").is_err();
-        if !font_dirs.is_empty() {
-            tracing::info!(dirs = ?font_dirs, "loading fonts from {} additional directories", font_dirs.len());
-        }
-
-        let mut font_store = FontStore::new();
-        font_store.extend(typst_kit::fonts::embedded());
-        if include_system_fonts {
-            font_store.extend(typst_kit::fonts::system());
-        }
-        for dir in &font_dirs {
-            font_store.extend(typst_kit::fonts::scan(dir));
-        }
-
-        let user_agent = concat!("rheo/", env!("CARGO_PKG_VERSION"));
-        let package_storage = SystemPackages::new(SystemDownloader::new(user_agent));
-        let rheo_packages = RheoPackages::new(SystemDownloader::new(user_agent));
+        let (font_store, package_storage, rheo_packages) = Self::init_resources(&font_dirs);
 
         Ok(Self {
             root,
             main,
-            library: LazyHash::new(library),
             book: font_store.book().clone(),
+            library: LazyHash::new(library),
             font_store,
             package_storage,
             rheo_packages,
             slots: Mutex::new(HashMap::new()),
             format_name: format_name.map(str::to_string),
-            link_strategy,
             plugin_library,
+            virtual_main_source: None,
         })
+    }
+
+    /// Create a world for bundle spine compilation with a synthesized in-memory main.
+    ///
+    /// The caller passes the Typst source produced by `VirtualSpine::source()`; the world
+    /// serves it for the synthetic main file ID, bypassing disk.
+    pub fn new_for_bundle(
+        root: &Path,
+        virtual_main_source: String,
+        font_dirs: Vec<PathBuf>,
+    ) -> Result<Self> {
+        let root = crate::path_utils::canonicalize_path(root)?;
+
+        // Synthetic path — does not exist on disk; world serves it from memory.
+        let main_vpath =
+            VirtualPath::new("rheo_spine.typ").expect("rheo_spine.typ is a valid virtual path");
+        let main = RootedPath::new(VirtualRoot::Project, main_vpath).intern();
+
+        let library = Library::builder()
+            .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
+            .build();
+
+        let (font_store, package_storage, rheo_packages) = Self::init_resources(&font_dirs);
+
+        Ok(Self {
+            root,
+            main,
+            book: font_store.book().clone(),
+            library: LazyHash::new(library),
+            font_store,
+            package_storage,
+            rheo_packages,
+            slots: Mutex::new(HashMap::new()),
+            format_name: None,
+            plugin_library: None,
+            virtual_main_source: Some(virtual_main_source),
+        })
+    }
+
+    fn init_resources(font_dirs: &[PathBuf]) -> (FontStore, SystemPackages, RheoPackages) {
+        if !font_dirs.is_empty() {
+            tracing::info!(dirs = ?font_dirs, "loading fonts from {} additional directories", font_dirs.len());
+        }
+        let include_system_fonts = std::env::var("TYPST_IGNORE_SYSTEM_FONTS").is_err();
+        let mut font_store = FontStore::new();
+        font_store.extend(typst_kit::fonts::embedded());
+        if include_system_fonts {
+            font_store.extend(typst_kit::fonts::system());
+        }
+        for dir in font_dirs {
+            font_store.extend(typst_kit::fonts::scan(dir));
+        }
+        let user_agent = concat!("rheo/", env!("CARGO_PKG_VERSION"));
+        let package_storage = SystemPackages::new(SystemDownloader::new(user_agent));
+        let rheo_packages = RheoPackages::new(SystemDownloader::new(user_agent));
+        (font_store, package_storage, rheo_packages)
     }
 
     /// Reset the file cache for incremental compilation.
@@ -151,16 +180,6 @@ impl RheoWorld {
         slots.remove(&self.main);
 
         Ok(())
-    }
-
-    /// Transform links in source text based on output format name.
-    fn transform_links(&self, text: &str, id: FileId, format_name: &str) -> FileResult<String> {
-        use crate::reticulate::transformer::LinkTransformer;
-
-        let transformer = LinkTransformer::new(format_name).with_strategy(self.link_strategy);
-        transformer
-            .transform_source(text, Path::new(id.vpath().get_without_slash()), &self.root)
-            .map_err(|e| FileError::Other(Some(e.to_string().into())))
     }
 
     fn path_for_id(&self, id: FileId) -> FileResult<PathBuf> {
@@ -255,23 +274,30 @@ impl RheoWorld {
         unwrap_compilation_result(Some(self), result, None::<fn(&_) -> bool>)
     }
 
+    /// Compile the spine to its per-file outputs.
+    ///
+    /// Internally this drives Typst's multi-file bundle target, but that is an
+    /// implementation detail: nothing user-facing references "bundle".
+    pub fn compile_bundle(&self) -> crate::Result<typst_bundle::Bundle> {
+        use crate::diagnostics::unwrap_compilation_result;
+        use typst::diag::SourceDiagnostic;
+
+        tracing::debug!("compiling spine via bundle target");
+        let result = typst::compile::<typst_bundle::Bundle>(self);
+        // Suppress Typst's experimental-feature notice; bundle is internal-only.
+        let filter = |w: &SourceDiagnostic| !w.message.contains("bundle export is experimental");
+        unwrap_compilation_result(Some(self), result, Some(filter))
+    }
+
     /// Create a new world and compile the given file to an HTML document.
     pub fn compile_html_file(
         root: &Path,
         input: &Path,
         format_name: &str,
-        link_strategy: LinkStrategy,
         plugin_library: Option<String>,
         font_dirs: Vec<PathBuf>,
     ) -> crate::Result<typst_html::HtmlDocument> {
-        let world = Self::new(
-            root,
-            input,
-            Some(format_name),
-            link_strategy,
-            plugin_library,
-            font_dirs,
-        )?;
+        let world = Self::new(root, input, Some(format_name), plugin_library, font_dirs)?;
         tracing::info!(input = %input.display(), "compiling to HTML");
         world.compile_html()
     }
@@ -281,18 +307,10 @@ impl RheoWorld {
         root: &Path,
         input: &Path,
         format_name: Option<&str>,
-        link_strategy: LinkStrategy,
         plugin_library: Option<String>,
         font_dirs: Vec<PathBuf>,
     ) -> crate::Result<typst_layout::PagedDocument> {
-        let world = Self::new(
-            root,
-            input,
-            format_name,
-            link_strategy,
-            plugin_library,
-            font_dirs,
-        )?;
+        let world = Self::new(root, input, format_name, plugin_library, font_dirs)?;
         tracing::info!(input = %input.display(), "compiling to PDF");
         world.compile_pdf()
     }
@@ -318,8 +336,15 @@ impl World for RheoWorld {
             return Ok(source.clone());
         }
 
-        let path = self.path_for_id(id)?;
-        let mut text = fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
+        // Serve the synthesized virtual main from memory, bypassing disk.
+        let mut text = if id == self.main
+            && let Some(ref vm) = self.virtual_main_source
+        {
+            vm.clone()
+        } else {
+            let path = self.path_for_id(id)?;
+            fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?
+        };
 
         // Inject target() polyfill for all plugin formats.
         let target_polyfill = if self.format_name.is_some() {
@@ -340,11 +365,6 @@ impl World for RheoWorld {
             text = format!("{}{}", template_inject, text);
         } else if !target_polyfill.is_empty() {
             text = format!("{}{}", target_polyfill, text);
-        }
-
-        // Apply link transformations for ALL .typ files if output format is set.
-        if let Some(ref name) = self.format_name {
-            text = self.transform_links(&text, id, name)?;
         }
 
         let source = Source::new(id, text);

@@ -10,32 +10,60 @@ use rheo_core::{Result, constants::HTML_EXT};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use tokio::sync::broadcast;
+use std::sync::Arc;
+use tokio::sync::{RwLock, broadcast};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{info, warn};
+use typst::syntax::VirtualPath;
 
 /// Server state shared across handlers
 #[derive(Clone)]
 pub struct ServerState {
     /// Broadcast channel for sending reload events to connected clients
     pub reload_tx: broadcast::Sender<()>,
-    /// Directory containing HTML files to serve
+    /// Directory containing HTML files to serve (fallback if virtual_fs is empty)
     pub html_dir: PathBuf,
+    /// In-memory virtual file system (optional, for bundle compile mode)
+    pub virtual_fs: Arc<RwLock<Option<typst_bundle::VirtualFs>>>,
 }
 
 /// Start the web server on a given port
 ///
-/// Returns a tuple of (server_handle, reload_sender, server_url)
+/// Returns a tuple of (server_handle, reload_sender, server_url, vfs_arc)
 pub async fn start_server(
     html_dir: PathBuf,
     port: u16,
-) -> Result<(tokio::task::JoinHandle<()>, broadcast::Sender<()>, String)> {
+) -> Result<(
+    tokio::task::JoinHandle<()>,
+    broadcast::Sender<()>,
+    String,
+    Arc<RwLock<Option<typst_bundle::VirtualFs>>>,
+)> {
+    start_server_with_virtual_fs(html_dir, port, None).await
+}
+
+/// Start the web server with optional in-memory virtual file system
+///
+/// If `virtual_fs` is Some, serves HTML files from memory instead of disk.
+/// Returns a tuple of (server_handle, reload_sender, server_url, vfs_arc)
+pub async fn start_server_with_virtual_fs(
+    html_dir: PathBuf,
+    port: u16,
+    virtual_fs: Option<typst_bundle::VirtualFs>,
+) -> Result<(
+    tokio::task::JoinHandle<()>,
+    broadcast::Sender<()>,
+    String,
+    Arc<RwLock<Option<typst_bundle::VirtualFs>>>,
+)> {
     // Create broadcast channel for reload events
     let (reload_tx, _) = broadcast::channel(100);
 
+    let vfs_arc = Arc::new(RwLock::new(virtual_fs));
     let state = ServerState {
         reload_tx: reload_tx.clone(),
         html_dir: html_dir.clone(),
+        virtual_fs: vfs_arc.clone(),
     };
 
     // Build router
@@ -60,7 +88,7 @@ pub async fn start_server(
         }
     });
 
-    Ok((server_handle, reload_tx, server_url))
+    Ok((server_handle, reload_tx, server_url, vfs_arc))
 }
 
 /// SSE handler for live reload events
@@ -83,6 +111,70 @@ async fn sse_handler(
 /// Static file handler with HTML injection for live reload script
 async fn static_handler(State(state): State<ServerState>, uri: axum::http::Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
+
+    // Try VirtualFs first (bundle compile mode)
+    let virtual_fs = state.virtual_fs.read().await;
+    if let Some(ref vfs) = *virtual_fs {
+        // VirtualFs mode: serve from memory
+        let lookup_path_str = if path.is_empty() || path.ends_with('/') {
+            // Default to index.html for directory requests
+            format!("{}index.html", path)
+        } else {
+            path.to_string()
+        };
+
+        // Try to create a VirtualPath for lookup
+        let lookup_path = match VirtualPath::new(&lookup_path_str) {
+            Ok(vp) => vp,
+            Err(_) => {
+                return (StatusCode::BAD_REQUEST, "Invalid path").into_response();
+            }
+        };
+
+        if let Some(bytes) = vfs.get(&lookup_path) {
+            let content = bytes.to_vec();
+
+            // Drop read lock before async operations
+            drop(virtual_fs);
+
+            // If it's an HTML file, inject the live reload script
+            if lookup_path_str.ends_with(HTML_EXT) {
+                match inject_live_reload_script(&content) {
+                    Ok(modified_content) => {
+                        return Response::builder()
+                            .status(StatusCode::OK)
+                            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                            .body(Body::from(modified_content))
+                            .unwrap();
+                    }
+                    Err(_) => {
+                        warn!(
+                            "failed to inject live reload script for {}",
+                            lookup_path_str
+                        );
+                    }
+                }
+            }
+
+            // Determine content type
+            let content_type = mime_guess::from_path(&lookup_path_str)
+                .first_or_octet_stream()
+                .to_string();
+
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, content_type)
+                .body(Body::from(content))
+                .unwrap();
+        }
+
+        // File not found in VirtualFs — fall back to disk (CSS/JS assets etc.)
+        drop(virtual_fs);
+    } else {
+        drop(virtual_fs);
+    }
+
+    // Disk mode: serve from html_dir
 
     // Determine the file to serve
     let file_path = if path.is_empty() || path.ends_with('/') {

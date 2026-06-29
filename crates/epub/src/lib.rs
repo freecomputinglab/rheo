@@ -8,20 +8,17 @@ use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
 use rheo_core::{
-    Content, Document, DocumentTitle, EcoString, HeadingElem, HtmlDocument, Introspector,
-    NativeElement, OutlineNode, StyleChain,
+    CastVertebra, FormatInitTemplate, FormatPlugin, PluginContext, PluginSection, Result,
+    RheoError, Spine, SpineLayoutKind, SpineOptions, eco_format, eco_vec,
 };
-use rheo_core::{
-    FormatInitTemplate, FormatPlugin, PluginContext, PluginSection, Result, RheoError, Spine,
-    SpineOptions, compile_document_to_string, eco_format, eco_vec,
-};
+use rheo_core::{DocumentTitle, EcoString, OutlineNode};
 use serde::Deserialize;
 use std::{
     fmt::Write as _,
     fs::File,
     io::{BufWriter, Write},
     num::NonZero,
-    path::{Path, PathBuf},
+    path::Path,
 };
 use tracing::info;
 use uuid::Uuid;
@@ -34,13 +31,13 @@ impl FormatPlugin for EpubPlugin {
         "epub"
     }
 
-    /// EPUB always merges multiple files into a single output.
-    fn default_merge(&self) -> bool {
-        true
-    }
-
+    /// EPUB compiles each vertebra to XHTML, then packages them.
     fn extension(&self) -> &'static str {
         "xhtml"
+    }
+
+    fn spine_layout_kind(&self) -> SpineLayoutKind {
+        SpineLayoutKind::OnePerVertebra
     }
 
     /// Set EPUB smart defaults: infer spine title from project name when no config exists.
@@ -62,26 +59,47 @@ impl FormatPlugin for EpubPlugin {
         }
     }
 
-    fn compile(&self, ctx: PluginContext<'_>) -> Result<()> {
+    fn compile(&self, ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
         let epub_config = ctx.config.parse_extra::<EpubConfig>()?;
         let identifier = epub_config.identifier.clone();
         let date = epub_config.date_utc();
 
-        let spine_items = ctx.compile_spine_items_to_html(self)?;
-        let mut items = spine_items
-            .into_iter()
-            .map(|v| {
-                let href_path = PathBuf::from(v.path.file_name().unwrap_or_default());
-                EpubItem::from_html_document(href_path, v.document)
+        // Extract language and author from first output's HTML, default to "en" and no author.
+        let (language, author) = if let Some(first_output) = outputs.first() {
+            let html_string = String::from_utf8(first_output.bytes.to_vec()).map_err(|e| {
+                RheoError::invalid_data(format!("EPUB HTML output is not valid UTF-8: {}", e))
+            })?;
+            let lang = extract_language(&html_string).unwrap_or_else(|| "en".to_string());
+            let author = extract_author(&first_output.vars, &html_string);
+            (lang, author)
+        } else {
+            ("en".to_string(), None)
+        };
+
+        let mut items = outputs
+            .iter()
+            .map(|o| {
+                let html_string = String::from_utf8(o.bytes.to_vec()).map_err(|e| {
+                    RheoError::invalid_data(format!("EPUB HTML output is not valid UTF-8: {}", e))
+                })?;
+                EpubItem::from_html_string(o.output_path.clone(), html_string)
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let nav_xhtml = generate_nav_xhtml(&mut items)?;
-        let package_string =
-            generate_package(&items, ctx.spine, identifier.as_deref(), date.as_ref())?;
-        zip_epub(&ctx.options.output, package_string, nav_xhtml, &items)?;
+        let nav_xhtml = generate_nav_xhtml(&mut items, &language)?;
+        let package_string = generate_package(
+            &items,
+            ctx.spine,
+            identifier.as_deref(),
+            date.as_ref(),
+            &language,
+            author.as_deref(),
+        )?;
+        let epub_name = format!("{}.epub", ctx.project.name);
+        let epub_path = ctx.output_dir.join(&epub_name);
+        zip_epub(&epub_path, package_string, nav_xhtml, &items)?;
 
-        info!(output = %ctx.options.output.display(), "successfully generated EPUB");
+        info!(output = %epub_path.display(), "successfully generated EPUB");
         Ok(())
     }
 }
@@ -95,7 +113,7 @@ const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 
 const NAV_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" xmlns:epub="http://www.idpf.org/2007/ops">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{lang}" lang="{lang}" xmlns:epub="http://www.idpf.org/2007/ops">
 	<head>
 		<meta charset="utf-8"/>
 		<title>Navigation</title>
@@ -108,9 +126,9 @@ const NAV_FOOTER: &str = r#"        </nav>
     </body>
 </html>"#;
 
-pub fn generate_nav_xhtml(items: &mut [EpubItem]) -> Result<String> {
+pub fn generate_nav_xhtml(items: &mut [EpubItem], language: &str) -> Result<String> {
     let mut buf = String::new();
-    buf.push_str(NAV_HEADER);
+    buf.push_str(&NAV_HEADER.replace("{lang}", language));
 
     fn stringify_outline(buf: &mut String, outline: &[OutlineNode<EcoString>], indent: usize) {
         let indent_str = " ".repeat(indent);
@@ -169,9 +187,9 @@ pub fn generate_package(
     spine: &SpineOptions,
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
+    language: &str,
+    author: Option<&str>,
 ) -> Result<String> {
-    let info = items[0].document.info();
-    let language = info.locale.unwrap_or_default().rfc_3066();
     let title = spine
         .title
         .as_deref()
@@ -187,16 +205,16 @@ pub fn generate_package(
 
     let mut builder = Package::builder(title)
         .unique_identifier(INTERNAL_UNIQUE_ID)
-        .lang(language.clone())
+        .lang(language)
         .identifier(INTERNAL_UNIQUE_ID, identifier_content)
         .language(language);
 
-    if !info.author.is_empty() {
-        builder = builder.creator(info.author.join(", "));
-    }
-
     if let Some(d) = date {
         builder = builder.date(date_format(d));
+    }
+
+    if let Some(a) = author {
+        builder = builder.creator(a);
     }
 
     builder = builder
@@ -324,9 +342,123 @@ impl EpubConfig {
     }
 }
 
+/// Extract the `lang` attribute from the `<html>` element.
+///
+/// Returns `None` if no lang attribute is found or if parsing fails.
+fn extract_language(html_string: &str) -> Option<String> {
+    use markup5ever_rcdom::NodeData;
+    use rheo_core::html_utils::HtmlDom;
+
+    let dom = HtmlDom::parse(html_string).ok()?;
+
+    // Walk DOM to find <html> element and extract lang attribute.
+    fn find_html_lang(handle: &markup5ever_rcdom::Handle) -> Option<String> {
+        match &handle.data {
+            NodeData::Element { name, attrs, .. } => {
+                if name.local.as_ref() == "html" {
+                    for attr in attrs.borrow().iter() {
+                        if attr.name.local.as_ref() == "lang" {
+                            return Some(attr.value.to_string());
+                        }
+                    }
+                }
+                for child in handle.children.borrow().iter() {
+                    if let Some(lang) = find_html_lang(child) {
+                        return Some(lang);
+                    }
+                }
+            }
+            NodeData::Document => {
+                for child in handle.children.borrow().iter() {
+                    if let Some(lang) = find_html_lang(child) {
+                        return Some(lang);
+                    }
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    find_html_lang(dom.document_root())
+}
+
+/// Extract author from rheo-author var or HTML <meta name="author">.
+///
+/// Checks rheo-author var first, then falls back to HTML meta tag.
+/// Returns `None` if no author found.
+fn extract_author(
+    vars: &std::collections::HashMap<String, rheo_core::reticulate::types::RheoValue>,
+    html_string: &str,
+) -> Option<String> {
+    use markup5ever_rcdom::NodeData;
+    use rheo_core::html_utils::HtmlDom;
+
+    // Check rheo-author var first.
+    if let Some(author_value) = vars.get("author").and_then(|v| v.as_str()) {
+        return Some(author_value.to_string());
+    }
+
+    // Fall back to HTML <meta name="author" content="...">.
+    let dom = HtmlDom::parse(html_string).ok()?;
+    let _head = dom.find_element("head")?;
+
+    fn find_author_meta(handle: &markup5ever_rcdom::Handle) -> Option<String> {
+        if let NodeData::Element { name, attrs, .. } = &handle.data {
+            if name.local.as_ref() == "meta" {
+                let mut is_author = false;
+                let mut content = None;
+                for attr in attrs.borrow().iter() {
+                    match attr.name.local.as_ref() {
+                        "name" if attr.value.as_ref() == "author" => is_author = true,
+                        "content" => content = Some(attr.value.to_string()),
+                        _ => {}
+                    }
+                }
+                if is_author {
+                    return content;
+                }
+            }
+            for child in handle.children.borrow().iter() {
+                if let Some(author) = find_author_meta(child) {
+                    return Some(author);
+                }
+            }
+        }
+        None
+    }
+
+    // Get the Handle from head by accessing document_root and walking to head element.
+    fn find_head_handle(handle: &markup5ever_rcdom::Handle) -> Option<markup5ever_rcdom::Handle> {
+        match &handle.data {
+            NodeData::Element { name, .. } => {
+                if name.local.as_ref() == "head" {
+                    return Some(handle.clone());
+                }
+                for child in handle.children.borrow().iter() {
+                    if let Some(found) = find_head_handle(child) {
+                        return Some(found);
+                    }
+                }
+            }
+            NodeData::Document => {
+                for child in handle.children.borrow().iter() {
+                    if let Some(found) = find_head_handle(child) {
+                        return Some(found);
+                    }
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    let head_handle = find_head_handle(dom.document_root())?;
+    find_author_meta(&head_handle)
+}
+
 pub struct EpubItem {
     href: IriRefBuf,
-    document: HtmlDocument,
     xhtml: String,
     info: HtmlInfo,
     outline: Option<Vec<OutlineNode<EcoString>>>,
@@ -344,61 +476,121 @@ fn text_to_id(s: &str) -> EcoString {
         .collect()
 }
 
-impl EpubItem {
-    pub fn from_html_document(path: PathBuf, document: HtmlDocument) -> Result<Self> {
-        let href =
-            IriRefBuf::new(path.with_extension("xhtml").display().to_string()).map_err(|e| {
-                RheoError::epub_generation(format!("invalid href for EPUB item: {}", e))
-            })?;
-        let (heading_ids, outline) = Self::outline(&document, &href);
+/// Recursively collect all text content from a DOM node.
+fn text_content(handle: &markup5ever_rcdom::Handle) -> EcoString {
+    use markup5ever_rcdom::NodeData;
+    let mut out = EcoString::new();
+    match &handle.data {
+        NodeData::Text { contents } => out.push_str(&contents.borrow()),
+        _ => {
+            for child in handle.children.borrow().iter() {
+                out.push_str(&text_content(child));
+            }
+        }
+    }
+    out
+}
 
-        let html_string = compile_document_to_string(&document)?;
+impl EpubItem {
+    /// Build an EPUB item from HTML bytes produced by the bundle compiler.
+    ///
+    /// `output_path` is the filename from VirtualFs (e.g. `"chapter1.xhtml"`).
+    /// The `.xhtml` extension is preserved as the EPUB item href.
+    pub fn from_html_string(output_path: String, html_string: String) -> Result<Self> {
+        // Ensure the href ends in .xhtml regardless of what the compiler produced.
+        use std::path::Path as StdPath;
+        let xhtml_name = StdPath::new(&output_path)
+            .with_extension("xhtml")
+            .display()
+            .to_string();
+        let href = IriRefBuf::new(xhtml_name).map_err(|e| {
+            RheoError::epub_generation(format!("invalid href for EPUB item: {}", e))
+        })?;
+
+        let (heading_ids, outline) = Self::outline_from_html(&html_string, &href)?;
         let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids)?;
 
         Ok(EpubItem {
             href,
-            document,
             xhtml,
             info,
             outline: Some(outline),
         })
     }
 
-    fn outline(doc: &HtmlDocument, href: &IriRef) -> (Vec<EcoString>, Vec<OutlineNode<EcoString>>) {
-        let elems = doc.introspector().query(&HeadingElem::ELEM.select());
-        let (nodes, heading_ids): (Vec<_>, Vec<_>) = elems
-            .iter()
-            .map(|elem: &Content| {
-                let heading = elem
-                    .to_packed::<HeadingElem>()
-                    .expect("must be heading b/c queried for headings");
-                let level = heading.resolve_level(StyleChain::default());
-                let text = heading.body.plain_text();
-                let id = match heading.label() {
-                    Some(label) => label.resolve().to_string().into(),
-                    None => text_to_id(&text),
-                };
-                let entry = match &heading.numbers {
-                    Some(num) => eco_format!("{num} {text}"),
-                    None => text,
-                };
-                let mut anchored_href = href.to_owned();
-                anchored_href.set_fragment(Some(
-                    Fragment::new(id.as_bytes())
-                        .expect("heading ID should be a valid IRI fragment"),
-                ));
-                let link = eco_format!(r#"<a href="{anchored_href}">{entry}</a>"#);
-                ((link, level, true), id)
-            })
-            .unzip();
-        (heading_ids, OutlineNode::build_tree(nodes))
+    /// Parse `html_string` to extract heading IDs and build the nav outline.
+    ///
+    /// Walks the DOM to find h2–h6 elements, derives an ID from their text content,
+    /// and builds the nav tree. Returns `(heading_ids, outline)` in DOM order so that
+    /// `html_to_portable_xhtml` can stamp the same IDs onto the XHTML output.
+    fn outline_from_html(
+        html_string: &str,
+        href: &IriRef,
+    ) -> Result<(Vec<EcoString>, Vec<OutlineNode<EcoString>>)> {
+        use markup5ever_rcdom::{Handle, NodeData};
+        use rheo_core::html_utils::HtmlDom;
+
+        let dom = HtmlDom::parse(html_string)?;
+
+        // Recursive walk to collect (id, level, link_html) for h2–h6.
+        fn collect_headings(
+            handle: &Handle,
+            href: &IriRef,
+            out: &mut Vec<(EcoString, u8, EcoString)>,
+        ) {
+            match &handle.data {
+                NodeData::Element { name, .. } => {
+                    let tag = name.local.as_ref();
+                    let mut chars = tag.chars();
+                    if let Some('h') = chars.next()
+                        && let Some(c) = chars.next()
+                        && c.is_ascii_digit()
+                        && c != '1'
+                        && chars.next().is_none()
+                    {
+                        let level = c.to_digit(10).unwrap_or(2) as u8;
+                        let text: EcoString = text_content(handle);
+                        let id = text_to_id(&text);
+                        let mut anchored = href.to_owned();
+                        anchored.set_fragment(Fragment::new(id.as_bytes()).ok());
+                        let link = eco_format!(r#"<a href="{anchored}">{text}</a>"#);
+                        out.push((id, level, link));
+                    }
+                    for child in handle.children.borrow().iter() {
+                        collect_headings(child, href, out);
+                    }
+                }
+                NodeData::Document => {
+                    for child in handle.children.borrow().iter() {
+                        collect_headings(child, href, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut raw: Vec<(EcoString, u8, EcoString)> = Vec::new();
+        collect_headings(dom.document_root(), href, &mut raw);
+
+        let heading_ids: Vec<EcoString> = raw.iter().map(|(id, _, _)| id.clone()).collect();
+        let nodes: Vec<(EcoString, NonZero<usize>, bool)> = raw
+            .into_iter()
+            .map(|(_, level, link)| (link, NonZero::new(level as usize).unwrap(), true))
+            .collect();
+        let outline = OutlineNode::build_tree(nodes);
+
+        Ok((heading_ids, outline))
     }
 
     fn title(&self) -> EcoString {
-        match &self.document.info().title {
-            Some(title) => title.clone(),
-            None => self.href.path().as_str().into(),
-        }
+        // Derive title from the href filename as a fallback.
+        let mut segments = self.href.path().segments();
+        let filename = segments.next_back().map(|s| s.as_str()).unwrap_or("");
+        Path::new(filename)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(filename)
+            .into()
     }
 
     fn id(&self) -> EcoString {
