@@ -10,7 +10,7 @@ use crate::compile::export_bundle;
 use crate::config::PluginSection;
 use crate::output::OutputConfig;
 use crate::plugins::{FormatPlugin, PluginContext, SpineOptions, SpineOutput, spine_layout_for};
-use crate::project::ProjectConfig;
+use crate::project::{ProjectConfig, ProjectMode};
 use crate::results::CompilationResults;
 use crate::reticulate::spine::VirtualSpine;
 use crate::world::RheoWorld;
@@ -167,7 +167,10 @@ impl Build {
             html_plugin.as_ref(),
             &self.project.name,
         );
-        let spine_files = spine.generate(&content_dir)?;
+        let spine_files = match self.project.mode {
+            ProjectMode::SingleFile => vec![self.project.typ_files[0].clone()],
+            ProjectMode::Directory => spine.generate(&content_dir)?,
+        };
 
         debug!(
             plugin = html_plugin.name(),
@@ -286,7 +289,10 @@ impl Build {
                 plugin.as_ref(),
                 &self.project.name,
             );
-            let spine_files = spine.generate(&content_dir)?;
+            let spine_files = match self.project.mode {
+                ProjectMode::SingleFile => vec![self.project.typ_files[0].clone()],
+                ProjectMode::Directory => spine.generate(&content_dir)?,
+            };
 
             debug!(
                 plugin = plugin.name(),
