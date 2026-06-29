@@ -34,3 +34,25 @@
     it
   }
 }
+
+// For #link(<handle>)[text] cross-vertebra links, strip the redundant fragment
+// (#handle) from the URL — the handle anchor is always at the top of the page,
+// so "llm.html" and "llm.html#llm" navigate to the same place. PDF is left
+// alone because all vertebrae share one file (internal anchors stay intact).
+#show link: it => context {
+  if type(it.dest) == label {
+    let matches = query(it.dest)
+    if matches.len() > 0 {
+      let elem = matches.first()
+      if elem.func() == figure and elem.kind == "rheo-handle" {
+        let fmt = rheo-target()
+        let ext = if fmt == "epub" { ".xhtml" } else if fmt == "html" { ".html" } else { none }
+        if ext != none {
+          let handle = repr(it.dest).slice(1, -1)
+          return link(handle + ext, it.body)
+        }
+      }
+    }
+  }
+  it
+}

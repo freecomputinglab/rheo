@@ -82,17 +82,19 @@ Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title 
 
 **Font directory resolution:** Without `font_dirs` in config, `fonts/` at project root is auto-discovered. Setting `font_dirs` replaces autoscan (include `"fonts"` explicitly if desired). `--font-dir` CLI flag always appends.
 
-## Cross-file references (@ref convention)
+## Cross-file references
 
-rheo uses Typst's native `@ref` for cross-file references within a spine. Each vertebra (source file) automatically gets handle labels based on its filename stem relative to the content directory:
+rheo assigns each vertebra a label based on its filename stem relative to the content directory. Link to it with standard Typst anchor syntax:
 
-**Bare handle (unique stems):** If `content/intro.typ` is the only file named `intro` in the spine, it gets label `@intro`. Reference it from another file: `[@intro][Link text]`.
+```typst
+#link(<intro>)[Link text]
+```
 
-**Path-qualified handle (stem collisions):** If both `content/intro.typ` and `content/chapters/intro.typ` exist, rheo generates path-qualified labels using `-` as separator: `@intro` for the root-level file, `@chapters-intro` for the nested one. This collision resolution applies to any files sharing the same basename across directories.
+**Bare handle (unique stems):** `content/intro.typ` → label `<intro>`. Use `#link(<intro>)[text]`.
 
-**Escape form:** The `<stem.typ>` form (e.g., `<intro.typ>`) is always available as an alias for compatibility, but the preferred forms are the bare `@intro` or path-qualified `@chapters:intro`.
+**Path-qualified handle (stem collisions):** If both `content/intro.typ` and `content/chapters/intro.typ` exist, rheo generates path-qualified labels using `-` as separator: `<intro>` for the root-level file, `<chapters-intro>` for the nested one.
 
-**Link rendering:** `@ref[handle][text]` renders as a clickable link in HTML/PDF with the resolved handle and provided text. The label syntax (`@label` or `<label>`) references the labeled element's anchor.
+**Escape form:** `<stem.typ>` (e.g., `<intro.typ>`) is always available as an alias — same label, `.typ` suffix included.
 
 ## Spine configuration and merge deprecation
 
