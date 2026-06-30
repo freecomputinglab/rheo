@@ -4,7 +4,9 @@
 
 Rheo is a typesetting and static site engine based on [Typst](https://typst.app/).
 It compiles folders of Typst to PDF, HTML, and EPUB simultaneously, and ships a
-development server for rapid website iteration.
+development server for rapid website iteration. Rheo is a project of the
+[Free Computing Lab](https://freecomputinglab.ohrg.org) and part of the document
+infrastructure described in [Document Infrastructure for Augmented Reading](https://chi-star-workshop.github.io/src/assets/pdf/papers/DocumentInfrastructureForAugmentedReading%20-%20Will%20Crichton.pdf).
 
 Full documentation lives at **[rheo.ohrg.org](https://rheo.ohrg.org)**.
 
