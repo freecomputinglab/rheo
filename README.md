@@ -94,7 +94,7 @@ document links in PDF and EPUB. A link to a non-existent file is a compile error
 Root-level files get a bare handle (`<about>`); nested files use `:` as the path
 separator (`<chapters:intro>`). See the
 [relative linking docs](https://rheo.ohrg.org) for handle rules and migrating
-older projects.
+projects from Rheo version `<0.4.0`.
 
 ## License
 
