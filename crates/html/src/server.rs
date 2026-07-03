@@ -348,8 +348,11 @@ fn directory_listing(html_dir: &Path, path: &str) -> Response {
         html.push_str("<li>No HTML files found</li>");
     } else {
         for file in html_files {
+            // Prefix the href with `./` so a colon in a nested vertebra's
+            // filename (e.g. `chapters:intro.html`) isn't parsed as a URL
+            // scheme by the browser, which would break the link.
             html.push_str(&format!(
-                r#"        <li><a href="{}">{}</a></li>
+                r#"        <li><a href="./{}">{}</a></li>
 "#,
                 file, file
             ));
@@ -413,5 +416,30 @@ mod tests {
 
         let result = bind_in_range(taken, taken).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_directory_listing_prefixes_href_for_colon_filenames() {
+        // Nested vertebrae land on disk as flat, colon-separated filenames
+        // (e.g. `chapters:intro.html`). The listing must not emit a bare
+        // `href="chapters:intro.html"` — the browser would read `chapters:`
+        // as a URL scheme and break the link. A `./` prefix fixes it.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("chapters:intro.html"), "<html></html>").unwrap();
+
+        let response = directory_listing(dir.path(), "");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(
+            html.contains(r#"href="./chapters:intro.html""#),
+            "expected a `./`-prefixed href, got: {html}"
+        );
+        assert!(
+            !html.contains(r#"href="chapters:intro.html""#),
+            "bare colon href would be parsed as a URL scheme: {html}"
+        );
     }
 }
