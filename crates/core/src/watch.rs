@@ -190,6 +190,25 @@ where
         }
     }
 
+    // The loaded config file may live outside the primary watched tree — in an
+    // ancestor directory (single-file walk-up) or at a custom `--config` path.
+    // Watch its parent directory (non-recursive) when it is not already covered,
+    // so config edits are detected regardless of mode or filename.
+    let primary_watch_dir = match project.mode {
+        ProjectMode::SingleFile => project.typ_files[0].parent(),
+        ProjectMode::Directory => Some(project.root.as_path()),
+    };
+    if let Some(config_parent) = project.config_path.as_deref().and_then(|p| p.parent())
+        && primary_watch_dir.is_none_or(|primary| !config_parent.starts_with(primary))
+    {
+        match watcher.watch(config_parent, RecursiveMode::NonRecursive) {
+            Ok(()) => debug!(path = %config_parent.display(), "watching config directory"),
+            Err(e) => {
+                warn!(error = %e, path = %config_parent.display(), "failed to watch config directory")
+            }
+        }
+    }
+
     // Debounce logic: collect events for 1 second before triggering recompilation
     // This prevents excessive recompilation when editors save multiple files rapidly
     // or when a single edit triggers multiple filesystem events
@@ -228,12 +247,7 @@ where
 
                             // Distinguish config changes from regular file changes
                             // Config changes require reloading project configuration
-                            if paths.iter().any(|p| {
-                                p.file_name()
-                                    .and_then(|n| n.to_str())
-                                    .map(|n| n == "rheo.toml")
-                                    .unwrap_or(false)
-                            }) {
+                            if paths.iter().any(|p| is_config_path(p, project)) {
                                 config_changed = true;
                             } else {
                                 pending_changes = true;
@@ -299,6 +313,11 @@ fn is_relevant_path(
         return false;
     }
 
+    // The config file is relevant in both modes (see `is_config_path`).
+    if is_config_path(path, project) {
+        return true;
+    }
+
     // A declared/resolved asset (from any plugin or imported package) or a
     // copy-glob match is relevant regardless of extension or location. This
     // covers both project-local assets and package assets under a package root.
@@ -317,11 +336,6 @@ fn is_relevant_path(
                 return true;
             }
 
-            // Check if it's rheo.toml
-            if path.file_name().and_then(|n| n.to_str()) == Some("rheo.toml") {
-                return true;
-            }
-
             // Check if it's a font file
             let font_extensions = ["ttf", "otf", "woff", "woff2"];
             path.extension()
@@ -330,6 +344,30 @@ fn is_relevant_path(
                 .unwrap_or(false)
         }
     }
+}
+
+/// True if `path` is the project's configuration file.
+///
+/// Matches the actually-loaded `project.config_path` (so a custom-named or
+/// relocated `--config` file is detected), and also any file literally named
+/// `rheo.toml` so that creating a config where none existed still triggers a
+/// reload.
+fn is_config_path(path: &Path, project: &ProjectConfig) -> bool {
+    if let Some(cfg) = project.config_path.as_deref()
+        && same_file(path, cfg)
+    {
+        return true;
+    }
+    path.file_name().and_then(|n| n.to_str()) == Some("rheo.toml")
+}
+
+/// Compare two paths for identity, tolerating non-canonical forms (e.g. a
+/// relative `--config` argument vs. an absolute event path).
+fn same_file(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
 }
 
 #[cfg(test)]
@@ -432,6 +470,75 @@ mod tests {
         let spec = WatchAssetSpec::new(vec![generated.clone()], vec![], vec![]);
 
         assert!(!is_relevant_path(&generated, &project, &build_dir, &spec));
+    }
+
+    /// A single-file project whose loaded config lives at `config_path`.
+    fn single_file_project(root: &Path, config_path: PathBuf) -> ProjectConfig {
+        ProjectConfig {
+            name: "document".into(),
+            root: root.to_path_buf(),
+            config: crate::RheoConfig::default(),
+            typ_files: vec![root.join("document.typ")],
+            mode: ProjectMode::SingleFile,
+            config_path: Some(config_path),
+        }
+    }
+
+    #[test]
+    fn test_config_file_relevant_in_single_file_mode() {
+        let temp = TempDir::new().unwrap();
+        let config = temp.path().join("rheo.toml");
+        let project = single_file_project(temp.path(), config.clone());
+        let build_dir = temp.path().join("build");
+
+        assert!(is_relevant_path(
+            &config,
+            &project,
+            &build_dir,
+            &empty_spec()
+        ));
+        assert!(is_config_path(&config, &project));
+    }
+
+    #[test]
+    fn test_custom_named_config_is_relevant() {
+        let temp = TempDir::new().unwrap();
+        let config = temp.path().join("prod.toml");
+        let project = single_file_project(temp.path(), config.clone());
+        let build_dir = temp.path().join("build");
+
+        // The custom-named config is detected via project.config_path...
+        assert!(is_relevant_path(
+            &config,
+            &project,
+            &build_dir,
+            &empty_spec()
+        ));
+        assert!(is_config_path(&config, &project));
+        // ...while an unrelated .toml is not.
+        let other = temp.path().join("other.toml");
+        assert!(!is_relevant_path(
+            &other,
+            &project,
+            &build_dir,
+            &empty_spec()
+        ));
+    }
+
+    #[test]
+    fn test_sibling_rheo_toml_relevant_in_directory_mode() {
+        let temp = TempDir::new().unwrap();
+        let project = dir_project(&temp);
+        let build_dir = project.root.join("build");
+
+        // Directory mode with no loaded config still reacts to a rheo.toml by name.
+        let config = project.root.join("rheo.toml");
+        assert!(is_relevant_path(
+            &config,
+            &project,
+            &build_dir,
+            &empty_spec()
+        ));
     }
 
     #[test]
