@@ -21,7 +21,7 @@ pub enum WatchEvent {
 ///
 /// This function sets up file system watching for:
 /// - All .typ files in the project
-/// - Asset files (style.css)
+/// - Assets declared by the format plugins (any filename, any subdirectory)
 /// - Project configuration (rheo.toml)
 ///
 /// Changes are debounced with a 1-second delay to avoid rapid rebuilds during editing.
@@ -176,7 +176,7 @@ fn is_relevant_path(path: &Path, project: &ProjectConfig, build_dir: &Path) -> b
 
     match project.mode {
         ProjectMode::SingleFile => {
-            // Only the exact file is relevant (and assets in parent directory)
+            // Only the exact file is relevant (and CSS/JS assets in parent directory)
             let target_file = &project.typ_files[0];
 
             // Check if it's the specific .typ file
@@ -184,11 +184,8 @@ fn is_relevant_path(path: &Path, project: &ProjectConfig, build_dir: &Path) -> b
                 return true;
             }
 
-            // Check if it's style.css in the same directory
-            if path.file_name().and_then(|n| n.to_str()) == Some("style.css")
-                && let Some(parent) = path.parent()
-                && parent == project.root
-            {
+            // Check if it's a plugin-declared asset (any filename, in the watched directory)
+            if is_asset_path(path) {
                 return true;
             }
 
@@ -206,14 +203,9 @@ fn is_relevant_path(path: &Path, project: &ProjectConfig, build_dir: &Path) -> b
                 return true;
             }
 
-            // Check if it's style.css
-            if path.file_name().and_then(|n| n.to_str()) == Some("style.css") {
-                // Only if it's in the project root
-                if let Some(parent) = path.parent()
-                    && parent == project.root
-                {
-                    return true;
-                }
+            // Check if it's a plugin-declared asset (any filename, any subdirectory)
+            if is_asset_path(path) {
+                return true;
             }
 
             // Check if it's a font file
@@ -229,5 +221,80 @@ fn is_relevant_path(path: &Path, project: &ProjectConfig, build_dir: &Path) -> b
 
             false
         }
+    }
+}
+
+/// Check if a path is an asset declared through the `FormatPlugin::assets`
+/// mechanism (e.g. the HTML plugin's `css_stylesheet` and `js_scripts`).
+///
+/// Matches by extension (not filename) so custom stylesheets, `index.js`,
+/// and assets in subdirectories all trigger rebuilds. The declared asset
+/// kinds are currently CSS and JS across all plugins; extend this set if a
+/// plugin declares assets with other extensions. Callers must have already
+/// excluded the build directory to avoid rebuild loops.
+fn is_asset_path(path: &Path) -> bool {
+    let asset_extensions = ["css", "js"];
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| asset_extensions.contains(&e))
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    /// Build a directory-mode project rooted at `temp` with one .typ file.
+    fn dir_project(temp: &TempDir) -> ProjectConfig {
+        fs::write(temp.path().join("doc.typ"), "#heading[Test]").unwrap();
+        ProjectConfig::from_path(temp.path(), None).unwrap()
+    }
+
+    #[test]
+    fn test_css_in_subdirectory_is_relevant() {
+        let temp = TempDir::new().unwrap();
+        let project = dir_project(&temp);
+        let build_dir = project.root.join("build");
+
+        let css = project.root.join("styles").join("custom.css");
+        assert!(is_relevant_path(&css, &project, &build_dir));
+    }
+
+    #[test]
+    fn test_js_asset_is_relevant() {
+        let temp = TempDir::new().unwrap();
+        let project = dir_project(&temp);
+        let build_dir = project.root.join("build");
+
+        let js = project.root.join("index.js");
+        assert!(is_relevant_path(&js, &project, &build_dir));
+    }
+
+    #[test]
+    fn test_css_under_build_dir_is_excluded() {
+        let temp = TempDir::new().unwrap();
+        let project = dir_project(&temp);
+        let build_dir = project.root.join("build");
+        fs::create_dir_all(&build_dir).unwrap();
+
+        // File must exist so canonicalize-based exclusion applies.
+        let generated = build_dir.join("style.css");
+        fs::write(&generated, "body {}").unwrap();
+
+        assert!(!is_relevant_path(&generated, &project, &build_dir));
+    }
+
+    #[test]
+    fn test_single_file_css_asset_is_relevant() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.path().join("document.typ");
+        fs::write(&file, "#heading[Test]").unwrap();
+        let project = ProjectConfig::from_path(&file, None).unwrap();
+        let build_dir = project.root.join("build");
+
+        let css = project.root.join("custom.css");
+        assert!(is_relevant_path(&css, &project, &build_dir));
     }
 }
