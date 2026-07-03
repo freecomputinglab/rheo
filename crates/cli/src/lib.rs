@@ -457,65 +457,73 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         .base
         .canonicalize()
         .unwrap_or_else(|_| build.output_config().base.clone());
+    // Capture the asset sources to watch (declared assets, copy globs, package
+    // roots) once, before `build` is moved into the change callback.
+    let asset_spec = build.watch_asset_spec();
 
-    watch_project(&watch_project_cfg, &build_dir_canonical, move |event| {
-        match event {
-            WatchEvent::FilesChanged => {
-                info!("files changed, recompiling");
-                if build.run().is_ok() {
-                    // Update HTML dev server VirtualFs before triggering browser reload.
-                    for handle in &open_handles {
-                        if let OpenHandle::Server(server) = handle {
-                            match build.compile_for_watch() {
-                                Ok(Some(vfs)) => {
-                                    let t = std::time::Instant::now();
-                                    server.update_virtual_fs(vfs);
-                                    debug!(ms = t.elapsed().as_millis(), "VirtualFs updated");
-                                }
-                                Ok(None) => {}
-                                Err(e) => {
-                                    warn!(error = %e, "VirtualFs compile failed, reload will serve stale content")
-                                }
-                            }
-                            server.reload();
-                            break; // only one server handle expected
-                        }
-                    }
-                }
-            }
-            WatchEvent::ConfigChanged => {
-                info!("config changed, reloading");
-                match prepare_build(
-                    &path,
-                    config_path.as_deref(),
-                    build_dir.clone(),
-                    enabled.clone(),
-                    cli_font_dirs.clone(),
-                ) {
-                    Ok(new_build) => {
-                        build = new_build;
-                        if build.run().is_ok() {
-                            for handle in &open_handles {
-                                if let OpenHandle::Server(server) = handle {
-                                    match build.compile_for_watch() {
-                                        Ok(Some(vfs)) => server.update_virtual_fs(vfs),
-                                        Ok(None) => {}
-                                        Err(e) => {
-                                            warn!(error = %e, "VirtualFs compile failed after config reload")
-                                        }
+    watch_project(
+        &watch_project_cfg,
+        &build_dir_canonical,
+        &asset_spec,
+        move |event| {
+            match event {
+                WatchEvent::FilesChanged => {
+                    info!("files changed, recompiling");
+                    if build.run().is_ok() {
+                        // Update HTML dev server VirtualFs before triggering browser reload.
+                        for handle in &open_handles {
+                            if let OpenHandle::Server(server) = handle {
+                                match build.compile_for_watch() {
+                                    Ok(Some(vfs)) => {
+                                        let t = std::time::Instant::now();
+                                        server.update_virtual_fs(vfs);
+                                        debug!(ms = t.elapsed().as_millis(), "VirtualFs updated");
                                     }
-                                    server.reload();
-                                    break;
+                                    Ok(None) => {}
+                                    Err(e) => {
+                                        warn!(error = %e, "VirtualFs compile failed, reload will serve stale content")
+                                    }
                                 }
+                                server.reload();
+                                break; // only one server handle expected
                             }
                         }
                     }
-                    Err(e) => warn!(error = %e, "failed to reload config"),
+                }
+                WatchEvent::ConfigChanged => {
+                    info!("config changed, reloading");
+                    match prepare_build(
+                        &path,
+                        config_path.as_deref(),
+                        build_dir.clone(),
+                        enabled.clone(),
+                        cli_font_dirs.clone(),
+                    ) {
+                        Ok(new_build) => {
+                            build = new_build;
+                            if build.run().is_ok() {
+                                for handle in &open_handles {
+                                    if let OpenHandle::Server(server) = handle {
+                                        match build.compile_for_watch() {
+                                            Ok(Some(vfs)) => server.update_virtual_fs(vfs),
+                                            Ok(None) => {}
+                                            Err(e) => {
+                                                warn!(error = %e, "VirtualFs compile failed after config reload")
+                                            }
+                                        }
+                                        server.reload();
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => warn!(error = %e, "failed to reload config"),
+                    }
                 }
             }
-        }
-        Ok(())
-    })
+            Ok(())
+        },
+    )
 }
 
 fn run_compile(sub: &ArgMatches) -> Result<()> {

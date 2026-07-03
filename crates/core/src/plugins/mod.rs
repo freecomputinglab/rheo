@@ -55,6 +55,12 @@ pub struct AssetConfig {
 #[derive(Debug, Clone)]
 pub struct Asset {
     pub config: AssetConfig,
+    /// Absolute path of the source file this asset was copied from.
+    ///
+    /// For user-declared assets this is under the project root; for
+    /// package-declared assets it is under the package's `source_root`.
+    pub source_path: PathBuf,
+    /// Absolute path of the copied file in the plugin output directory.
     pub resolved_path: PathBuf,
     pub built_relative_path: String,
 }

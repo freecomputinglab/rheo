@@ -95,6 +95,71 @@ impl Build {
         &self.output
     }
 
+    /// Derive the set of asset sources the watcher should treat as relevant.
+    ///
+    /// Mirrors the asset-resolution pass in [`run`](Self::run) across every
+    /// enabled plugin — collecting each resolved asset's source path, the
+    /// project/plugin/package `copy` glob patterns, and the source roots of any
+    /// packages that declare assets — so watch coverage is driven by what the
+    /// plugins actually declare rather than a hard-coded extension list.
+    ///
+    /// Only packages that declare rheo assets in their `typst.toml` contribute a
+    /// source root here, so the watched set stays tight (immutable `@preview`
+    /// deps that declare nothing are never watched).
+    pub fn watch_asset_spec(&self) -> crate::watch::WatchAssetSpec {
+        let default_section = PluginSection::default();
+        let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
+
+        let mut asset_paths: Vec<PathBuf> = Vec::new();
+        let mut copy_globs: Vec<(PathBuf, Vec<String>)> = Vec::new();
+        let mut package_roots: Vec<PathBuf> = Vec::new();
+
+        for plugin in &self.plugins {
+            let plugin_output_dir = self.output.dir_for_plugin(plugin.name());
+            let plugin_section: &PluginSection = self
+                .project
+                .config
+                .plugin_sections
+                .get(plugin.name())
+                .unwrap_or(&default_section);
+
+            let manifest_blocks = if plugin_section.auto_detect_packages_enabled() {
+                crate::plugins::detect_manifest_package_assets(&package_imports, plugin.name())
+            } else {
+                vec![]
+            };
+
+            let resolver = AssetResolver::new(&self.project.root, &plugin_output_dir);
+            if let Ok(resolved) =
+                resolver.resolve(plugin.as_ref(), plugin_section, &manifest_blocks)
+            {
+                for assets in resolved.values() {
+                    for asset in assets {
+                        asset_paths.push(asset.source_path.clone());
+                    }
+                }
+            }
+
+            // Copy globs: project-level, per-package, and per-plugin asset blocks.
+            if !self.project.config.copy.is_empty() {
+                copy_globs.push((self.project.root.clone(), self.project.config.copy.clone()));
+            }
+            for block in &manifest_blocks {
+                if !block.assets.copy.is_empty() {
+                    copy_globs.push((block.source_root.clone(), block.assets.copy.clone()));
+                }
+                package_roots.push(block.source_root.clone());
+            }
+            for block in plugin_section.asset_blocks() {
+                if !block.copy.is_empty() {
+                    copy_globs.push((self.project.root.clone(), block.copy.clone()));
+                }
+            }
+        }
+
+        crate::watch::WatchAssetSpec::new(asset_paths, copy_globs, package_roots)
+    }
+
     /// Compile HTML to an in-memory VirtualFs for the dev server.
     ///
     /// Resolves assets (CSS/JS), copies them to the plugin output dir so the
