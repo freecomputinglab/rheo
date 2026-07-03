@@ -171,6 +171,7 @@ impl<'a> AssetResolver<'a> {
                         seen_relative_paths.insert(rel.clone(), src.clone());
                         Ok(Asset {
                             config: asset_config.clone(),
+                            source_path: src.clone(),
                             resolved_path: abs,
                             built_relative_path: rel,
                         })

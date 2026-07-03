@@ -72,13 +72,11 @@ pub async fn start_server_with_virtual_fs(
         .fallback(get(static_handler))
         .with_state(state);
 
-    // Bind to address
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .map_err(|e| crate::RheoError::io(e, format!("binding to {}", addr)))?;
+    // Bind to an available port, advancing past ones already in use.
+    let listener = bind_available_port(port).await?;
+    let actual_port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
 
-    let server_url = format!("http://localhost:{}", port);
+    let server_url = format!("http://localhost:{}", actual_port);
     info!(url = %server_url, "web server started");
 
     // Spawn server task
@@ -89,6 +87,42 @@ pub async fn start_server_with_virtual_fs(
     });
 
     Ok((server_handle, reload_tx, server_url, vfs_arc))
+}
+
+/// Highest port the dev server will try before giving up (inclusive).
+const MAX_PORT: u16 = 3050;
+
+/// Bind a `TcpListener` on `127.0.0.1`, starting at `start_port` and advancing
+/// to the next port when one is already in use, up to [`MAX_PORT`] inclusive.
+async fn bind_available_port(start_port: u16) -> Result<tokio::net::TcpListener> {
+    bind_in_range(start_port, MAX_PORT).await
+}
+
+/// Bind on `127.0.0.1`, trying `start_port..=max_port` in order.
+///
+/// Only `AddrInUse` advances to the next port; any other bind error surfaces
+/// immediately. If every port in the range is taken, returns an error naming it.
+async fn bind_in_range(start_port: u16, max_port: u16) -> Result<tokio::net::TcpListener> {
+    let mut last_in_use = None;
+    for port in start_port..=max_port {
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => return Ok(listener),
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                warn!(port, "port already in use, trying next");
+                last_in_use = Some(e);
+            }
+            Err(e) => return Err(crate::RheoError::io(e, format!("binding to {}", addr))),
+        }
+    }
+
+    let err = last_in_use.unwrap_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::AddrInUse, "no ports available")
+    });
+    Err(crate::RheoError::io(
+        err,
+        format!("all ports {}-{} are in use", start_port, max_port),
+    ))
 }
 
 /// SSE handler for live reload events
@@ -314,8 +348,11 @@ fn directory_listing(html_dir: &Path, path: &str) -> Response {
         html.push_str("<li>No HTML files found</li>");
     } else {
         for file in html_files {
+            // Prefix the href with `./` so a colon in a nested vertebra's
+            // filename (e.g. `chapters:intro.html`) isn't parsed as a URL
+            // scheme by the browser, which would break the link.
             html.push_str(&format!(
-                r#"        <li><a href="{}">{}</a></li>
+                r#"        <li><a href="./{}">{}</a></li>
 "#,
                 file, file
             ));
@@ -340,4 +377,69 @@ pub fn open_browser(url: &str) -> Result<()> {
     info!(url = %url, "opening browser");
     webbrowser::open(url)
         .map_err(|e| crate::RheoError::project_config(format!("failed to open browser: {}", e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn test_bind_advances_past_occupied_port() {
+        // Hold an ephemeral port, then ask to start binding at it.
+        let occupied = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let taken = occupied.local_addr().unwrap().port();
+
+        let listener = bind_in_range(taken, taken.saturating_add(10))
+            .await
+            .unwrap();
+        let got = listener.local_addr().unwrap().port();
+        assert!(got > taken, "expected a port above {taken}, got {got}");
+    }
+
+    #[tokio::test]
+    async fn test_bind_uses_start_port_when_free() {
+        // Find a free port, release it, then confirm we bind exactly it.
+        let probe = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let free = probe.local_addr().unwrap().port();
+        drop(probe);
+
+        let listener = bind_in_range(free, free).await.unwrap();
+        assert_eq!(listener.local_addr().unwrap().port(), free);
+    }
+
+    #[tokio::test]
+    async fn test_bind_errors_when_range_exhausted() {
+        // The single port in range is occupied, so binding must fail.
+        let occupied = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let taken = occupied.local_addr().unwrap().port();
+
+        let result = bind_in_range(taken, taken).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_directory_listing_prefixes_href_for_colon_filenames() {
+        // Nested vertebrae land on disk as flat, colon-separated filenames
+        // (e.g. `chapters:intro.html`). The listing must not emit a bare
+        // `href="chapters:intro.html"` — the browser would read `chapters:`
+        // as a URL scheme and break the link. A `./` prefix fixes it.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("chapters:intro.html"), "<html></html>").unwrap();
+
+        let response = directory_listing(dir.path(), "");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(
+            html.contains(r#"href="./chapters:intro.html""#),
+            "expected a `./`-prefixed href, got: {html}"
+        );
+        assert!(
+            !html.contains(r#"href="chapters:intro.html""#),
+            "bare colon href would be parsed as a URL scheme: {html}"
+        );
+    }
 }
