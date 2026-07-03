@@ -1,5 +1,5 @@
-use crate::reticulate::types::{ImportInfo, RheoValue, RheoVar};
-use typst::syntax::{Source, SyntaxKind, SyntaxNode};
+use crate::reticulate::types::{DocumentDate, ImportInfo, RheoValue, RheoVar};
+use typst::syntax::{Source, SyntaxKind, SyntaxNode, ast};
 
 /// Extract only package import path strings (those starting with '@') from
 /// Typst source.
@@ -28,20 +28,107 @@ pub struct ExtractedNodes {
     pub rheo_vars: Vec<RheoVar>,
     /// All `<label>` names defined in the source (angle brackets stripped).
     pub user_labels: Vec<String>,
+    /// Parsed `#set document(date: datetime(...))` timestamp, if present.
+    pub document_date: Option<DocumentDate>,
 }
 
 /// Extract rheo-* variables from Typst source.
 ///
 /// Parses the source and traverses the AST to collect rheo-prefixed
-/// let-bindings. Link extraction is deprecated — bundle compilation uses
-/// Typst @ref for cross-file references.
+/// let-bindings, the document date, and user-defined labels. Link extraction
+/// is deprecated — bundle compilation uses Typst @ref for cross-file references.
 pub fn extract_nodes(source: &Source) -> ExtractedNodes {
     let root = typst::syntax::parse(source.text());
     let rheo_vars = collect_rheo_vars(&root, source);
     let user_labels = collect_user_labels(source);
+    let document_date = DocumentDate::from_syntax(&root);
     ExtractedNodes {
         rheo_vars,
         user_labels,
+        document_date,
+    }
+}
+
+/// A value that can be located and decoded from a parsed Typst syntax tree.
+///
+/// Implement this to harvest one element of the core Typst syntax during the
+/// canonical parse and thread it downstream — the same shape used for `rheo-*`
+/// variables. An extractor yields at most one value; `None` means the element is
+/// absent or could not be decoded.
+pub trait FromSyntax: Sized {
+    /// Locate and parse this value from the document `root`.
+    fn from_syntax(root: &SyntaxNode) -> Option<Self>;
+}
+
+impl FromSyntax for DocumentDate {
+    /// Walk the AST for a `set` rule targeting `document` whose `date:` argument is
+    /// a `datetime(year: …, month: …, day: …[, hour: …, minute: …, second: …])`
+    /// call. When no time components are present the time defaults to 00:00:00 UTC.
+    ///
+    /// Yields `None` when there is no `#set document`, no `date:` argument, the date
+    /// is `none`/`auto`/`datetime.today()`, or the datetime is malformed/partial
+    /// (missing year, month, or day, or an out-of-range value).
+    fn from_syntax(root: &SyntaxNode) -> Option<Self> {
+        if let Some(set_rule) = root.cast::<ast::SetRule>()
+            && let ast::Expr::Ident(target) = set_rule.target()
+            && target.as_str() == "document"
+            && let Some(date) = Self::from_document_args(set_rule.args())
+        {
+            return Some(date);
+        }
+        root.children().find_map(Self::from_syntax)
+    }
+}
+
+impl DocumentDate {
+    /// Build a timestamp from a `#set document(...)` argument list, if it carries a
+    /// `date: datetime(...)` argument.
+    fn from_document_args(args: ast::Args) -> Option<Self> {
+        use chrono::{TimeZone, Utc};
+
+        // The `date:` named argument's value must be a `datetime(...)` call.
+        let date_expr = args.items().find_map(|item| match item {
+            ast::Arg::Named(named) if named.name().as_str() == "date" => Some(named.expr()),
+            _ => None,
+        })?;
+        let ast::Expr::FuncCall(call) = date_expr else {
+            return None;
+        };
+        let ast::Expr::Ident(callee) = call.callee() else {
+            return None;
+        };
+        if callee.as_str() != "datetime" {
+            return None;
+        }
+
+        let year = Self::named_int(call.args(), "year")?;
+        let month = Self::named_int(call.args(), "month")?;
+        let day = Self::named_int(call.args(), "day")?;
+        let hour = Self::named_int(call.args(), "hour").unwrap_or(0);
+        let minute = Self::named_int(call.args(), "minute").unwrap_or(0);
+        let second = Self::named_int(call.args(), "second").unwrap_or(0);
+
+        Utc.with_ymd_and_hms(
+            i32::try_from(year).ok()?,
+            u32::try_from(month).ok()?,
+            u32::try_from(day).ok()?,
+            u32::try_from(hour).ok()?,
+            u32::try_from(minute).ok()?,
+            u32::try_from(second).ok()?,
+        )
+        .single()
+        .map(DocumentDate)
+    }
+
+    /// Read the integer value of a named argument (e.g. `year: 2025`).
+    fn named_int(args: ast::Args, name: &str) -> Option<i64> {
+        args.items().find_map(|item| match item {
+            ast::Arg::Named(named) if named.name().as_str() == name => match named.expr() {
+                ast::Expr::Int(int) => Some(int.get()),
+                _ => None,
+            },
+            _ => None,
+        })
     }
 }
 
@@ -307,6 +394,73 @@ Some text. <fig:chart>
         let source = Source::detached("= No labels here\n\nJust text.");
         let labels = collect_user_labels(&source);
         assert!(labels.is_empty());
+    }
+
+    // --- document date tests ---
+
+    fn document_date(src: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        extract_nodes(&Source::detached(src))
+            .document_date
+            .map(|d| d.0)
+    }
+
+    #[test]
+    fn test_document_date_date_only() {
+        use chrono::{Datelike, Timelike};
+        let date = document_date(r#"#set document(date: datetime(year: 2025, month: 1, day: 15))"#)
+            .expect("date should parse");
+        assert_eq!((date.year(), date.month(), date.day()), (2025, 1, 15));
+        assert_eq!((date.hour(), date.minute(), date.second()), (0, 0, 0));
+    }
+
+    #[test]
+    fn test_document_date_with_time() {
+        use chrono::{Datelike, Timelike};
+        let date = document_date(
+            r#"#set document(date: datetime(year: 2025, month: 3, day: 9, hour: 14, minute: 30, second: 5))"#,
+        )
+        .expect("date should parse");
+        assert_eq!((date.year(), date.month(), date.day()), (2025, 3, 9));
+        assert_eq!((date.hour(), date.minute(), date.second()), (14, 30, 5));
+    }
+
+    #[test]
+    fn test_document_date_none() {
+        assert!(document_date(r#"#set document(date: none)"#).is_none());
+    }
+
+    #[test]
+    fn test_document_date_auto() {
+        assert!(document_date(r#"#set document(date: auto)"#).is_none());
+    }
+
+    #[test]
+    fn test_document_date_absent() {
+        assert!(document_date(r#"#set document(title: [No Date Here])"#).is_none());
+    }
+
+    #[test]
+    fn test_document_date_partial_is_none() {
+        // Missing `day` → cannot build a date.
+        assert!(document_date(r#"#set document(date: datetime(year: 2025, month: 1))"#).is_none());
+    }
+
+    #[test]
+    fn test_document_date_today_is_none() {
+        // `datetime.today()` can't be resolved statically → None.
+        assert!(document_date(r#"#set document(date: datetime.today())"#).is_none());
+    }
+
+    #[test]
+    fn test_document_date_ignores_other_set_rules() {
+        // A `#set page(...)` before the document rule must not confuse the walk.
+        use chrono::Datelike;
+        let date = document_date(
+            r#"#set page(width: 10cm)
+#set document(title: [Doc], date: datetime(year: 2024, month: 12, day: 31))"#,
+        )
+        .expect("date should parse");
+        assert_eq!((date.year(), date.month(), date.day()), (2024, 12, 31));
     }
 
     #[test]

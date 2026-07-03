@@ -68,6 +68,15 @@ impl RheoValue {
     }
 }
 
+/// The `#set document(date: datetime(...))` timestamp harvested from a spine
+/// vertebra during the canonical Typst parse.
+///
+/// Like [`RheoVar`], this is one element of the core Typst syntax decoded once at
+/// parse time and threaded into downstream features (the HTML Atom feed). The
+/// parsing lives in [`crate::reticulate::parser`] via the `FromSyntax` trait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DocumentDate(pub chrono::DateTime<chrono::Utc>);
+
 /// A top-level `#let rheo-<key> = "..."` binding harvested from a spine
 /// vertebra during the canonical Typst parse.
 #[derive(Debug, Clone, PartialEq)]
