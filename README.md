@@ -53,7 +53,7 @@ cargo install --locked rheo
 # Or build from source
 git clone https://github.com/freecomputinglab/rheo
 cd rheo
-cargo install --path .
+cargo install --path crates/cli
 ```
 
 ### Using Nix flakes
