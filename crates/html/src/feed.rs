@@ -81,7 +81,10 @@ fn link(rel: &str, href: &str) -> atom::Link {
 
 /// Generate Atom feed from spine outputs when feed_base_url is configured.
 ///
-/// Only vertebrae with `rheo-feed-title` produce feed entries.
+/// Every vertebra produces a feed entry by default. Each entry's title defaults
+/// to the parsed `#document` title (overridable with `rheo-feed-title`), and its
+/// timestamp defaults to the parsed `#document` date, then the output file mtime
+/// (overridable with `rheo-feed-updated`).
 pub fn generate_feed(
     ctx: PluginContext<'_>,
     outputs: &[CastVertebra],
@@ -97,17 +100,20 @@ pub fn generate_feed(
         .with_timezone(&Utc);
 
     for output in outputs {
-        // Extract rheo-feed-title from vars.
+        // Entry title: rheo-feed-title override, else the parsed #document title.
         let title = match output.vars.get("feed-title").and_then(|v| v.as_str()) {
             Some(t) => t.to_string(),
-            None => continue,
+            None => output.title.clone(),
         };
 
-        // Extract rheo-feed-updated, falling back to file mtime.
+        // Entry timestamp precedence: rheo-feed-updated override, else the
+        // parsed #document date, else the output file mtime.
         let updated = if let Some(ts) = output.vars.get("feed-updated").and_then(|v| v.as_str()) {
             DateTime::parse_from_rfc3339(ts)
                 .map(|dt| dt.with_timezone(&Utc))
                 .map_err(|e| RheoError::invalid_data(format!("invalid rheo-feed-updated: {}", e)))?
+        } else if let Some(date) = output.date {
+            date
         } else {
             // Fall back to output file mtime.
             let out_path = ctx.output_dir.join(&output.output_path);
