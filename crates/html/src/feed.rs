@@ -81,7 +81,10 @@ fn link(rel: &str, href: &str) -> atom::Link {
 
 /// Generate Atom feed from spine outputs when feed_base_url is configured.
 ///
-/// Only vertebrae with `rheo-feed-title` produce feed entries.
+/// Every vertebra produces a feed entry by default. Each entry's title defaults
+/// to the parsed `#document` title (overridable with `rheo-feed-title`), and its
+/// timestamp defaults to the parsed `#document` date, then the output file mtime
+/// (overridable with `rheo-feed-updated`).
 pub fn generate_feed(
     ctx: PluginContext<'_>,
     outputs: &[CastVertebra],
@@ -97,17 +100,25 @@ pub fn generate_feed(
         .with_timezone(&Utc);
 
     for output in outputs {
-        // Extract rheo-feed-title from vars.
+        // Opt-out: skip vertebrae that declare rheo-feed-exclude = true.
+        if output.vars.get("feed-exclude").and_then(|v| v.as_bool()) == Some(true) {
+            continue;
+        }
+
+        // Entry title: rheo-feed-title override, else the parsed #document title.
         let title = match output.vars.get("feed-title").and_then(|v| v.as_str()) {
             Some(t) => t.to_string(),
-            None => continue,
+            None => output.title.clone(),
         };
 
-        // Extract rheo-feed-updated, falling back to file mtime.
+        // Entry timestamp precedence: rheo-feed-updated override, else the
+        // parsed #document date, else the output file mtime.
         let updated = if let Some(ts) = output.vars.get("feed-updated").and_then(|v| v.as_str()) {
             DateTime::parse_from_rfc3339(ts)
                 .map(|dt| dt.with_timezone(&Utc))
                 .map_err(|e| RheoError::invalid_data(format!("invalid rheo-feed-updated: {}", e)))?
+        } else if let Some(date) = output.date {
+            date
         } else {
             // Fall back to output file mtime.
             let out_path = ctx.output_dir.join(&output.output_path);
@@ -231,6 +242,80 @@ mod tests {
         };
         let xml = feed.serialize();
         assert_eq!(xml.matches("<entry>").count(), 2);
+    }
+
+    #[test]
+    fn test_feed_exclude_omits_entry() {
+        use rheo_core::project::{ProjectConfig, ProjectMode};
+        use rheo_core::{PluginSection, RheoConfig, RheoValue, SpineOptions, TypstFormat};
+        use std::collections::HashMap;
+        use typst::foundations::Bytes;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let output_dir = dir.path().to_path_buf();
+
+        // Build a CastVertebra; `exclude` sets rheo-feed-exclude = <bool>.
+        // A parsed `date` is supplied so the mtime fallback never touches disk.
+        let make = |path: &str, exclude: Option<bool>| {
+            let mut vars = HashMap::new();
+            if let Some(val) = exclude {
+                vars.insert("feed-exclude".to_string(), RheoValue::Bool(val));
+            }
+            CastVertebra {
+                output_path: path.to_string(),
+                bytes: Bytes::new(b"<html><body><main><p>Body</p></main></body></html>".to_vec()),
+                format: TypstFormat::Html,
+                title: path.to_string(),
+                date: Some(ts()),
+                vars,
+            }
+        };
+
+        // keep.html included, skip.html excluded (true), false.html included (false).
+        let outputs = vec![
+            make("keep.html", None),
+            make("skip.html", Some(true)),
+            make("false.html", Some(false)),
+        ];
+
+        let project = ProjectConfig {
+            name: "test".to_string(),
+            root: output_dir.clone(),
+            config: RheoConfig::default(),
+            typ_files: vec![],
+            mode: ProjectMode::Directory,
+            config_path: None,
+        };
+        let spine = SpineOptions {
+            title: None,
+            vertebrae: vec![],
+        };
+        let section = PluginSection::default();
+        let assets = HashMap::new();
+        let font_dirs: Vec<std::path::PathBuf> = vec![];
+        let ctx = PluginContext {
+            project: &project,
+            output_dir: &output_dir,
+            spine: &spine,
+            config: &section,
+            assets: &assets,
+            font_dirs: &font_dirs,
+        };
+        let html_cfg = crate::HtmlConfig::default();
+
+        generate_feed(ctx, &outputs, "https://example.com", "Test Feed", &html_cfg)
+            .expect("generate_feed");
+
+        let feed = std::fs::read_to_string(output_dir.join("feed.xml")).expect("read feed.xml");
+        // Only the excluded vertebra is dropped; "false" is not the strict match.
+        assert_eq!(
+            feed.matches("<entry>").count(),
+            2,
+            "expected 2 entries (skip.html excluded), feed:\n{feed}"
+        );
+        assert!(feed.contains("https://example.com/keep.html"));
+        assert!(feed.contains("https://example.com/false.html"));
+        assert!(!feed.contains("skip.html"), "excluded vertebra leaked");
     }
 
     #[test]

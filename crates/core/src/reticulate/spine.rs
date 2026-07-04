@@ -3,7 +3,7 @@ use crate::pdf_utils::DocumentTitle;
 use crate::plugins::SpineOptions;
 use crate::reticulate::bundle_source::BundleSource;
 use crate::reticulate::parser;
-use crate::reticulate::types::RheoValue;
+use crate::reticulate::types::{DocumentDate, RheoValue};
 use crate::{Result, RheoError, TYP_EXT};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -65,9 +65,7 @@ impl SpineOptions {
         }
 
         if typst_files.is_empty() {
-            return Err(RheoError::project_config(
-                "merge spine matched no .typ files",
-            ));
+            return Err(RheoError::project_config("spine matched no .typ files"));
         }
 
         Ok(typst_files)
@@ -99,6 +97,8 @@ pub struct Vertebra {
     pub emit_handle: bool,
     /// Document title for `#document title:` and `@handle` display text.
     pub title: String,
+    /// Parsed `#set document(date: datetime(...))` timestamp, if present.
+    pub date: Option<DocumentDate>,
     /// Harvested `rheo-*` variables from this vertebra's source file.
     pub vars: std::collections::HashMap<String, RheoValue>,
 }
@@ -146,6 +146,7 @@ impl VirtualSpine {
             output_path: String,
             rel_path: String,
             title: String,
+            date: Option<DocumentDate>,
             vars: HashMap<String, RheoValue>,
             user_labels: Vec<String>,
         }
@@ -186,6 +187,7 @@ impl VirtualSpine {
 
                 let source_obj = Source::detached(&source);
                 let extracted = parser::extract_nodes(&source_obj);
+                let date = extracted.document_date;
                 let user_labels = extracted.user_labels;
                 let mut vars = HashMap::new();
                 for v in extracted.rheo_vars {
@@ -195,7 +197,7 @@ impl VirtualSpine {
                         }
                         None => {
                             return Err(RheoError::invalid_data(format!(
-                                "{}:{}: rheo-{} must be a string",
+                                "{}:{}: rheo-{} must be a string or boolean",
                                 file.display(),
                                 v.line,
                                 v.key
@@ -211,6 +213,7 @@ impl VirtualSpine {
                     output_path,
                     rel_path,
                     title,
+                    date,
                     vars,
                     user_labels,
                 })
@@ -253,6 +256,7 @@ impl VirtualSpine {
                     extra_handles: vec![fi.escape],
                     emit_handle,
                     title: fi.title,
+                    date: fi.date,
                     vars: fi.vars,
                 })
             })
@@ -443,7 +447,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("merge spine matched no .typ files")
+                .contains("spine matched no .typ files")
         );
     }
 
@@ -533,6 +537,7 @@ mod tests {
             extra_handles: vec!["intro.typ".into()],
             emit_handle: true,
             title: "Introduction".into(),
+            date: None,
             vars: HashMap::new(),
         };
         let spine = VirtualSpine {
@@ -562,6 +567,7 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "A".into(),
+                    date: None,
                     vars: HashMap::new(),
                 },
                 Vertebra {
@@ -571,6 +577,7 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "B".into(),
+                    date: None,
                     vars: HashMap::new(),
                 },
             ],
@@ -601,6 +608,7 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "A".into(),
+                    date: None,
                     vars: Default::default(),
                 },
                 Vertebra {
@@ -610,6 +618,7 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "B".into(),
+                    date: None,
                     vars: Default::default(),
                 },
             ],

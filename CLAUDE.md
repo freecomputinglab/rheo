@@ -67,7 +67,6 @@ js_scripts     = "two.js"
 [pdf.spine]
 title = "My Book"
 vertebrae = ["cover.typ", "chapters/**/*.typ"]
-merge = true
 
 [epub]
 identifier = "urn:uuid:..."  # optional, auto-generated
@@ -101,25 +100,22 @@ rheo assigns each vertebra a canonical label derived from its path relative to t
 
 **Escape-collision error:** if the escape label (`<handle.typ>`) collides with any user-authored label or another vertebra's escape label, the build fails with an error naming the offending file and label.
 
-## Spine configuration and merge deprecation
+## Spine configuration
 
 **Spine vertebrae:** The `vertebrae` array in `[pdf.spine]` or `[epub.spine]` specifies which source files to include and in what order. Glob patterns are supported (e.g., `chapters/**/*.typ`).
 
-**Merge deprecation (BREAKING):** The `merge = true` flag is **deprecated as a cross-cutting setting** across all formats. In this version:
-- PDF now defaults to producing a single combined PDF (previous behavior required `merge = true`)
-- HTML and EPUB ignore the merge setting (they always produce per-page outputs)
-
-The `merge` flag will return in a future release as a **PDF-only option** for more explicit control over PDF concatenation. If you relied on `merge = true` behavior, update your configs to remove the flag — PDF now combines by default.
+PDF combines its spine into a single document by default; HTML and EPUB always produce per-page outputs. A `merge` key left in an old `rheo.toml` is silently ignored.
 
 ## rheo-* variables and the Atom feed
 
-**Generic variable convention:** any top-level `#let rheo-<key> = "<string>"` in a vertebra is harvested during compilation. The value must be a string literal — a non-string RHS is a compile error. Plugins read these per-file with the `rheo-` prefix stripped (e.g. `rheo-feed-title` is available as `feed-title`).
+**Generic variable convention:** any top-level `#let rheo-<key> = <value>` in a vertebra is harvested during compilation. The value must be a string or boolean literal (e.g. `"title"` or `true`) — any other RHS is a compile error. Plugins read these per-file with the `rheo-` prefix stripped (e.g. `rheo-feed-title` is available as `feed-title`).
 
-**Atom feed:** set `feed_base_url` under `[html]` to enable it. When set, the HTML build emits `build/html/feed.xml` (Atom 1.0) with one `<entry>` per vertebra that declares `rheo-feed-title`, and injects a `<link rel="alternate" type="application/atom+xml">` autodiscovery tag into every page's `<head>`. Without `feed_base_url`, no feed is emitted. The feed's `atom:author` defaults to `Rheo`; set `[html] feed_author = "..."` to override it. The feed's `<title>` (and autodiscovery link title) defaults to the HTML spine title, then the project/directory name; set `[html] feed_title = "..."` to override both.
+**Atom feed:** set `feed_base_url` under `[html]` to enable it. When set, the HTML build emits `build/html/feed.xml` (Atom 1.0) with one `<entry>` per vertebra (every vertebra appears by default), and injects a `<link rel="alternate" type="application/atom+xml">` autodiscovery tag into every page's `<head>`. Without `feed_base_url`, no feed is emitted. The feed's `atom:author` defaults to `Rheo`; set `[html] feed_author = "..."` to override it. The feed's `<title>` (and autodiscovery link title) defaults to the HTML spine title, then the project/directory name; set `[html] feed_title = "..."` to override both.
 
-Feed variables:
-- `rheo-feed-title` — entry title; **required** for a vertebra to appear in the feed.
-- `rheo-feed-updated` — entry timestamp (RFC 3339); optional, falls back to the source file's mtime.
+Feed variables (all optional):
+- `rheo-feed-title` — override for the entry title; defaults to the `#set document(title: [...])` value.
+- `rheo-feed-updated` — override for the entry timestamp (RFC 3339); defaults to the `#set document(date: datetime(...))` value, then the source file's mtime.
+- `rheo-feed-exclude` — set to the boolean `true` (`#let rheo-feed-exclude = true`) to omit a vertebra from the feed. Any other value (or absent) includes the page. Useful for cover/index pages.
 
 **Feed content region:** each entry's `<content>` is taken from the first `<main>` element, else the first element with class `rheo-feed-content`, else the whole `<body>`. To exclude page chrome (header/footer/nav) from feed entries, wrap the article in `<main>` (e.g. `html.elem("main", doc)`) and keep the chrome outside it. With no marker, the full body is used.
 

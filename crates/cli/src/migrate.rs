@@ -235,7 +235,7 @@ mod tests {
     fn bump_version_preserves_formatting() {
         let dir = tempfile::tempdir().unwrap();
         let toml_path = dir.path().join("rheo.toml");
-        let original = "# a leading comment\nversion = \"0.3.0\"\ncontent_dir = \"pages\"\n\n[pdf.spine]\nvertebrae = [\"a.typ\"]\nmerge = true\n";
+        let original = "# a leading comment\nversion = \"0.3.0\"\ncontent_dir = \"pages\"\n\n[pdf.spine]\nvertebrae = [\"a.typ\"]\ntitle = \"Book\"\n";
         fs::write(&toml_path, original).unwrap();
 
         let target = ManifestVersion::parse("0.4.0").unwrap();
@@ -244,7 +244,7 @@ mod tests {
         let updated = fs::read_to_string(&toml_path).unwrap();
         assert!(updated.starts_with("# a leading comment\n"));
         assert!(updated.contains("content_dir = \"pages\""));
-        assert!(updated.contains("merge = true"));
+        assert!(updated.contains("title = \"Book\""));
         assert!(updated.contains("version = \"0.4.0\""));
         assert!(!updated.contains("0.3.0"));
     }
