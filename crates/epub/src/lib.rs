@@ -45,7 +45,6 @@ impl FormatPlugin for EpubPlugin {
         let spine = section.spine.get_or_insert_with(|| Spine {
             title: None,
             vertebrae: vec![],
-            merge: None,
         });
         if spine.title.is_none() {
             spine.title = Some(DocumentTitle::to_readable_name(project_name));

@@ -35,8 +35,7 @@ pub struct ExtractedNodes {
 /// Extract rheo-* variables from Typst source.
 ///
 /// Parses the source and traverses the AST to collect rheo-prefixed
-/// let-bindings, the document date, and user-defined labels. Link extraction
-/// is deprecated — bundle compilation uses Typst @ref for cross-file references.
+/// let-bindings, the document date, and user-defined labels.
 pub fn extract_nodes(source: &Source) -> ExtractedNodes {
     let root = typst::syntax::parse(source.text());
     let rheo_vars = collect_rheo_vars(&root, source);

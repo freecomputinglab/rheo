@@ -6,13 +6,12 @@ use std::collections::HashMap;
 use std::path::Path;
 use tracing::debug;
 
-/// Spine configuration from `rheo.toml`: glob patterns, title, and optional merge flag.
+/// Spine configuration from `rheo.toml`: glob patterns and title.
 ///
-/// All format plugins share this single config type. Each plugin interprets the
-/// `merge` field according to its own defaults (e.g. EPUB defaults to merge=true).
+/// All format plugins share this single config type.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Spine {
-    /// Title for the merged output document (required when merge=true).
+    /// Title for the combined output document, when applicable.
     pub title: Option<String>,
 
     /// Glob patterns for files to include, evaluated relative to content_dir.
@@ -20,10 +19,6 @@ pub struct Spine {
     /// Empty = auto-discover all .typ files.
     #[serde(default)]
     pub vertebrae: Vec<String>,
-
-    /// Whether to merge vertebrae into a single output file.
-    /// `None` means "use the plugin's default" (false for PDF/HTML, true for EPUB).
-    pub merge: Option<bool>,
 }
 
 /// Asset configuration for `[plugin_name.assets]` in rheo.toml.
@@ -467,7 +462,9 @@ mod tests {
     }
 
     #[test]
-    fn test_pdf_spine_with_merge_true() {
+    fn test_pdf_spine_parses_title_and_vertebrae() {
+        // A legacy `merge` key (removed) is silently ignored, so old configs
+        // still parse; title and vertebrae are read as usual.
         let toml = versioned_toml(
             "[pdf.spine]\ntitle = \"My Book\"\nvertebrae = [\"cover.typ\", \"chapters/*.typ\"]\nmerge = true",
         );
@@ -475,25 +472,6 @@ mod tests {
         let spine = config.spine_for_plugin("pdf").unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "My Book");
         assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
-        assert_eq!(spine.merge, Some(true));
-    }
-
-    #[test]
-    fn test_pdf_spine_with_merge_false() {
-        let toml = versioned_toml(
-            "[pdf.spine]\ntitle = \"My Book\"\nvertebrae = [\"cover.typ\", \"chapters/*.typ\"]\nmerge = false",
-        );
-        let config = parse(&toml);
-        let spine = config.spine_for_plugin("pdf").unwrap();
-        assert_eq!(spine.merge, Some(false));
-    }
-
-    #[test]
-    fn test_pdf_spine_merge_omitted() {
-        let toml = versioned_toml("[pdf.spine]\ntitle = \"My Book\"\nvertebrae = [\"cover.typ\"]");
-        let config = parse(&toml);
-        let spine = config.spine_for_plugin("pdf").unwrap();
-        assert_eq!(spine.merge, None);
     }
 
     #[test]

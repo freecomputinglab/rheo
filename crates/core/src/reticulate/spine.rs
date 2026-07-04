@@ -65,9 +65,7 @@ impl SpineOptions {
         }
 
         if typst_files.is_empty() {
-            return Err(RheoError::project_config(
-                "merge spine matched no .typ files",
-            ));
+            return Err(RheoError::project_config("spine matched no .typ files"));
         }
 
         Ok(typst_files)
@@ -449,7 +447,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("merge spine matched no .typ files")
+                .contains("spine matched no .typ files")
         );
     }
 

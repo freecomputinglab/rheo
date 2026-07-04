@@ -137,8 +137,8 @@ impl TypstFormat {
 /// How the plugin wants the spine laid out for compilation.
 ///
 /// Core uses this to synthesize the virtual main Typst source, which drives one
-/// bundle compile that produces all outputs at once. The choice here replaces
-/// the old `default_merge` / `spine.merge` flags.
+/// bundle compile that produces all outputs at once. Each plugin declares
+/// whether it emits one file per vertebra or a single combined file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpineLayoutKind {
     /// One output file per vertebra — each gets its own `#document(…)` block.

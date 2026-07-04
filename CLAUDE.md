@@ -67,7 +67,6 @@ js_scripts     = "two.js"
 [pdf.spine]
 title = "My Book"
 vertebrae = ["cover.typ", "chapters/**/*.typ"]
-merge = true
 
 [epub]
 identifier = "urn:uuid:..."  # optional, auto-generated
@@ -101,15 +100,11 @@ rheo assigns each vertebra a canonical label derived from its path relative to t
 
 **Escape-collision error:** if the escape label (`<handle.typ>`) collides with any user-authored label or another vertebra's escape label, the build fails with an error naming the offending file and label.
 
-## Spine configuration and merge deprecation
+## Spine configuration
 
 **Spine vertebrae:** The `vertebrae` array in `[pdf.spine]` or `[epub.spine]` specifies which source files to include and in what order. Glob patterns are supported (e.g., `chapters/**/*.typ`).
 
-**Merge deprecation (BREAKING):** The `merge = true` flag is **deprecated as a cross-cutting setting** across all formats. In this version:
-- PDF now defaults to producing a single combined PDF (previous behavior required `merge = true`)
-- HTML and EPUB ignore the merge setting (they always produce per-page outputs)
-
-The `merge` flag will return in a future release as a **PDF-only option** for more explicit control over PDF concatenation. If you relied on `merge = true` behavior, update your configs to remove the flag — PDF now combines by default.
+PDF combines its spine into a single document by default; HTML and EPUB always produce per-page outputs. A `merge` key left in an old `rheo.toml` is silently ignored.
 
 ## rheo-* variables and the Atom feed
 
