@@ -199,7 +199,7 @@ impl VirtualSpine {
                         }
                         None => {
                             return Err(RheoError::invalid_data(format!(
-                                "{}:{}: rheo-{} must be a string",
+                                "{}:{}: rheo-{} must be a string or boolean",
                                 file.display(),
                                 v.line,
                                 v.key

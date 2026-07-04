@@ -100,9 +100,8 @@ pub fn generate_feed(
         .with_timezone(&Utc);
 
     for output in outputs {
-        // Opt-out: skip vertebrae that declare rheo-feed-exclude = "true".
-        // Strict match — only the exact string "true" excludes the page.
-        if output.vars.get("feed-exclude").and_then(|v| v.as_str()) == Some("true") {
+        // Opt-out: skip vertebrae that declare rheo-feed-exclude = true.
+        if output.vars.get("feed-exclude").and_then(|v| v.as_bool()) == Some(true) {
             continue;
         }
 
@@ -255,12 +254,12 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let output_dir = dir.path().to_path_buf();
 
-        // Build a CastVertebra; `exclude` sets rheo-feed-exclude = "<val>".
+        // Build a CastVertebra; `exclude` sets rheo-feed-exclude = <bool>.
         // A parsed `date` is supplied so the mtime fallback never touches disk.
-        let make = |path: &str, exclude: Option<&str>| {
+        let make = |path: &str, exclude: Option<bool>| {
             let mut vars = HashMap::new();
             if let Some(val) = exclude {
-                vars.insert("feed-exclude".to_string(), RheoValue::Str(val.to_string()));
+                vars.insert("feed-exclude".to_string(), RheoValue::Bool(val));
             }
             CastVertebra {
                 output_path: path.to_string(),
@@ -272,11 +271,11 @@ mod tests {
             }
         };
 
-        // keep.html included, skip.html excluded, false.html included (strict "true").
+        // keep.html included, skip.html excluded (true), false.html included (false).
         let outputs = vec![
             make("keep.html", None),
-            make("skip.html", Some("true")),
-            make("false.html", Some("false")),
+            make("skip.html", Some(true)),
+            make("false.html", Some(false)),
         ];
 
         let project = ProjectConfig {

@@ -50,13 +50,15 @@ pub struct ImportInfo {
     pub is_package: bool,
 }
 
-/// A value bound to a `rheo-*` variable. Currently only string literals are
+/// A value bound to a `rheo-*` variable. String literals and booleans are
 /// supported; the enum exists so further kinds (e.g. datetimes) can be added
 /// without changing every consumer's signature.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RheoValue {
     /// A string literal RHS.
     Str(String),
+    /// A boolean literal RHS (`true`/`false`).
+    Bool(bool),
 }
 
 impl RheoValue {
@@ -64,6 +66,15 @@ impl RheoValue {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             RheoValue::Str(s) => Some(s),
+            RheoValue::Bool(_) => None,
+        }
+    }
+
+    /// The inner bool if this is a [`RheoValue::Bool`], else `None`.
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            RheoValue::Bool(b) => Some(*b),
+            RheoValue::Str(_) => None,
         }
     }
 }

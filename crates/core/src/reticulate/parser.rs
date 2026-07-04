@@ -213,13 +213,17 @@ fn parse_rheo_var(let_binding: &SyntaxNode, offset: usize, source: &Source) -> O
     let key = name.leaf_text().strip_prefix("rheo-")?;
 
     // The value is the first meaningful node after `=` (skipping whitespace).
+    // String and boolean literals are supported; any other RHS yields `None`.
     let value = let_binding
         .children()
         .skip_while(|c| c.kind() != SyntaxKind::Eq)
         .skip(1)
         .find(|c| c.kind() != SyntaxKind::Space)
-        .filter(|c| c.kind() == SyntaxKind::Str)
-        .map(|c| RheoValue::Str(c.leaf_text().trim_matches('"').to_string()));
+        .and_then(|c| match c.kind() {
+            SyntaxKind::Str => Some(RheoValue::Str(c.leaf_text().trim_matches('"').to_string())),
+            SyntaxKind::Bool => Some(RheoValue::Bool(c.leaf_text() == "true")),
+            _ => None,
+        });
 
     let line = source
         .lines()
@@ -293,6 +297,20 @@ mod tests {
         assert_eq!(vars.len(), 1);
         assert_eq!(vars[0].key, "feed-title");
         assert_eq!(vars[0].value, Some(RheoValue::Str("Hello".to_string())));
+    }
+
+    #[test]
+    fn test_rheo_var_bool() {
+        let source = Source::detached(
+            r#"#let rheo-feed-exclude = true
+#let rheo-draft = false"#,
+        );
+        let vars = collect_rheo_vars(&typst::syntax::parse(source.text()), &source);
+        assert_eq!(vars.len(), 2);
+        assert_eq!(vars[0].key, "feed-exclude");
+        assert_eq!(vars[0].value, Some(RheoValue::Bool(true)));
+        assert_eq!(vars[1].key, "draft");
+        assert_eq!(vars[1].value, Some(RheoValue::Bool(false)));
     }
 
     #[test]
