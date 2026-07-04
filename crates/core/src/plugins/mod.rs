@@ -87,6 +87,13 @@ pub struct CastVertebra {
     pub bytes: Bytes,
     /// Typst compile target this output was produced with.
     pub format: TypstFormat,
+    /// Document title parsed from the vertebra's source (`#document title:`).
+    ///
+    /// Empty when the output has no matching per-vertebra source (e.g. a
+    /// combined output).
+    pub title: String,
+    /// Parsed `#set document(date:)` timestamp, if present.
+    pub date: Option<chrono::DateTime<chrono::Utc>>,
     /// Harvested `rheo-*` variables from the vertebra's source file.
     pub vars: std::collections::HashMap<String, crate::reticulate::types::RheoValue>,
 }

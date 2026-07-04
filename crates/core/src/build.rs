@@ -414,17 +414,21 @@ impl Build {
                 .into_iter()
                 .map(|(vpath, bytes)| {
                     let output_path = vpath.get_with_slash().trim_start_matches('/').to_string();
-                    // Find the corresponding Vertebra to get its vars.
-                    let vars = virtual_spine
+                    // Find the corresponding Vertebra to get its title, date, and vars.
+                    // No match (e.g. a combined output) defaults to empty title / no date.
+                    let vertebra = virtual_spine
                         .vertebrae
                         .iter()
-                        .find(|v| v.output_path == output_path)
-                        .map(|v| v.vars.clone())
-                        .unwrap_or_default();
+                        .find(|v| v.output_path == output_path);
+                    let title = vertebra.map(|v| v.title.clone()).unwrap_or_default();
+                    let date = vertebra.and_then(|v| v.date.map(|d| d.0));
+                    let vars = vertebra.map(|v| v.vars.clone()).unwrap_or_default();
                     CastVertebra {
                         output_path,
                         bytes,
                         format: plugin.typst_format(),
+                        title,
+                        date,
                         vars,
                     }
                 })
