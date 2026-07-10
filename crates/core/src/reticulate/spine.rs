@@ -104,7 +104,7 @@ pub struct Vertebra {
     /// The vertebra's raw source text, retained for the Mold stage.
     pub source: String,
     /// Label definition and reference sites extracted from `source`; the Mold
-    /// stage turns these into rewrites (e.g. handle-prefixing).
+    /// stage turns these into rewrites.
     pub sites: LabelSites,
 }
 

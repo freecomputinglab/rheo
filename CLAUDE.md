@@ -125,6 +125,11 @@ Feed variables (all optional):
 - `cargo clippy` — fix all warnings
 - Errors via `thiserror`, logging via `tracing` macros
 - INFO logs: natural language. DEBUG: implementation details.
+- Doc comments on general abstractions (traits, generic types, module docs)
+  describe the abstraction, not its implementors. Avoid "the first impl",
+  "X is the first", or naming concrete impls (e.g. a trait doc referencing a
+  specific type that implements it). Concrete examples belong on the concrete
+  type's own docs.
 
 ## Release
 

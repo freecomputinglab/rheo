@@ -2,11 +2,11 @@
 //!
 //! A [`SyntaxRewrite`] is a decided edit at a site — a map from the span's
 //! current text to its replacement. Producers turn a vertebra's `SyntaxSite`s
-//! into `SyntaxRewrite`s (label handle-prefixing is the first). [`Rewrites`]
-//! collects them and applies them **end-first** (so earlier byte offsets stay
-//! valid). [`VirtualSpine::mold`] runs the producers per vertebra and returns a
-//! [`SpineMold`]: the synthesized main plus each vertebra's rewritten body,
-//! ready to hand to the Cast stage (Typst bundle compilation).
+//! into `SyntaxRewrite`s. [`Rewrites`] collects them and applies them
+//! **end-first** (so earlier byte offsets stay valid). [`VirtualSpine::mold`]
+//! runs the producers per vertebra and returns a [`SpineMold`]: the synthesized
+//! main plus each vertebra's rewritten body, ready to hand to the Cast stage
+//! (Typst bundle compilation).
 
 use super::spine::{Vertebra, VirtualSpine};
 use std::collections::HashMap;
@@ -15,8 +15,8 @@ use std::ops::Range;
 /// A decided edit at a syntax site: replace the bytes at [`range`](Self::range)
 /// with the result of mapping their current text.
 ///
-/// More general than any one rewrite kind — labels are the first impl; format
-/// plugins may contribute their own during molding.
+/// A rewrite kind implements this to describe how one class of site is edited;
+/// molding is agnostic to which kinds exist.
 pub trait SyntaxRewrite {
     /// Byte range of the span to replace in the original source.
     fn range(&self) -> Range<usize>;
@@ -80,12 +80,12 @@ impl Vertebra {
 
     /// Gather the rewrites every Mold producer wants applied to this vertebra.
     ///
-    /// The producer set is the extension seam: label handle-prefixing joins here
-    /// (gated by `prefix_labels`), and format plugins will contribute their own.
+    /// The producer set is the extension seam: rewrite producers append here
+    /// (gated by `prefix_labels`), and format plugins may contribute their own.
     fn rewrites(&self, prefix_labels: bool) -> Rewrites {
         let list: Vec<Box<dyn SyntaxRewrite>> = Vec::new();
         if prefix_labels {
-            // LabelRewrite (handle-prefixing) is appended here once implemented.
+            // Rewrite producers are appended here.
         }
         Rewrites(list)
     }
