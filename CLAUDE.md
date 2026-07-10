@@ -43,7 +43,6 @@ build_dir = "build"      # optional
 formats = ["html", "pdf", "epub"]  # default formats
 font_dirs = ["fonts"]    # optional; replaces autoscan of fonts/ directory
 copy = ["*.txt"]         # optional; glob patterns copied to every plugin output dir
-prefix_labels = true     # optional; auto-namespace authored labels by handle (default true)
 
 [html]
 feed_base_url = "https://example.com"  # optional; when set, emits build/html/feed.xml (Atom)
@@ -80,8 +79,6 @@ vertebrae = ["cover.typ", "chapters/**/*.typ"]
 
 Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title and spine are inferred from filename/directory.
 
-**`prefix_labels`** (top-level, default `true`): auto-namespace every authored label by its vertebra handle (see [Section-label prefixing](#section-label-prefixing)). Applies to every format's bundle. Set to `false` to disable and keep raw authored labels — needed only for projects that still manually prefix their anchors; with it off, an authored label that matches a vertebra's canonical handle collides exactly as before.
-
 **Font directory resolution:** Without `font_dirs` in config, `fonts/` at project root is auto-discovered. Setting `font_dirs` replaces autoscan (include `"fonts"` explicitly if desired). `--font-dir` CLI flag always appends.
 
 ## Cross-file references
@@ -103,27 +100,26 @@ rheo assigns each vertebra a canonical label derived from its path relative to t
 
 **Escape-collision error:** if the escape label (`<handle.typ>`) collides with any user-authored label or another vertebra's escape label, the build fails with an error naming the offending file and label.
 
-### Section-label prefixing
+## rheo-context
 
-Because the whole spine is collated into one virtual Typst bundle, authored labels share a single flat namespace. rheo removes the need to hand-prefix them: every label a vertebra **defines** is automatically namespaced with that vertebra's handle (using the `:` divider), and the vertebra's **local** references are rewritten to match — so bare in-file refs still resolve.
+rheo injects a per-vertebra Typst variable `rheo-context` into every spine file, exposing rheo's view of the project to authored Typst and to packages. It is **contextual** — each vertebra sees its own values.
 
-A heading `=== Et alia <etal>` in `content/26w27.typ`:
-- is referenced **globally**, from any other file, as `@26w27:etal`;
-- is referenced **locally**, within `26w27.typ`, as bare `@etal` (rheo rewrites it to `@26w27:etal`).
+Fields (v1; the value is a dictionary and may gain fields later):
+- `handle` — this file's `:`-separated handle (its ID; the same handle used for the cross-file links above).
+- `spine` — a flat list of every vertebra in spine order, each an entry `(handle, path, title)`.
 
-Details:
-- **Prefix = the full vertebra handle.** `content/chapters/intro.typ` with `<foo>` → globally `@chapters:intro:foo`.
-- **Labels already containing `:`** simply gain a further prefix: `<fig:chart>` in `26w27.typ` → `<26w27:fig:chart>`.
-- **Only local refs are rewritten.** A reference whose target is *not* a label the same file defines is left alone — this is what keeps bibliography citations and already-qualified cross-file refs (`@26w24:framework`) intact.
-- **Whole-page anchors are unaffected:** `@26w27` / `@26w27.typ` still resolve via the synthesized handle anchors, independent of section labels.
+```typst
+#context [This is #rheo-context.handle of #rheo-context.spine.len() pages.]
+```
 
-All rewriting is done over the Typst syntax AST (never regex): each `<name>`/`@name` token is spliced at its exact byte range.
+**Passing it to packages:** a package template can't read the file's local `rheo-context` implicitly — Typst functions capture their definition scope, not the call site — so hand it in explicitly:
 
-**HTML/URL note:** `:` is valid in an HTML `id` and in a URL fragment, so `id="26w27:etal"` and `href="#26w27:etal"` work as-is. Only **CSS selectors** need the colon escaped — `#26w27\:etal { … }`.
+```typst
+#import "@rheo/somepackage": template
+#show: template.with(ctx: rheo-context)
+```
 
-**Label vs. citation-key clash:** a local reference `@name` is prefixed only when `name` is a label the same file *defines*. Because bibliography citations share the `@key` syntax, a file that both defines `<key>` and cites `@key` will have the citation rewritten to `@handle:key` and detached from the bibliography — rheo cannot tell the two apart by name alone. Bib keys are conventionally distinct from section labels; if a clash is unavoidable, rename the label.
-
-**Prefixing scope — spine vertebrae only:** label prefixing applies to spine vertebrae. A file pulled in via `#include` that is not itself a spine vertebra is served to Typst unchanged, so its labels are **not** namespaced. Consequences: (1) a label authored in a shared partial keeps its raw name; (2) if two vertebrae include the same partial that defines a label, the bundle gets a duplicate raw label → Typst error (the collision prefixing was meant to remove, but the partial isn't a vertebra so it isn't namespaced); (3) a vertebra's local `@foo` pointing at a label defined in an included partial is not rewritten (the partial's site isn't among the vertebra's own sites). Keep shared partials label-free, or promote them to spine vertebrae.
+**Section-label namespacing is a package concern, not core.** rheo does not rewrite or prefix authored labels; label semantics stay exactly as Typst defines them (two vertebrae defining the same label collide as an ordinary Typst duplicate-label error). Packages such as `@rheo/zettelkasten` use `rheo-context` to *additively* synthesize globally-unique `<handle:label>` section anchors alongside the author's own labels.
 
 ## Spine configuration
 
