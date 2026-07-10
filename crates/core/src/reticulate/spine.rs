@@ -545,6 +545,28 @@ mod tests {
     }
 
     #[test]
+    fn mold_main_matches_source_and_has_no_bodies_without_producers() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro <etal>\n\nSee @etal.\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+
+        let molded = spine.mold(true);
+        // main is the synthesized bundle source.
+        assert_eq!(molded.main, spine.source());
+        // No producers wired yet, so nothing is rewritten (identity mold).
+        assert!(molded.bodies.is_empty());
+    }
+
+    #[test]
     fn nested_files_get_colon_qualified_handle() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
