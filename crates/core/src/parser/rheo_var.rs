@@ -54,44 +54,49 @@ impl SyntaxSite for RheoVar {
     /// a closure, code block, or another binding's RHS.
     fn visit(source: &Source, node: &SyntaxNode, offset: usize, ctx: WalkCtx, out: &mut Vec<Self>) {
         if ctx.file_scope && node.kind() == SyntaxKind::LetBinding {
-            out.extend(parse_rheo_var(node, offset, source));
+            out.extend(Self::from_let_binding(node, offset, source));
         }
     }
 }
 
-/// Parse a single `LetBinding` (starting at byte `offset`) into a `RheoVar` if
-/// its name is `rheo-`-prefixed. The RHS is `Some(string)` for a string literal
-/// and `None` for any other kind (the consumer turns `None` into an error).
-fn parse_rheo_var(let_binding: &SyntaxNode, offset: usize, source: &Source) -> Option<RheoVar> {
-    let name = let_binding
-        .children()
-        .find(|c| c.kind() == SyntaxKind::Ident)?;
-    let key = name.leaf_text().strip_prefix("rheo-")?;
+impl RheoVar {
+    /// Parse a single `LetBinding` (starting at byte `offset`) into a `RheoVar`
+    /// if its name is `rheo-`-prefixed. The RHS is `Some(string)` for a string
+    /// literal and `None` for any other kind (the consumer turns `None` into an
+    /// error).
+    fn from_let_binding(let_binding: &SyntaxNode, offset: usize, source: &Source) -> Option<Self> {
+        let name = let_binding
+            .children()
+            .find(|c| c.kind() == SyntaxKind::Ident)?;
+        let key = name.leaf_text().strip_prefix("rheo-")?;
 
-    // The value is the first meaningful node after `=` (skipping whitespace).
-    // String and boolean literals are supported; any other RHS yields `None`.
-    let value = let_binding
-        .children()
-        .skip_while(|c| c.kind() != SyntaxKind::Eq)
-        .skip(1)
-        .find(|c| c.kind() != SyntaxKind::Space)
-        .and_then(|c| match c.kind() {
-            SyntaxKind::Str => Some(RheoValue::Str(c.leaf_text().trim_matches('"').to_string())),
-            SyntaxKind::Bool => Some(RheoValue::Bool(c.leaf_text() == "true")),
-            _ => None,
-        });
+        // The value is the first meaningful node after `=` (skipping whitespace).
+        // String and boolean literals are supported; any other RHS yields `None`.
+        let value = let_binding
+            .children()
+            .skip_while(|c| c.kind() != SyntaxKind::Eq)
+            .skip(1)
+            .find(|c| c.kind() != SyntaxKind::Space)
+            .and_then(|c| match c.kind() {
+                SyntaxKind::Str => {
+                    Some(RheoValue::Str(c.leaf_text().trim_matches('"').to_string()))
+                }
+                SyntaxKind::Bool => Some(RheoValue::Bool(c.leaf_text() == "true")),
+                _ => None,
+            });
 
-    let line = source
-        .lines()
-        .byte_to_line(offset)
-        .map(|l| l + 1)
-        .unwrap_or(1);
+        let line = source
+            .lines()
+            .byte_to_line(offset)
+            .map(|l| l + 1)
+            .unwrap_or(1);
 
-    Some(RheoVar {
-        key: key.to_string(),
-        value,
-        line,
-    })
+        Some(RheoVar {
+            key: key.to_string(),
+            value,
+            line,
+        })
+    }
 }
 
 #[cfg(test)]

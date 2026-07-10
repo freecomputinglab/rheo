@@ -81,19 +81,21 @@ pub struct LabelSites {
     pub references: Vec<LabelSite>,
 }
 
-/// Collect label sites from `source` and partition them by role.
-///
-/// A view over `LabelSite::collect`: ranges are exact byte offsets into
-/// `source`, suitable for splicing.
-pub fn extract_label_sites(source: &Source) -> LabelSites {
-    let mut sites = LabelSites::default();
-    for site in LabelSite::collect(source) {
-        match site.role {
-            LabelRole::Definition => sites.definitions.push(site),
-            LabelRole::Reference => sites.references.push(site),
+impl LabelSites {
+    /// Collect the label sites in `source` and partition them by role.
+    ///
+    /// A view over [`LabelSite::collect`]: ranges are exact byte offsets into
+    /// `source`, suitable for splicing.
+    pub fn from_source(source: &Source) -> Self {
+        let mut sites = LabelSites::default();
+        for site in LabelSite::collect(source) {
+            match site.role {
+                LabelRole::Definition => sites.definitions.push(site),
+                LabelRole::Reference => sites.references.push(site),
+            }
         }
+        sites
     }
-    sites
 }
 
 /// Return all `<label>` names **defined** in the source (markup context only).
@@ -101,7 +103,7 @@ pub fn extract_label_sites(source: &Source) -> LabelSites {
 /// Labels inside function-call arguments (`#link(<label>)`) are references, not
 /// definitions, and are excluded. Surrounding `<`/`>` are stripped.
 pub fn collect_user_labels(source: &Source) -> Vec<String> {
-    extract_label_sites(source)
+    LabelSites::from_source(source)
         .definitions
         .into_iter()
         .map(|site| site.name)
@@ -151,7 +153,7 @@ Some text. <fig:chart>
     #[test]
     fn test_sites_heading_definition() {
         let src = "= Intro <intro>";
-        let sites = extract_label_sites(&Source::detached(src));
+        let sites = LabelSites::from_source(&Source::detached(src));
         assert_sites_slice(src, &sites.definitions, &[("intro", "<intro>")]);
         assert!(sites.references.is_empty());
     }
@@ -159,7 +161,7 @@ Some text. <fig:chart>
     #[test]
     fn test_sites_figure_label_definition() {
         let src = "#figure([], caption: [c]) <fig:chart>";
-        let sites = extract_label_sites(&Source::detached(src));
+        let sites = LabelSites::from_source(&Source::detached(src));
         assert_sites_slice(src, &sites.definitions, &[("fig:chart", "<fig:chart>")]);
         assert!(sites.references.is_empty());
     }
@@ -167,7 +169,7 @@ Some text. <fig:chart>
     #[test]
     fn test_sites_ref_marker_is_reference() {
         let src = "See @intro for more.";
-        let sites = extract_label_sites(&Source::detached(src));
+        let sites = LabelSites::from_source(&Source::detached(src));
         assert!(sites.definitions.is_empty());
         assert_sites_slice(src, &sites.references, &[("intro", "@intro")]);
     }
@@ -176,14 +178,14 @@ Some text. <fig:chart>
     fn test_sites_ref_with_supplement_excludes_supplement() {
         // The `[p.9]` supplement is a sibling node; the range covers only `@key`.
         let src = "Citation @key[p.9] here.";
-        let sites = extract_label_sites(&Source::detached(src));
+        let sites = LabelSites::from_source(&Source::detached(src));
         assert_sites_slice(src, &sites.references, &[("key", "@key")]);
     }
 
     #[test]
     fn test_sites_link_and_ref_calls_are_references() {
         let src = "#link(<a>)[text] and #ref(<b>)";
-        let sites = extract_label_sites(&Source::detached(src));
+        let sites = LabelSites::from_source(&Source::detached(src));
         assert!(sites.definitions.is_empty());
         assert_sites_slice(src, &sites.references, &[("a", "<a>"), ("b", "<b>")]);
     }
@@ -191,7 +193,7 @@ Some text. <fig:chart>
     #[test]
     fn test_sites_definition_and_reference_classified() {
         let src = "== Section <sec>\n\nBack to @sec.";
-        let sites = extract_label_sites(&Source::detached(src));
+        let sites = LabelSites::from_source(&Source::detached(src));
         assert_sites_slice(src, &sites.definitions, &[("sec", "<sec>")]);
         assert_sites_slice(src, &sites.references, &[("sec", "@sec")]);
     }
@@ -199,7 +201,7 @@ Some text. <fig:chart>
     #[test]
     fn test_syntaxsite_collect_tags_roles() {
         // The SyntaxSite trait's collect() returns every site in one flat list,
-        // each tagged with its role; extract_label_sites is the partition view.
+        // each tagged with its role; LabelSites::from_source is the partition view.
         let src = "= A <a>\n\n#link(<a>)[x] and @a.";
         let roles: Vec<LabelRole> = LabelSite::collect(&Source::detached(src))
             .into_iter()
@@ -225,7 +227,7 @@ Some text. <fig:chart>
 
     #[test]
     fn test_collect_user_labels_matches_definitions() {
-        // collect_user_labels is a thin wrapper over extract_label_sites definitions.
+        // collect_user_labels is a thin wrapper over LabelSites::from_source definitions.
         let src = "= A <a>\n\n#link(<a>)[x]\n\n== B <b>";
         let source = Source::detached(src);
         let mut labels = collect_user_labels(&source);

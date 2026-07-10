@@ -1,6 +1,6 @@
 use crate::config::PluginAssets;
 use crate::packages::RheoPackages;
-use crate::parser::extract_package_imports;
+use crate::parser::ImportInfo;
 use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -43,7 +43,7 @@ pub fn scan_project_package_imports(typ_files: &[PathBuf]) -> Vec<String> {
             }
         };
         let source = Source::detached(content);
-        for path in extract_package_imports(&source) {
+        for path in ImportInfo::package_paths(&source) {
             if seen.insert(path.clone()) {
                 result.push(path);
             }

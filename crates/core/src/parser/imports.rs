@@ -26,40 +26,42 @@ impl SyntaxSite for ImportInfo {
         if matches!(
             node.kind(),
             SyntaxKind::ModuleImport | SyntaxKind::ModuleInclude
-        ) && let Some(info) = parse_import_node(node, offset)
+        ) && let Some(info) = Self::from_node(node, offset)
         {
             out.push(info);
         }
     }
 }
 
-/// Parse a `ModuleImport`/`ModuleInclude` (starting at byte `node_offset`) into
-/// `ImportInfo`, reading the first `Str` child as the path and deriving its byte
-/// range from the walker-supplied offset.
-fn parse_import_node(node: &SyntaxNode, node_offset: usize) -> Option<ImportInfo> {
-    let mut offset = node_offset;
-    for child in node.children() {
-        if child.kind() == SyntaxKind::Str {
-            let path = child.leaf_text().trim_matches('"').to_string();
-            let byte_range = offset..offset + child.len();
-            return Some(ImportInfo {
-                is_package: path.starts_with('@'),
-                path,
-                byte_range,
-            });
+impl ImportInfo {
+    /// Parse a `ModuleImport`/`ModuleInclude` (starting at byte `node_offset`)
+    /// into an `ImportInfo`, reading the first `Str` child as the path and
+    /// deriving its byte range from the walker-supplied offset.
+    fn from_node(node: &SyntaxNode, node_offset: usize) -> Option<Self> {
+        let mut offset = node_offset;
+        for child in node.children() {
+            if child.kind() == SyntaxKind::Str {
+                let path = child.leaf_text().trim_matches('"').to_string();
+                let byte_range = offset..offset + child.len();
+                return Some(ImportInfo {
+                    is_package: path.starts_with('@'),
+                    path,
+                    byte_range,
+                });
+            }
+            offset += child.len();
         }
-        offset += child.len();
+        None
     }
-    None
-}
 
-/// Extract package import paths (those starting with `@`) from Typst source.
-pub fn extract_package_imports(source: &Source) -> Vec<String> {
-    ImportInfo::collect(source)
-        .into_iter()
-        .filter(|info| info.is_package)
-        .map(|info| info.path)
-        .collect()
+    /// Extract package import paths (those starting with `@`) from Typst source.
+    pub fn package_paths(source: &Source) -> Vec<String> {
+        Self::collect(source)
+            .into_iter()
+            .filter(|info| info.is_package)
+            .map(|info| info.path)
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -69,7 +71,7 @@ mod tests {
     #[test]
     fn test_extract_package_imports() {
         let source = Source::detached(r#"#import "@preview/tablex:0.0.6": tablex"#);
-        let imports = extract_package_imports(&source);
+        let imports = ImportInfo::package_paths(&source);
         assert_eq!(imports.len(), 1);
         assert_eq!(imports[0], "@preview/tablex:0.0.6");
     }
@@ -81,7 +83,7 @@ mod tests {
 #import "./local.typ": utils
 #import "@preview/bar:2.0.0": bar"#,
         );
-        let imports = extract_package_imports(&source);
+        let imports = ImportInfo::package_paths(&source);
         assert_eq!(imports.len(), 2);
         assert_eq!(imports[0], "@preview/foo:1.0.0");
         assert_eq!(imports[1], "@preview/bar:2.0.0");

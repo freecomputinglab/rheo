@@ -9,13 +9,13 @@
 //! in the bundle — globally referenceable as `@26w27:etal` — while a bare
 //! `@etal` in the same file is rewritten to `@26w27:etal`.
 //!
-//! All rewriting is driven by the Typst syntax AST via [`extract_label_sites`],
+//! All rewriting is driven by the Typst syntax AST via [`LabelSites::from_source`],
 //! never by regex or naive string search. References whose target is *not* a
 //! local markup definition are left untouched — this is precisely what keeps
 //! bibliography citations (`@karataniTranscritique2005`) and already-qualified
 //! cross-file references (`@26w24:framework`) alone.
 
-use super::extract_label_sites;
+use super::LabelSites;
 use std::collections::HashSet;
 use std::ops::Range;
 use typst::syntax::Source;
@@ -30,7 +30,7 @@ use typst::syntax::Source;
 /// The rewrite runs exactly once per vertebra; it is not idempotent.
 pub fn prefix_labels(source: &str, handle: &str) -> String {
     let parsed = Source::detached(source);
-    let sites = extract_label_sites(&parsed);
+    let sites = LabelSites::from_source(&parsed);
 
     // Names defined in *this* source (markup context). Only references to these
     // are rewritten; every other reference (citations, cross-file refs) is left
