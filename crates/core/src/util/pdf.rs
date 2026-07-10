@@ -1,5 +1,5 @@
 /// PDF utility functions shared across rheo core and plugins
-use crate::constants::TYPST_LABEL_PATTERN;
+use crate::util::constants::TYPST_LABEL_PATTERN;
 
 /// Sanitize a filename to create a valid Typst label name.
 ///

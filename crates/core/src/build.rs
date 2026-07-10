@@ -285,7 +285,7 @@ impl Build {
                     let path_str = vpath.get_with_slash().trim_start_matches('/').to_string();
                     if path_str.ends_with(".html") {
                         let html = String::from_utf8_lossy(&bytes);
-                        let mut dom = crate::html_utils::HtmlDom::parse(&html)?;
+                        let mut dom = crate::util::html::HtmlDom::parse(&html)?;
                         dom.inject_head_links(&[], &css_refs, &js_refs)?;
                         let modified = dom.serialize()?;
                         Ok((vpath, typst::foundations::Bytes::new(modified.into_bytes())))

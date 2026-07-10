@@ -4,7 +4,7 @@
 //! at the header of each struct.
 
 use iref::IriRefBuf;
-use rheo_core::typst_types::EcoString;
+use rheo_core::util::typst_types::EcoString;
 use serde::{Deserialize, Serialize};
 
 // To understand the idiosyncratic serde renames, see:

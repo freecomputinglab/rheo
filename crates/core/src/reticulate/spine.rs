@@ -1,9 +1,9 @@
 use crate::parser;
 use crate::parser::{DocumentDate, RheoValue};
-use crate::path_utils::{sanitize_handle_segment, to_forward_slash};
-use crate::pdf_utils::DocumentTitle;
 use crate::plugins::SpineOptions;
 use crate::reticulate::bundle_source::BundleSource;
+use crate::util::path::{sanitize_handle_segment, to_forward_slash};
+use crate::util::pdf::DocumentTitle;
 use crate::{Result, RheoError, TYP_EXT};
 use std::collections::{HashMap, HashSet};
 use std::fs;

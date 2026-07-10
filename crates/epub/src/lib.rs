@@ -346,7 +346,7 @@ impl EpubConfig {
 /// Returns `None` if no lang attribute is found or if parsing fails.
 fn extract_language(html_string: &str) -> Option<String> {
     use markup5ever_rcdom::NodeData;
-    use rheo_core::html_utils::HtmlDom;
+    use rheo_core::util::html::HtmlDom;
 
     let dom = HtmlDom::parse(html_string).ok()?;
 
@@ -391,7 +391,7 @@ fn extract_author(
     html_string: &str,
 ) -> Option<String> {
     use markup5ever_rcdom::NodeData;
-    use rheo_core::html_utils::HtmlDom;
+    use rheo_core::util::html::HtmlDom;
 
     // Check rheo-author var first.
     if let Some(author_value) = vars.get("author").and_then(|v| v.as_str()) {
@@ -527,7 +527,7 @@ impl EpubItem {
         href: &IriRef,
     ) -> Result<(Vec<EcoString>, Vec<OutlineNode<EcoString>>)> {
         use markup5ever_rcdom::{Handle, NodeData};
-        use rheo_core::html_utils::HtmlDom;
+        use rheo_core::util::html::HtmlDom;
 
         let dom = HtmlDom::parse(html_string)?;
 

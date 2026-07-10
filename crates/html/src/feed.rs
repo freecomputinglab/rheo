@@ -7,7 +7,8 @@
 
 use atom_syndication as atom;
 use chrono::{DateTime, Utc};
-use rheo_core::{CastVertebra, PluginContext, RheoError, html_utils};
+use rheo_core::util::html as html_utils;
+use rheo_core::{CastVertebra, PluginContext, RheoError};
 
 /// A single `<entry>` in the feed.
 pub struct AtomEntry {

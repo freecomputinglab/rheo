@@ -63,8 +63,8 @@ impl RheoWorld {
         plugin_library: Option<String>,
         font_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
-        let root = crate::path_utils::canonicalize_path(root)?;
-        let main_path = crate::path_utils::canonicalize_path(main_file)?;
+        let root = crate::util::path::canonicalize_path(root)?;
+        let main_path = crate::util::path::canonicalize_path(main_file)?;
 
         let main_vpath = VirtualPath::virtualize(&root, &main_path).map_err(|e| {
             RheoError::path(
@@ -106,7 +106,7 @@ impl RheoWorld {
         format_name: Option<&str>,
         font_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
-        let root = crate::path_utils::canonicalize_path(root)?;
+        let root = crate::util::path::canonicalize_path(root)?;
 
         // Synthetic path — does not exist on disk; world serves it from memory.
         let main_vpath =
@@ -166,7 +166,7 @@ impl RheoWorld {
     /// they remain valid across per-file compilations.
     pub fn set_main(&mut self, main_file: &Path) -> Result<()> {
         let old_main = self.main;
-        let main_path = crate::path_utils::canonicalize_path(main_file)?;
+        let main_path = crate::util::path::canonicalize_path(main_file)?;
 
         let main_vpath = VirtualPath::virtualize(&self.root, &main_path).map_err(|e| {
             RheoError::path(

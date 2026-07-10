@@ -1,4 +1,4 @@
-use crate::path_utils::escape_typst_content;
+use crate::util::path::escape_typst_content;
 use std::fmt;
 
 /// A handle anchor emitted into a `BundleDocument` body so that `@label` cross-references
