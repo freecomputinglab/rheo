@@ -51,6 +51,10 @@ pub struct RheoWorld {
     /// include path (e.g. `content/intro.typ`). When an included file matches, the
     /// world serves the rewritten source instead of reading it from disk.
     source_overlay: HashMap<String, String>,
+    /// Per-vertebra `rheo-context` prelude, keyed by project-relative include path.
+    /// Prepended to each matching vertebra's served source so authored Typst can
+    /// read `rheo-context` (its handle and the spine).
+    rheo_context: HashMap<String, String>,
 }
 
 struct FileSlot {
@@ -98,19 +102,23 @@ impl RheoWorld {
             plugin_library,
             virtual_main_source: None,
             source_overlay: HashMap::new(),
+            rheo_context: HashMap::new(),
         })
     }
 
     /// Create a world for bundle spine compilation with a synthesized in-memory main.
     ///
-    /// The caller passes the moulded spine: the synthesized main source plus a
-    /// per-vertebra source overlay (rewritten sources keyed by include path). The
-    /// world serves the main for the synthetic main file ID and each overlay entry
-    /// for its vertebra, bypassing disk.
+    /// The caller passes the moulded spine: the synthesized main source, a
+    /// per-vertebra source overlay (rewritten sources keyed by include path), and
+    /// per-vertebra `rheo-context` preludes (keyed the same way). The world serves
+    /// the main for the synthetic main file ID, each overlay entry for its
+    /// vertebra, and prepends the matching `rheo-context` prelude — all bypassing
+    /// disk.
     pub fn new_for_bundle(
         root: &Path,
         virtual_main_source: String,
         source_overlay: HashMap<String, String>,
+        rheo_context: HashMap<String, String>,
         format_name: Option<&str>,
         font_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
@@ -141,6 +149,7 @@ impl RheoWorld {
             plugin_library: None,
             virtual_main_source: Some(virtual_main_source),
             source_overlay,
+            rheo_context,
         })
     }
 
@@ -380,8 +389,22 @@ impl World for RheoWorld {
                 target_polyfill, rheo_content, plugin_lib_content
             );
             text = format!("{}{}", template_inject, text);
-        } else if !target_polyfill.is_empty() {
-            text = format!("{}{}", target_polyfill, text);
+        } else {
+            // Non-main files (vertebrae/partials): the target() polyfill, then any
+            // per-vertebra `rheo-context` prelude, then the file's own source.
+            let rel = id
+                .vpath()
+                .get_with_slash()
+                .trim_start_matches('/')
+                .to_string();
+            let context_prelude = self
+                .rheo_context
+                .get(&rel)
+                .map(String::as_str)
+                .unwrap_or("");
+            if !target_polyfill.is_empty() || !context_prelude.is_empty() {
+                text = format!("{}{}{}", target_polyfill, context_prelude, text);
+            }
         }
 
         let source = Source::new(id, text);
@@ -502,6 +525,7 @@ mod tests {
             root,
             "#document(\"intro.html\", format: \"html\")[]".to_string(),
             source_overlay,
+            HashMap::new(),
             Some("html"),
             vec![],
         )
@@ -514,5 +538,39 @@ mod tests {
         .intern();
         let source = World::source(&world, id).unwrap();
         assert!(source.text().contains("<intro:etal>"));
+    }
+
+    #[test]
+    fn prepends_rheo_context_prelude_to_matching_vertebra() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // rheo-context is served from memory; the vertebra need not exist on disk.
+        let mut source_overlay = HashMap::new();
+        source_overlay.insert("content/intro.typ".to_string(), "= Intro\n".to_string());
+        let mut rheo_context = HashMap::new();
+        rheo_context.insert(
+            "content/intro.typ".to_string(),
+            "#let rheo-context = (handle: \"intro\", spine: ())\n\n".to_string(),
+        );
+        let world = RheoWorld::new_for_bundle(
+            root,
+            "#document(\"intro.html\", format: \"html\")[]".to_string(),
+            source_overlay,
+            rheo_context,
+            Some("html"),
+            vec![],
+        )
+        .unwrap();
+
+        let id = RootedPath::new(
+            VirtualRoot::Project,
+            VirtualPath::new("content/intro.typ").unwrap(),
+        )
+        .intern();
+        let text = World::source(&world, id).unwrap().text().to_string();
+        // The prelude is prepended ahead of the file's own body.
+        assert!(text.contains("#let rheo-context = (handle: \"intro\""));
+        assert!(text.find("rheo-context").unwrap() < text.find("= Intro").unwrap());
     }
 }

@@ -264,11 +264,13 @@ impl Build {
         virtual_spine.check_output_collisions()?;
 
         let moulded = virtual_spine.mould();
+        let rheo_context = virtual_spine.rheo_context_preludes();
 
         let world = RheoWorld::new_for_bundle(
             &self.project.root,
             moulded.main,
             moulded.sources,
+            rheo_context,
             html_plugin.rheo_target(),
             self.font_dirs.clone(),
         )?;
@@ -397,6 +399,7 @@ impl Build {
             };
 
             let moulded = virtual_spine.mould();
+            let rheo_context = virtual_spine.rheo_context_preludes();
             debug!(plugin = plugin.name(), "moulded virtual spine source");
 
             // Single Typst bundle compile for this plugin.
@@ -404,6 +407,7 @@ impl Build {
                 &self.project.root,
                 moulded.main,
                 moulded.sources,
+                rheo_context,
                 plugin.rheo_target(),
                 self.font_dirs.clone(),
             )?;

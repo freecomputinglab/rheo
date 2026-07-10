@@ -4,6 +4,7 @@ use crate::plugins::SpineOptions;
 use crate::reticulate::bundle_source::BundleSource;
 use crate::util::path::{sanitize_handle_segment, to_forward_slash};
 use crate::util::pdf::DocumentTitle;
+use crate::util::typst_literal::TypstLiteral;
 use crate::{Result, RheoError, TYP_EXT};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -297,6 +298,46 @@ impl VirtualSpine {
         )
     }
 
+    /// Per-vertebra `rheo-context` Typst preludes, keyed by include path (`rel_path`).
+    ///
+    /// Each vertebra is injected with `#let rheo-context = (handle: <its handle>,
+    /// spine: <flat list of every vertebra>)` so package templates can read the
+    /// file's own handle and the whole spine. The `handle` varies per file; the
+    /// `spine` literal is identical across files. The shape is a dictionary so
+    /// attributes can be added later (e.g. by format plugins) without breaking
+    /// consumers.
+    pub fn rheo_context_preludes(&self) -> HashMap<String, String> {
+        let spine = self.spine_data();
+        self.vertebrae
+            .iter()
+            .map(|v| {
+                let context = TypstLiteral::Dict(vec![
+                    ("handle".to_string(), TypstLiteral::str(v.handle.as_str())),
+                    ("spine".to_string(), spine.clone()),
+                ]);
+                let prelude = format!("#let rheo-context = {}\n\n", context.serialize());
+                (v.rel_path.clone(), prelude)
+            })
+            .collect()
+    }
+
+    /// The flat spine as a [`TypstLiteral`] array-of-dictionaries: one entry per
+    /// vertebra with `handle`, `path`, and `title`.
+    fn spine_data(&self) -> TypstLiteral {
+        TypstLiteral::Array(
+            self.vertebrae
+                .iter()
+                .map(|v| {
+                    TypstLiteral::Dict(vec![
+                        ("handle".to_string(), TypstLiteral::str(v.handle.as_str())),
+                        ("path".to_string(), TypstLiteral::str(v.rel_path.as_str())),
+                        ("title".to_string(), TypstLiteral::str(v.title.as_str())),
+                    ])
+                })
+                .collect(),
+        )
+    }
+
     /// Validate that no two vertebrae produce the same output path.
     ///
     /// Skipped for `SingleCombined` layouts where all vertebrae intentionally share
@@ -562,6 +603,40 @@ mod tests {
         );
         let def = &v.sites.definitions[0];
         assert_eq!(&v.source[def.range.clone()], "<etal>");
+    }
+
+    #[test]
+    fn rheo_context_prelude_carries_handle_and_full_spine() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        let chapters = content.join("chapters");
+        fs::create_dir_all(&chapters).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro\n").unwrap();
+        fs::write(chapters.join("intro.typ"), "= Chapter\n").unwrap();
+
+        let files = vec![content.join("intro.typ"), chapters.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+
+        let preludes = spine.rheo_context_preludes();
+        // One prelude per vertebra, keyed by include path.
+        assert_eq!(preludes.len(), 2);
+        let root_prelude = &preludes["content/intro.typ"];
+        let nested_prelude = &preludes["content/chapters/intro.typ"];
+
+        // Each carries its OWN handle...
+        assert!(root_prelude.contains("handle: \"intro\""));
+        assert!(nested_prelude.contains("handle: \"chapters:intro\""));
+        // ...and the full flat spine (both vertebrae, with path).
+        for p in [root_prelude, nested_prelude] {
+            assert!(p.starts_with("#let rheo-context = "));
+            assert!(p.contains("path: \"content/intro.typ\""));
+            assert!(p.contains("path: \"content/chapters/intro.typ\""));
+        }
     }
 
     #[test]

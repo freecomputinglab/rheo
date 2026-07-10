@@ -155,6 +155,10 @@ Feed variables (all optional):
   "X is the first", or naming concrete impls (e.g. a trait doc referencing a
   specific type that implements it). Concrete examples belong on the concrete
   type's own docs.
+- Prefer a data-structure-first approach over standalone functions: model the
+  thing as a type and hang behaviour off it as methods (e.g. `TypstLiteral` with
+  a `serialize` method, `LabelSites::from_source`), rather than free functions
+  that pass data around. Reach for a struct/enum + `impl` before a bare `fn`.
 
 ## Release
 
