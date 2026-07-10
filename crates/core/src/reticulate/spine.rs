@@ -860,4 +860,78 @@ mod tests {
         };
         assert!(VirtualSpine::build(&files, &content, root, layout, true).is_ok());
     }
+
+    #[test]
+    fn dotted_directory_yields_dot_free_handle_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        let dir = content.join("v1.0");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("notes.typ"), "= Notes <foo>\n").unwrap();
+
+        let files = vec![dir.join("notes.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout, true).unwrap();
+
+        // The dot in the directory becomes an underscore in the handle.
+        assert_eq!(spine.vertebrae[0].handle, "v1_0:notes");
+        // The user label is prefixed with the sanitized, dot-free handle.
+        let body = &spine.mould(true).sources["content/v1.0/notes.typ"];
+        assert!(body.contains("<v1_0:notes:foo>"), "body: {body}");
+    }
+
+    #[test]
+    fn spaced_filename_yields_underscore_handle_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("a b.typ"), "= X <foo>\n").unwrap();
+
+        let files = vec![content.join("a b.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout, true).unwrap();
+
+        // The space in the filename becomes an underscore in the handle.
+        assert_eq!(spine.vertebrae[0].handle, "a_b");
+        let body = &spine.mould(true).sources["content/a b.typ"];
+        assert!(body.contains("<a_b:foo>"), "body: {body}");
+    }
+
+    #[test]
+    fn user_label_named_like_escape_stays_distinct_from_escape_anchor() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        // A user label literally named `intro.typ` — the dot is in the label NAME
+        // (right of `:`), never in the handle.
+        fs::write(content.join("intro.typ"), "= Intro <intro.typ>\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout, true).unwrap();
+        let moulded = spine.mould(true);
+
+        // The user label moulds to `<intro:intro.typ>` in the vertebra body...
+        let body = &moulded.sources["content/intro.typ"];
+        assert!(body.contains("<intro:intro.typ>"), "body: {body}");
+        // ...and no bare `<intro.typ>` survives in the body: the label is fully
+        // prefixed, so it can never be mistaken for the escape anchor.
+        assert!(!body.contains("<intro.typ>"), "body: {body}");
+        // The synthesized escape anchor `<intro.typ>` lives in the main, distinct
+        // from the prefixed user label. Because the handle (left of `:`) is always
+        // dot-free, `<intro.typ:...>` can never arise.
+        assert!(moulded.main.contains("<intro.typ>"));
+    }
 }
