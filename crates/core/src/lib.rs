@@ -10,6 +10,7 @@ pub mod init_templates;
 pub mod logging;
 pub mod manifest_version;
 pub mod output;
+pub mod parser;
 pub mod path_utils;
 pub mod pdf_utils;
 pub mod plugins;
@@ -47,7 +48,7 @@ pub use plugins::{
     AssetConfig, CastVertebra, FormatInitTemplate, FormatPlugin, OpenHandle, PackageAssets,
     PluginContext, ResolvedPackage, ServerHandle, SpineLayoutKind, SpineOptions, TypstFormat,
 };
-pub use reticulate::parser::RheoValue;
+pub use parser::RheoValue;
 
 // HTML/PDF export utilities
 pub use compile::{compile_document_to_string, document_to_pdf_bytes};

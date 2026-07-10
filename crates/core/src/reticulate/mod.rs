@@ -1,5 +1,4 @@
 pub mod bundle_source;
-pub mod parser;
 pub mod spine;
 
 pub use bundle_source::BundleSource;
