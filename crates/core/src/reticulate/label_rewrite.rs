@@ -153,6 +153,23 @@ mod tests {
     }
 
     #[test]
+    fn ref_matching_local_def_is_rewritten_even_if_also_a_citation_key() {
+        // Known limitation: `@name` is rewritten whenever `name` is a local
+        // markup definition. If a file BOTH defines `<someKey>` AND cites
+        // `@someKey` (a bibliography key of the same name), the citation is
+        // rewritten to `@H:someKey` and thereby detached from the bibliography.
+        // rheo cannot tell a citation from a label ref by name alone, and bib
+        // keys are conventionally distinct from section labels — so this is
+        // accepted and documented rather than special-cased. See CLAUDE.md
+        // "Cross-file references".
+        let src = "= Some key <someKey>\n\nAs shown @someKey, it holds.";
+        assert_eq!(
+            prefixed(src, "H"),
+            "= Some key <H:someKey>\n\nAs shown @H:someKey, it holds."
+        );
+    }
+
+    #[test]
     fn multiple_definitions_are_each_prefixed() {
         let src = "= A <a>\n\n== B <b>\n\n@a then @b.";
         assert_eq!(

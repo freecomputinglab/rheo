@@ -100,6 +100,8 @@ rheo assigns each vertebra a canonical label derived from its path relative to t
 
 **Escape-collision error:** if the escape label (`<handle.typ>`) collides with any user-authored label or another vertebra's escape label, the build fails with an error naming the offending file and label.
 
+**Label vs. citation-key clash:** a local reference `@name` is prefixed only when `name` is a label the same file *defines*. Because bibliography citations share the `@key` syntax, a file that both defines `<key>` and cites `@key` will have the citation rewritten to `@handle:key` and detached from the bibliography — rheo cannot tell the two apart by name alone. Bib keys are conventionally distinct from section labels; if a clash is unavoidable, rename the label.
+
 ## Spine configuration
 
 **Spine vertebrae:** The `vertebrae` array in `[pdf.spine]` or `[epub.spine]` specifies which source files to include and in what order. Glob patterns are supported (e.g., `chapters/**/*.typ`).
