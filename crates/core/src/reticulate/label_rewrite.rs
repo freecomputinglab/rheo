@@ -11,7 +11,7 @@
 //! definition — bibliography citations, already-qualified cross-file refs — are
 //! left untouched.
 
-use super::mold::SyntaxRewrite;
+use super::mould::SyntaxRewrite;
 use super::spine::Vertebra;
 use crate::parser::LabelSites;
 use std::collections::HashSet;
@@ -74,11 +74,11 @@ impl LabelRewrite {
 
 #[cfg(test)]
 mod tests {
-    use super::super::mold::Rewrites;
+    use super::super::mould::Rewrites;
     use super::*;
     use typst::syntax::Source;
 
-    /// Build the handle-prefix rewrites for `src` and apply them, as molding does.
+    /// Build the handle-prefix rewrites for `src` and apply them, as moulding does.
     fn prefixed(src: &str, handle: &str) -> String {
         let sites = LabelSites::from_source(&Source::detached(src));
         let rewrites = LabelRewrite::build(src, handle, &sites)

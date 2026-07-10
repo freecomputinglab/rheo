@@ -101,9 +101,9 @@ pub struct Vertebra {
     pub date: Option<DocumentDate>,
     /// Harvested `rheo-*` variables from this vertebra's source file.
     pub vars: std::collections::HashMap<String, RheoValue>,
-    /// The vertebra's raw source text, retained for the Mold stage.
+    /// The vertebra's raw source text, retained for the Mould stage.
     pub source: String,
-    /// Label definition and reference sites extracted from `source`; the Mold
+    /// Label definition and reference sites extracted from `source`; the Mould
     /// stage turns these into rewrites.
     pub sites: LabelSites,
 }
@@ -230,9 +230,9 @@ impl VirtualSpine {
         let file_infos = file_infos?;
 
         // Union of all user-authored labels across the spine, as they will land
-        // in the bundle. When `prefix_labels` is on, the Mold stage namespaces
+        // in the bundle. When `prefix_labels` is on, the Mould stage namespaces
         // every definition to `handle:name` (see `LabelRewrite`), so the checks
-        // below must compare against the prefixed names — the same rule Mold
+        // below must compare against the prefixed names — the same rule Mould
         // uses. A consequence: a prefixed label can never equal the bare
         // `handle` or the `handle.typ` escape (those synthesized anchors are not
         // prefixed), so section labels no longer suppress a handle anchor or
@@ -538,7 +538,7 @@ mod tests {
         let spine = VirtualSpine::build(&files, &content, root, layout, true).unwrap();
         let v = &spine.vertebrae[0];
 
-        // The raw source is retained for the Mold stage.
+        // The raw source is retained for the Mould stage.
         assert!(v.source.contains("<etal>"));
         // The definition and the reference are both captured, with byte ranges.
         assert_eq!(
@@ -562,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn mold_prefixes_labels_and_gates_on_flag() {
+    fn mould_prefixes_labels_and_gates_on_flag() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let content = root.join("content");
@@ -577,15 +577,15 @@ mod tests {
         let spine = VirtualSpine::build(&files, &content, root, layout, true).unwrap();
 
         // main is the synthesized bundle source in both cases.
-        let molded = spine.mold(true);
-        assert_eq!(molded.main, spine.source());
+        let moulded = spine.mould(true);
+        assert_eq!(moulded.main, spine.source());
         // With prefixing on, the vertebra's body is rewritten under its handle.
-        let body = &molded.bodies["content/intro.typ"];
+        let body = &moulded.bodies["content/intro.typ"];
         assert!(body.contains("<intro:etal>"));
         assert!(body.contains("@intro:etal"));
 
         // With prefixing off, nothing is rewritten (no overlay entry).
-        assert!(spine.mold(false).bodies.is_empty());
+        assert!(spine.mould(false).bodies.is_empty());
     }
 
     #[test]

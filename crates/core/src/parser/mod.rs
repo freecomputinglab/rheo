@@ -37,7 +37,7 @@ pub struct ExtractedNodes {
     pub rheo_vars: Vec<RheoVar>,
     /// Label definition and reference sites (with byte ranges), partitioned by
     /// role. Definition names drive the canonical-handle machinery; the full
-    /// sites are retained so the Mold stage can rewrite them.
+    /// sites are retained so the Mould stage can rewrite them.
     pub labels: LabelSites,
     /// Parsed `#set document(date: datetime(...))` timestamp, if present.
     pub document_date: Option<DocumentDate>,

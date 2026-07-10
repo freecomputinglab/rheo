@@ -1,10 +1,10 @@
-//! The Mold stage: rewrite vertebra sources before Typst compilation.
+//! The Mould stage: rewrite vertebra sources before Typst compilation.
 //!
 //! A [`SyntaxRewrite`] is a decided edit at a site — a map from the span's
 //! current text to its replacement. Producers turn a vertebra's `SyntaxSite`s
 //! into `SyntaxRewrite`s. [`Rewrites`] collects them and applies them
-//! **end-first** (so earlier byte offsets stay valid). [`VirtualSpine::mold`]
-//! runs the producers per vertebra and returns a [`SpineMold`]: the synthesized
+//! **end-first** (so earlier byte offsets stay valid). [`VirtualSpine::mould`]
+//! runs the producers per vertebra and returns a [`SpineMould`]: the synthesized
 //! main plus each vertebra's rewritten body, ready to hand to the Cast stage
 //! (Typst bundle compilation).
 
@@ -17,7 +17,7 @@ use std::ops::Range;
 /// with the result of mapping their current text.
 ///
 /// A rewrite kind implements this to describe how one class of site is edited;
-/// molding is agnostic to which kinds exist.
+/// moulding is agnostic to which kinds exist.
 pub trait SyntaxRewrite {
     /// Byte range of the span to replace in the original source.
     fn range(&self) -> Range<usize>;
@@ -57,8 +57,8 @@ impl Rewrites {
     }
 }
 
-/// The molded virtual Typst file handed to the Cast stage.
-pub struct SpineMold {
+/// The moulded virtual Typst file handed to the Cast stage.
+pub struct SpineMould {
     /// The synthesized `#document(…)[…#include…]` main (see [`VirtualSpine::bundle_source`]).
     pub main: String,
     /// Rewritten source per vertebra, keyed by its `#include` path (`Vertebra::rel_path`).
@@ -67,11 +67,11 @@ pub struct SpineMold {
 }
 
 impl Vertebra {
-    /// Collect this vertebra's Mold rewrites and apply them to its source.
+    /// Collect this vertebra's Mould rewrites and apply them to its source.
     ///
-    /// Returns `None` when there are no rewrites (an identity mold), so the
+    /// Returns `None` when there are no rewrites (an identity mould), so the
     /// caller can omit the vertebra from the overlay and let it disk-read.
-    pub fn mold(&self, prefix_labels: bool) -> Option<String> {
+    pub fn mould(&self, prefix_labels: bool) -> Option<String> {
         let rewrites = self.rewrites(prefix_labels);
         if rewrites.is_empty() {
             return None;
@@ -79,7 +79,7 @@ impl Vertebra {
         Some(rewrites.apply(&self.source))
     }
 
-    /// Gather the rewrites every Mold producer wants applied to this vertebra.
+    /// Gather the rewrites every Mould producer wants applied to this vertebra.
     ///
     /// The producer set is the extension seam: rewrite producers append here
     /// (gated by `prefix_labels`), and format plugins may contribute their own.
@@ -97,19 +97,19 @@ impl Vertebra {
 }
 
 impl VirtualSpine {
-    /// Mold the spine: synthesize the main and rewrite each vertebra's body.
+    /// Mould the spine: synthesize the main and rewrite each vertebra's body.
     ///
     /// When `prefix_labels` is disabled (or a vertebra has no rewrites), the
     /// vertebra is omitted from `bodies` and served from disk unchanged.
-    pub fn mold(&self, prefix_labels: bool) -> SpineMold {
+    pub fn mould(&self, prefix_labels: bool) -> SpineMould {
         let main = self.bundle_source().to_string();
         let mut bodies = HashMap::new();
         for vertebra in &self.vertebrae {
-            if let Some(body) = vertebra.mold(prefix_labels) {
+            if let Some(body) = vertebra.mould(prefix_labels) {
                 bodies.insert(vertebra.rel_path.clone(), body);
             }
         }
-        SpineMold { main, bodies }
+        SpineMould { main, bodies }
     }
 }
 
