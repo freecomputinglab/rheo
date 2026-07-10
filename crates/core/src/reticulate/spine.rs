@@ -136,6 +136,7 @@ impl VirtualSpine {
         content_dir: &Path,
         project_root: &Path,
         layout: SpineLayout,
+        prefix_labels: bool,
     ) -> Result<Self> {
         // Stem relative to content_dir (no extension, forward-slash).
         let rel_stems: Vec<String> = files
@@ -228,10 +229,26 @@ impl VirtualSpine {
             .collect();
         let file_infos = file_infos?;
 
-        // Union of all user-authored labels across the entire spine.
+        // Union of all user-authored labels across the spine, as they will land
+        // in the bundle. When `prefix_labels` is on, the Mold stage namespaces
+        // every definition to `handle:name` (see `LabelRewrite`), so the checks
+        // below must compare against the prefixed names — the same rule Mold
+        // uses. A consequence: a prefixed label can never equal the bare
+        // `handle` or the `handle.typ` escape (those synthesized anchors are not
+        // prefixed), so section labels no longer suppress a handle anchor or
+        // collide with an escape. Whole-page `@handle` / `@handle.typ` still
+        // resolve via the synthesized anchors.
         let all_user_labels: HashSet<String> = file_infos
             .iter()
-            .flat_map(|fi| fi.sites.definitions.iter().map(|d| d.name.clone()))
+            .flat_map(|fi| {
+                fi.sites.definitions.iter().map(move |d| {
+                    if prefix_labels {
+                        format!("{}:{}", fi.handle, d.name)
+                    } else {
+                        d.name.clone()
+                    }
+                })
+            })
             .collect();
 
         // Second pass: assign emit_handle and check escape uniqueness.
@@ -496,7 +513,7 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
-        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+        let spine = VirtualSpine::build(&files, &content, root, layout, true).unwrap();
 
         assert_eq!(spine.vertebrae[0].handle, "intro");
         assert_eq!(spine.vertebrae[0].extra_handles, vec!["intro.typ"]);
@@ -518,7 +535,7 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
-        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+        let spine = VirtualSpine::build(&files, &content, root, layout, true).unwrap();
         let v = &spine.vertebrae[0];
 
         // The raw source is retained for the Mold stage.
@@ -557,7 +574,7 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
-        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+        let spine = VirtualSpine::build(&files, &content, root, layout, true).unwrap();
 
         // main is the synthesized bundle source in both cases.
         let molded = spine.mold(true);
@@ -588,7 +605,7 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
-        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+        let spine = VirtualSpine::build(&files, &content, root, layout, true).unwrap();
 
         assert_eq!(spine.vertebrae[0].handle, "a:notes");
         assert_eq!(spine.vertebrae[1].handle, "b:notes");
@@ -729,7 +746,8 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
-        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+        // Without prefixing, the raw `<intro>` collides with the canonical handle.
+        let spine = VirtualSpine::build(&files, &content, root, layout, false).unwrap();
 
         assert_eq!(spine.vertebrae[0].handle, "intro");
         // Canonical was user-claimed → not emitted.
@@ -756,7 +774,7 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
-        let result = VirtualSpine::build(&files, &content, root, layout);
+        let result = VirtualSpine::build(&files, &content, root, layout, false);
         match result {
             Err(e) => {
                 let msg = e.to_string();
@@ -764,5 +782,44 @@ mod tests {
             }
             Ok(_) => panic!("expected escape collision error"),
         }
+    }
+
+    #[test]
+    fn prefixing_keeps_handle_anchor_when_user_label_matches() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        // Hand-authored `<intro>` becomes `<intro:intro>` under prefixing, so it no
+        // longer occupies the bare canonical handle.
+        fs::write(content.join("intro.typ"), "= Intro <intro>\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout, true).unwrap();
+
+        // Canonical is not suppressed: the prefixed label can't equal the handle.
+        assert!(spine.vertebrae[0].emit_handle);
+    }
+
+    #[test]
+    fn prefixing_avoids_escape_collision_from_user_label() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        // `<intro.typ>` would collide with the escape alias in raw mode, but under
+        // prefixing it becomes `<intro:intro.typ>` and no longer collides.
+        fs::write(content.join("intro.typ"), "= Intro <intro.typ>\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        assert!(VirtualSpine::build(&files, &content, root, layout, true).is_ok());
     }
 }

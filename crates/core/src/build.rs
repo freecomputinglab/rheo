@@ -260,7 +260,7 @@ impl Build {
         );
 
         let virtual_spine =
-            VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout)?;
+            VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout, true)?;
         virtual_spine.check_output_collisions()?;
 
         let spine_source = virtual_spine.source();
@@ -390,7 +390,7 @@ impl Build {
             );
 
             let virtual_spine =
-                VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout)?;
+                VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout, true)?;
             virtual_spine.check_output_collisions()?;
 
             let spine_source = virtual_spine.source();
