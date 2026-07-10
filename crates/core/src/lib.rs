@@ -3,11 +3,11 @@ pub mod build;
 pub mod compile;
 pub mod config;
 pub mod diagnostics;
-pub mod init_templates;
 pub mod parser;
 pub mod plugins;
 pub mod reticulate;
 pub mod rheo_packages;
+pub mod templates;
 pub mod util;
 pub mod world;
 
