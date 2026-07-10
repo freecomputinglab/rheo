@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 // Re-export logging functionality
-pub use rheo_core::logging;
+pub use rheo_core::diagnostics::logging;
 
 mod migrate;
 

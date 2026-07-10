@@ -4,15 +4,12 @@ pub mod compile;
 pub mod config;
 pub mod constants;
 pub mod diagnostics;
-pub mod error;
 pub mod html_utils;
 pub mod init_templates;
-pub mod logging;
 pub mod parser;
 pub mod path_utils;
 pub mod pdf_utils;
 pub mod plugins;
-pub mod results;
 pub mod reticulate;
 pub mod rheo_packages;
 pub mod typst_types;
@@ -25,10 +22,10 @@ pub mod world;
 pub use config::ManifestVersion;
 pub use config::RheoConfig;
 pub use constants::*;
-pub use error::RheoError;
+pub use diagnostics::error::RheoError;
+pub use diagnostics::results::{CompilationResults, FormatResult};
 pub use globset::{Glob, GlobSet, GlobSetBuilder};
 pub use path_utils::PathExt;
-pub use results::{CompilationResults, FormatResult};
 
 // === Plugin API re-exports ===
 
