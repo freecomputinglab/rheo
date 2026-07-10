@@ -360,15 +360,6 @@ impl Build {
                 vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
             };
 
-            let ctx = PluginContext {
-                project: &self.project,
-                output_dir: &plugin_output_dir,
-                spine: &spine,
-                config: plugin_section,
-                assets: &resolved_assets,
-                font_dirs: &self.font_dirs,
-            };
-
             // Build VirtualSpine from plugin's declared layout + project context.
             let layout = spine_layout_for(
                 plugin.spine_layout_kind(),
@@ -405,6 +396,17 @@ impl Build {
                 prefix_labels,
             )?;
             virtual_spine.check_output_collisions()?;
+
+            // Expose the pre-Mould site map (handles + label sites) to the plugin.
+            let ctx = PluginContext {
+                project: &self.project,
+                output_dir: &plugin_output_dir,
+                spine: &spine,
+                config: plugin_section,
+                assets: &resolved_assets,
+                font_dirs: &self.font_dirs,
+                site_map: virtual_spine.site_map(),
+            };
 
             let moulded = virtual_spine.mould(prefix_labels);
             debug!(plugin = plugin.name(), "moulded virtual spine source");

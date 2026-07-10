@@ -248,7 +248,9 @@ mod tests {
     #[test]
     fn test_feed_exclude_omits_entry() {
         use rheo_core::config::project::{ProjectConfig, ProjectMode};
-        use rheo_core::{PluginSection, RheoConfig, RheoValue, SpineOptions, TypstFormat};
+        use rheo_core::{
+            PluginSection, RheoConfig, RheoValue, SpineOptions, SpineSites, TypstFormat,
+        };
         use std::collections::HashMap;
         use typst::foundations::Bytes;
 
@@ -301,6 +303,7 @@ mod tests {
             config: &section,
             assets: &assets,
             font_dirs: &font_dirs,
+            site_map: SpineSites::empty(),
         };
         let html_cfg = crate::HtmlConfig::default();
 

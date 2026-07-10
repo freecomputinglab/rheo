@@ -294,6 +294,23 @@ impl VirtualSpine {
         })
     }
 
+    /// A read-only, per-vertebra view of extracted syntax sites for plugins.
+    ///
+    /// Exposes each vertebra's include path, handle, and label sites without
+    /// handing plugins the compilation-facing spine itself.
+    pub fn site_map(&self) -> crate::plugins::SpineSites<'_> {
+        crate::plugins::SpineSites::new(
+            self.vertebrae
+                .iter()
+                .map(|v| crate::plugins::VertebraSites {
+                    rel_path: &v.rel_path,
+                    handle: &v.handle,
+                    sites: &v.sites,
+                })
+                .collect(),
+        )
+    }
+
     /// Validate that no two vertebrae produce the same output path.
     ///
     /// Skipped for `SingleCombined` layouts where all vertebrae intentionally share
@@ -859,6 +876,47 @@ mod tests {
             format: "html".into(),
         };
         assert!(VirtualSpine::build(&files, &content, root, layout, true).is_ok());
+    }
+
+    #[test]
+    fn site_map_exposes_rel_path_handle_and_sites() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro <etal>\n\nSee @etal.\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout, true).unwrap();
+
+        // The plugin-facing site map mirrors the spine's vertebrae.
+        let map = spine.site_map();
+        let views = map.vertebrae();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].rel_path, "content/intro.typ");
+        assert_eq!(views[0].handle, "intro");
+        assert_eq!(
+            views[0]
+                .sites
+                .definitions
+                .iter()
+                .map(|d| d.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["etal"]
+        );
+        assert_eq!(
+            views[0]
+                .sites
+                .references
+                .iter()
+                .map(|r| r.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["etal"]
+        );
     }
 
     #[test]
