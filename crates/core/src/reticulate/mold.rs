@@ -8,6 +8,7 @@
 //! main plus each vertebra's rewritten body, ready to hand to the Cast stage
 //! (Typst bundle compilation).
 
+use super::label_rewrite::LabelRewrite;
 use super::spine::{Vertebra, VirtualSpine};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -83,9 +84,13 @@ impl Vertebra {
     /// The producer set is the extension seam: rewrite producers append here
     /// (gated by `prefix_labels`), and format plugins may contribute their own.
     fn rewrites(&self, prefix_labels: bool) -> Rewrites {
-        let list: Vec<Box<dyn SyntaxRewrite>> = Vec::new();
+        let mut list: Vec<Box<dyn SyntaxRewrite>> = Vec::new();
         if prefix_labels {
-            // Rewrite producers are appended here.
+            list.extend(
+                LabelRewrite::collect(self)
+                    .into_iter()
+                    .map(|r| Box::new(r) as Box<dyn SyntaxRewrite>),
+            );
         }
         Rewrites(list)
     }

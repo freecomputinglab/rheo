@@ -545,7 +545,7 @@ mod tests {
     }
 
     #[test]
-    fn mold_main_matches_source_and_has_no_bodies_without_producers() {
+    fn mold_prefixes_labels_and_gates_on_flag() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let content = root.join("content");
@@ -559,11 +559,16 @@ mod tests {
         };
         let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
 
+        // main is the synthesized bundle source in both cases.
         let molded = spine.mold(true);
-        // main is the synthesized bundle source.
         assert_eq!(molded.main, spine.source());
-        // No producers wired yet, so nothing is rewritten (identity mold).
-        assert!(molded.bodies.is_empty());
+        // With prefixing on, the vertebra's body is rewritten under its handle.
+        let body = &molded.bodies["content/intro.typ"];
+        assert!(body.contains("<intro:etal>"));
+        assert!(body.contains("@intro:etal"));
+
+        // With prefixing off, nothing is rewritten (no overlay entry).
+        assert!(spine.mold(false).bodies.is_empty());
     }
 
     #[test]
