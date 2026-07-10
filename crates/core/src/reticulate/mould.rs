@@ -8,7 +8,6 @@
 //! main plus each vertebra's rewritten body, ready to hand to the Cast stage
 //! (Typst bundle compilation).
 
-use super::label_rewrite::LabelRewrite;
 use super::spine::{Vertebra, VirtualSpine};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -67,12 +66,12 @@ pub struct SpineMould {
 }
 
 impl Vertebra {
-    /// Collect this vertebra's Mould rewrites and apply them to its source.
+    /// Apply this vertebra's Mould rewrites to its source.
     ///
     /// Returns `None` when there are no rewrites (an identity mould), so the
     /// caller can omit the vertebra from the overlay and let it disk-read.
-    pub fn mould(&self, prefix_labels: bool) -> Option<String> {
-        let rewrites = self.rewrites(prefix_labels);
+    pub fn mould(&self) -> Option<String> {
+        let rewrites = self.rewrites();
         if rewrites.is_empty() {
             return None;
         }
@@ -81,31 +80,24 @@ impl Vertebra {
 
     /// Gather the rewrites every Mould producer wants applied to this vertebra.
     ///
-    /// The producer set is the extension seam: rewrite producers append here
-    /// (gated by `prefix_labels`), and format plugins may contribute their own.
-    fn rewrites(&self, prefix_labels: bool) -> Rewrites {
-        let mut list: Vec<Box<dyn SyntaxRewrite>> = Vec::new();
-        if prefix_labels {
-            list.extend(
-                LabelRewrite::collect(self)
-                    .into_iter()
-                    .map(|r| Box::new(r) as Box<dyn SyntaxRewrite>),
-            );
-        }
-        Rewrites(list)
+    /// This is the extension seam: rewrite producers append here, and format
+    /// plugins may contribute their own. No producers are wired today, so the
+    /// Mould stage is an identity — the source is served unchanged.
+    fn rewrites(&self) -> Rewrites {
+        Rewrites(Vec::new())
     }
 }
 
 impl VirtualSpine {
-    /// Mould the spine: synthesize the main and rewrite each vertebra's body.
+    /// Mould the spine: synthesize the main and apply each vertebra's rewrites.
     ///
-    /// When `prefix_labels` is disabled (or a vertebra has no rewrites), the
-    /// vertebra is omitted from `sources` and served from disk unchanged.
-    pub fn mould(&self, prefix_labels: bool) -> SpineMould {
+    /// A vertebra with no rewrites is omitted from `sources` and served from
+    /// disk unchanged. With no producers wired, `sources` is empty (identity).
+    pub fn mould(&self) -> SpineMould {
         let main = self.bundle_source().to_string();
         let mut sources = HashMap::new();
         for vertebra in &self.vertebrae {
-            if let Some(body) = vertebra.mould(prefix_labels) {
+            if let Some(body) = vertebra.mould() {
                 sources.insert(vertebra.rel_path.clone(), body);
             }
         }

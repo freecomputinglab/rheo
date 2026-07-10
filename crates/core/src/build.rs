@@ -259,17 +259,11 @@ impl Build {
             "building virtual spine for watch mode"
         );
 
-        let prefix_labels = self.project.config.prefix_labels;
-        let virtual_spine = VirtualSpine::build(
-            &spine_files,
-            &content_dir,
-            &self.project.root,
-            layout,
-            prefix_labels,
-        )?;
+        let virtual_spine =
+            VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout)?;
         virtual_spine.check_output_collisions()?;
 
-        let moulded = virtual_spine.mould(prefix_labels);
+        let moulded = virtual_spine.mould();
 
         let world = RheoWorld::new_for_bundle(
             &self.project.root,
@@ -387,14 +381,8 @@ impl Build {
                 "building virtual spine"
             );
 
-            let prefix_labels = self.project.config.prefix_labels;
-            let virtual_spine = VirtualSpine::build(
-                &spine_files,
-                &content_dir,
-                &self.project.root,
-                layout,
-                prefix_labels,
-            )?;
+            let virtual_spine =
+                VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout)?;
             virtual_spine.check_output_collisions()?;
 
             // Expose the pre-Mould site map (handles + label sites) to the plugin.
@@ -408,7 +396,7 @@ impl Build {
                 site_map: virtual_spine.site_map(),
             };
 
-            let moulded = virtual_spine.mould(prefix_labels);
+            let moulded = virtual_spine.mould();
             debug!(plugin = plugin.name(), "moulded virtual spine source");
 
             // Single Typst bundle compile for this plugin.
