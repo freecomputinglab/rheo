@@ -47,7 +47,7 @@ pub use plugins::{
     AssetConfig, CastVertebra, FormatInitTemplate, FormatPlugin, OpenHandle, PackageAssets,
     PluginContext, ResolvedPackage, ServerHandle, SpineLayoutKind, SpineOptions, TypstFormat,
 };
-pub use reticulate::types::RheoValue;
+pub use reticulate::parser::RheoValue;
 
 // HTML/PDF export utilities
 pub use compile::{compile_document_to_string, document_to_pdf_bytes};

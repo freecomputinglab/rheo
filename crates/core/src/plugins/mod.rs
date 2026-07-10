@@ -95,7 +95,7 @@ pub struct CastVertebra {
     /// Parsed `#set document(date:)` timestamp, if present.
     pub date: Option<chrono::DateTime<chrono::Utc>>,
     /// Harvested `rheo-*` variables from the vertebra's source file.
-    pub vars: std::collections::HashMap<String, crate::reticulate::types::RheoValue>,
+    pub vars: std::collections::HashMap<String, crate::reticulate::parser::RheoValue>,
 }
 
 impl CastVertebra {

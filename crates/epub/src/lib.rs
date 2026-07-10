@@ -387,7 +387,7 @@ fn extract_language(html_string: &str) -> Option<String> {
 /// Checks rheo-author var first, then falls back to HTML meta tag.
 /// Returns `None` if no author found.
 fn extract_author(
-    vars: &std::collections::HashMap<String, rheo_core::reticulate::types::RheoValue>,
+    vars: &std::collections::HashMap<String, rheo_core::reticulate::parser::RheoValue>,
     html_string: &str,
 ) -> Option<String> {
     use markup5ever_rcdom::NodeData;

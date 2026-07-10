@@ -3,7 +3,7 @@ use crate::pdf_utils::DocumentTitle;
 use crate::plugins::SpineOptions;
 use crate::reticulate::bundle_source::BundleSource;
 use crate::reticulate::parser;
-use crate::reticulate::types::{DocumentDate, RheoValue};
+use crate::reticulate::parser::{DocumentDate, RheoValue};
 use crate::{Result, RheoError, TYP_EXT};
 use std::collections::{HashMap, HashSet};
 use std::fs;
