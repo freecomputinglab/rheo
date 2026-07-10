@@ -43,6 +43,7 @@ build_dir = "build"      # optional
 formats = ["html", "pdf", "epub"]  # default formats
 font_dirs = ["fonts"]    # optional; replaces autoscan of fonts/ directory
 copy = ["*.txt"]         # optional; glob patterns copied to every plugin output dir
+prefix_labels = true     # optional; auto-namespace authored labels by handle (default true)
 
 [html]
 feed_base_url = "https://example.com"  # optional; when set, emits build/html/feed.xml (Atom)
@@ -79,6 +80,8 @@ vertebrae = ["cover.typ", "chapters/**/*.typ"]
 
 Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title and spine are inferred from filename/directory.
 
+**`prefix_labels`** (top-level, default `true`): auto-namespace every authored label by its vertebra handle (see [Section-label prefixing](#section-label-prefixing)). Applies to every format's bundle. Set to `false` to disable and keep raw authored labels — needed only for projects that still manually prefix their anchors; with it off, an authored label that matches a vertebra's canonical handle collides exactly as before.
+
 **Font directory resolution:** Without `font_dirs` in config, `fonts/` at project root is auto-discovered. Setting `font_dirs` replaces autoscan (include `"fonts"` explicitly if desired). `--font-dir` CLI flag always appends.
 
 ## Cross-file references
@@ -99,6 +102,24 @@ rheo assigns each vertebra a canonical label derived from its path relative to t
 **Canonical-skip rule:** if a user-authored label in the project already uses the canonical name, rheo silently skips injecting it — the vertebra is still reachable via its escape form.
 
 **Escape-collision error:** if the escape label (`<handle.typ>`) collides with any user-authored label or another vertebra's escape label, the build fails with an error naming the offending file and label.
+
+### Section-label prefixing
+
+Because the whole spine is collated into one virtual Typst bundle, authored labels share a single flat namespace. rheo removes the need to hand-prefix them: every label a vertebra **defines** is automatically namespaced with that vertebra's handle (using the `:` divider), and the vertebra's **local** references are rewritten to match — so bare in-file refs still resolve.
+
+A heading `=== Et alia <etal>` in `content/26w27.typ`:
+- is referenced **globally**, from any other file, as `@26w27:etal`;
+- is referenced **locally**, within `26w27.typ`, as bare `@etal` (rheo rewrites it to `@26w27:etal`).
+
+Details:
+- **Prefix = the full vertebra handle.** `content/chapters/intro.typ` with `<foo>` → globally `@chapters:intro:foo`.
+- **Labels already containing `:`** simply gain a further prefix: `<fig:chart>` in `26w27.typ` → `<26w27:fig:chart>`.
+- **Only local refs are rewritten.** A reference whose target is *not* a label the same file defines is left alone — this is what keeps bibliography citations and already-qualified cross-file refs (`@26w24:framework`) intact.
+- **Whole-page anchors are unaffected:** `@26w27` / `@26w27.typ` still resolve via the synthesized handle anchors, independent of section labels.
+
+All rewriting is done over the Typst syntax AST (never regex): each `<name>`/`@name` token is spliced at its exact byte range.
+
+**HTML/URL note:** `:` is valid in an HTML `id` and in a URL fragment, so `id="26w27:etal"` and `href="#26w27:etal"` work as-is. Only **CSS selectors** need the colon escaped — `#26w27\:etal { … }`.
 
 **Label vs. citation-key clash:** a local reference `@name` is prefixed only when `name` is a label the same file *defines*. Because bibliography citations share the `@key` syntax, a file that both defines `<key>` and cites `@key` will have the citation rewritten to `@handle:key` and detached from the bibliography — rheo cannot tell the two apart by name alone. Bib keys are conventionally distinct from section labels; if a clash is unavoidable, rename the label.
 
