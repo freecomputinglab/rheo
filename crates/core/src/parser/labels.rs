@@ -75,7 +75,7 @@ impl SyntaxSite for LabelSite {
 /// `definitions` are markup-context `<name>` labels (attached to content).
 /// `references` are `@name` markers plus code-context `<name>` labels such as
 /// `#link(<name>)` / `#ref(<name>)`.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct LabelSites {
     pub definitions: Vec<LabelSite>,
     pub references: Vec<LabelSite>,

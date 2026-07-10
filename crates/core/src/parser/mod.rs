@@ -37,8 +37,10 @@ use typst::syntax::Source;
 pub struct ExtractedNodes {
     /// Top-level `#let rheo-<key> = "..."` bindings harvested from the source.
     pub rheo_vars: Vec<RheoVar>,
-    /// All `<label>` names defined in the source (angle brackets stripped).
-    pub user_labels: Vec<String>,
+    /// Label definition and reference sites (with byte ranges), partitioned by
+    /// role. Definition names drive the canonical-handle machinery; the full
+    /// sites are retained so the Mold stage can rewrite them.
+    pub labels: LabelSites,
     /// Parsed `#set document(date: datetime(...))` timestamp, if present.
     pub document_date: Option<DocumentDate>,
 }
@@ -60,13 +62,16 @@ pub fn extract_nodes(source: &Source) -> ExtractedNodes {
         RheoVar::visit(s, n, o, c, &mut rheo_vars);
         DocumentDate::visit(s, n, o, c, &mut dates);
     });
+    let mut label_sites = LabelSites::default();
+    for site in labels {
+        match site.role {
+            LabelRole::Definition => label_sites.definitions.push(site),
+            LabelRole::Reference => label_sites.references.push(site),
+        }
+    }
     ExtractedNodes {
         rheo_vars,
-        user_labels: labels
-            .into_iter()
-            .filter(|l| l.role == LabelRole::Definition)
-            .map(|l| l.name)
-            .collect(),
+        labels: label_sites,
         document_date: dates.into_iter().next(),
     }
 }
