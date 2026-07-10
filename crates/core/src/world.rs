@@ -47,6 +47,10 @@ pub struct RheoWorld {
     /// In-memory source for the main file. When set, the world serves this
     /// content for the main FileId instead of reading from disk.
     virtual_main_source: Option<String>,
+    /// Per-vertebra source overlay from the Mould stage, keyed by project-relative
+    /// include path (e.g. `content/intro.typ`). When an included file matches, the
+    /// world serves the rewritten source instead of reading it from disk.
+    bodies: HashMap<String, String>,
 }
 
 struct FileSlot {
@@ -93,16 +97,20 @@ impl RheoWorld {
             format_name: format_name.map(str::to_string),
             plugin_library,
             virtual_main_source: None,
+            bodies: HashMap::new(),
         })
     }
 
     /// Create a world for bundle spine compilation with a synthesized in-memory main.
     ///
-    /// The caller passes the Typst source produced by `VirtualSpine::source()`; the world
-    /// serves it for the synthetic main file ID, bypassing disk.
+    /// The caller passes the moulded spine: the synthesized main source plus a
+    /// per-vertebra source overlay (rewritten bodies keyed by include path). The
+    /// world serves the main for the synthetic main file ID and each overlay entry
+    /// for its vertebra, bypassing disk.
     pub fn new_for_bundle(
         root: &Path,
         virtual_main_source: String,
+        bodies: HashMap<String, String>,
         format_name: Option<&str>,
         font_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
@@ -132,6 +140,7 @@ impl RheoWorld {
             format_name: format_name.map(str::to_string),
             plugin_library: None,
             virtual_main_source: Some(virtual_main_source),
+            bodies,
         })
     }
 
@@ -338,11 +347,17 @@ impl World for RheoWorld {
             return Ok(source.clone());
         }
 
-        // Serve the synthesized virtual main from memory, bypassing disk.
+        // Serve the synthesized virtual main, then any moulded vertebra overlay,
+        // from memory — falling back to disk for everything else.
         let mut text = if id == self.main
             && let Some(ref vm) = self.virtual_main_source
         {
             vm.clone()
+        } else if let Some(body) = self
+            .bodies
+            .get(id.vpath().get_with_slash().trim_start_matches('/'))
+        {
+            body.clone()
         } else {
             let path = self.path_for_id(id)?;
             fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?
@@ -463,5 +478,41 @@ impl<'a> Files<'a> for RheoWorld {
                 given,
                 max: source.len_lines(),
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn serves_moulded_body_overlay_instead_of_disk() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Overlay carries a rewritten body; the file itself never exists on disk,
+        // so serving it proves the overlay is consulted before the disk read.
+        let mut bodies = HashMap::new();
+        bodies.insert(
+            "content/intro.typ".to_string(),
+            "= Intro <intro:etal>\n".to_string(),
+        );
+        let world = RheoWorld::new_for_bundle(
+            root,
+            "#document(\"intro.html\", format: \"html\")[]".to_string(),
+            bodies,
+            Some("html"),
+            vec![],
+        )
+        .unwrap();
+
+        let id = RootedPath::new(
+            VirtualRoot::Project,
+            VirtualPath::new("content/intro.typ").unwrap(),
+        )
+        .intern();
+        let source = World::source(&world, id).unwrap();
+        assert!(source.text().contains("<intro:etal>"));
     }
 }

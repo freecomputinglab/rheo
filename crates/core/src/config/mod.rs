@@ -131,6 +131,16 @@ pub struct RheoConfig {
     /// Per-plugin configuration sections, keyed by plugin name.
     /// Built from `[html]`, `[pdf]`, `[epub]` (and any other) table sections.
     pub plugin_sections: HashMap<String, PluginSection>,
+
+    /// Prefix every vertebra's authored labels with its handle during the Mould
+    /// stage, so section anchors are globally unique without manual stems.
+    /// Applies to every format's bundle. Default `true`.
+    pub prefix_labels: bool,
+}
+
+/// Serde default for `prefix_labels` (on unless explicitly disabled).
+fn default_true() -> bool {
+    true
 }
 
 impl Default for RheoConfig {
@@ -143,6 +153,7 @@ impl Default for RheoConfig {
             copy: vec![],
             font_dirs: vec![],
             plugin_sections: HashMap::new(),
+            prefix_labels: true,
         }
     }
 }
@@ -159,6 +170,8 @@ pub struct RheoConfigRaw {
     copy: Vec<String>,
     #[serde(default)]
     font_dirs: Vec<String>,
+    #[serde(default = "default_true")]
+    prefix_labels: bool,
     #[serde(flatten)]
     extra: HashMap<String, toml::Value>,
 }
@@ -183,6 +196,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             copy: raw.copy,
             font_dirs: raw.font_dirs,
             plugin_sections,
+            prefix_labels: raw.prefix_labels,
         })
     }
 }
@@ -367,6 +381,13 @@ mod tests {
         let toml = versioned_toml(r#"formats = ["pdf"]"#);
         let config = parse(&toml);
         assert_eq!(config.formats, vec!["pdf"]);
+    }
+
+    #[test]
+    fn test_prefix_labels_defaults_true_and_overrides() {
+        assert!(RheoConfig::default().prefix_labels);
+        assert!(parse(&versioned_toml("")).prefix_labels);
+        assert!(!parse(&versioned_toml("prefix_labels = false")).prefix_labels);
     }
 
     #[test]

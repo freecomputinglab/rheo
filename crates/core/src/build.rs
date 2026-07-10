@@ -259,15 +259,22 @@ impl Build {
             "building virtual spine for watch mode"
         );
 
-        let virtual_spine =
-            VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout, true)?;
+        let prefix_labels = self.project.config.prefix_labels;
+        let virtual_spine = VirtualSpine::build(
+            &spine_files,
+            &content_dir,
+            &self.project.root,
+            layout,
+            prefix_labels,
+        )?;
         virtual_spine.check_output_collisions()?;
 
-        let spine_source = virtual_spine.source();
+        let moulded = virtual_spine.mould(prefix_labels);
 
         let world = RheoWorld::new_for_bundle(
             &self.project.root,
-            spine_source,
+            moulded.main,
+            moulded.bodies,
             html_plugin.rheo_target(),
             self.font_dirs.clone(),
         )?;
@@ -389,17 +396,24 @@ impl Build {
                 "building virtual spine"
             );
 
-            let virtual_spine =
-                VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout, true)?;
+            let prefix_labels = self.project.config.prefix_labels;
+            let virtual_spine = VirtualSpine::build(
+                &spine_files,
+                &content_dir,
+                &self.project.root,
+                layout,
+                prefix_labels,
+            )?;
             virtual_spine.check_output_collisions()?;
 
-            let spine_source = virtual_spine.source();
-            debug!(plugin = plugin.name(), "created virtual spine source");
+            let moulded = virtual_spine.mould(prefix_labels);
+            debug!(plugin = plugin.name(), "moulded virtual spine source");
 
             // Single Typst bundle compile for this plugin.
             let world = RheoWorld::new_for_bundle(
                 &self.project.root,
-                spine_source,
+                moulded.main,
+                moulded.bodies,
                 plugin.rheo_target(),
                 self.font_dirs.clone(),
             )?;
