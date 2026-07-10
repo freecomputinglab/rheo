@@ -9,7 +9,6 @@ pub mod plugins;
 pub mod reticulate;
 pub mod rheo_packages;
 pub mod util;
-pub mod watch;
 pub mod world;
 
 // Note: Cli is now in rheo crate, not exported here

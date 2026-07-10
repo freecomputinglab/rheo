@@ -106,7 +106,7 @@ impl Build {
     /// Only packages that declare rheo assets in their `typst.toml` contribute a
     /// source root here, so the watched set stays tight (immutable `@preview`
     /// deps that declare nothing are never watched).
-    pub fn watch_asset_spec(&self) -> crate::watch::WatchAssetSpec {
+    pub fn watch_asset_spec(&self) -> crate::assets::watch::WatchAssetSpec {
         let default_section = PluginSection::default();
         let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
 
@@ -157,7 +157,7 @@ impl Build {
             }
         }
 
-        crate::watch::WatchAssetSpec::new(asset_paths, copy_globs, package_roots)
+        crate::assets::watch::WatchAssetSpec::new(asset_paths, copy_globs, package_roots)
     }
 
     /// Compile HTML to an in-memory VirtualFs for the dev server.
