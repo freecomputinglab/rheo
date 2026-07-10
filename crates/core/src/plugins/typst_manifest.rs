@@ -1,6 +1,6 @@
 use crate::config::PluginAssets;
-use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
 use crate::parser::extract_package_imports;
+use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
 use crate::rheo_packages::RheoPackages;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

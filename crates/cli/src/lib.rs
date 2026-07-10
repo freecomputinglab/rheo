@@ -1,9 +1,9 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use rheo_core::OpenHandle;
 use rheo_core::build::{Build, BuildOptions, resolve_build_dir};
-use rheo_core::manifest_version;
-use rheo_core::output::OutputConfig;
-use rheo_core::project::ProjectConfig;
+use rheo_core::config::manifest_version;
+use rheo_core::config::output::OutputConfig;
+use rheo_core::config::project::ProjectConfig;
 use rheo_core::watch::{WatchEvent, watch_project};
 use rheo_core::{FormatPlugin, Result, RheoError};
 use std::fs;

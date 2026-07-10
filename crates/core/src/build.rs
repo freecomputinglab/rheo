@@ -8,9 +8,9 @@
 use crate::assets::AssetResolver;
 use crate::compile::export_bundle;
 use crate::config::PluginSection;
-use crate::output::OutputConfig;
+use crate::config::output::OutputConfig;
+use crate::config::project::{ProjectConfig, ProjectMode};
 use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, SpineOptions, spine_layout_for};
-use crate::project::{ProjectConfig, ProjectMode};
 use crate::results::CompilationResults;
 use crate::reticulate::spine::VirtualSpine;
 use crate::world::RheoWorld;

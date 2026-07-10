@@ -1,5 +1,5 @@
 use crate::config::Spine;
-use crate::manifest_version::ManifestVersion;
+use crate::config::manifest_version::ManifestVersion;
 use crate::{Result, RheoConfig, RheoError};
 use tracing::warn;
 

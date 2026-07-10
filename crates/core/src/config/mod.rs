@@ -1,10 +1,16 @@
 use crate::Result;
-use crate::manifest_version::ManifestVersion;
-use crate::validation::ValidateConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use tracing::debug;
+
+pub mod manifest_version;
+pub mod output;
+pub mod project;
+pub mod validation;
+
+pub use manifest_version::ManifestVersion;
+use validation::ValidateConfig;
 
 /// Spine configuration from `rheo.toml`: glob patterns and title.
 ///

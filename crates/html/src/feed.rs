@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn test_feed_exclude_omits_entry() {
-        use rheo_core::project::{ProjectConfig, ProjectMode};
+        use rheo_core::config::project::{ProjectConfig, ProjectMode};
         use rheo_core::{PluginSection, RheoConfig, RheoValue, SpineOptions, TypstFormat};
         use std::collections::HashMap;
         use typst::foundations::Bytes;

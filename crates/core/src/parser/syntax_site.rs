@@ -170,7 +170,7 @@ mod tests {
     use typst::syntax::Source;
 
     fn count_nodes(node: &SyntaxNode) -> usize {
-        1 + node.children().map(|c| count_nodes(&c)).sum::<usize>()
+        1 + node.children().map(count_nodes).sum::<usize>()
     }
 
     #[test]

@@ -18,9 +18,9 @@
 
 use regex::{Captures, Regex};
 use rheo_core::build::resolve_effective_content_dir;
-use rheo_core::manifest_version::ManifestVersion;
+use rheo_core::config::manifest_version::ManifestVersion;
+use rheo_core::config::project::ProjectConfig;
 use rheo_core::path_utils::canonicalize_path;
-use rheo_core::project::ProjectConfig;
 use rheo_core::reticulate::{SpineLayout, VirtualSpine};
 use rheo_core::{Result, RheoError};
 use std::collections::HashMap;
@@ -287,7 +287,7 @@ mod tests {
                 ..Default::default()
             },
             typ_files: vec![content.join("intro.typ"), content.join("about.typ")],
-            mode: rheo_core::project::ProjectMode::Directory,
+            mode: rheo_core::config::project::ProjectMode::Directory,
             config_path: Some(root.join("rheo.toml")),
         };
         fs::write(
@@ -328,7 +328,7 @@ mod tests {
                 ..Default::default()
             },
             typ_files: vec![content.join("intro.typ"), sub.join("intro.typ")],
-            mode: rheo_core::project::ProjectMode::Directory,
+            mode: rheo_core::config::project::ProjectMode::Directory,
             config_path: Some(root.join("rheo.toml")),
         };
         fs::write(
@@ -369,7 +369,7 @@ mod tests {
                 ..Default::default()
             },
             typ_files: vec![content.join("intro.typ"), sub.join("intro.typ")],
-            mode: rheo_core::project::ProjectMode::Directory,
+            mode: rheo_core::config::project::ProjectMode::Directory,
             config_path: Some(root.join("rheo.toml")),
         };
         fs::write(

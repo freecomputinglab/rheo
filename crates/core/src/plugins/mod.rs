@@ -1,5 +1,5 @@
 use crate::config::PluginSection;
-use crate::project::ProjectConfig;
+use crate::config::project::ProjectConfig;
 use crate::reticulate::spine::SpineLayout;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

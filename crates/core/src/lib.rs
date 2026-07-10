@@ -8,29 +8,25 @@ pub mod error;
 pub mod html_utils;
 pub mod init_templates;
 pub mod logging;
-pub mod manifest_version;
-pub mod output;
 pub mod parser;
 pub mod path_utils;
 pub mod pdf_utils;
 pub mod plugins;
-pub mod project;
 pub mod results;
 pub mod reticulate;
 pub mod rheo_packages;
 pub mod typst_types;
-pub mod validation;
 pub mod watch;
 pub mod world;
 
 // Note: Cli is now in rheo crate, not exported here
 
 // === Core types (already exported) ===
+pub use config::ManifestVersion;
 pub use config::RheoConfig;
 pub use constants::*;
 pub use error::RheoError;
 pub use globset::{Glob, GlobSet, GlobSetBuilder};
-pub use manifest_version::ManifestVersion;
 pub use path_utils::PathExt;
 pub use results::{CompilationResults, FormatResult};
 
@@ -44,11 +40,11 @@ pub use build::{Build, BuildOptions};
 pub use config::{AssetsField, PluginAssets, PluginSection, Spine};
 
 // Plugin trait and context
+pub use parser::RheoValue;
 pub use plugins::{
     AssetConfig, CastVertebra, FormatInitTemplate, FormatPlugin, OpenHandle, PackageAssets,
     PluginContext, ResolvedPackage, ServerHandle, SpineLayoutKind, SpineOptions, TypstFormat,
 };
-pub use parser::RheoValue;
 
 // HTML/PDF export utilities
 pub use compile::{compile_document_to_string, document_to_pdf_bytes};
