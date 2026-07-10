@@ -589,6 +589,44 @@ mod tests {
     }
 
     #[test]
+    fn included_non_vertebra_partial_is_not_moulded() {
+        // A vertebra `#include`s a partial that is NOT itself a spine vertebra.
+        // Only spine vertebrae are moulded, so the partial is absent from the
+        // overlay — Typst reads it from disk and its labels stay unprefixed.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(
+            content.join("intro.typ"),
+            "= Intro <top>\n\n#include \"_shared.typ\"\n",
+        )
+        .unwrap();
+        // A shared partial defining its own label — not listed as a vertebra.
+        fs::write(content.join("_shared.typ"), "== Shared <shared>\n").unwrap();
+
+        // Only intro.typ is a spine vertebra; _shared.typ is a transitive include.
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout, true).unwrap();
+        let moulded = spine.mould(true);
+
+        // Only the vertebra is in the overlay; the partial is not (disk-served).
+        assert_eq!(moulded.sources.len(), 1);
+        assert!(moulded.sources.contains_key("content/intro.typ"));
+        assert!(!moulded.sources.contains_key("content/_shared.typ"));
+
+        // The vertebra's own label is prefixed; the `#include` is untouched, so the
+        // partial's `<shared>` reaches the bundle from disk, unprefixed.
+        let body = &moulded.sources["content/intro.typ"];
+        assert!(body.contains("<intro:top>"));
+        assert!(body.contains("#include \"_shared.typ\""));
+    }
+
+    #[test]
     fn nested_files_get_colon_qualified_handle() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();

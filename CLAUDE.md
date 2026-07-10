@@ -102,6 +102,8 @@ rheo assigns each vertebra a canonical label derived from its path relative to t
 
 **Label vs. citation-key clash:** a local reference `@name` is prefixed only when `name` is a label the same file *defines*. Because bibliography citations share the `@key` syntax, a file that both defines `<key>` and cites `@key` will have the citation rewritten to `@handle:key` and detached from the bibliography — rheo cannot tell the two apart by name alone. Bib keys are conventionally distinct from section labels; if a clash is unavoidable, rename the label.
 
+**Prefixing scope — spine vertebrae only:** label prefixing applies to spine vertebrae. A file pulled in via `#include` that is not itself a spine vertebra is served to Typst unchanged, so its labels are **not** namespaced. Consequences: (1) a label authored in a shared partial keeps its raw name; (2) if two vertebrae include the same partial that defines a label, the bundle gets a duplicate raw label → Typst error (the collision prefixing was meant to remove, but the partial isn't a vertebra so it isn't namespaced); (3) a vertebra's local `@foo` pointing at a label defined in an included partial is not rewritten (the partial's site isn't among the vertebra's own sites). Keep shared partials label-free, or promote them to spine vertebrae.
+
 ## Spine configuration
 
 **Spine vertebrae:** The `vertebrae` array in `[pdf.spine]` or `[epub.spine]` specifies which source files to include and in what order. Glob patterns are supported (e.g., `chapters/**/*.typ`).
