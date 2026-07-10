@@ -50,7 +50,7 @@ pub struct RheoWorld {
     /// Per-vertebra source overlay from the Mould stage, keyed by project-relative
     /// include path (e.g. `content/intro.typ`). When an included file matches, the
     /// world serves the rewritten source instead of reading it from disk.
-    bodies: HashMap<String, String>,
+    source_overlay: HashMap<String, String>,
 }
 
 struct FileSlot {
@@ -97,20 +97,20 @@ impl RheoWorld {
             format_name: format_name.map(str::to_string),
             plugin_library,
             virtual_main_source: None,
-            bodies: HashMap::new(),
+            source_overlay: HashMap::new(),
         })
     }
 
     /// Create a world for bundle spine compilation with a synthesized in-memory main.
     ///
     /// The caller passes the moulded spine: the synthesized main source plus a
-    /// per-vertebra source overlay (rewritten bodies keyed by include path). The
+    /// per-vertebra source overlay (rewritten sources keyed by include path). The
     /// world serves the main for the synthetic main file ID and each overlay entry
     /// for its vertebra, bypassing disk.
     pub fn new_for_bundle(
         root: &Path,
         virtual_main_source: String,
-        bodies: HashMap<String, String>,
+        source_overlay: HashMap<String, String>,
         format_name: Option<&str>,
         font_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
@@ -140,7 +140,7 @@ impl RheoWorld {
             format_name: format_name.map(str::to_string),
             plugin_library: None,
             virtual_main_source: Some(virtual_main_source),
-            bodies,
+            source_overlay,
         })
     }
 
@@ -354,7 +354,7 @@ impl World for RheoWorld {
         {
             vm.clone()
         } else if let Some(body) = self
-            .bodies
+            .source_overlay
             .get(id.vpath().get_with_slash().trim_start_matches('/'))
         {
             body.clone()
@@ -493,15 +493,15 @@ mod tests {
 
         // Overlay carries a rewritten body; the file itself never exists on disk,
         // so serving it proves the overlay is consulted before the disk read.
-        let mut bodies = HashMap::new();
-        bodies.insert(
+        let mut source_overlay = HashMap::new();
+        source_overlay.insert(
             "content/intro.typ".to_string(),
             "= Intro <intro:etal>\n".to_string(),
         );
         let world = RheoWorld::new_for_bundle(
             root,
             "#document(\"intro.html\", format: \"html\")[]".to_string(),
-            bodies,
+            source_overlay,
             Some("html"),
             vec![],
         )

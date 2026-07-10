@@ -580,12 +580,12 @@ mod tests {
         let moulded = spine.mould(true);
         assert_eq!(moulded.main, spine.source());
         // With prefixing on, the vertebra's body is rewritten under its handle.
-        let body = &moulded.bodies["content/intro.typ"];
+        let body = &moulded.sources["content/intro.typ"];
         assert!(body.contains("<intro:etal>"));
         assert!(body.contains("@intro:etal"));
 
         // With prefixing off, nothing is rewritten (no overlay entry).
-        assert!(spine.mould(false).bodies.is_empty());
+        assert!(spine.mould(false).sources.is_empty());
     }
 
     #[test]

@@ -63,7 +63,7 @@ pub struct SpineMould {
     pub main: String,
     /// Rewritten source per vertebra, keyed by its `#include` path (`Vertebra::rel_path`).
     /// A vertebra with no rewrites is omitted, so the world reads it from disk unchanged.
-    pub bodies: HashMap<String, String>,
+    pub sources: HashMap<String, String>,
 }
 
 impl Vertebra {
@@ -100,16 +100,16 @@ impl VirtualSpine {
     /// Mould the spine: synthesize the main and rewrite each vertebra's body.
     ///
     /// When `prefix_labels` is disabled (or a vertebra has no rewrites), the
-    /// vertebra is omitted from `bodies` and served from disk unchanged.
+    /// vertebra is omitted from `sources` and served from disk unchanged.
     pub fn mould(&self, prefix_labels: bool) -> SpineMould {
         let main = self.bundle_source().to_string();
-        let mut bodies = HashMap::new();
+        let mut sources = HashMap::new();
         for vertebra in &self.vertebrae {
             if let Some(body) = vertebra.mould(prefix_labels) {
-                bodies.insert(vertebra.rel_path.clone(), body);
+                sources.insert(vertebra.rel_path.clone(), body);
             }
         }
-        SpineMould { main, bodies }
+        SpineMould { main, sources }
     }
 }
 

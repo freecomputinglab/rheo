@@ -274,7 +274,7 @@ impl Build {
         let world = RheoWorld::new_for_bundle(
             &self.project.root,
             moulded.main,
-            moulded.bodies,
+            moulded.sources,
             html_plugin.rheo_target(),
             self.font_dirs.clone(),
         )?;
@@ -413,7 +413,7 @@ impl Build {
             let world = RheoWorld::new_for_bundle(
                 &self.project.root,
                 moulded.main,
-                moulded.bodies,
+                moulded.sources,
                 plugin.rheo_target(),
                 self.font_dirs.clone(),
             )?;
