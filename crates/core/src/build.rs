@@ -160,6 +160,70 @@ impl Build {
         crate::assets::watch::WatchAssetSpec::new(asset_paths, copy_globs, package_roots)
     }
 
+    /// Build the virtual spine for `plugin` and compile it to an in-memory bundle.
+    ///
+    /// Shared by the full build and the dev-server watch path: resolves the spine
+    /// options, generates the spine files for the project mode, builds and
+    /// collision-checks the `VirtualSpine`, then moulds it and compiles the Typst
+    /// bundle into a `VirtualFs`.
+    fn compile_spine(
+        &self,
+        plugin: &dyn FormatPlugin,
+        plugin_section: &PluginSection,
+        content_dir: &Path,
+    ) -> Result<(VirtualSpine, typst_bundle::VirtualFs)> {
+        // Resolve spine options.
+        let spine_cfg = plugin_section.spine.as_ref();
+        let spine = SpineOptions {
+            title: spine_cfg.and_then(|s| s.title.clone()),
+            vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
+        };
+
+        // Build VirtualSpine from plugin's declared layout + project context.
+        let layout = spine_layout_for(plugin.spine_layout_kind(), plugin, &self.project.name);
+        let spine_files = match self.project.mode {
+            ProjectMode::SingleFile => vec![self.project.typ_files[0].clone()],
+            ProjectMode::Directory => {
+                // When content_dir is explicit in config, vertebrae patterns are
+                // relative to it. When auto-detected or absent, vertebrae are
+                // project-root-relative (users write "content/**" explicitly).
+                let explicit_content_dir =
+                    self.project.config.resolve_content_dir(&self.project.root);
+                let generate_root = explicit_content_dir
+                    .as_deref()
+                    .unwrap_or(&self.project.root);
+                spine.generate(generate_root)?
+            }
+        };
+
+        debug!(
+            plugin = plugin.name(),
+            files = spine_files.len(),
+            "building virtual spine"
+        );
+
+        let virtual_spine =
+            VirtualSpine::build(&spine_files, content_dir, &self.project.root, layout)?;
+        virtual_spine.check_output_collisions()?;
+
+        let moulded = virtual_spine.mould();
+        let rheo_context = virtual_spine.rheo_context_preludes();
+
+        // Single Typst bundle compile for this plugin.
+        let world = RheoWorld::new_for_bundle(
+            &self.project.root,
+            moulded.main,
+            moulded.sources,
+            rheo_context,
+            plugin.rheo_target(),
+            self.font_dirs.clone(),
+        )?;
+        let bundle = world.compile_bundle()?;
+        let virtual_fs = export_bundle(&bundle)?;
+
+        Ok((virtual_spine, virtual_fs))
+    }
+
     /// Compile HTML to an in-memory VirtualFs for the dev server.
     ///
     /// Resolves assets (CSS/JS), copies them to the plugin output dir so the
@@ -228,54 +292,8 @@ impl Build {
             .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
             .unwrap_or_default();
 
-        // Resolve spine options.
-        let spine_cfg = plugin_section.spine.as_ref();
-        let spine = SpineOptions {
-            title: spine_cfg.and_then(|s| s.title.clone()),
-            vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
-        };
-
-        // Build VirtualSpine + compile.
-        let layout = spine_layout_for(
-            html_plugin.spine_layout_kind(),
-            html_plugin.as_ref(),
-            &self.project.name,
-        );
-        let spine_files = match self.project.mode {
-            ProjectMode::SingleFile => vec![self.project.typ_files[0].clone()],
-            ProjectMode::Directory => {
-                let explicit_content_dir =
-                    self.project.config.resolve_content_dir(&self.project.root);
-                let generate_root = explicit_content_dir
-                    .as_deref()
-                    .unwrap_or(&self.project.root);
-                spine.generate(generate_root)?
-            }
-        };
-
-        debug!(
-            plugin = html_plugin.name(),
-            files = spine_files.len(),
-            "building virtual spine for watch mode"
-        );
-
-        let virtual_spine =
-            VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout)?;
-        virtual_spine.check_output_collisions()?;
-
-        let moulded = virtual_spine.mould();
-        let rheo_context = virtual_spine.rheo_context_preludes();
-
-        let world = RheoWorld::new_for_bundle(
-            &self.project.root,
-            moulded.main,
-            moulded.sources,
-            rheo_context,
-            html_plugin.rheo_target(),
-            self.font_dirs.clone(),
-        )?;
-        let bundle = world.compile_bundle()?;
-        let virtual_fs = export_bundle(&bundle)?;
+        let (_virtual_spine, virtual_fs) =
+            self.compile_spine(html_plugin.as_ref(), plugin_section, &content_dir)?;
 
         // Inject CSS/JS link tags into each HTML entry in memory.
         let needs_injection = !css_paths.is_empty() || !js_paths.is_empty();
@@ -349,43 +367,16 @@ impl Build {
             let resolved_assets =
                 resolver.resolve(plugin.as_ref(), plugin_section, &manifest_blocks)?;
 
-            // Resolve spine options.
+            let (virtual_spine, virtual_fs) =
+                self.compile_spine(plugin.as_ref(), plugin_section, &content_dir)?;
+
+            // `spine` (used by PluginContext below) is re-derived here; `compile_spine`
+            // resolves its own copy internally to build the VirtualSpine.
             let spine_cfg = plugin_section.spine.as_ref();
             let spine = SpineOptions {
                 title: spine_cfg.and_then(|s| s.title.clone()),
                 vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
             };
-
-            // Build VirtualSpine from plugin's declared layout + project context.
-            let layout = spine_layout_for(
-                plugin.spine_layout_kind(),
-                plugin.as_ref(),
-                &self.project.name,
-            );
-            let spine_files = match self.project.mode {
-                ProjectMode::SingleFile => vec![self.project.typ_files[0].clone()],
-                ProjectMode::Directory => {
-                    // When content_dir is explicit in config, vertebrae patterns are
-                    // relative to it. When auto-detected or absent, vertebrae are
-                    // project-root-relative (users write "content/**" explicitly).
-                    let explicit_content_dir =
-                        self.project.config.resolve_content_dir(&self.project.root);
-                    let generate_root = explicit_content_dir
-                        .as_deref()
-                        .unwrap_or(&self.project.root);
-                    spine.generate(generate_root)?
-                }
-            };
-
-            debug!(
-                plugin = plugin.name(),
-                files = spine_files.len(),
-                "building virtual spine"
-            );
-
-            let virtual_spine =
-                VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout)?;
-            virtual_spine.check_output_collisions()?;
 
             let ctx = PluginContext {
                 project: &self.project,
@@ -395,22 +386,6 @@ impl Build {
                 assets: &resolved_assets,
                 font_dirs: &self.font_dirs,
             };
-
-            let moulded = virtual_spine.mould();
-            let rheo_context = virtual_spine.rheo_context_preludes();
-            debug!(plugin = plugin.name(), "moulded virtual spine source");
-
-            // Single Typst bundle compile for this plugin.
-            let world = RheoWorld::new_for_bundle(
-                &self.project.root,
-                moulded.main,
-                moulded.sources,
-                rheo_context,
-                plugin.rheo_target(),
-                self.font_dirs.clone(),
-            )?;
-            let bundle = world.compile_bundle()?;
-            let virtual_fs = export_bundle(&bundle)?;
 
             // Flatten VirtualFs entries into plugin-facing CastVertebra list.
             // VirtualPath::get_with_slash() gives the path string (e.g. "/intro.html").
