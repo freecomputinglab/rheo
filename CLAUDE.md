@@ -107,6 +107,7 @@ rheo injects a per-vertebra Typst variable `rheo-context` into every spine file,
 Fields (v1; the value is a dictionary and may gain fields later):
 - `handle` — this file's `:`-separated handle (its ID; the same handle used for the cross-file links above).
 - `spine` — a flat list of every vertebra in spine order, each an entry `(handle, path, title)`.
+- `target` — the rheo output-format name (`"epub"`/`"html"`/…). Present only for formats that set one; **absent for PDF**, where documents fall back to Typst's native `target()` == `"paged"`. Identical across vertebrae, so it also rides on the global `sys.inputs.rheo-context`.
 
 ```typst
 This is #rheo-context.handle of #rheo-context.spine.len() pages.
@@ -128,6 +129,8 @@ This is #rheo-context.handle of #rheo-context.spine.len() pages.
 ```
 
 A package needing only the shared spine can read `sys.inputs.rheo-context.spine` directly and never touch the per-file `#let`.
+
+**Output format.** The output format is read from `sys.inputs.rheo-context.target` (globally, same value for every vertebra). rheo injects a `target()` polyfill so Typst's own `target()` returns this value (`"epub"`/`"html"`, or native `"paged"` for PDF), and the injected template exposes `is-rheo-epub()`/`is-rheo-html()`/`is-rheo-pdf()` helpers that read it. Prefer `target()` (or those helpers) over reading the field directly. The older `sys.inputs.rheo-target` key has been **removed** — use `sys.inputs.rheo-context.target`.
 
 **Section-label namespacing is a package concern, not core.** rheo does not rewrite or prefix authored labels; label semantics stay exactly as Typst defines them (two vertebrae defining the same label collide as an ordinary Typst duplicate-label error). Packages such as `@rheo/zettelkasten` use `rheo-context` to *additively* synthesize globally-unique `<handle:label>` section anchors alongside the author's own labels.
 
