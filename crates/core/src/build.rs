@@ -207,7 +207,7 @@ impl Build {
         virtual_spine.check_output_collisions()?;
 
         let moulded = virtual_spine.mould();
-        let rheo_context = virtual_spine.rheo_context_preludes();
+        let rheo_context = virtual_spine.rheo_context_preludes(plugin.rheo_target());
 
         // Single Typst bundle compile for this plugin.
         let world = RheoWorld::new_for_bundle(
@@ -215,7 +215,7 @@ impl Build {
             moulded.main,
             moulded.sources,
             rheo_context,
-            Some(virtual_spine.global_context()),
+            Some(virtual_spine.global_context(plugin.rheo_target())),
             plugin.rheo_target(),
             self.font_dirs.clone(),
         )?;
