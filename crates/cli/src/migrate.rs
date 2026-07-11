@@ -22,8 +22,8 @@
 //! removed; the output format now lives on `sys.inputs.rheo-context.target`
 //! and is surfaced through Typst's polyfilled `target()`. Projects upgrading from
 //! an older version have their direct references rewritten (`migrate_target_references`).
-//! Authors using the `is-rheo-epub()`/`is-rheo-html()`/`is-rheo-pdf()` helpers
-//! need no change — those already read the new location.
+//! Authors using the polyfilled `target()` need no change — it already reports
+//! the output format.
 
 use regex::{Captures, Regex};
 use rheo_core::build::resolve_effective_content_dir;
@@ -200,8 +200,8 @@ fn migrate_link_syntax(project: &ProjectConfig, apply: bool) -> Result<()> {
 /// - `"rheo-target" in sys.inputs` -> `"rheo-context" in sys.inputs and "target" in sys.inputs.rheo-context`
 /// - `sys.inputs.rheo-target`      -> `sys.inputs.rheo-context.target`
 ///
-/// Authors using the injected `is-rheo-epub()`/`is-rheo-html()`/`is-rheo-pdf()`
-/// helpers need no change — those already read the new location. Any file still
+/// Authors using the polyfilled `target()` need no change — it already reports
+/// the output format. Any file still
 /// containing the literal `rheo-target` afterwards (e.g. a
 /// `sys.inputs.at("rheo-target")` form this does not rewrite) is reported with a
 /// `warn!` for manual fixing.
@@ -219,7 +219,8 @@ fn migrate_target_references(project: &ProjectConfig, apply: bool) -> Result<()>
             "rheo-target()  ->  target()",
         ),
         (
-            Regex::new(r#""rheo-target"\s+in\s+sys\.inputs"#).expect("hardcoded regex must compile"),
+            Regex::new(r#""rheo-target"\s+in\s+sys\.inputs"#)
+                .expect("hardcoded regex must compile"),
             r#""rheo-context" in sys.inputs and "target" in sys.inputs.rheo-context"#,
             "\"rheo-target\" in sys.inputs  ->  \"rheo-context\" in sys.inputs and \"target\" in sys.inputs.rheo-context",
         ),
@@ -449,7 +450,9 @@ mod tests {
         assert!(out.contains("#let fmt = target()"));
         // Membership guard rewritten.
         assert!(
-            out.contains("\"rheo-context\" in sys.inputs and \"target\" in sys.inputs.rheo-context")
+            out.contains(
+                "\"rheo-context\" in sys.inputs and \"target\" in sys.inputs.rheo-context"
+            )
         );
         // Value access rewritten.
         assert!(out.contains("{ sys.inputs.rheo-context.target }"));
