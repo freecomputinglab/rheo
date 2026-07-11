@@ -98,44 +98,9 @@ impl LabelSites {
     }
 }
 
-/// Return all `<label>` names **defined** in the source (markup context only).
-///
-/// Labels inside function-call arguments (`#link(<label>)`) are references, not
-/// definitions, and are excluded. Surrounding `<`/`>` are stripped.
-pub fn collect_user_labels(source: &Source) -> Vec<String> {
-    LabelSites::from_source(source)
-        .definitions
-        .into_iter()
-        .map(|site| site.name)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_collect_user_labels() {
-        let source = Source::detached(
-            r#"= Introduction <intro>
-
-Some text. <fig:chart>
-
-#figure([], caption: [Chart]) <fig:chart>
-
-== Section <sec-one>"#,
-        );
-        let mut labels = collect_user_labels(&source);
-        labels.sort();
-        assert_eq!(labels, vec!["fig:chart", "fig:chart", "intro", "sec-one"]);
-    }
-
-    #[test]
-    fn test_collect_user_labels_empty() {
-        let source = Source::detached("= No labels here\n\nJust text.");
-        let labels = collect_user_labels(&source);
-        assert!(labels.is_empty());
-    }
 
     /// Assert that each site's recorded range slices back to `expected` text.
     fn assert_sites_slice(src: &str, sites: &[LabelSite], expected: &[(&str, &str)]) {
@@ -223,15 +188,5 @@ Some text. <fig:chart>
         let src = "= A <a>\n\n== B <b>";
         let first = LabelSite::first(&Source::detached(src)).expect("a label");
         assert_eq!(first.name, "a");
-    }
-
-    #[test]
-    fn test_collect_user_labels_matches_definitions() {
-        // collect_user_labels is a thin wrapper over LabelSites::from_source definitions.
-        let src = "= A <a>\n\n#link(<a>)[x]\n\n== B <b>";
-        let source = Source::detached(src);
-        let mut labels = collect_user_labels(&source);
-        labels.sort();
-        assert_eq!(labels, vec!["a", "b"]);
     }
 }

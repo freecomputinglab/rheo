@@ -25,7 +25,7 @@ mod syntax_site;
 
 pub use document_date::DocumentDate;
 pub use imports::ImportInfo;
-pub use labels::{LabelRole, LabelSite, LabelSites, collect_user_labels};
+pub use labels::{LabelRole, LabelSite, LabelSites};
 pub use rheo_var::{RheoValue, RheoVar};
 pub use syntax_site::{SyntaxSite, WalkCtx};
 
