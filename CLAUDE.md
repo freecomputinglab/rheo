@@ -102,14 +102,14 @@ rheo assigns each vertebra a canonical label derived from its path relative to t
 
 ## rheo-context
 
-rheo injects a per-vertebra Typst variable `rheo-context` into every spine file, exposing rheo's view of the project to authored Typst and to packages. It is **contextual** — each vertebra sees its own values.
+rheo injects a per-vertebra Typst variable `rheo-context` into every spine file, exposing rheo's view of the project to authored Typst and to packages. It is a plain top-level `#let` binding prepended to each file's source — an ordinary dictionary, **not** a Typst `context` value. Each vertebra gets its own values because rheo injects a distinct literal per file, not through Typst's context mechanism. Reading it therefore does **not** require the `#context` keyword:
 
 Fields (v1; the value is a dictionary and may gain fields later):
 - `handle` — this file's `:`-separated handle (its ID; the same handle used for the cross-file links above).
 - `spine` — a flat list of every vertebra in spine order, each an entry `(handle, path, title)`.
 
 ```typst
-#context [This is #rheo-context.handle of #rheo-context.spine.len() pages.]
+This is #rheo-context.handle of #rheo-context.spine.len() pages.
 ```
 
 **Passing it to packages:** a package template can't read the file's local `rheo-context` implicitly — Typst functions capture their definition scope, not the call site — so hand it in explicitly:
