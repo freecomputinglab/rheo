@@ -293,6 +293,17 @@ impl VirtualSpine {
             .collect()
     }
 
+    /// The file-independent `rheo-context` data exposed via `sys.inputs`.
+    ///
+    /// `sys.inputs` is global to the whole bundle compile, so it carries only the
+    /// parts of `rheo-context` identical across vertebrae — the spine. Packages
+    /// read `sys.inputs.rheo-context` to detect a rheo build (and reach the shared
+    /// spine) without referencing the per-file `#let rheo-context`, which
+    /// additionally carries this file's `handle`.
+    pub fn global_context(&self) -> TypstLiteral {
+        TypstLiteral::Dict(vec![("spine".to_string(), self.spine_data())])
+    }
+
     /// The flat spine as a [`TypstLiteral`] array-of-dictionaries: one entry per
     /// vertebra with `handle`, `path`, and `title`.
     fn spine_data(&self) -> TypstLiteral {

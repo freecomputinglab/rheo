@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::packages::RheoPackages;
+use crate::util::typst_literal::TypstLiteral;
 use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
@@ -21,10 +22,13 @@ use typst_library::Feature;
 use typst_library::foundations::Duration;
 
 /// Build sys.inputs Dict for Typst compilation.
-fn build_inputs(format_name: Option<&str>) -> Dict {
+fn build_inputs(format_name: Option<&str>, rheo_context: Option<&TypstLiteral>) -> Dict {
     let mut dict = Dict::new();
     if let Some(name) = format_name {
         dict.insert("rheo-target".into(), name.into_value());
+    }
+    if let Some(ctx) = rheo_context {
+        dict.insert("rheo-context".into(), ctx.to_value());
     }
     dict
 }
@@ -84,7 +88,7 @@ impl RheoWorld {
 
         let library = Library::builder()
             .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
-            .with_inputs(build_inputs(format_name))
+            .with_inputs(build_inputs(format_name, None))
             .build();
 
         let (font_store, package_storage, rheo_packages) = Self::init_resources(&font_dirs);
@@ -113,12 +117,15 @@ impl RheoWorld {
     /// per-vertebra `rheo-context` preludes (keyed the same way). The world serves
     /// the main for the synthetic main file ID, each overlay entry for its
     /// vertebra, and prepends the matching `rheo-context` prelude — all bypassing
-    /// disk.
+    /// disk. It also seeds `sys.inputs.rheo-context` with the global (spine)
+    /// context, so packages can detect a rheo build and reach the shared spine
+    /// without depending on the per-file `#let rheo-context`.
     pub fn new_for_bundle(
         root: &Path,
         virtual_main_source: String,
         source_overlay: HashMap<String, String>,
         rheo_context: HashMap<String, String>,
+        global_context: Option<TypstLiteral>,
         format_name: Option<&str>,
         font_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
@@ -131,7 +138,7 @@ impl RheoWorld {
 
         let library = Library::builder()
             .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
-            .with_inputs(build_inputs(format_name))
+            .with_inputs(build_inputs(format_name, global_context.as_ref()))
             .build();
 
         let (font_store, package_storage, rheo_packages) = Self::init_resources(&font_dirs);
@@ -526,6 +533,7 @@ mod tests {
             "#document(\"intro.html\", format: \"html\")[]".to_string(),
             source_overlay,
             HashMap::new(),
+            None,
             Some("html"),
             vec![],
         )
@@ -558,6 +566,7 @@ mod tests {
             "#document(\"intro.html\", format: \"html\")[]".to_string(),
             source_overlay,
             rheo_context,
+            None,
             Some("html"),
             vec![],
         )
@@ -572,5 +581,17 @@ mod tests {
         // The prelude is prepended ahead of the file's own body.
         assert!(text.contains("#let rheo-context = (handle: \"intro\""));
         assert!(text.find("rheo-context").unwrap() < text.find("= Intro").unwrap());
+    }
+
+    #[test]
+    fn build_inputs_includes_rheo_context() {
+        let ctx = TypstLiteral::Dict(vec![("spine".to_string(), TypstLiteral::Array(vec![]))]);
+        let dict = build_inputs(Some("html"), Some(&ctx));
+        assert!(dict.contains("rheo-context"));
+        assert!(dict.contains("rheo-target"));
+
+        let empty = build_inputs(None, None);
+        assert!(!empty.contains("rheo-context"));
+        assert!(!empty.contains("rheo-target"));
     }
 }

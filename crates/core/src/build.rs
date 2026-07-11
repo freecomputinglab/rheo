@@ -215,6 +215,7 @@ impl Build {
             moulded.main,
             moulded.sources,
             rheo_context,
+            Some(virtual_spine.global_context()),
             plugin.rheo_target(),
             self.font_dirs.clone(),
         )?;

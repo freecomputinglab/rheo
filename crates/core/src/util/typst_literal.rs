@@ -48,6 +48,25 @@ impl TypstLiteral {
             }
         }
     }
+
+    /// Convert to a runtime typst [`Value`] for programmatic APIs (e.g. `sys.inputs`),
+    /// mirroring the shape that [`serialize`](Self::serialize) renders as source text.
+    pub fn to_value(&self) -> typst::foundations::Value {
+        use typst::foundations::{Array, Dict, Value};
+        match self {
+            TypstLiteral::Str(s) => Value::Str(s.as_str().into()),
+            TypstLiteral::Array(items) => {
+                Value::Array(items.iter().map(TypstLiteral::to_value).collect::<Array>())
+            }
+            TypstLiteral::Dict(pairs) => {
+                let mut dict = Dict::new();
+                for (k, v) in pairs {
+                    dict.insert(k.as_str().into(), v.to_value());
+                }
+                Value::Dict(dict)
+            }
+        }
+    }
 }
 
 /// Render `s` as a Typst string literal, escaping quotes/backslashes/control chars.
@@ -104,5 +123,29 @@ mod tests {
             data.serialize(),
             "(handle: \"chapters:intro\", spine: ((handle: \"intro\", path: \"content/intro.typ\", title: \"Introduction\"),))"
         );
+    }
+
+    #[test]
+    fn to_value_builds_nested_dict() {
+        use typst::foundations::Value;
+
+        let data = TypstLiteral::Dict(vec![
+            ("handle".to_string(), TypstLiteral::str("chapters:intro")),
+            (
+                "spine".to_string(),
+                TypstLiteral::Array(vec![TypstLiteral::Dict(vec![
+                    ("handle".to_string(), TypstLiteral::str("intro")),
+                    ("path".to_string(), TypstLiteral::str("content/intro.typ")),
+                    ("title".to_string(), TypstLiteral::str("Introduction")),
+                ])]),
+            ),
+        ]);
+
+        let value = data.to_value();
+        let Value::Dict(dict) = value else {
+            panic!("expected Value::Dict");
+        };
+        assert!(dict.at("handle".into(), None).is_ok());
+        assert!(dict.at("spine".into(), None).is_ok());
     }
 }

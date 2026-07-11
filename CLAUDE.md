@@ -119,6 +119,16 @@ This is #rheo-context.handle of #rheo-context.spine.len() pages.
 #show: template.with(ctx: rheo-context)
 ```
 
+**Detecting a rheo build (for a friendly native-Typst error).** rheo also seeds `sys.inputs` with a `rheo-context` key carrying the file-independent context (the `spine`). Because `sys.inputs` is global to the whole bundle compile, it does **not** carry the per-file `handle` — that stays on the per-vertebra `#let rheo-context`. A package (or author) uses `sys.inputs` to detect a rheo build and turn native-Typst compilation into a friendly message, without tripping the unbound-variable error (`rheo-context` referenced inside an untaken `if` branch is never evaluated):
+
+```typst
+#show: template.with(ctx: if "rheo-context" in sys.inputs { rheo-context } else {
+  panic("This document must be compiled with Rheo — https://rheo.ohrg.org")
+})
+```
+
+A package needing only the shared spine can read `sys.inputs.rheo-context.spine` directly and never touch the per-file `#let`.
+
 **Section-label namespacing is a package concern, not core.** rheo does not rewrite or prefix authored labels; label semantics stay exactly as Typst defines them (two vertebrae defining the same label collide as an ordinary Typst duplicate-label error). Packages such as `@rheo/zettelkasten` use `rheo-context` to *additively* synthesize globally-unique `<handle:label>` section anchors alongside the author's own labels.
 
 ## Spine configuration
