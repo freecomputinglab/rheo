@@ -1,6 +1,6 @@
 use crate::{
     Result,
-    project::{ProjectConfig, ProjectMode},
+    config::project::{ProjectConfig, ProjectMode},
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};

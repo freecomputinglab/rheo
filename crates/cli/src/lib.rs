@@ -1,17 +1,17 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use rheo_core::OpenHandle;
+use rheo_core::assets::watch::{WatchEvent, watch_project};
 use rheo_core::build::{Build, BuildOptions, resolve_build_dir};
-use rheo_core::manifest_version;
-use rheo_core::output::OutputConfig;
-use rheo_core::project::ProjectConfig;
-use rheo_core::watch::{WatchEvent, watch_project};
+use rheo_core::config::manifest_version;
+use rheo_core::config::output::OutputConfig;
+use rheo_core::config::project::ProjectConfig;
 use rheo_core::{FormatPlugin, Result, RheoError};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 // Re-export logging functionality
-pub use rheo_core::logging;
+pub use rheo_core::diagnostics::logging;
 
 mod migrate;
 
@@ -267,7 +267,7 @@ fn init_project(target_dir: &Path) -> Result<()> {
     fs::create_dir_all(target_dir).map_err(|e| RheoError::io(e, "creating target directory"))?;
 
     let mut toml_content =
-        rheo_core::init_templates::RHEO_TOML.replace("{{VERSION}}", manifest_version::CURRENT);
+        rheo_core::templates::RHEO_TOML.replace("{{VERSION}}", manifest_version::CURRENT);
     for plugin in all_plugins() {
         let tmpl = plugin.format_init_template();
         if let Some(section) = tmpl.options_toml {
@@ -284,17 +284,17 @@ fn init_project(target_dir: &Path) -> Result<()> {
 
     fs::write(
         content_dir.join("index.typ"),
-        rheo_core::init_templates::CONTENT_INDEX_TYP,
+        rheo_core::templates::CONTENT_INDEX_TYP,
     )
     .map_err(|e| RheoError::io(e, "writing index.typ"))?;
     fs::write(
         content_dir.join("about.typ"),
-        rheo_core::init_templates::CONTENT_ABOUT_TYP,
+        rheo_core::templates::CONTENT_ABOUT_TYP,
     )
     .map_err(|e| RheoError::io(e, "writing about.typ"))?;
     fs::write(
         content_dir.join("references.bib"),
-        rheo_core::init_templates::CONTENT_REFERENCES_BIB,
+        rheo_core::templates::CONTENT_REFERENCES_BIB,
     )
     .map_err(|e| RheoError::io(e, "writing references.bib"))?;
 
@@ -302,7 +302,7 @@ fn init_project(target_dir: &Path) -> Result<()> {
     fs::create_dir_all(&img_dir).map_err(|e| RheoError::io(e, "creating img directory"))?;
     fs::write(
         img_dir.join("header.svg"),
-        rheo_core::init_templates::CONTENT_IMG_HEADER_SVG,
+        rheo_core::templates::CONTENT_IMG_HEADER_SVG,
     )
     .map_err(|e| RheoError::io(e, "writing header.svg"))?;
 

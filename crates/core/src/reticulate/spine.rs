@@ -1,40 +1,16 @@
-use crate::path_utils::{sanitize_handle_segment, to_forward_slash};
-use crate::pdf_utils::DocumentTitle;
+use crate::parser;
+use crate::parser::{DocumentDate, RheoValue};
 use crate::plugins::SpineOptions;
 use crate::reticulate::bundle_source::BundleSource;
-use crate::reticulate::parser;
-use crate::reticulate::types::{DocumentDate, RheoValue};
+use crate::util::path::{sanitize_handle_segment, to_forward_slash};
+use crate::util::pdf::DocumentTitle;
+use crate::util::typst_literal::TypstLiteral;
 use crate::{Result, RheoError, TYP_EXT};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use typst::syntax::Source;
 use walkdir::WalkDir;
-
-fn collect_typst_files(root: &Path) -> Vec<PathBuf> {
-    WalkDir::new(root)
-        .into_iter()
-        .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
-        .filter(|entry| {
-            entry
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext == &TYP_EXT[1..])
-                .unwrap_or(false)
-        })
-        .collect()
-}
-
-fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut typst_files = collect_typst_files(root);
-
-    if typst_files.is_empty() {
-        return Err(RheoError::project_config("need at least one .typ file"));
-    }
-
-    typst_files.sort();
-    Ok(typst_files)
-}
 
 /// Generates a spine (ordered list of .typ files) based on configuration.
 impl SpineOptions {
@@ -43,7 +19,12 @@ impl SpineOptions {
     /// If no vertebrae are configured, discovers all .typ files under `root`.
     pub fn generate(&self, root: &Path) -> Result<Vec<PathBuf>> {
         if self.vertebrae.is_empty() {
-            return collect_all_typst_files(root);
+            let mut typst_files = Self::collect_typst_files(root);
+            if typst_files.is_empty() {
+                return Err(RheoError::project_config("need at least one .typ file"));
+            }
+            typst_files.sort();
+            return Ok(typst_files);
         }
 
         let mut typst_files = Vec::new();
@@ -69,6 +50,21 @@ impl SpineOptions {
         }
 
         Ok(typst_files)
+    }
+
+    /// Discover every `.typ` file under `root` (unordered).
+    fn collect_typst_files(root: &Path) -> Vec<PathBuf> {
+        WalkDir::new(root)
+            .into_iter()
+            .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
+            .filter(|entry| {
+                entry
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext == &TYP_EXT[1..])
+                    .unwrap_or(false)
+            })
+            .collect()
     }
 }
 
@@ -101,6 +97,8 @@ pub struct Vertebra {
     pub date: Option<DocumentDate>,
     /// Harvested `rheo-*` variables from this vertebra's source file.
     pub vars: std::collections::HashMap<String, RheoValue>,
+    /// The vertebra's raw source text, retained for the Mould stage.
+    pub source: String,
 }
 
 impl Vertebra {
@@ -148,8 +146,14 @@ impl VirtualSpine {
             title: String,
             date: Option<DocumentDate>,
             vars: HashMap<String, RheoValue>,
-            user_labels: Vec<String>,
+            source: String,
         }
+
+        // Union of all user-authored labels across the spine, as they land in
+        // the bundle. Used by the page-handle checks below (canonical-skip and
+        // escape-collision) to detect a user label occupying a synthesized
+        // handle name.
+        let mut user_labels: HashSet<String> = HashSet::new();
 
         let file_infos: Result<Vec<FileInfo>> = files
             .iter()
@@ -188,7 +192,7 @@ impl VirtualSpine {
                 let source_obj = Source::detached(&source);
                 let extracted = parser::extract_nodes(&source_obj);
                 let date = extracted.document_date;
-                let user_labels = extracted.user_labels;
+                let sites = extracted.labels;
                 let mut vars = HashMap::new();
                 for v in extracted.rheo_vars {
                     match v.value {
@@ -206,6 +210,8 @@ impl VirtualSpine {
                     }
                 }
 
+                user_labels.extend(sites.definitions.iter().map(|d| d.name.clone()));
+
                 Ok(FileInfo {
                     file: file.clone(),
                     handle,
@@ -215,17 +221,12 @@ impl VirtualSpine {
                     title,
                     date,
                     vars,
-                    user_labels,
+                    source,
                 })
             })
             .collect();
         let file_infos = file_infos?;
-
-        // Union of all user-authored labels across the entire spine.
-        let all_user_labels: HashSet<String> = file_infos
-            .iter()
-            .flat_map(|fi| fi.user_labels.iter().cloned())
-            .collect();
+        let all_user_labels = user_labels;
 
         // Second pass: assign emit_handle and check escape uniqueness.
         let mut seen_canonicals: HashSet<String> = HashSet::new();
@@ -258,6 +259,7 @@ impl VirtualSpine {
                     title: fi.title,
                     date: fi.date,
                     vars: fi.vars,
+                    source: fi.source,
                 })
             })
             .collect();
@@ -266,6 +268,57 @@ impl VirtualSpine {
             vertebrae: vertebrae?,
             layout,
         })
+    }
+
+    /// Per-vertebra `rheo-context` Typst preludes, keyed by include path (`rel_path`).
+    ///
+    /// Each vertebra is injected with `#let rheo-context = (handle: <its handle>,
+    /// spine: <flat list of every vertebra>)` so package templates can read the
+    /// file's own handle and the whole spine. The `handle` varies per file; the
+    /// `spine` literal is identical across files. The shape is a dictionary so
+    /// attributes can be added later (e.g. by format plugins) without breaking
+    /// consumers.
+    pub fn rheo_context_preludes(&self) -> HashMap<String, String> {
+        let spine = self.spine_data();
+        self.vertebrae
+            .iter()
+            .map(|v| {
+                let context = TypstLiteral::Dict(vec![
+                    ("handle".to_string(), TypstLiteral::str(v.handle.as_str())),
+                    ("spine".to_string(), spine.clone()),
+                ]);
+                let prelude = format!("#let rheo-context = {}\n\n", context.serialize());
+                (v.rel_path.clone(), prelude)
+            })
+            .collect()
+    }
+
+    /// The file-independent `rheo-context` data exposed via `sys.inputs`.
+    ///
+    /// `sys.inputs` is global to the whole bundle compile, so it carries only the
+    /// parts of `rheo-context` identical across vertebrae — the spine. Packages
+    /// read `sys.inputs.rheo-context` to detect a rheo build (and reach the shared
+    /// spine) without referencing the per-file `#let rheo-context`, which
+    /// additionally carries this file's `handle`.
+    pub fn global_context(&self) -> TypstLiteral {
+        TypstLiteral::Dict(vec![("spine".to_string(), self.spine_data())])
+    }
+
+    /// The flat spine as a [`TypstLiteral`] array-of-dictionaries: one entry per
+    /// vertebra with `handle`, `path`, and `title`.
+    fn spine_data(&self) -> TypstLiteral {
+        TypstLiteral::Array(
+            self.vertebrae
+                .iter()
+                .map(|v| {
+                    TypstLiteral::Dict(vec![
+                        ("handle".to_string(), TypstLiteral::str(v.handle.as_str())),
+                        ("path".to_string(), TypstLiteral::str(v.rel_path.as_str())),
+                        ("title".to_string(), TypstLiteral::str(v.title.as_str())),
+                    ])
+                })
+                .collect(),
+        )
     }
 
     /// Validate that no two vertebrae produce the same output path.
@@ -497,6 +550,60 @@ mod tests {
     }
 
     #[test]
+    fn vertebra_retains_source() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro <etal>\n\nSee @etal.\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+        let v = &spine.vertebrae[0];
+
+        // The raw source is retained for the Mould stage.
+        assert!(v.source.contains("<etal>"));
+    }
+
+    #[test]
+    fn rheo_context_prelude_carries_handle_and_full_spine() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        let chapters = content.join("chapters");
+        fs::create_dir_all(&chapters).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro\n").unwrap();
+        fs::write(chapters.join("intro.typ"), "= Chapter\n").unwrap();
+
+        let files = vec![content.join("intro.typ"), chapters.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+
+        let preludes = spine.rheo_context_preludes();
+        // One prelude per vertebra, keyed by include path.
+        assert_eq!(preludes.len(), 2);
+        let root_prelude = &preludes["content/intro.typ"];
+        let nested_prelude = &preludes["content/chapters/intro.typ"];
+
+        // Each carries its OWN handle...
+        assert!(root_prelude.contains("handle: \"intro\""));
+        assert!(nested_prelude.contains("handle: \"chapters:intro\""));
+        // ...and the full flat spine (both vertebrae, with path).
+        for p in [root_prelude, nested_prelude] {
+            assert!(p.starts_with("#let rheo-context = "));
+            assert!(p.contains("path: \"content/intro.typ\""));
+            assert!(p.contains("path: \"content/chapters/intro.typ\""));
+        }
+    }
+
+    #[test]
     fn nested_files_get_colon_qualified_handle() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -539,6 +646,7 @@ mod tests {
             title: "Introduction".into(),
             date: None,
             vars: HashMap::new(),
+            source: String::new(),
         };
         let spine = VirtualSpine {
             vertebrae: vec![v],
@@ -569,6 +677,7 @@ mod tests {
                     title: "A".into(),
                     date: None,
                     vars: HashMap::new(),
+                    source: String::new(),
                 },
                 Vertebra {
                     rel_path: "content/b.typ".into(),
@@ -579,6 +688,7 @@ mod tests {
                     title: "B".into(),
                     date: None,
                     vars: HashMap::new(),
+                    source: String::new(),
                 },
             ],
             layout: SpineLayout::SingleCombined {
@@ -610,6 +720,7 @@ mod tests {
                     title: "A".into(),
                     date: None,
                     vars: Default::default(),
+                    source: String::new(),
                 },
                 Vertebra {
                     rel_path: "b.typ".into(),
@@ -620,6 +731,7 @@ mod tests {
                     title: "B".into(),
                     date: None,
                     vars: Default::default(),
+                    source: String::new(),
                 },
             ],
             layout: SpineLayout::SingleCombined {
@@ -644,6 +756,7 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
+        // Without prefixing, the raw `<intro>` collides with the canonical handle.
         let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
 
         assert_eq!(spine.vertebrae[0].handle, "intro");

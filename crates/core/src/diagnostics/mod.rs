@@ -1,4 +1,8 @@
-use crate::error::RheoError;
+pub mod error;
+pub mod logging;
+pub mod results;
+
+use crate::diagnostics::error::RheoError;
 use crate::world::RheoWorld;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term;

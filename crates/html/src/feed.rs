@@ -7,7 +7,8 @@
 
 use atom_syndication as atom;
 use chrono::{DateTime, Utc};
-use rheo_core::{CastVertebra, PluginContext, RheoError, html_utils};
+use rheo_core::util::html as html_utils;
+use rheo_core::{CastVertebra, PluginContext, RheoError};
 
 /// A single `<entry>` in the feed.
 pub struct AtomEntry {
@@ -246,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_feed_exclude_omits_entry() {
-        use rheo_core::project::{ProjectConfig, ProjectMode};
+        use rheo_core::config::project::{ProjectConfig, ProjectMode};
         use rheo_core::{PluginSection, RheoConfig, RheoValue, SpineOptions, TypstFormat};
         use std::collections::HashMap;
         use typst::foundations::Bytes;

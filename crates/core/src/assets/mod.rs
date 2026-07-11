@@ -4,6 +4,8 @@
 //! etc.) from project sources and package dependencies, copies them into the
 //! build output directory, and detects path collisions.
 
+pub mod watch;
+
 use crate::config::PluginSection;
 use crate::plugins::{Asset, FormatPlugin, PackageAssets};
 use crate::{Result, RheoError};

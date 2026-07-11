@@ -100,6 +100,37 @@ rheo assigns each vertebra a canonical label derived from its path relative to t
 
 **Escape-collision error:** if the escape label (`<handle.typ>`) collides with any user-authored label or another vertebra's escape label, the build fails with an error naming the offending file and label.
 
+## rheo-context
+
+rheo injects a per-vertebra Typst variable `rheo-context` into every spine file, exposing rheo's view of the project to authored Typst and to packages. It is a plain top-level `#let` binding prepended to each file's source — an ordinary dictionary, **not** a Typst `context` value. Each vertebra gets its own values because rheo injects a distinct literal per file, not through Typst's context mechanism. Reading it therefore does **not** require the `#context` keyword:
+
+Fields (v1; the value is a dictionary and may gain fields later):
+- `handle` — this file's `:`-separated handle (its ID; the same handle used for the cross-file links above).
+- `spine` — a flat list of every vertebra in spine order, each an entry `(handle, path, title)`.
+
+```typst
+This is #rheo-context.handle of #rheo-context.spine.len() pages.
+```
+
+**Passing it to packages:** a package template can't read the file's local `rheo-context` implicitly — Typst functions capture their definition scope, not the call site — so hand it in explicitly:
+
+```typst
+#import "@rheo/somepackage": template
+#show: template.with(ctx: rheo-context)
+```
+
+**Detecting a rheo build (for a friendly native-Typst error).** rheo also seeds `sys.inputs` with a `rheo-context` key carrying the file-independent context (the `spine`). Because `sys.inputs` is global to the whole bundle compile, it does **not** carry the per-file `handle` — that stays on the per-vertebra `#let rheo-context`. A package (or author) uses `sys.inputs` to detect a rheo build and turn native-Typst compilation into a friendly message, without tripping the unbound-variable error (`rheo-context` referenced inside an untaken `if` branch is never evaluated):
+
+```typst
+#show: template.with(ctx: if "rheo-context" in sys.inputs { rheo-context } else {
+  panic("This document must be compiled with Rheo — https://rheo.ohrg.org")
+})
+```
+
+A package needing only the shared spine can read `sys.inputs.rheo-context.spine` directly and never touch the per-file `#let`.
+
+**Section-label namespacing is a package concern, not core.** rheo does not rewrite or prefix authored labels; label semantics stay exactly as Typst defines them (two vertebrae defining the same label collide as an ordinary Typst duplicate-label error). Packages such as `@rheo/zettelkasten` use `rheo-context` to *additively* synthesize globally-unique `<handle:label>` section anchors alongside the author's own labels.
+
 ## Spine configuration
 
 **Spine vertebrae:** The `vertebrae` array in `[pdf.spine]` or `[epub.spine]` specifies which source files to include and in what order. Glob patterns are supported (e.g., `chapters/**/*.typ`).
@@ -125,6 +156,15 @@ Feed variables (all optional):
 - `cargo clippy` — fix all warnings
 - Errors via `thiserror`, logging via `tracing` macros
 - INFO logs: natural language. DEBUG: implementation details.
+- Doc comments on general abstractions (traits, generic types, module docs)
+  describe the abstraction, not its implementors. Avoid "the first impl",
+  "X is the first", or naming concrete impls (e.g. a trait doc referencing a
+  specific type that implements it). Concrete examples belong on the concrete
+  type's own docs.
+- Prefer a data-structure-first approach over standalone functions: model the
+  thing as a type and hang behaviour off it as methods (e.g. `TypstLiteral` with
+  a `serialize` method, `LabelSites::from_source`), rather than free functions
+  that pass data around. Reach for a struct/enum + `impl` before a bare `fn`.
 
 ## Release
 

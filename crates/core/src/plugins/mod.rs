@@ -1,5 +1,5 @@
 use crate::config::PluginSection;
-use crate::project::ProjectConfig;
+use crate::config::project::ProjectConfig;
 use crate::reticulate::spine::SpineLayout;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -95,18 +95,18 @@ pub struct CastVertebra {
     /// Parsed `#set document(date:)` timestamp, if present.
     pub date: Option<chrono::DateTime<chrono::Utc>>,
     /// Harvested `rheo-*` variables from the vertebra's source file.
-    pub vars: std::collections::HashMap<String, crate::reticulate::types::RheoValue>,
+    pub vars: std::collections::HashMap<String, crate::parser::RheoValue>,
 }
 
 impl CastVertebra {
     /// Parse this output as an HTML DOM.
     ///
     /// Returns an error if `format` is not `TypstFormat::Html`.
-    pub fn html(&self) -> crate::Result<crate::html_utils::HtmlDom> {
+    pub fn html(&self) -> crate::Result<crate::util::html::HtmlDom> {
         if self.format != TypstFormat::Html {
             return Err(crate::RheoError::invalid_data("output is not HTML-shaped"));
         }
-        crate::html_utils::HtmlDom::parse(&String::from_utf8_lossy(&self.bytes))
+        crate::util::html::HtmlDom::parse(&String::from_utf8_lossy(&self.bytes))
     }
 }
 

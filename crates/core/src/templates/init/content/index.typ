@@ -14,7 +14,7 @@
 
 // To show content only in HTML, we can use Typst's `target` function:
 #context if target() == "html" [
-- #link("./about.typ")[About] 
+  - #link(<about>)[About]
 ]
 
 == The philosophy of Rheo
