@@ -12,31 +12,6 @@ use std::path::{Path, PathBuf};
 use typst::syntax::Source;
 use walkdir::WalkDir;
 
-fn collect_typst_files(root: &Path) -> Vec<PathBuf> {
-    WalkDir::new(root)
-        .into_iter()
-        .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
-        .filter(|entry| {
-            entry
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext == &TYP_EXT[1..])
-                .unwrap_or(false)
-        })
-        .collect()
-}
-
-fn collect_all_typst_files(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut typst_files = collect_typst_files(root);
-
-    if typst_files.is_empty() {
-        return Err(RheoError::project_config("need at least one .typ file"));
-    }
-
-    typst_files.sort();
-    Ok(typst_files)
-}
-
 /// Generates a spine (ordered list of .typ files) based on configuration.
 impl SpineOptions {
     /// Resolve vertebrae patterns into an ordered list of .typ files.
@@ -44,7 +19,12 @@ impl SpineOptions {
     /// If no vertebrae are configured, discovers all .typ files under `root`.
     pub fn generate(&self, root: &Path) -> Result<Vec<PathBuf>> {
         if self.vertebrae.is_empty() {
-            return collect_all_typst_files(root);
+            let mut typst_files = Self::collect_typst_files(root);
+            if typst_files.is_empty() {
+                return Err(RheoError::project_config("need at least one .typ file"));
+            }
+            typst_files.sort();
+            return Ok(typst_files);
         }
 
         let mut typst_files = Vec::new();
@@ -70,6 +50,21 @@ impl SpineOptions {
         }
 
         Ok(typst_files)
+    }
+
+    /// Discover every `.typ` file under `root` (unordered).
+    fn collect_typst_files(root: &Path) -> Vec<PathBuf> {
+        WalkDir::new(root)
+            .into_iter()
+            .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
+            .filter(|entry| {
+                entry
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext == &TYP_EXT[1..])
+                    .unwrap_or(false)
+            })
+            .collect()
     }
 }
 
