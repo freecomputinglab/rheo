@@ -249,7 +249,7 @@ pub trait FormatPlugin: Send + Sync {
     ///
     /// 1. **CLI flag**: `--<name>` enables this format (e.g., `--html`)
     /// 2. **Output subdirectory**: files are written to `build/<name>/` (e.g., `build/html/`)
-    /// 3. **Format name**: passed to sys.inputs for `rheo-target()` polyfill injection
+    /// 3. **Format name**: threaded into `rheo-context.target` for the `target()` polyfill
     ///
     /// **Requirements:**
     /// - Must be stable (do not change between versions)
@@ -282,8 +282,8 @@ pub trait FormatPlugin: Send + Sync {
         TypstFormat::Html
     }
 
-    /// The value injected as `sys.inputs.rheo-target`, surfaced to documents via
-    /// the `target()` polyfill.
+    /// The output-format name written into `sys.inputs.rheo-context.target`,
+    /// surfaced to documents via the `target()` polyfill.
     ///
     /// This keeps formats that share a Typst export target distinguishable: EPUB
     /// and HTML both compile via the `html` target, but report `"epub"` and

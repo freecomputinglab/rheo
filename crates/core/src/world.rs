@@ -10,7 +10,7 @@ use codespan_reporting::files::{Error as CodespanError, Files};
 use parking_lot::Mutex;
 use tracing::warn;
 use typst::diag::{FileError, FileResult};
-use typst::foundations::{Bytes, Datetime, Dict, IntoValue};
+use typst::foundations::{Bytes, Datetime, Dict};
 use typst::syntax::{FileId, Lines, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
@@ -22,11 +22,12 @@ use typst_library::Feature;
 use typst_library::foundations::Duration;
 
 /// Build sys.inputs Dict for Typst compilation.
-fn build_inputs(format_name: Option<&str>, rheo_context: Option<&TypstLiteral>) -> Dict {
+///
+/// The output format is surfaced only via `rheo-context.target` (read by the
+/// injected `target()` polyfill and the `rheo.typ` helpers); there is no
+/// separate `rheo-target` key.
+fn build_inputs(rheo_context: Option<&TypstLiteral>) -> Dict {
     let mut dict = Dict::new();
-    if let Some(name) = format_name {
-        dict.insert("rheo-target".into(), name.into_value());
-    }
     if let Some(ctx) = rheo_context {
         dict.insert("rheo-context".into(), ctx.to_value());
     }
@@ -88,7 +89,7 @@ impl RheoWorld {
 
         let library = Library::builder()
             .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
-            .with_inputs(build_inputs(format_name, None))
+            .with_inputs(build_inputs(None))
             .build();
 
         let (font_store, package_storage, rheo_packages) = Self::init_resources(&font_dirs);
@@ -138,7 +139,7 @@ impl RheoWorld {
 
         let library = Library::builder()
             .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
-            .with_inputs(build_inputs(format_name, global_context.as_ref()))
+            .with_inputs(build_inputs(global_context.as_ref()))
             .build();
 
         let (font_store, package_storage, rheo_packages) = Self::init_resources(&font_dirs);
@@ -382,7 +383,7 @@ impl World for RheoWorld {
         // Inject target() polyfill for all plugin formats.
         let target_polyfill = if self.format_name.is_some() {
             "// Polyfill target() to return rheo's output format from sys.inputs\n\
-             #let target() = if \"rheo-target\" in sys.inputs { sys.inputs.rheo-target } else { std.target() }\n\n"
+             #let target() = if \"rheo-context\" in sys.inputs and \"target\" in sys.inputs.rheo-context { sys.inputs.rheo-context.target } else { std.target() }\n\n"
         } else {
             ""
         };
@@ -584,13 +585,17 @@ mod tests {
     }
 
     #[test]
-    fn build_inputs_includes_rheo_context() {
-        let ctx = TypstLiteral::Dict(vec![("spine".to_string(), TypstLiteral::Array(vec![]))]);
-        let dict = build_inputs(Some("html"), Some(&ctx));
+    fn build_inputs_includes_rheo_context_and_no_rheo_target() {
+        let ctx = TypstLiteral::Dict(vec![
+            ("spine".to_string(), TypstLiteral::Array(vec![])),
+            ("target".to_string(), TypstLiteral::str("html")),
+        ]);
+        let dict = build_inputs(Some(&ctx));
         assert!(dict.contains("rheo-context"));
-        assert!(dict.contains("rheo-target"));
+        // The deprecated top-level key is gone; format lives in rheo-context.target.
+        assert!(!dict.contains("rheo-target"));
 
-        let empty = build_inputs(None, None);
+        let empty = build_inputs(None);
         assert!(!empty.contains("rheo-context"));
         assert!(!empty.contains("rheo-target"));
     }

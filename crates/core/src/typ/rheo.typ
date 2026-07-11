@@ -1,19 +1,13 @@
-// Get the rheo output format, with fallback to Typst's target()
-// Returns: "epub", "html", "pdf" when compiled with rheo
-//          "html" or "paged" when compiled with vanilla Typst
-#let rheo-target() = {
-  if "rheo-target" in sys.inputs {
-    sys.inputs.rheo-target
-  } else {
-    target()
-  }
-}
+// The rheo output format is surfaced through Typst's own `target()`: rheo
+// injects a `target()` polyfill that returns "epub"/"html"/"paged" from
+// `sys.inputs.rheo-context.target`, falling back to `std.target()` under vanilla
+// Typst. There is no separate `rheo-target()` — use `target()` directly.
 
-// Check if we're compiling for a specific rheo format
-// Works in vanilla Typst (returns false when rheo-target not set)
-#let is-rheo-epub() = "rheo-target" in sys.inputs and sys.inputs.rheo-target == "epub"
-#let is-rheo-html() = "rheo-target" in sys.inputs and sys.inputs.rheo-target == "html"
-#let is-rheo-pdf() = "rheo-target" in sys.inputs and sys.inputs.rheo-target == "pdf"
+// Check if we're compiling for a specific rheo format.
+// Works in vanilla Typst (returns false when there is no rheo-context).
+#let is-rheo-epub() = "rheo-context" in sys.inputs and sys.inputs.rheo-context.at("target", default: none) == "epub"
+#let is-rheo-html() = "rheo-context" in sys.inputs and sys.inputs.rheo-context.at("target", default: none) == "html"
+#let is-rheo-pdf() = "rheo-context" in sys.inputs and sys.inputs.rheo-context.at("target", default: none) == "pdf"
 
 #let rheo_template(doc) = context {
   doc
@@ -45,7 +39,7 @@
     if matches.len() > 0 {
       let elem = matches.first()
       if elem.func() == figure and elem.kind == "rheo-handle" {
-        let fmt = rheo-target()
+        let fmt = target()
         let ext = if fmt == "epub" { ".xhtml" } else if fmt == "html" { ".html" } else { none }
         if ext != none {
           let handle = repr(it.dest).slice(1, -1)
