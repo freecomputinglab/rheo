@@ -1,5 +1,5 @@
 use crate::parser;
-use crate::parser::{DocumentDate, LabelSites, RheoValue};
+use crate::parser::{DocumentDate, RheoValue};
 use crate::plugins::SpineOptions;
 use crate::reticulate::bundle_source::BundleSource;
 use crate::util::path::{sanitize_handle_segment, to_forward_slash};
@@ -104,9 +104,6 @@ pub struct Vertebra {
     pub vars: std::collections::HashMap<String, RheoValue>,
     /// The vertebra's raw source text, retained for the Mould stage.
     pub source: String,
-    /// Label definition and reference sites extracted from `source`; the Mould
-    /// stage turns these into rewrites.
-    pub sites: LabelSites,
 }
 
 impl Vertebra {
@@ -155,8 +152,13 @@ impl VirtualSpine {
             date: Option<DocumentDate>,
             vars: HashMap<String, RheoValue>,
             source: String,
-            sites: LabelSites,
         }
+
+        // Union of all user-authored labels across the spine, as they land in
+        // the bundle. Used by the page-handle checks below (canonical-skip and
+        // escape-collision) to detect a user label occupying a synthesized
+        // handle name.
+        let mut user_labels: HashSet<String> = HashSet::new();
 
         let file_infos: Result<Vec<FileInfo>> = files
             .iter()
@@ -213,6 +215,8 @@ impl VirtualSpine {
                     }
                 }
 
+                user_labels.extend(sites.definitions.iter().map(|d| d.name.clone()));
+
                 Ok(FileInfo {
                     file: file.clone(),
                     handle,
@@ -223,20 +227,11 @@ impl VirtualSpine {
                     date,
                     vars,
                     source,
-                    sites,
                 })
             })
             .collect();
         let file_infos = file_infos?;
-
-        // Union of all user-authored labels across the spine, as they land in
-        // the bundle. Used by the page-handle checks below (canonical-skip and
-        // escape-collision) to detect a user label occupying a synthesized
-        // handle name.
-        let all_user_labels: HashSet<String> = file_infos
-            .iter()
-            .flat_map(|fi| fi.sites.definitions.iter().map(|d| d.name.clone()))
-            .collect();
+        let all_user_labels = user_labels;
 
         // Second pass: assign emit_handle and check escape uniqueness.
         let mut seen_canonicals: HashSet<String> = HashSet::new();
@@ -270,7 +265,6 @@ impl VirtualSpine {
                     date: fi.date,
                     vars: fi.vars,
                     source: fi.source,
-                    sites: fi.sites,
                 })
             })
             .collect();
@@ -279,23 +273,6 @@ impl VirtualSpine {
             vertebrae: vertebrae?,
             layout,
         })
-    }
-
-    /// A read-only, per-vertebra view of extracted syntax sites for plugins.
-    ///
-    /// Exposes each vertebra's include path, handle, and label sites without
-    /// handing plugins the compilation-facing spine itself.
-    pub fn site_map(&self) -> crate::plugins::SpineSites<'_> {
-        crate::plugins::SpineSites::new(
-            self.vertebrae
-                .iter()
-                .map(|v| crate::plugins::VertebraSites {
-                    rel_path: &v.rel_path,
-                    handle: &v.handle,
-                    sites: &v.sites,
-                })
-                .collect(),
-        )
     }
 
     /// Per-vertebra `rheo-context` Typst preludes, keyed by include path (`rel_path`).
@@ -567,7 +544,7 @@ mod tests {
     }
 
     #[test]
-    fn vertebra_retains_source_and_label_sites() {
+    fn vertebra_retains_source() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let content = root.join("content");
@@ -584,25 +561,6 @@ mod tests {
 
         // The raw source is retained for the Mould stage.
         assert!(v.source.contains("<etal>"));
-        // The definition and the reference are both captured, with byte ranges.
-        assert_eq!(
-            v.sites
-                .definitions
-                .iter()
-                .map(|d| d.name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["etal"]
-        );
-        assert_eq!(
-            v.sites
-                .references
-                .iter()
-                .map(|r| r.name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["etal"]
-        );
-        let def = &v.sites.definitions[0];
-        assert_eq!(&v.source[def.range.clone()], "<etal>");
     }
 
     #[test]
@@ -683,7 +641,6 @@ mod tests {
             date: None,
             vars: HashMap::new(),
             source: String::new(),
-            sites: LabelSites::default(),
         };
         let spine = VirtualSpine {
             vertebrae: vec![v],
@@ -715,7 +672,6 @@ mod tests {
                     date: None,
                     vars: HashMap::new(),
                     source: String::new(),
-                    sites: LabelSites::default(),
                 },
                 Vertebra {
                     rel_path: "content/b.typ".into(),
@@ -727,7 +683,6 @@ mod tests {
                     date: None,
                     vars: HashMap::new(),
                     source: String::new(),
-                    sites: LabelSites::default(),
                 },
             ],
             layout: SpineLayout::SingleCombined {
@@ -760,7 +715,6 @@ mod tests {
                     date: None,
                     vars: Default::default(),
                     source: String::new(),
-                    sites: LabelSites::default(),
                 },
                 Vertebra {
                     rel_path: "b.typ".into(),
@@ -772,7 +726,6 @@ mod tests {
                     date: None,
                     vars: Default::default(),
                     source: String::new(),
-                    sites: LabelSites::default(),
                 },
             ],
             layout: SpineLayout::SingleCombined {
@@ -833,46 +786,5 @@ mod tests {
             }
             Ok(_) => panic!("expected escape collision error"),
         }
-    }
-
-    #[test]
-    fn site_map_exposes_rel_path_handle_and_sites() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-        let content = root.join("content");
-        fs::create_dir_all(&content).unwrap();
-        fs::write(content.join("intro.typ"), "= Intro <etal>\n\nSee @etal.\n").unwrap();
-
-        let files = vec![content.join("intro.typ")];
-        let layout = SpineLayout::OnePerVertebra {
-            ext: "html".into(),
-            format: "html".into(),
-        };
-        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
-
-        // The plugin-facing site map mirrors the spine's vertebrae.
-        let map = spine.site_map();
-        let views = map.vertebrae();
-        assert_eq!(views.len(), 1);
-        assert_eq!(views[0].rel_path, "content/intro.typ");
-        assert_eq!(views[0].handle, "intro");
-        assert_eq!(
-            views[0]
-                .sites
-                .definitions
-                .iter()
-                .map(|d| d.name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["etal"]
-        );
-        assert_eq!(
-            views[0]
-                .sites
-                .references
-                .iter()
-                .map(|r| r.name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["etal"]
-        );
     }
 }

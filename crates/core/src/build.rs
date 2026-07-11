@@ -387,7 +387,6 @@ impl Build {
                 VirtualSpine::build(&spine_files, &content_dir, &self.project.root, layout)?;
             virtual_spine.check_output_collisions()?;
 
-            // Expose the pre-Mould site map (handles + label sites) to the plugin.
             let ctx = PluginContext {
                 project: &self.project,
                 output_dir: &plugin_output_dir,
@@ -395,7 +394,6 @@ impl Build {
                 config: plugin_section,
                 assets: &resolved_assets,
                 font_dirs: &self.font_dirs,
-                site_map: virtual_spine.site_map(),
             };
 
             let moulded = virtual_spine.mould();

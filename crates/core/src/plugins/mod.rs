@@ -1,6 +1,5 @@
 use crate::config::PluginSection;
 use crate::config::project::ProjectConfig;
-use crate::parser::LabelSites;
 use crate::reticulate::spine::SpineLayout;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -150,44 +149,6 @@ pub enum SpineLayoutKind {
     SingleCombined,
 }
 
-/// One vertebra's identity and extracted label sites, exposed read-only to plugins.
-pub struct VertebraSites<'a> {
-    /// Project-relative include path (forward-slash), e.g. `content/intro.typ`.
-    pub rel_path: &'a str,
-    /// Canonical handle, e.g. `intro` or `chapters:intro`.
-    pub handle: &'a str,
-    /// Label definition and reference sites extracted from the vertebra's source.
-    pub sites: &'a LabelSites,
-}
-
-/// A read-only, per-vertebra view of the spine's extracted syntax sites.
-///
-/// Carried on [`PluginContext`] so a format can inspect each vertebra's handle and
-/// label sites before compilation. Informational today; the seam through which a
-/// format may later contribute its own rewrites.
-pub struct SpineSites<'a> {
-    vertebrae: Vec<VertebraSites<'a>>,
-}
-
-impl<'a> SpineSites<'a> {
-    /// Build the view from borrowed per-vertebra sites, in spine order.
-    pub fn new(vertebrae: Vec<VertebraSites<'a>>) -> Self {
-        Self { vertebrae }
-    }
-
-    /// An empty view — for contexts constructed without a resolved spine.
-    pub fn empty() -> Self {
-        Self {
-            vertebrae: Vec::new(),
-        }
-    }
-
-    /// The per-vertebra site views, in spine order.
-    pub fn vertebrae(&self) -> &[VertebraSites<'a>] {
-        &self.vertebrae
-    }
-}
-
 /// Context passed to plugin.compile() for each compilation unit.
 pub struct PluginContext<'a> {
     pub project: &'a ProjectConfig,
@@ -223,10 +184,6 @@ pub struct PluginContext<'a> {
     /// Additional font directories to search, resolved by the build (autoscan +
     /// config + `--font-dir`). Threaded into worlds the plugin creates if needed.
     pub font_dirs: &'a [PathBuf],
-    /// Read-only per-vertebra syntax sites for this spine (handles + label sites),
-    /// available before compilation. Informational; lets a format inspect the site
-    /// map without reaching into compilation internals.
-    pub site_map: SpineSites<'a>,
 }
 
 /// Parse `@namespace/name:version` into its components. Returns None on malformed input.
@@ -414,31 +371,5 @@ pub(crate) fn spine_layout_for(
             output_name: format!("{}.{}", project_name, plugin.extension()),
             format,
         },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn spine_sites_view_is_readable_like_a_plugin() {
-        let sites = LabelSites::default();
-        let map = SpineSites::new(vec![VertebraSites {
-            rel_path: "content/intro.typ",
-            handle: "intro",
-            sites: &sites,
-        }]);
-
-        // A plugin reads the site map off its PluginContext like this.
-        let handles: Vec<&str> = map.vertebrae().iter().map(|v| v.handle).collect();
-        assert_eq!(handles, vec!["intro"]);
-        assert_eq!(map.vertebrae()[0].rel_path, "content/intro.typ");
-        assert!(map.vertebrae()[0].sites.definitions.is_empty());
-    }
-
-    #[test]
-    fn empty_spine_sites_has_no_vertebrae() {
-        assert!(SpineSites::empty().vertebrae().is_empty());
     }
 }
