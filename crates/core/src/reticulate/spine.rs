@@ -278,15 +278,23 @@ impl VirtualSpine {
     /// `spine` literal is identical across files. The shape is a dictionary so
     /// attributes can be added later (e.g. by format plugins) without breaking
     /// consumers.
-    pub fn rheo_context_preludes(&self) -> HashMap<String, String> {
+    ///
+    /// `target` is the output-format name (e.g. `"html"`/`"epub"`); when
+    /// `Some`, a `target` field is added to the dict, and when `None` (PDF) it
+    /// is omitted so consumers fall back to Typst's native `target()`.
+    pub fn rheo_context_preludes(&self, target: Option<&str>) -> HashMap<String, String> {
         let spine = self.spine_data();
         self.vertebrae
             .iter()
             .map(|v| {
-                let context = TypstLiteral::Dict(vec![
+                let mut fields = vec![
                     ("handle".to_string(), TypstLiteral::str(v.handle.as_str())),
                     ("spine".to_string(), spine.clone()),
-                ]);
+                ];
+                if let Some(t) = target {
+                    fields.push(("target".to_string(), TypstLiteral::str(t)));
+                }
+                let context = TypstLiteral::Dict(fields);
                 let prelude = format!("#let rheo-context = {}\n\n", context.serialize());
                 (v.rel_path.clone(), prelude)
             })
@@ -300,8 +308,15 @@ impl VirtualSpine {
     /// read `sys.inputs.rheo-context` to detect a rheo build (and reach the shared
     /// spine) without referencing the per-file `#let rheo-context`, which
     /// additionally carries this file's `handle`.
-    pub fn global_context(&self) -> TypstLiteral {
-        TypstLiteral::Dict(vec![("spine".to_string(), self.spine_data())])
+    ///
+    /// `target` follows the same rule as [`Self::rheo_context_preludes`]: a
+    /// `target` field is added when `Some`, omitted for PDF (`None`).
+    pub fn global_context(&self, target: Option<&str>) -> TypstLiteral {
+        let mut fields = vec![("spine".to_string(), self.spine_data())];
+        if let Some(t) = target {
+            fields.push(("target".to_string(), TypstLiteral::str(t)));
+        }
+        TypstLiteral::Dict(fields)
     }
 
     /// The flat spine as a [`TypstLiteral`] array-of-dictionaries: one entry per
@@ -586,7 +601,7 @@ mod tests {
         };
         let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
 
-        let preludes = spine.rheo_context_preludes();
+        let preludes = spine.rheo_context_preludes(Some("html"));
         // One prelude per vertebra, keyed by include path.
         assert_eq!(preludes.len(), 2);
         let root_prelude = &preludes["content/intro.typ"];
@@ -601,6 +616,37 @@ mod tests {
             assert!(p.contains("path: \"content/intro.typ\""));
             assert!(p.contains("path: \"content/chapters/intro.typ\""));
         }
+    }
+
+    #[test]
+    fn rheo_context_target_present_when_some_absent_when_none() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+
+        // Some(target) -> `target` field in both prelude and global context.
+        let with = spine.rheo_context_preludes(Some("html"));
+        assert!(with["content/intro.typ"].contains("target: \"html\""));
+        assert!(
+            spine
+                .global_context(Some("html"))
+                .serialize()
+                .contains("target: \"html\"")
+        );
+
+        // None (PDF) -> no `target` field anywhere.
+        let without = spine.rheo_context_preludes(None);
+        assert!(!without["content/intro.typ"].contains("target:"));
+        assert!(!spine.global_context(None).serialize().contains("target:"));
     }
 
     #[test]
