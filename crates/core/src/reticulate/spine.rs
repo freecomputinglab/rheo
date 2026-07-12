@@ -6,6 +6,7 @@ use crate::util::path::{sanitize_handle_segment, to_forward_slash};
 use crate::util::pdf::DocumentTitle;
 use crate::util::typst_literal::TypstLiteral;
 use crate::{Result, RheoError, TYP_EXT};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -65,6 +66,250 @@ impl SpineOptions {
                     .unwrap_or(false)
             })
             .collect()
+    }
+}
+
+// ── Directory scan: SpineScan ────────────────────────────────────────────────
+
+/// A content directory scanned into a structured spine tree.
+///
+/// Built via [`SpineScan::run`], which walks the directory on disk.
+pub struct SpineScan {
+    /// Ordered flat file list in pre-order (feeds `VirtualSpine::build` later).
+    pub files: Vec<PathBuf>,
+    /// Structured tree; `node.vertebra` indexes into `files` (== pre-order position).
+    pub tree: Vec<SpineNode>,
+}
+
+impl SpineScan {
+    /// Recursively scan `content_dir`, producing the structured spine tree and
+    /// its matching ordered flat file list.
+    ///
+    /// `exclude` is a list of glob patterns matched against each candidate
+    /// path relative to `content_dir` (forward-slash separated); matching
+    /// files or directories are dropped entirely.
+    pub fn run(content_dir: &Path, exclude: &[String]) -> Result<SpineScan> {
+        let exclude_set = Self::build_exclude_set(exclude)?;
+
+        let mut files = Vec::new();
+        let tree = Self::scan_dir(content_dir, content_dir, &exclude_set, &mut files)?;
+
+        if files.is_empty() {
+            return Err(RheoError::project_config("need at least one .typ file"));
+        }
+
+        debug_assert!(
+            {
+                let mut indices = Vec::new();
+                for node in &tree {
+                    node.collect_indices(&mut indices);
+                }
+                let unique: HashSet<usize> = indices.iter().copied().collect();
+                indices.len() == unique.len()
+                    && indices.iter().all(|&i| i < files.len())
+            },
+            "spine scan tree indices must be unique and in range"
+        );
+
+        Ok(SpineScan { files, tree })
+    }
+
+    /// Compile exclude globs into a path-aware [`GlobSet`] (matched against
+    /// content_dir-relative, forward-slashed paths). `literal_separator` keeps
+    /// `*` from crossing `/` while `**` still descends, matching the documented
+    /// exclude semantics.
+    fn build_exclude_set(exclude: &[String]) -> Result<GlobSet> {
+        let mut builder = GlobSetBuilder::new();
+        for g in exclude {
+            let glob = GlobBuilder::new(g)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| {
+                    RheoError::project_config(format!("invalid exclude glob '{}': {}", g, e))
+                })?;
+            builder.add(glob);
+        }
+        builder
+            .build()
+            .map_err(|e| RheoError::project_config(format!("invalid exclude globs: {}", e)))
+    }
+
+    /// Return `true` if `path` (relative to `content_dir`) matches any exclude glob.
+    fn is_excluded(content_dir: &Path, path: &Path, exclude: &GlobSet) -> bool {
+        let rel = path.strip_prefix(content_dir).unwrap_or(path);
+        exclude.is_match(to_forward_slash(rel))
+    }
+
+    /// Scan one directory, recursing into subdirectories. Returns the child
+    /// node list for `dir`; pushes discovered files into `files` in pre-order.
+    fn scan_dir(
+        content_dir: &Path,
+        dir: &Path,
+        exclude: &GlobSet,
+        files: &mut Vec<PathBuf>,
+    ) -> Result<Vec<SpineNode>> {
+        let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)
+            .map_err(|e| RheoError::project_config(format!("failed to read dir '{}': {}", dir.display(), e)))?
+            .filter_map(|e| e.ok())
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+
+        let mut nodes = Vec::new();
+
+        for entry in entries {
+            let path = entry.path();
+
+            if Self::is_excluded(content_dir, &path, exclude) {
+                continue;
+            }
+
+            if path.is_dir() {
+                if let Some(node) = Self::scan_subdir(content_dir, &path, exclude, files)? {
+                    nodes.push(node);
+                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some(&TYP_EXT[1..]) {
+                // Root-level index.typ is a normal leaf; only nested dirs treat
+                // it as a landing page (handled in scan_subdir).
+                let stem = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default();
+                let idx = files.len();
+                files.push(path.clone());
+                nodes.push(SpineNode {
+                    segment: sanitize_handle_segment(stem),
+                    title: None,
+                    vertebra: Some(idx),
+                    children: Vec::new(),
+                });
+            }
+        }
+
+        Ok(nodes)
+    }
+
+    /// Scan a subdirectory, deciding whether it has a landing page (clickable
+    /// node) or not (group node). Returns `None` if the subtree contains no
+    /// `.typ` files after exclusion (pruned).
+    fn scan_subdir(
+        content_dir: &Path,
+        dir: &Path,
+        exclude: &GlobSet,
+        files: &mut Vec<PathBuf>,
+    ) -> Result<Option<SpineNode>> {
+        let dirname = dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+
+        let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)
+            .map_err(|e| RheoError::project_config(format!("failed to read dir '{}': {}", dir.display(), e)))?
+            .filter_map(|e| e.ok())
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+
+        // Find the landing file: prefer index.typ, else <dirname>.typ.
+        let index_name = format!("index{}", TYP_EXT);
+        let named_name = format!("{}{}", dirname, TYP_EXT);
+
+        let landing_path = entries
+            .iter()
+            .map(|e| e.path())
+            .filter(|p| !Self::is_excluded(content_dir, p, exclude))
+            .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(index_name.as_str()))
+            .or_else(|| {
+                entries
+                    .iter()
+                    .map(|e| e.path())
+                    .filter(|p| !Self::is_excluded(content_dir, p, exclude))
+                    .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(named_name.as_str()))
+            });
+
+        let (vertebra, title) = if let Some(landing) = &landing_path {
+            let idx = files.len();
+            files.push(landing.clone());
+            (Some(idx), None)
+        } else {
+            (None, Some(Self::prettify(&dirname)))
+        };
+
+        // Recurse for children, skipping the landing file itself.
+        let mut children = Vec::new();
+        for entry in &entries {
+            let path = entry.path();
+
+            if Some(&path) == landing_path.as_ref() {
+                continue;
+            }
+            if Self::is_excluded(content_dir, &path, exclude) {
+                continue;
+            }
+
+            if path.is_dir() {
+                if let Some(node) = Self::scan_subdir(content_dir, &path, exclude, files)? {
+                    children.push(node);
+                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some(&TYP_EXT[1..]) {
+                let stem = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default();
+                let idx = files.len();
+                files.push(path.clone());
+                children.push(SpineNode {
+                    segment: sanitize_handle_segment(stem),
+                    title: None,
+                    vertebra: Some(idx),
+                    children: Vec::new(),
+                });
+            }
+        }
+
+        if vertebra.is_none() && children.is_empty() {
+            // Empty subtree after exclusion/pruning: drop the whole node.
+            return Ok(None);
+        }
+
+        Ok(Some(SpineNode {
+            segment: sanitize_handle_segment(&dirname),
+            title,
+            vertebra,
+            children,
+        }))
+    }
+
+    /// Derive a group title from a directory name: strip a leading numeric
+    /// order prefix (e.g. `01-`, `1_`), replace `-`/`_` with spaces, and Title
+    /// Case each word.
+    fn prettify(dirname: &str) -> String {
+        let digits_end = dirname
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(0);
+        let stripped = if digits_end > 0
+            && dirname[digits_end..]
+                .starts_with(['-', '_'])
+        {
+            &dirname[digits_end + 1..]
+        } else {
+            dirname
+        };
+
+        stripped
+            .split(['-', '_'])
+            .filter(|w| !w.is_empty())
+            .map(|w| {
+                let mut chars = w.chars();
+                match chars.next() {
+                    Some(first) => {
+                        first.to_uppercase().collect::<String>()
+                            + &chars.as_str().to_lowercase()
+                    }
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
@@ -945,6 +1190,82 @@ mod tests {
                 assert!(msg.contains("intro.typ"), "error should name label: {msg}");
             }
             Ok(_) => panic!("expected escape collision error"),
+        }
+    }
+
+    // ── SpineScan tests ─────────────────────────────────────────────────────
+
+    fn find_node<'a>(nodes: &'a [SpineNode], segment: &str) -> &'a SpineNode {
+        nodes
+            .iter()
+            .find(|n| n.segment == segment)
+            .unwrap_or_else(|| panic!("node '{segment}' not found among {:?}", nodes.iter().map(|n| &n.segment).collect::<Vec<_>>()))
+    }
+
+    #[test]
+    fn scan_nested_tree_with_landing_pages() {
+        let temp = create_test_dir_with_files(&[
+            "index.typ",
+            "intro.typ",
+            "guide/index.typ",
+            "guide/a.typ",
+            "guide/b.typ",
+            "guide/deep/x.typ",
+        ]);
+
+        let result = SpineScan::run(temp.path(), &[]).unwrap();
+        assert_eq!(result.files.len(), 6);
+
+        let guide = find_node(&result.tree, "guide");
+        assert!(guide.vertebra.is_some());
+        assert_eq!(guide.segment, "guide");
+
+        let a = find_node(&guide.children, "a");
+        assert!(a.vertebra.is_some());
+        let _b = find_node(&guide.children, "b");
+
+        let deep = find_node(&guide.children, "deep");
+        assert!(deep.vertebra.is_none());
+        let x = find_node(&deep.children, "x");
+        assert!(x.vertebra.is_some());
+    }
+
+    #[test]
+    fn scan_dir_without_index_is_group_node() {
+        let temp = create_test_dir_with_files(&["extras/note.typ"]);
+        let result = SpineScan::run(temp.path(), &[]).unwrap();
+
+        let extras = find_node(&result.tree, "extras");
+        assert!(extras.vertebra.is_none());
+        assert_eq!(extras.title, Some("Extras".to_string()));
+    }
+
+    #[test]
+    fn scan_numeric_prefix_dir_title() {
+        let temp = create_test_dir_with_files(&["01-basics/setup.typ"]);
+        let result = SpineScan::run(temp.path(), &[]).unwrap();
+
+        let basics = find_node(&result.tree, "01-basics");
+        assert_eq!(basics.title, Some("Basics".to_string()));
+    }
+
+    #[test]
+    fn scan_exclude_prunes_subtree() {
+        let temp = create_test_dir_with_files(&["drafts/wip.typ", "keep.typ"]);
+        let result = SpineScan::run(temp.path(), &["drafts/**".to_string()]).unwrap();
+
+        assert!(result.tree.iter().all(|n| n.segment != "drafts"));
+        assert!(result.tree.iter().any(|n| n.segment == "keep"));
+        assert_eq!(result.files.len(), 1);
+    }
+
+    #[test]
+    fn scan_empty_after_exclude_errors() {
+        let temp = create_test_dir_with_files(&["only.typ"]);
+        let result = SpineScan::run(temp.path(), &["only.typ".to_string()]);
+        match result {
+            Err(e) => assert!(e.to_string().contains("need at least one .typ file")),
+            Ok(_) => panic!("expected empty-scan error"),
         }
     }
 }
