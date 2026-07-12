@@ -108,6 +108,35 @@ impl Vertebra {
     }
 }
 
+/// One node in the structured spine. Mirrors directory / section nesting to
+/// arbitrary depth as a structural overlay over the flat `vertebrae`.
+pub struct SpineNode {
+    /// Handle segment contributed by this node (dir name, file stem, or section
+    /// name). For the trivial flat tree this is the vertebra's full handle.
+    pub segment: String,
+    /// Explicit group title. `None` for a leaf — display title comes from the
+    /// vertebra it points at.
+    pub title: Option<String>,
+    /// Index into `VirtualSpine.vertebrae` for this node's landing page, or
+    /// `None` for a non-clickable group node.
+    pub vertebra: Option<usize>,
+    /// Child nodes, in order.
+    pub children: Vec<SpineNode>,
+}
+
+impl SpineNode {
+    /// Pre-order walk: push this node's vertebra index (if any) then recurse
+    /// into children regardless of whether this node itself yielded one.
+    fn collect_indices(&self, out: &mut Vec<usize>) {
+        if let Some(i) = self.vertebra {
+            out.push(i);
+        }
+        for child in &self.children {
+            child.collect_indices(out);
+        }
+    }
+}
+
 /// A resolved spine ready for bundle compilation.
 ///
 /// Constructed via `VirtualSpine::build`; call `source()` to get the synthesized
@@ -115,9 +144,33 @@ impl Vertebra {
 pub struct VirtualSpine {
     pub vertebrae: Vec<Vertebra>,
     pub layout: SpineLayout,
+    /// Structural overlay over `vertebrae`; a flat one-level tree today, but the
+    /// foundation for arbitrary nesting later.
+    pub tree: Vec<SpineNode>,
 }
 
 impl VirtualSpine {
+    /// Pre-order walk of `self.tree`, yielding `&Vertebra` for every node that
+    /// points at one, in the same order as `self.vertebrae` for the trivial flat
+    /// tree built by `build()`. Group nodes with `vertebra: None` still recurse
+    /// into their children. A stale index is silently skipped, never panics.
+    pub fn flat_vertebrae(&self) -> Vec<&Vertebra> {
+        let mut indices = Vec::new();
+        for node in &self.tree {
+            node.collect_indices(&mut indices);
+        }
+        indices
+            .into_iter()
+            .filter_map(|i| self.vertebrae.get(i))
+            .collect()
+    }
+
+    /// The vertebra a tree node points at, or `None` for a group node or a
+    /// stale index. Never panics — looks up via `.get`.
+    pub fn vertebra_of(&self, node: &SpineNode) -> Option<&Vertebra> {
+        node.vertebra.and_then(|i| self.vertebrae.get(i))
+    }
+
     /// Resolve a list of spine files into a `VirtualSpine` with computed handles,
     /// output paths, and titles.
     ///
@@ -264,9 +317,36 @@ impl VirtualSpine {
             })
             .collect();
 
+        let vertebrae = vertebrae?;
+
+        // Trivial flat tree: one top-level node per vertebra, in order.
+        let tree: Vec<SpineNode> = vertebrae
+            .iter()
+            .enumerate()
+            .map(|(i, v)| SpineNode {
+                segment: v.handle.clone(),
+                title: None,
+                vertebra: Some(i),
+                children: Vec::new(),
+            })
+            .collect();
+
+        debug_assert!(
+            {
+                let mut indices = Vec::new();
+                for node in &tree {
+                    node.collect_indices(&mut indices);
+                }
+                let unique: HashSet<usize> = indices.iter().copied().collect();
+                indices.len() == vertebrae.len() && unique.len() == indices.len()
+            },
+            "spine tree must reference every vertebra exactly once"
+        );
+
         Ok(Self {
-            vertebrae: vertebrae?,
+            vertebrae,
             layout,
+            tree,
         })
     }
 
@@ -565,6 +645,31 @@ mod tests {
     }
 
     #[test]
+    fn flat_accessor_matches_vertebrae_order() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro\n").unwrap();
+        fs::write(content.join("closing.typ"), "= Closing\n").unwrap();
+
+        let files = vec![content.join("intro.typ"), content.join("closing.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+
+        let expected: Vec<&str> = spine.vertebrae.iter().map(|v| v.handle.as_str()).collect();
+        let actual: Vec<&str> = spine
+            .flat_vertebrae()
+            .iter()
+            .map(|v| v.handle.as_str())
+            .collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn vertebra_retains_source() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -700,6 +805,7 @@ mod tests {
                 ext: "html".into(),
                 format: "html".into(),
             },
+            tree: Vec::new(),
         };
         let src = spine.source();
         assert!(src.contains("#document(\"intro.html\", format: \"html\""));
@@ -741,6 +847,7 @@ mod tests {
                 output_name: "doc.pdf".into(),
                 format: "pdf".into(),
             },
+            tree: Vec::new(),
         };
         let src = spine.source();
         assert!(src.contains("#document(\"doc.pdf\", format: \"pdf\""));
@@ -784,6 +891,7 @@ mod tests {
                 output_name: "book.pdf".into(),
                 format: "pdf".into(),
             },
+            tree: Vec::new(),
         };
         assert!(spine.check_output_collisions().is_ok());
     }
