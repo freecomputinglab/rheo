@@ -60,6 +60,7 @@ mod tests {
         let spine = Spine {
             title: Some("Test".to_string()),
             vertebrae: vec![],
+            ..Default::default()
         };
         assert!(spine.validate().is_ok());
     }
@@ -69,6 +70,7 @@ mod tests {
         let spine = Spine {
             title: Some("Test".to_string()),
             vertebrae: vec!["*.typ".to_string(), "chapters/**/*.typ".to_string()],
+            ..Default::default()
         };
         assert!(spine.validate().is_ok());
     }
@@ -78,6 +80,7 @@ mod tests {
         let spine = Spine {
             title: Some("Test".to_string()),
             vertebrae: vec!["[invalid".to_string()],
+            ..Default::default()
         };
         let result = spine.validate();
         assert!(result.is_err());

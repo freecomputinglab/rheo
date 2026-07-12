@@ -1,3 +1,4 @@
+use crate::config::SpineSection;
 use crate::parser;
 use crate::parser::{DocumentDate, RheoValue};
 use crate::plugins::SpineOptions;
@@ -74,6 +75,7 @@ impl SpineOptions {
 /// A content directory scanned into a structured spine tree.
 ///
 /// Built via [`SpineScan::run`], which walks the directory on disk.
+#[derive(Debug)]
 pub struct SpineScan {
     /// Ordered flat file list in pre-order (feeds `VirtualSpine::build` later).
     pub files: Vec<PathBuf>,
@@ -311,6 +313,221 @@ impl SpineScan {
             .collect::<Vec<_>>()
             .join(" ")
     }
+
+    /// Apply `[[spine.section]]` virtual-directory layering (knob 2) to a scanned
+    /// spine, returning a new [`SpineScan`] with the tree + flat file list rebuilt.
+    ///
+    /// Each section is a virtual directory: its `include` globs pull matching
+    /// leaf files out of their scanned position and nest them under a group node
+    /// named `name` (arbitrary depth via nested `section`). A file placed under
+    /// section `guide` later resolves to handle `guide:<stem>`, exactly as if it
+    /// lived in `content/guide/`. Only leaf files are movable; a directory
+    /// landing page (`index.typ`) stays where it is. Returns `self` unchanged
+    /// when there are no sections.
+    pub fn apply_sections(self, content_dir: &Path, sections: &[SpineSection]) -> Result<SpineScan> {
+        if sections.is_empty() {
+            return Ok(self);
+        }
+        Self::validate_sections(sections)?;
+
+        let mut roots = Self::to_path_nodes(&self.tree, &self.files);
+
+        // All movable (leaf) file paths currently in the tree.
+        let mut leaves = Vec::new();
+        Self::collect_leaf_files(&roots, &mut leaves);
+
+        // Build virtual section nodes, claiming leaf files (each to the first
+        // section, pre-order, whose include matches it).
+        let mut claimed: HashSet<PathBuf> = HashSet::new();
+        let virtual_nodes =
+            Self::build_section_nodes(content_dir, sections, &leaves, &mut claimed)?;
+
+        // Remove claimed leaves from the scanned tree, pruning emptied groups.
+        Self::prune_claimed(&mut roots, &claimed);
+
+        // Insert virtual dirs at top level; order top-level siblings by segment,
+        // just as on-disk directories are ordered by name.
+        roots.extend(virtual_nodes);
+        roots.sort_by(|a, b| a.segment.cmp(&b.segment));
+
+        // Re-index into SpineNode + flat file list (pre-order, parent before child).
+        let mut files = Vec::new();
+        let tree = Self::reindex(&roots, &mut files);
+
+        if files.is_empty() {
+            return Err(RheoError::project_config(
+                "spine is empty after applying sections",
+            ));
+        }
+        Ok(SpineScan { files, tree })
+    }
+
+    /// Validate section names recursively: each `name` must be a non-empty slug
+    /// and sibling names must be unique (they behave like directory names).
+    fn validate_sections(sections: &[SpineSection]) -> Result<()> {
+        let mut seen: HashSet<&str> = HashSet::new();
+        for s in sections {
+            if sanitize_handle_segment(&s.name).is_empty() {
+                return Err(RheoError::project_config(format!(
+                    "spine section name '{}' is not a valid slug",
+                    s.name
+                )));
+            }
+            if !seen.insert(s.name.as_str()) {
+                return Err(RheoError::project_config(format!(
+                    "duplicate spine section name '{}'",
+                    s.name
+                )));
+            }
+            Self::validate_sections(&s.section)?;
+        }
+        Ok(())
+    }
+
+    /// Convert an indexed [`SpineNode`] tree into a path-carrying working tree.
+    fn to_path_nodes(nodes: &[SpineNode], files: &[PathBuf]) -> Vec<PathNode> {
+        nodes
+            .iter()
+            .map(|n| PathNode {
+                segment: n.segment.clone(),
+                title: n.title.clone(),
+                file: n.vertebra.and_then(|i| files.get(i)).cloned(),
+                children: Self::to_path_nodes(&n.children, files),
+            })
+            .collect()
+    }
+
+    /// Collect every movable leaf file path (a node with a file and no children).
+    fn collect_leaf_files(nodes: &[PathNode], out: &mut Vec<PathBuf>) {
+        for n in nodes {
+            if n.children.is_empty()
+                && let Some(f) = &n.file
+            {
+                out.push(f.clone());
+            }
+            Self::collect_leaf_files(&n.children, out);
+        }
+    }
+
+    /// Build virtual-directory nodes from `sections`, claiming leaf files.
+    fn build_section_nodes(
+        content_dir: &Path,
+        sections: &[SpineSection],
+        leaves: &[PathBuf],
+        claimed: &mut HashSet<PathBuf>,
+    ) -> Result<Vec<PathNode>> {
+        let mut result = Vec::new();
+        for s in sections {
+            let mut children = Vec::new();
+
+            // Match this section's includes, in listed order; within one glob,
+            // lexicographic. A file is claimed by the first section that matches.
+            let mut matched: Vec<PathBuf> = Vec::new();
+            for g in &s.include {
+                let matcher = GlobBuilder::new(g)
+                    .literal_separator(true)
+                    .build()
+                    .map_err(|e| {
+                        RheoError::project_config(format!(
+                            "invalid include glob '{}' in spine section '{}': {}",
+                            g, s.name, e
+                        ))
+                    })?
+                    .compile_matcher();
+                let mut ms: Vec<PathBuf> = leaves
+                    .iter()
+                    .filter(|p| !claimed.contains(*p))
+                    .filter(|p| {
+                        let rel = p.strip_prefix(content_dir).unwrap_or(p);
+                        matcher.is_match(to_forward_slash(rel))
+                    })
+                    .cloned()
+                    .collect();
+                ms.sort();
+                for m in ms {
+                    if claimed.insert(m.clone()) {
+                        matched.push(m);
+                    }
+                }
+            }
+            if !s.include.is_empty() && matched.is_empty() {
+                return Err(RheoError::project_config(format!(
+                    "spine section '{}' include matched no files",
+                    s.name
+                )));
+            }
+
+            for p in matched {
+                let stem = p
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default();
+                children.push(PathNode {
+                    segment: sanitize_handle_segment(stem),
+                    title: None,
+                    file: Some(p),
+                    children: Vec::new(),
+                });
+            }
+
+            // Nested virtual directories.
+            let nested = Self::build_section_nodes(content_dir, &s.section, leaves, claimed)?;
+            children.extend(nested);
+
+            result.push(PathNode {
+                segment: sanitize_handle_segment(&s.name),
+                title: Some(s.title.clone().unwrap_or_else(|| Self::prettify(&s.name))),
+                file: None,
+                children,
+            });
+        }
+        Ok(result)
+    }
+
+    /// Remove claimed leaf files from the working tree, dropping any group node
+    /// left with neither a file nor children.
+    fn prune_claimed(nodes: &mut Vec<PathNode>, claimed: &HashSet<PathBuf>) {
+        nodes.retain_mut(|n| {
+            Self::prune_claimed(&mut n.children, claimed);
+            if n.children.is_empty()
+                && let Some(f) = &n.file
+                && claimed.contains(f)
+            {
+                return false;
+            }
+            !(n.file.is_none() && n.children.is_empty())
+        });
+    }
+
+    /// Re-index a working tree into an indexed [`SpineNode`] tree, rebuilding the
+    /// flat file list in pre-order (parent before children).
+    fn reindex(nodes: &[PathNode], files: &mut Vec<PathBuf>) -> Vec<SpineNode> {
+        nodes
+            .iter()
+            .map(|n| {
+                let vertebra = n.file.as_ref().map(|f| {
+                    let idx = files.len();
+                    files.push(f.clone());
+                    idx
+                });
+                SpineNode {
+                    segment: n.segment.clone(),
+                    title: n.title.clone(),
+                    vertebra,
+                    children: Self::reindex(&n.children, files),
+                }
+            })
+            .collect()
+    }
+}
+
+/// A working spine node carrying file PATHS (not indices), used while
+/// transforming the scanned tree before re-indexing into [`SpineNode`].
+struct PathNode {
+    segment: String,
+    title: Option<String>,
+    file: Option<PathBuf>,
+    children: Vec<PathNode>,
 }
 
 // ── Bundle spine: VirtualSpine, Vertebra, SpineLayout ────────────────────────
@@ -355,6 +572,7 @@ impl Vertebra {
 
 /// One node in the structured spine. Mirrors directory / section nesting to
 /// arbitrary depth as a structural overlay over the flat `vertebrae`.
+#[derive(Debug)]
 pub struct SpineNode {
     /// Handle segment contributed by this node (dir name, file stem, or section
     /// name). For the trivial flat tree this is the vertebra's full handle.
@@ -1267,5 +1485,99 @@ mod tests {
             Err(e) => assert!(e.to_string().contains("need at least one .typ file")),
             Ok(_) => panic!("expected empty-scan error"),
         }
+    }
+
+    // ── apply_sections tests ─────────────────────────────────────────────────
+
+    fn section(name: &str, include: &[&str]) -> SpineSection {
+        SpineSection {
+            name: name.into(),
+            title: None,
+            include: include.iter().map(|s| s.to_string()).collect(),
+            section: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn apply_sections_groups_flat_files() {
+        let temp = create_test_dir_with_files(&["a.typ", "b.typ", "c.typ"]);
+        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let out = scan
+            .apply_sections(temp.path(), &[section("guide", &["a.typ", "b.typ"])])
+            .unwrap();
+
+        // c stays top-level; guide is a group node holding a and b.
+        assert_eq!(out.files.len(), 3);
+        let guide = out.tree.iter().find(|n| n.segment == "guide").unwrap();
+        assert!(guide.vertebra.is_none()); // non-clickable group
+        assert_eq!(guide.title.as_deref(), Some("Guide")); // derived from name
+        let child_segs: Vec<&str> = guide.children.iter().map(|c| c.segment.as_str()).collect();
+        assert_eq!(child_segs, vec!["a", "b"]);
+        assert!(out.tree.iter().any(|n| n.segment == "c" && n.vertebra.is_some()));
+        // Children reindexed to valid file positions.
+        for c in &guide.children {
+            let idx = c.vertebra.expect("section child is a leaf vertebra");
+            assert!(idx < out.files.len());
+        }
+    }
+
+    #[test]
+    fn apply_sections_nests_subsections() {
+        let temp = create_test_dir_with_files(&["a.typ", "b.typ", "c.typ"]);
+        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let mut guide = section("guide", &["a.typ"]);
+        guide.section = vec![section("advanced", &["c.typ"])];
+        let out = scan.apply_sections(temp.path(), &[guide]).unwrap();
+
+        let guide = out.tree.iter().find(|n| n.segment == "guide").unwrap();
+        // guide holds leaf a, then nested group advanced holding c.
+        assert_eq!(guide.children[0].segment, "a");
+        let advanced = guide.children.iter().find(|n| n.segment == "advanced").unwrap();
+        assert!(advanced.vertebra.is_none());
+        assert_eq!(advanced.children[0].segment, "c");
+        assert!(out.tree.iter().any(|n| n.segment == "b"));
+    }
+
+    #[test]
+    fn apply_sections_title_derived_strips_numeric_prefix() {
+        let temp = create_test_dir_with_files(&["a.typ"]);
+        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let out = scan
+            .apply_sections(temp.path(), &[section("01-guide", &["a.typ"])])
+            .unwrap();
+        let guide = out.tree.iter().find(|n| n.segment == "01-guide").unwrap();
+        assert_eq!(guide.title.as_deref(), Some("Guide")); // prefix stripped for title, kept in segment
+    }
+
+    #[test]
+    fn apply_sections_include_no_match_errors() {
+        let temp = create_test_dir_with_files(&["a.typ"]);
+        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let err = scan
+            .apply_sections(temp.path(), &[section("guide", &["nope.typ"])])
+            .unwrap_err();
+        assert!(err.to_string().contains("matched no files"));
+    }
+
+    #[test]
+    fn apply_sections_duplicate_sibling_name_errors() {
+        let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
+        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let err = scan
+            .apply_sections(
+                temp.path(),
+                &[section("guide", &["a.typ"]), section("guide", &["b.typ"])],
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("duplicate spine section"));
+    }
+
+    #[test]
+    fn apply_sections_empty_is_noop() {
+        let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
+        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let before = scan.files.len();
+        let out = scan.apply_sections(temp.path(), &[]).unwrap();
+        assert_eq!(out.files.len(), before);
     }
 }

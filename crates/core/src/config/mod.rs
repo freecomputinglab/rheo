@@ -25,6 +25,32 @@ pub struct Spine {
     /// Empty = auto-discover all .typ files.
     #[serde(default)]
     pub vertebrae: Vec<String>,
+
+    /// Glob patterns (relative to content_dir) for files/folders to omit from
+    /// the directory-scanned spine.
+    #[serde(default)]
+    pub exclude: Vec<String>,
+
+    /// Virtual-directory layering over flat files (knob 2). Each section groups
+    /// matched files under a virtual subdirectory without moving them on disk.
+    #[serde(default)]
+    pub section: Vec<SpineSection>,
+}
+
+/// A virtual directory in the spine: groups flat files under a named node,
+/// behaving like an on-disk subdirectory. Nests to arbitrary depth via `section`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpineSection {
+    /// Slug — the node's handle segment and sibling sort key (like a dir name).
+    pub name: String,
+    /// Display title; when absent, derived from `name`.
+    pub title: Option<String>,
+    /// Glob patterns (relative to content_dir) for files pulled under this section.
+    #[serde(default)]
+    pub include: Vec<String>,
+    /// Nested virtual directories.
+    #[serde(default)]
+    pub section: Vec<SpineSection>,
 }
 
 /// Asset configuration for `[plugin_name.assets]` in rheo.toml.
@@ -131,6 +157,9 @@ pub struct RheoConfig {
     /// Per-plugin configuration sections, keyed by plugin name.
     /// Built from `[html]`, `[pdf]`, `[epub]` (and any other) table sections.
     pub plugin_sections: HashMap<String, PluginSection>,
+
+    /// Global spine configuration (applies when no per-plugin spine is set).
+    pub spine: Option<Spine>,
 }
 
 impl Default for RheoConfig {
@@ -143,6 +172,7 @@ impl Default for RheoConfig {
             copy: vec![],
             font_dirs: vec![],
             plugin_sections: HashMap::new(),
+            spine: None,
         }
     }
 }
@@ -166,7 +196,11 @@ pub struct RheoConfigRaw {
 impl TryFrom<RheoConfigRaw> for RheoConfig {
     type Error = toml::de::Error;
 
-    fn try_from(raw: RheoConfigRaw) -> std::result::Result<Self, Self::Error> {
+    fn try_from(mut raw: RheoConfigRaw) -> std::result::Result<Self, Self::Error> {
+        let spine: Option<Spine> = match raw.extra.remove("spine") {
+            Some(value) => value.try_into()?,
+            None => None,
+        };
         let mut plugin_sections = HashMap::new();
         for (key, value) in raw.extra {
             if let toml::Value::Table(_) = &value {
@@ -183,6 +217,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             copy: raw.copy,
             font_dirs: raw.font_dirs,
             plugin_sections,
+            spine,
         })
     }
 }
@@ -723,5 +758,72 @@ mod tests {
         assert_eq!(pairs[0].0.dest.as_deref(), Some("subdir"));
         assert_eq!(pairs[1].1, "two.js");
         assert!(pairs[1].0.dest.is_none());
+    }
+
+    #[test]
+    fn test_global_spine_exclude_and_nested_sections() {
+        let toml = versioned_toml(
+            r#"
+        [spine]
+        exclude = ["drafts/**", "*.tmp.typ"]
+
+        [[spine.section]]
+        name = "guides"
+
+        [[spine.section.section]]
+        name = "advanced"
+        "#,
+        );
+        let config = parse(&toml);
+        let spine = config.spine.as_ref().unwrap();
+        assert_eq!(spine.exclude, vec!["drafts/**", "*.tmp.typ"]);
+        assert_eq!(spine.section.len(), 1);
+        assert_eq!(spine.section[0].name, "guides");
+        assert_eq!(spine.section[0].section.len(), 1);
+        assert_eq!(spine.section[0].section[0].name, "advanced");
+        assert!(!config.plugin_sections.contains_key("spine"));
+    }
+
+    #[test]
+    fn test_pdf_spine_exclude_and_section() {
+        let toml = versioned_toml(
+            r#"
+        [pdf.spine]
+        exclude = ["scratch/**"]
+
+        [[pdf.spine.section]]
+        name = "appendix"
+        include = ["appendix/*.typ"]
+        "#,
+        );
+        let config = parse(&toml);
+        let spine = config.spine_for_plugin("pdf").unwrap();
+        assert_eq!(spine.exclude, vec!["scratch/**"]);
+        assert_eq!(spine.section.len(), 1);
+        assert_eq!(spine.section[0].name, "appendix");
+        assert_eq!(spine.section[0].include, vec!["appendix/*.typ"]);
+    }
+
+    #[test]
+    fn test_legacy_pdf_spine_without_exclude_or_section() {
+        let toml = versioned_toml("[pdf.spine]\nvertebrae = [\"cover.typ\", \"chapters/*.typ\"]");
+        let config = parse(&toml);
+        let spine = config.spine_for_plugin("pdf").unwrap();
+        assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
+        assert!(spine.exclude.is_empty());
+        assert!(spine.section.is_empty());
+    }
+
+    #[test]
+    fn test_spine_section_title_defaults_to_none() {
+        let toml = r#"
+        name = "guides"
+        include = ["guides/*.typ"]
+    "#;
+        let section: SpineSection = toml::from_str(toml).expect("parse failed");
+        assert_eq!(section.name, "guides");
+        assert!(section.title.is_none());
+        assert!(section.include.len() == 1);
+        assert!(section.section.is_empty());
     }
 }

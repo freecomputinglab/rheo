@@ -44,7 +44,7 @@ impl FormatPlugin for EpubPlugin {
     fn apply_defaults(&self, section: &mut PluginSection, project_name: &str) {
         let spine = section.spine.get_or_insert_with(|| Spine {
             title: None,
-            vertebrae: vec![],
+            ..Default::default()
         });
         if spine.title.is_none() {
             spine.title = Some(DocumentTitle::to_readable_name(project_name));
