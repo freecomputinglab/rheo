@@ -136,6 +136,38 @@ impl SpineScan {
             .map_err(|e| RheoError::project_config(format!("invalid exclude globs: {}", e)))
     }
 
+    /// Build a flat spine (no nesting) from an explicit, ordered file list.
+    ///
+    /// Each file becomes a top-level leaf whose segment is its full `:`-joined
+    /// disk-path handle relative to `content_dir` (e.g. `a/notes.typ` →
+    /// `a:notes`), preserving the given order. Used for single-file projects and
+    /// wherever an explicit ordering is supplied rather than a directory scan.
+    pub fn flat(files: &[PathBuf], content_dir: &Path) -> SpineScan {
+        let tree = files
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let stem =
+                    to_forward_slash(&f.strip_prefix(content_dir).unwrap_or(f).with_extension(""));
+                let segment = stem
+                    .split('/')
+                    .map(sanitize_handle_segment)
+                    .collect::<Vec<_>>()
+                    .join(":");
+                SpineNode {
+                    segment,
+                    title: None,
+                    vertebra: Some(i),
+                    children: Vec::new(),
+                }
+            })
+            .collect();
+        SpineScan {
+            files: files.to_vec(),
+            tree,
+        }
+    }
+
     /// Return `true` if `path` (relative to `content_dir`) matches any exclude glob.
     fn is_excluded(content_dir: &Path, path: &Path, exclude: &GlobSet) -> bool {
         let rel = path.strip_prefix(content_dir).unwrap_or(path);
@@ -634,23 +666,40 @@ impl VirtualSpine {
         node.vertebra.and_then(|i| self.vertebrae.get(i))
     }
 
+    /// Fill `handles[i]` with the `:`-joined segment path from the tree root to
+    /// the node whose `vertebra` is `Some(i)`, walking pre-order. Group nodes
+    /// contribute their segment as a prefix to descendants without claiming a slot.
+    fn assign_handles(nodes: &[SpineNode], prefix: &str, handles: &mut [String]) {
+        for n in nodes {
+            let seg = if prefix.is_empty() {
+                n.segment.clone()
+            } else {
+                format!("{prefix}:{}", n.segment)
+            };
+            if let Some(i) = n.vertebra
+                && let Some(slot) = handles.get_mut(i)
+            {
+                *slot = seg.clone();
+            }
+            Self::assign_handles(&n.children, &seg, handles);
+        }
+    }
+
     /// Resolve a list of spine files into a `VirtualSpine` with computed handles,
     /// output paths, and titles.
     ///
     /// `content_dir` is the project content root; stems are computed relative to it
     /// so `content/chapters/intro.typ` yields handle `intro` (or `chapters:intro`
     /// on a cross-directory stem collision). Pass `project_root` for `#include` paths.
-    pub fn build(
-        files: &[PathBuf],
-        content_dir: &Path,
-        project_root: &Path,
-        layout: SpineLayout,
-    ) -> Result<Self> {
-        // Stem relative to content_dir (no extension, forward-slash).
-        let rel_stems: Vec<String> = files
-            .iter()
-            .map(|f| to_forward_slash(&f.strip_prefix(content_dir).unwrap_or(f).with_extension("")))
-            .collect();
+    pub fn build(scan: SpineScan, project_root: &Path, layout: SpineLayout) -> Result<Self> {
+        let SpineScan { files, tree } = scan;
+
+        // Handle per file, derived from its position in the spine tree: the
+        // ':'-joined path of ancestor segments down to the file. For a plain
+        // directory scan this equals the disk path; a file pulled under a
+        // `[[spine.section]]` gains that section's segment as a prefix.
+        let mut handles: Vec<String> = vec![String::new(); files.len()];
+        Self::assign_handles(&tree, "", &mut handles);
 
         // First pass: parse each file, compute handles, collect user labels.
         struct FileInfo {
@@ -673,22 +722,9 @@ impl VirtualSpine {
 
         let file_infos: Result<Vec<FileInfo>> = files
             .iter()
-            .zip(rel_stems.iter())
-            .map(|(file, rel_stem)| {
-                let segments: Vec<&str> = rel_stem.split('/').collect();
-
-                // Canonical handle: bare stem for root-level files, path-prefixed
-                // with ':' separator for nested files ("a/notes" → "a:notes").
-                let handle = if segments.len() > 1 {
-                    segments
-                        .iter()
-                        .map(|s| sanitize_handle_segment(s))
-                        .collect::<Vec<_>>()
-                        .join(":")
-                } else {
-                    sanitize_handle_segment(segments[0])
-                };
-
+            .zip(handles.iter())
+            .map(|(file, handle)| {
+                let handle = handle.clone();
                 let escape = format!("{handle}.typ");
 
                 let output_path = match &layout {
@@ -781,18 +817,6 @@ impl VirtualSpine {
             .collect();
 
         let vertebrae = vertebrae?;
-
-        // Trivial flat tree: one top-level node per vertebra, in order.
-        let tree: Vec<SpineNode> = vertebrae
-            .iter()
-            .enumerate()
-            .map(|(i, v)| SpineNode {
-                segment: v.handle.clone(),
-                title: None,
-                vertebra: Some(i),
-                children: Vec::new(),
-            })
-            .collect();
 
         debug_assert!(
             {
@@ -1098,7 +1122,7 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
-        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
 
         assert_eq!(spine.vertebrae[0].handle, "intro");
         assert_eq!(spine.vertebrae[0].extra_handles, vec!["intro.typ"]);
@@ -1121,7 +1145,7 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
-        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
 
         let expected: Vec<&str> = spine.vertebrae.iter().map(|v| v.handle.as_str()).collect();
         let actual: Vec<&str> = spine
@@ -1145,7 +1169,7 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
-        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
         let v = &spine.vertebrae[0];
 
         // The raw source is retained for the Mould stage.
@@ -1167,7 +1191,7 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
-        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
 
         let preludes = spine.rheo_context_preludes(Some("html"));
         // One prelude per vertebra, keyed by include path.
@@ -1199,7 +1223,7 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
-        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
 
         // Some(target) -> `target` field in both prelude and global context.
         let with = spine.rheo_context_preludes(Some("html"));
@@ -1234,7 +1258,7 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
-        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
 
         assert_eq!(spine.vertebrae[0].handle, "a:notes");
         assert_eq!(spine.vertebrae[1].handle, "b:notes");
@@ -1374,7 +1398,7 @@ mod tests {
             format: "html".into(),
         };
         // Without prefixing, the raw `<intro>` collides with the canonical handle.
-        let spine = VirtualSpine::build(&files, &content, root, layout).unwrap();
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
 
         assert_eq!(spine.vertebrae[0].handle, "intro");
         // Canonical was user-claimed → not emitted.
@@ -1401,7 +1425,7 @@ mod tests {
             ext: "html".into(),
             format: "html".into(),
         };
-        let result = VirtualSpine::build(&files, &content, root, layout);
+        let result = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout);
         match result {
             Err(e) => {
                 let msg = e.to_string();

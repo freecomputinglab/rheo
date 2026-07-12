@@ -12,7 +12,7 @@ use crate::config::output::OutputConfig;
 use crate::config::project::{ProjectConfig, ProjectMode};
 use crate::diagnostics::results::CompilationResults;
 use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, SpineOptions, spine_layout_for};
-use crate::reticulate::spine::VirtualSpine;
+use crate::reticulate::spine::{SpineScan, VirtualSpine};
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use std::path::{Path, PathBuf};
@@ -172,38 +172,36 @@ impl Build {
         plugin_section: &PluginSection,
         content_dir: &Path,
     ) -> Result<(VirtualSpine, typst_bundle::VirtualFs)> {
-        // Resolve spine options.
-        let spine_cfg = plugin_section.spine.as_ref();
-        let spine = SpineOptions {
-            title: spine_cfg.and_then(|s| s.title.clone()),
-            vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
-        };
+        // Effective spine config: a per-format [plugin.spine] fully replaces the
+        // global [spine]; with neither, the spine is a pure directory scan.
+        let spine_cfg = plugin_section
+            .spine
+            .as_ref()
+            .or(self.project.config.spine.as_ref());
+        let exclude = spine_cfg.map(|s| s.exclude.clone()).unwrap_or_default();
+        let sections = spine_cfg.map(|s| s.section.clone()).unwrap_or_default();
 
-        // Build VirtualSpine from plugin's declared layout + project context.
         let layout = spine_layout_for(plugin.spine_layout_kind(), plugin, &self.project.name);
-        let spine_files = match self.project.mode {
-            ProjectMode::SingleFile => vec![self.project.typ_files[0].clone()],
+
+        // Base spine = directory scan under content_dir, customized by the two
+        // knobs (exclude, then section layering). A single-file project is a
+        // one-node flat spine.
+        let scan = match self.project.mode {
+            ProjectMode::SingleFile => {
+                SpineScan::flat(&[self.project.typ_files[0].clone()], content_dir)
+            }
             ProjectMode::Directory => {
-                // When content_dir is explicit in config, vertebrae patterns are
-                // relative to it. When auto-detected or absent, vertebrae are
-                // project-root-relative (users write "content/**" explicitly).
-                let explicit_content_dir =
-                    self.project.config.resolve_content_dir(&self.project.root);
-                let generate_root = explicit_content_dir
-                    .as_deref()
-                    .unwrap_or(&self.project.root);
-                spine.generate(generate_root)?
+                SpineScan::run(content_dir, &exclude)?.apply_sections(content_dir, &sections)?
             }
         };
 
         debug!(
             plugin = plugin.name(),
-            files = spine_files.len(),
+            files = scan.files.len(),
             "building virtual spine"
         );
 
-        let virtual_spine =
-            VirtualSpine::build(&spine_files, content_dir, &self.project.root, layout)?;
+        let virtual_spine = VirtualSpine::build(scan, &self.project.root, layout)?;
         virtual_spine.check_output_collisions()?;
 
         let moulded = virtual_spine.mould();
@@ -373,10 +371,16 @@ impl Build {
 
             // `spine` (used by PluginContext below) is re-derived here; `compile_spine`
             // resolves its own copy internally to build the VirtualSpine.
-            let spine_cfg = plugin_section.spine.as_ref();
+            // Plugins read `ctx.spine.title` (e.g. the HTML feed title). Resolve
+            // it with the same precedence as the spine itself: per-format
+            // [plugin.spine] title, else the global [spine] title.
+            let spine_cfg = plugin_section
+                .spine
+                .as_ref()
+                .or(self.project.config.spine.as_ref());
             let spine = SpineOptions {
                 title: spine_cfg.and_then(|s| s.title.clone()),
-                vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
+                vertebrae: Vec::new(),
             };
 
             let ctx = PluginContext {

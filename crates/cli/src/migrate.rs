@@ -29,7 +29,7 @@ use regex::{Captures, Regex};
 use rheo_core::build::resolve_effective_content_dir;
 use rheo_core::config::manifest_version::ManifestVersion;
 use rheo_core::config::project::ProjectConfig;
-use rheo_core::reticulate::{SpineLayout, VirtualSpine};
+use rheo_core::reticulate::{SpineLayout, SpineScan, VirtualSpine};
 use rheo_core::util::path::canonicalize_path;
 use rheo_core::{Result, RheoError};
 use std::collections::HashMap;
@@ -124,7 +124,7 @@ fn migrate_link_syntax(project: &ProjectConfig, apply: bool) -> Result<()> {
         ext: "html".into(),
         format: "html".into(),
     };
-    let spine = VirtualSpine::build(&typ_files, &content_dir, &project.root, layout)?;
+    let spine = VirtualSpine::build(SpineScan::flat(&typ_files, &content_dir), &project.root, layout)?;
 
     // Canonical absolute source path -> label to emit.
     // The primary handle is always unique: bare (`intro`) for root-level files,
