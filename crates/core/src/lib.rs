@@ -35,7 +35,7 @@ pub use config::{AssetsField, PluginAssets, PluginSection, Spine};
 pub use parser::RheoValue;
 pub use plugins::{
     AssetConfig, CastVertebra, FormatInitTemplate, FormatPlugin, OpenHandle, PackageAssets,
-    PluginContext, ResolvedPackage, ServerHandle, SpineLayoutKind, SpineOptions, TypstFormat,
+    PluginContext, ResolvedPackage, ServerHandle, SpineLayoutKind, TypstFormat,
 };
 
 // HTML/PDF export utilities

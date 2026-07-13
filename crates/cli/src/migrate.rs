@@ -29,10 +29,10 @@ use regex::{Captures, Regex};
 use rheo_core::build::resolve_effective_content_dir;
 use rheo_core::config::manifest_version::ManifestVersion;
 use rheo_core::config::project::ProjectConfig;
-use rheo_core::reticulate::{SpineLayout, VirtualSpine};
-use rheo_core::util::path::canonicalize_path;
-use rheo_core::{Result, RheoError};
-use std::collections::HashMap;
+use rheo_core::reticulate::{SpineLayout, SpineScan, VirtualSpine};
+use rheo_core::util::path::{canonicalize_path, to_forward_slash};
+use rheo_core::{Result, RheoError, Spine};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
@@ -75,6 +75,10 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     // check above) has its direct references rewritten.
     let needs_target_rewrite = from < to;
 
+    // `vertebrae` was retired by the structured-spine directory-scan default,
+    // in the same release as the rheo-target removal above — same threshold.
+    let needs_vertebrae_migration = from < to;
+
     println!("\nMigrations:");
     if needs_link_rewrite {
         println!("  - rewrite #link(\"./file.typ\") syntax to #link(<handle>)");
@@ -83,6 +87,9 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
         println!(
             "  - rewrite sys.inputs.rheo-target -> sys.inputs.rheo-context.target (and rheo-target() -> target())"
         );
+    }
+    if needs_vertebrae_migration {
+        println!("  - convert retired [spine] vertebrae glob lists to [spine] exclude");
     }
     println!("  - bump rheo.toml version to {to}");
 
@@ -94,6 +101,11 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     if needs_target_rewrite {
         println!("\nTarget references:");
         migrate_target_references(&project, apply)?;
+    }
+
+    if needs_vertebrae_migration {
+        println!("\nSpine config:");
+        migrate_vertebrae_to_exclude(&project, config_path, apply)?;
     }
 
     if apply {
@@ -124,7 +136,11 @@ fn migrate_link_syntax(project: &ProjectConfig, apply: bool) -> Result<()> {
         ext: "html".into(),
         format: "html".into(),
     };
-    let spine = VirtualSpine::build(&typ_files, &content_dir, &project.root, layout)?;
+    let spine = VirtualSpine::build(
+        SpineScan::flat(&typ_files, &content_dir),
+        &project.root,
+        layout,
+    )?;
 
     // Canonical absolute source path -> label to emit.
     // The primary handle is always unique: bare (`intro`) for root-level files,
@@ -268,6 +284,179 @@ fn migrate_target_references(project: &ProjectConfig, apply: bool) -> Result<()>
             fs::write(file, content.as_bytes())
                 .map_err(|e| RheoError::io(e, format!("failed to write {}", file.display())))?;
         }
+    }
+
+    Ok(())
+}
+
+/// One `[spine]`/`[<plugin>.spine]` table that still sets the retired
+/// `vertebrae` glob list.
+struct VertebraeSite {
+    /// `None` for the global `[spine]` table, `Some(plugin name)` for a
+    /// per-format `[<plugin>.spine]` table.
+    plugin: Option<String>,
+    patterns: Vec<String>,
+}
+
+impl VertebraeSite {
+    fn label(&self) -> String {
+        match &self.plugin {
+            Some(name) => format!("{name}.spine"),
+            None => "spine".to_string(),
+        }
+    }
+}
+
+/// Read `spine.extra`'s `vertebrae` key (captured there since the typed field
+/// was removed — see rheo-cyy) as a list of glob-pattern strings.
+fn vertebrae_patterns(spine: &Spine) -> Option<Vec<String>> {
+    let patterns = spine.extra.get("vertebrae")?.as_array()?;
+    Some(
+        patterns
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect(),
+    )
+}
+
+/// Expand `vertebrae` glob patterns into the `.typ` files they matched, the
+/// same way the retired `SpineOptions::generate` used to (glob each pattern
+/// against `content_dir`, keep only `.typ` files). Paths are canonicalized so
+/// they compare equal to the directory-scan set regardless of path spelling.
+fn expand_vertebrae_patterns(patterns: &[String], content_dir: &Path) -> HashSet<PathBuf> {
+    let mut matched = HashSet::new();
+    for pattern in patterns {
+        let glob_pattern = content_dir.join(pattern).display().to_string();
+        let Ok(paths) = glob::glob(&glob_pattern) else {
+            continue;
+        };
+        for path in paths.filter_map(|p| p.ok()) {
+            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("typ") {
+                matched.insert(canonicalize_path(&path).unwrap_or(path));
+            }
+        }
+    }
+    matched
+}
+
+/// Convert a retired `vertebrae` inclusion-filter glob list into an equivalent
+/// `[spine] exclude`, so a helper-only `.typ` file the old list deliberately
+/// never named doesn't silently start being published as a spine page under
+/// the directory-scan-by-default model (see rheo-9vl.1). When `vertebrae`
+/// matched every `.typ` file anyway (e.g. an empty list, or a catch-all glob),
+/// no exclude is needed — the key is simply dropped.
+fn migrate_vertebrae_to_exclude(
+    project: &ProjectConfig,
+    config_path: &Path,
+    apply: bool,
+) -> Result<()> {
+    let mut sites = Vec::new();
+    if let Some(spine) = &project.config.spine
+        && let Some(patterns) = vertebrae_patterns(spine)
+    {
+        sites.push(VertebraeSite {
+            plugin: None,
+            patterns,
+        });
+    }
+    for (name, section) in &project.config.plugin_sections {
+        if let Some(spine) = &section.spine
+            && let Some(patterns) = vertebrae_patterns(spine)
+        {
+            sites.push(VertebraeSite {
+                plugin: Some(name.clone()),
+                patterns,
+            });
+        }
+    }
+    if sites.is_empty() {
+        return Ok(());
+    }
+    // Sort for deterministic output across runs (HashMap iteration order varies).
+    sites.sort_by_key(|a| a.label());
+
+    let content_dir = resolve_effective_content_dir(project);
+    // Full directory-scan file set the new zero-config model would include.
+    // No `.typ` files under content_dir means nothing to reconcile.
+    let Ok(scan) = SpineScan::run(&content_dir, &[]) else {
+        return Ok(());
+    };
+    let scanned: HashSet<PathBuf> = scan
+        .files
+        .into_iter()
+        .map(|f| canonicalize_path(&f).unwrap_or(f))
+        .collect();
+
+    let text = fs::read_to_string(config_path)
+        .map_err(|e| RheoError::io(e, format!("failed to read {}", config_path.display())))?;
+    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| {
+        RheoError::project_config(format!("failed to parse {}: {}", config_path.display(), e))
+    })?;
+
+    for site in &sites {
+        // An empty pattern list means "auto-discover everything" under the old
+        // semantics too — already equivalent to the new default, no diff.
+        let newly_included: Vec<String> = if site.patterns.is_empty() {
+            Vec::new()
+        } else {
+            let matched = expand_vertebrae_patterns(&site.patterns, &content_dir);
+            let mut rel: Vec<String> = scanned
+                .iter()
+                .filter(|f| !matched.contains(*f))
+                .map(|f| to_forward_slash(f.strip_prefix(&content_dir).unwrap_or(f)))
+                .collect();
+            rel.sort();
+            rel
+        };
+
+        if newly_included.is_empty() {
+            println!(
+                "  - [{}]: vertebrae matched the full scan; removing (no exclude needed)",
+                site.label()
+            );
+        } else {
+            println!(
+                "  - [{}]: vertebrae -> exclude = {:?}",
+                site.label(),
+                newly_included
+            );
+        }
+
+        if apply {
+            let item = match &site.plugin {
+                Some(name) => &mut doc[name.as_str()]["spine"],
+                None => &mut doc["spine"],
+            };
+            if let Some(table) = item.as_table_like_mut() {
+                table.remove("vertebrae");
+                if !newly_included.is_empty() {
+                    match table.get_mut("exclude").and_then(|i| i.as_array_mut()) {
+                        Some(arr) => {
+                            for f in &newly_included {
+                                if !arr.iter().any(|v| v.as_str() == Some(f.as_str())) {
+                                    arr.push(f.as_str());
+                                }
+                            }
+                        }
+                        None => {
+                            let mut arr = toml_edit::Array::new();
+                            for f in &newly_included {
+                                arr.push(f.as_str());
+                            }
+                            table.insert(
+                                "exclude",
+                                toml_edit::Item::Value(toml_edit::Value::Array(arr)),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if apply {
+        fs::write(config_path, doc.to_string())
+            .map_err(|e| RheoError::io(e, format!("failed to write {}", config_path.display())))?;
     }
 
     Ok(())
@@ -460,6 +649,123 @@ mod tests {
         assert!(!out.contains("rheo-target"));
         // Unrelated content untouched.
         assert!(out.contains("= Unrelated Title"));
+    }
+
+    #[test]
+    fn vertebrae_migration_excludes_files_the_old_list_never_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let content = root.join("content");
+        fs::create_dir_all(content.join("lib")).unwrap();
+        fs::write(content.join("main.typ"), "= Main\n").unwrap();
+        fs::write(content.join("lib").join("helper.typ"), "#let x = 1\n").unwrap();
+
+        let mut extra = toml::Table::new();
+        extra.insert(
+            "vertebrae".to_string(),
+            toml::Value::Array(vec![toml::Value::String("main.typ".to_string())]),
+        );
+        let spine = Spine {
+            title: Some("Book".to_string()),
+            extra,
+            ..Default::default()
+        };
+        let mut plugin_sections = HashMap::new();
+        plugin_sections.insert(
+            "epub".to_string(),
+            rheo_core::PluginSection {
+                spine: Some(spine),
+                ..Default::default()
+            },
+        );
+
+        let project = ProjectConfig {
+            root: root.to_path_buf(),
+            name: "test".into(),
+            config: rheo_core::RheoConfig {
+                version: ManifestVersion::parse("0.3.0").unwrap(),
+                content_dir: Some("content".into()),
+                plugin_sections,
+                ..Default::default()
+            },
+            typ_files: vec![
+                content.join("main.typ"),
+                content.join("lib").join("helper.typ"),
+            ],
+            mode: rheo_core::config::project::ProjectMode::Directory,
+            config_path: Some(root.join("rheo.toml")),
+        };
+        let toml_path = root.join("rheo.toml");
+        fs::write(
+            &toml_path,
+            "version = \"0.3.0\"\ncontent_dir = \"content\"\n\n[epub.spine]\ntitle = \"Book\"\nvertebrae = [\"main.typ\"]\n",
+        )
+        .unwrap();
+
+        // Dry run: no write.
+        migrate_vertebrae_to_exclude(&project, &toml_path, false).unwrap();
+        let unchanged = fs::read_to_string(&toml_path).unwrap();
+        assert!(unchanged.contains("vertebrae"));
+
+        migrate_vertebrae_to_exclude(&project, &toml_path, true).unwrap();
+        let updated = fs::read_to_string(&toml_path).unwrap();
+        assert!(!updated.contains("vertebrae"), "{updated}");
+        assert!(updated.contains("exclude"), "{updated}");
+        assert!(updated.contains("lib/helper.typ"), "{updated}");
+        // Unrelated keys preserved.
+        assert!(updated.contains("title = \"Book\""), "{updated}");
+    }
+
+    #[test]
+    fn vertebrae_migration_drops_key_with_no_exclude_when_nothing_new_included() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("main.typ"), "= Main\n").unwrap();
+
+        let mut extra = toml::Table::new();
+        extra.insert(
+            "vertebrae".to_string(),
+            toml::Value::Array(vec![toml::Value::String("*.typ".to_string())]),
+        );
+        let spine = Spine {
+            extra,
+            ..Default::default()
+        };
+        let mut plugin_sections = HashMap::new();
+        plugin_sections.insert(
+            "pdf".to_string(),
+            rheo_core::PluginSection {
+                spine: Some(spine),
+                ..Default::default()
+            },
+        );
+
+        let project = ProjectConfig {
+            root: root.to_path_buf(),
+            name: "test".into(),
+            config: rheo_core::RheoConfig {
+                version: ManifestVersion::parse("0.3.0").unwrap(),
+                content_dir: Some("content".into()),
+                plugin_sections,
+                ..Default::default()
+            },
+            typ_files: vec![content.join("main.typ")],
+            mode: rheo_core::config::project::ProjectMode::Directory,
+            config_path: Some(root.join("rheo.toml")),
+        };
+        let toml_path = root.join("rheo.toml");
+        fs::write(
+            &toml_path,
+            "version = \"0.3.0\"\ncontent_dir = \"content\"\n\n[pdf.spine]\nvertebrae = [\"*.typ\"]\n",
+        )
+        .unwrap();
+
+        migrate_vertebrae_to_exclude(&project, &toml_path, true).unwrap();
+        let updated = fs::read_to_string(&toml_path).unwrap();
+        assert!(!updated.contains("vertebrae"), "{updated}");
+        assert!(!updated.contains("exclude"), "{updated}");
     }
 
     #[test]

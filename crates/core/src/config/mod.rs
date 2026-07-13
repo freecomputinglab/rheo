@@ -12,7 +12,7 @@ pub mod validation;
 pub use manifest_version::ManifestVersion;
 use validation::ValidateConfig;
 
-/// Spine configuration from `rheo.toml`: glob patterns and title.
+/// Spine configuration from `rheo.toml`: directory-scan knobs and title.
 ///
 /// All format plugins share this single config type.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -20,11 +20,46 @@ pub struct Spine {
     /// Title for the combined output document, when applicable.
     pub title: Option<String>,
 
-    /// Glob patterns for files to include, evaluated relative to content_dir.
-    /// Results are sorted lexicographically within each pattern.
-    /// Empty = auto-discover all .typ files.
+    /// Glob patterns (relative to content_dir) for files/folders to omit from
+    /// the directory-scanned spine.
+    ///
+    /// `None` when unset in this table (as opposed to `Some(vec![])`, an
+    /// explicit empty list) so a per-format `[plugin.spine]` that doesn't set
+    /// `exclude` falls back to the global `[spine] exclude` field-by-field,
+    /// rather than a per-format table's mere presence blanking every global
+    /// spine key at once (rheo-9vl.2).
     #[serde(default)]
-    pub vertebrae: Vec<String>,
+    pub exclude: Option<Vec<String>>,
+
+    /// Virtual-directory layering over flat files (knob 2). Each section groups
+    /// matched files under a virtual subdirectory without moving them on disk.
+    ///
+    /// `None` when unset, for the same per-field fallback reason as `exclude`.
+    #[serde(default)]
+    pub section: Option<Vec<SpineSection>>,
+
+    /// Unrecognized keys, captured so [`validation`](super::validation) can warn
+    /// when a field retired from `Spine` in a past version (e.g. the removed
+    /// `vertebrae` glob list) is still set in an older `rheo.toml`, rather than
+    /// silently dropping it.
+    #[serde(flatten, default)]
+    pub extra: toml::Table,
+}
+
+/// A virtual directory in the spine: groups flat files under a named node,
+/// behaving like an on-disk subdirectory. Nests to arbitrary depth via `section`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpineSection {
+    /// Slug — the node's handle segment and sibling sort key (like a dir name).
+    pub name: String,
+    /// Display title; when absent, derived from `name`.
+    pub title: Option<String>,
+    /// Glob patterns (relative to content_dir) for files pulled under this section.
+    #[serde(default)]
+    pub include: Vec<String>,
+    /// Nested virtual directories.
+    #[serde(default)]
+    pub section: Vec<SpineSection>,
 }
 
 /// Asset configuration for `[plugin_name.assets]` in rheo.toml.
@@ -131,6 +166,9 @@ pub struct RheoConfig {
     /// Per-plugin configuration sections, keyed by plugin name.
     /// Built from `[html]`, `[pdf]`, `[epub]` (and any other) table sections.
     pub plugin_sections: HashMap<String, PluginSection>,
+
+    /// Global spine configuration (applies when no per-plugin spine is set).
+    pub spine: Option<Spine>,
 }
 
 impl Default for RheoConfig {
@@ -143,6 +181,7 @@ impl Default for RheoConfig {
             copy: vec![],
             font_dirs: vec![],
             plugin_sections: HashMap::new(),
+            spine: None,
         }
     }
 }
@@ -166,7 +205,11 @@ pub struct RheoConfigRaw {
 impl TryFrom<RheoConfigRaw> for RheoConfig {
     type Error = toml::de::Error;
 
-    fn try_from(raw: RheoConfigRaw) -> std::result::Result<Self, Self::Error> {
+    fn try_from(mut raw: RheoConfigRaw) -> std::result::Result<Self, Self::Error> {
+        let spine: Option<Spine> = match raw.extra.remove("spine") {
+            Some(value) => value.try_into()?,
+            None => None,
+        };
         let mut plugin_sections = HashMap::new();
         for (key, value) in raw.extra {
             if let toml::Value::Table(_) = &value {
@@ -183,6 +226,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             copy: raw.copy,
             font_dirs: raw.font_dirs,
             plugin_sections,
+            spine,
         })
     }
 }
@@ -468,63 +512,29 @@ mod tests {
     }
 
     #[test]
-    fn test_pdf_spine_parses_title_and_vertebrae() {
+    fn test_pdf_spine_parses_title() {
         // A legacy `merge` key (removed) is silently ignored, so old configs
-        // still parse; title and vertebrae are read as usual.
-        let toml = versioned_toml(
-            "[pdf.spine]\ntitle = \"My Book\"\nvertebrae = [\"cover.typ\", \"chapters/*.typ\"]\nmerge = true",
-        );
+        // still parse; title is read as usual.
+        let toml = versioned_toml("[pdf.spine]\ntitle = \"My Book\"\nmerge = true");
         let config = parse(&toml);
         let spine = config.spine_for_plugin("pdf").unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "My Book");
-        assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
     }
 
     #[test]
     fn test_epub_spine() {
-        let toml = versioned_toml(
-            "[epub.spine]\ntitle = \"My EPUB\"\nvertebrae = [\"intro.typ\", \"chapter*.typ\", \"outro.typ\"]",
-        );
+        let toml = versioned_toml("[epub.spine]\ntitle = \"My EPUB\"");
         let config = parse(&toml);
         let spine = config.spine_for_plugin("epub").unwrap();
         assert_eq!(spine.title.as_deref().unwrap(), "My EPUB");
-        assert_eq!(
-            spine.vertebrae,
-            vec!["intro.typ", "chapter*.typ", "outro.typ"]
-        );
     }
 
     #[test]
     fn test_html_spine() {
-        let toml = versioned_toml(
-            "[html.spine]\ntitle = \"My Website\"\nvertebrae = [\"index.typ\", \"about.typ\"]",
-        );
+        let toml = versioned_toml("[html.spine]\ntitle = \"My Website\"");
         let config = parse(&toml);
         let spine = config.spine_for_plugin("html").unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "My Website");
-        assert_eq!(spine.vertebrae, vec!["index.typ", "about.typ"]);
-    }
-
-    #[test]
-    fn test_spine_empty_vertebrae() {
-        let toml = versioned_toml("[epub.spine]\ntitle = \"Single File Book\"\nvertebrae = []");
-        let config = parse(&toml);
-        let spine = config.spine_for_plugin("epub").unwrap();
-        assert_eq!(spine.title.as_deref().unwrap(), "Single File Book");
-        assert!(spine.vertebrae.is_empty());
-    }
-
-    #[test]
-    fn test_spine_complex_glob_patterns() {
-        let toml = versioned_toml(
-            "[pdf.spine]\ntitle = \"Complex Book\"\nvertebrae = [\"frontmatter/**/*.typ\", \"chapters/**/ch*.typ\", \"appendix.typ\"]\nmerge = true",
-        );
-        let config = parse(&toml);
-        let spine = config.spine_for_plugin("pdf").unwrap();
-        assert_eq!(spine.vertebrae.len(), 3);
-        assert_eq!(spine.vertebrae[0], "frontmatter/**/*.typ");
-        assert_eq!(spine.vertebrae[1], "chapters/**/ch*.typ");
-        assert_eq!(spine.vertebrae[2], "appendix.typ");
     }
 
     #[test]
@@ -723,5 +733,79 @@ mod tests {
         assert_eq!(pairs[0].0.dest.as_deref(), Some("subdir"));
         assert_eq!(pairs[1].1, "two.js");
         assert!(pairs[1].0.dest.is_none());
+    }
+
+    #[test]
+    fn test_global_spine_exclude_and_nested_sections() {
+        let toml = versioned_toml(
+            r#"
+        [spine]
+        exclude = ["drafts/**", "*.tmp.typ"]
+
+        [[spine.section]]
+        name = "guides"
+
+        [[spine.section.section]]
+        name = "advanced"
+        "#,
+        );
+        let config = parse(&toml);
+        let spine = config.spine.as_ref().unwrap();
+        assert_eq!(
+            spine.exclude.clone().unwrap(),
+            vec!["drafts/**", "*.tmp.typ"]
+        );
+        let sections = spine.section.clone().unwrap();
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].name, "guides");
+        assert_eq!(sections[0].section.len(), 1);
+        assert_eq!(sections[0].section[0].name, "advanced");
+        assert!(!config.plugin_sections.contains_key("spine"));
+    }
+
+    #[test]
+    fn test_pdf_spine_exclude_and_section() {
+        let toml = versioned_toml(
+            r#"
+        [pdf.spine]
+        exclude = ["scratch/**"]
+
+        [[pdf.spine.section]]
+        name = "appendix"
+        include = ["appendix/*.typ"]
+        "#,
+        );
+        let config = parse(&toml);
+        let spine = config.spine_for_plugin("pdf").unwrap();
+        assert_eq!(spine.exclude.clone().unwrap(), vec!["scratch/**"]);
+        let sections = spine.section.clone().unwrap();
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].name, "appendix");
+        assert_eq!(sections[0].include, vec!["appendix/*.typ"]);
+    }
+
+    #[test]
+    fn test_legacy_vertebrae_only_config_still_parses() {
+        // A legacy config setting only the retired `vertebrae` key still
+        // parses (captured in `extra`, not a typed field) rather than erroring.
+        let toml = versioned_toml("[pdf.spine]\nvertebrae = [\"cover.typ\", \"chapters/*.typ\"]");
+        let config = parse(&toml);
+        let spine = config.spine_for_plugin("pdf").unwrap();
+        assert!(spine.extra.contains_key("vertebrae"));
+        assert!(spine.exclude.is_none());
+        assert!(spine.section.is_none());
+    }
+
+    #[test]
+    fn test_spine_section_title_defaults_to_none() {
+        let toml = r#"
+        name = "guides"
+        include = ["guides/*.typ"]
+    "#;
+        let section: SpineSection = toml::from_str(toml).expect("parse failed");
+        assert_eq!(section.name, "guides");
+        assert!(section.title.is_none());
+        assert!(section.include.len() == 1);
+        assert!(section.section.is_empty());
     }
 }

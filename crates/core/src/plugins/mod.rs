@@ -1,6 +1,6 @@
 use crate::config::PluginSection;
 use crate::config::project::ProjectConfig;
-use crate::reticulate::spine::SpineLayout;
+use crate::reticulate::spine::{SpineLayout, VirtualSpine};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::info;
@@ -32,13 +32,6 @@ pub enum OpenHandle {
 }
 
 use crate::config::PluginAssets;
-
-/// Standardized spine options resolved by rheo core before calling compile().
-#[derive(Debug, Clone)]
-pub struct SpineOptions {
-    pub title: Option<String>,
-    pub vertebrae: Vec<String>,
-}
 
 /// Declares an additional non-Typst input file needed from the project directory.
 #[derive(Debug, Clone)]
@@ -154,8 +147,15 @@ pub struct PluginContext<'a> {
     pub project: &'a ProjectConfig,
     /// Plugin output directory (e.g., `build/html/`). Write outputs here.
     pub output_dir: &'a PathBuf,
-    /// Resolved spine options (title, vertebrae patterns).
-    pub spine: &'a SpineOptions,
+    /// The resolved spine — same tree and flat vertebra list as the Typst-side
+    /// `rheo-context` (`spine`/`spine-flat`), available on the Rust side too,
+    /// plus the resolved combined-document/feed title (`spine.title`, distinct
+    /// from any individual vertebra's own title). `compile()`'s
+    /// `outputs: &[CastVertebra]` parameter is a separate, already-cast view of
+    /// each output's title/date/vars; use `spine` for the tree structure,
+    /// cross-vertebra queries, and the resolved title, `outputs` for
+    /// per-output compiled bytes.
+    pub spine: &'a VirtualSpine,
     /// Full parsed plugin section from rheo.toml (or default if not configured).
     ///
     /// # Reading format-specific configuration

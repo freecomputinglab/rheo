@@ -284,7 +284,7 @@ mod tests {
         fs::write(
             &config_path,
             format!(
-                "version = \"{}\"\n\n[epub.spine]\ntitle = \"Custom Title\"\nvertebrae = [\"custom.typ\"]\n",
+                "version = \"{}\"\n\n[epub.spine]\ntitle = \"Custom Title\"\n",
                 env!("CARGO_PKG_VERSION")
             ),
         )
@@ -295,7 +295,6 @@ mod tests {
         let section = project.config.plugin_section("epub");
         let spine = section.spine.unwrap();
         assert_eq!(spine.title.as_deref().unwrap(), "Custom Title");
-        assert_eq!(spine.vertebrae, vec!["custom.typ"]);
     }
 
     #[test]

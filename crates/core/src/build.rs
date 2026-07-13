@@ -11,8 +11,8 @@ use crate::config::PluginSection;
 use crate::config::output::OutputConfig;
 use crate::config::project::{ProjectConfig, ProjectMode};
 use crate::diagnostics::results::CompilationResults;
-use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, SpineOptions, spine_layout_for};
-use crate::reticulate::spine::VirtualSpine;
+use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, spine_layout_for};
+use crate::reticulate::spine::{SpineScan, VirtualSpine};
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use std::path::{Path, PathBuf};
@@ -172,38 +172,47 @@ impl Build {
         plugin_section: &PluginSection,
         content_dir: &Path,
     ) -> Result<(VirtualSpine, typst_bundle::VirtualFs)> {
-        // Resolve spine options.
-        let spine_cfg = plugin_section.spine.as_ref();
-        let spine = SpineOptions {
-            title: spine_cfg.and_then(|s| s.title.clone()),
-            vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
-        };
+        // Effective spine config: each field on a per-format [plugin.spine]
+        // falls back to the global [spine] independently when unset, rather
+        // than the per-format table's mere presence blanking every global
+        // spine key at once (a footgun since fixed — rheo-9vl.2: e.g. setting
+        // only `[pdf.spine] title` used to silently drop a global `exclude`).
+        let plugin_spine = plugin_section.spine.as_ref();
+        let global_spine = self.project.config.spine.as_ref();
+        let exclude = plugin_spine
+            .and_then(|s| s.exclude.clone())
+            .or_else(|| global_spine.and_then(|s| s.exclude.clone()))
+            .unwrap_or_default();
+        let sections = plugin_spine
+            .and_then(|s| s.section.clone())
+            .or_else(|| global_spine.and_then(|s| s.section.clone()))
+            .unwrap_or_default();
+        let title = plugin_spine
+            .and_then(|s| s.title.clone())
+            .or_else(|| global_spine.and_then(|s| s.title.clone()));
 
-        // Build VirtualSpine from plugin's declared layout + project context.
         let layout = spine_layout_for(plugin.spine_layout_kind(), plugin, &self.project.name);
-        let spine_files = match self.project.mode {
-            ProjectMode::SingleFile => vec![self.project.typ_files[0].clone()],
+
+        // Base spine = directory scan under content_dir, customized by the two
+        // knobs (exclude, then section layering). A single-file project is a
+        // one-node flat spine.
+        let scan = match self.project.mode {
+            ProjectMode::SingleFile => {
+                SpineScan::flat(&[self.project.typ_files[0].clone()], content_dir)
+            }
             ProjectMode::Directory => {
-                // When content_dir is explicit in config, vertebrae patterns are
-                // relative to it. When auto-detected or absent, vertebrae are
-                // project-root-relative (users write "content/**" explicitly).
-                let explicit_content_dir =
-                    self.project.config.resolve_content_dir(&self.project.root);
-                let generate_root = explicit_content_dir
-                    .as_deref()
-                    .unwrap_or(&self.project.root);
-                spine.generate(generate_root)?
+                SpineScan::run(content_dir, &exclude)?.apply_sections(content_dir, &sections)?
             }
         };
 
         debug!(
             plugin = plugin.name(),
-            files = spine_files.len(),
+            files = scan.files.len(),
             "building virtual spine"
         );
 
         let virtual_spine =
-            VirtualSpine::build(&spine_files, content_dir, &self.project.root, layout)?;
+            VirtualSpine::build(scan, &self.project.root, layout)?.with_title(title);
         virtual_spine.check_output_collisions()?;
 
         let moulded = virtual_spine.mould();
@@ -371,18 +380,10 @@ impl Build {
             let (virtual_spine, virtual_fs) =
                 self.compile_spine(plugin.as_ref(), plugin_section, &content_dir)?;
 
-            // `spine` (used by PluginContext below) is re-derived here; `compile_spine`
-            // resolves its own copy internally to build the VirtualSpine.
-            let spine_cfg = plugin_section.spine.as_ref();
-            let spine = SpineOptions {
-                title: spine_cfg.and_then(|s| s.title.clone()),
-                vertebrae: spine_cfg.map(|s| s.vertebrae.clone()).unwrap_or_default(),
-            };
-
             let ctx = PluginContext {
                 project: &self.project,
                 output_dir: &plugin_output_dir,
-                spine: &spine,
+                spine: &virtual_spine,
                 config: plugin_section,
                 assets: &resolved_assets,
                 font_dirs: &self.font_dirs,

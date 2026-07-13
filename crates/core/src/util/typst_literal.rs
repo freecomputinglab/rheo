@@ -13,6 +13,8 @@
 pub enum TypstLiteral {
     /// A string literal (escaped on serialize).
     Str(String),
+    /// The `none` literal.
+    None,
     /// An array literal, e.g. `(a, b,)`.
     Array(Vec<TypstLiteral>),
     /// A dictionary literal with identifier keys, e.g. `(k: v)`.
@@ -33,6 +35,7 @@ impl TypstLiteral {
     pub fn serialize(&self) -> String {
         match self {
             TypstLiteral::Str(s) => serialize_string(s),
+            TypstLiteral::None => "none".to_string(),
             TypstLiteral::Array(items) if items.is_empty() => "()".to_string(),
             TypstLiteral::Array(items) => {
                 let inner: Vec<String> = items.iter().map(TypstLiteral::serialize).collect();
@@ -55,6 +58,7 @@ impl TypstLiteral {
         use typst::foundations::{Array, Dict, Value};
         match self {
             TypstLiteral::Str(s) => Value::Str(s.as_str().into()),
+            TypstLiteral::None => Value::None,
             TypstLiteral::Array(items) => {
                 Value::Array(items.iter().map(TypstLiteral::to_value).collect::<Array>())
             }
@@ -104,6 +108,15 @@ mod tests {
     fn empty_array_and_dict_use_typst_syntax() {
         assert_eq!(TypstLiteral::Array(vec![]).serialize(), "()");
         assert_eq!(TypstLiteral::Dict(vec![]).serialize(), "(:)");
+    }
+
+    #[test]
+    fn none_serializes_and_converts_to_value_none() {
+        assert_eq!(TypstLiteral::None.serialize(), "none");
+        assert_eq!(
+            TypstLiteral::None.to_value(),
+            typst::foundations::Value::None
+        );
     }
 
     #[test]

@@ -64,9 +64,15 @@ dest           = "subdir"  # optional; output subdirectory for this block's file
 css_stylesheet = "two.css"
 js_scripts     = "two.js"
 
+[spine]
+exclude = ["drafts/**"]  # optional; glob patterns (relative to content_dir) omitted from every format's scan
+
+[[spine.section]]
+name = "chapters"        # optional; virtual-directory regrouping without moving files on disk
+include = ["ch-*.typ"]
+
 [pdf.spine]
-title = "My Book"
-vertebrae = ["cover.typ", "chapters/**/*.typ"]
+title = "My Book"        # per-format override; only the fields set here replace the global [spine]'s
 
 [epub]
 identifier = "urn:uuid:..."  # optional, auto-generated
@@ -74,7 +80,6 @@ date = 2025-01-15T00:00:00Z
 
 [epub.spine]
 title = "My Book"
-vertebrae = ["cover.typ", "chapters/**/*.typ"]
 ```
 
 Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title and spine are inferred from filename/directory.
@@ -104,13 +109,14 @@ rheo assigns each vertebra a canonical label derived from its path relative to t
 
 rheo injects a per-vertebra Typst variable `rheo-context` into every spine file, exposing rheo's view of the project to authored Typst and to packages. It is a plain top-level `#let` binding prepended to each file's source — an ordinary dictionary, **not** a Typst `context` value. Each vertebra gets its own values because rheo injects a distinct literal per file, not through Typst's context mechanism. Reading it therefore does **not** require the `#context` keyword:
 
-Fields (v1; the value is a dictionary and may gain fields later):
+Fields (the value is a dictionary and may gain fields later):
 - `handle` — this file's `:`-separated handle (its ID; the same handle used for the cross-file links above).
-- `spine` — a flat list of every vertebra in spine order, each an entry `(handle, path, title)`.
+- `spine` — the structured spine **tree**, mirroring directory/section nesting. Each node is a dict `(title, handle, path, children)`: a leaf (a vertebra) carries its own `handle`/`path`/`title`; a group node (a directory or `[[spine.section]]` with no landing file) carries `handle: none`, `path: none`, and its own group title, nesting its children.
+- `spine-flat` — the flat pre-order list of every *clickable* vertebra (groups excluded), each an entry `(handle, path, title)` — the same shape the old flat `spine` used to be.
 - `target` — the rheo output-format name (`"epub"`/`"html"`/…). Present only for formats that set one; **absent for PDF**, where documents fall back to Typst's native `target()` == `"paged"`. Identical across vertebrae, so it also rides on the global `sys.inputs.rheo-context`.
 
 ```typst
-This is #rheo-context.handle of #rheo-context.spine.len() pages.
+This is #rheo-context.handle of #rheo-context.spine-flat.len() pages.
 ```
 
 **Passing it to packages:** a package template can't read the file's local `rheo-context` implicitly — Typst functions capture their definition scope, not the call site — so hand it in explicitly:
@@ -132,11 +138,19 @@ A package needing only the shared spine can read `sys.inputs.rheo-context.spine`
 
 **Output format.** rheo injects a `target()` polyfill into every file so Typst's own `target()` returns the output format (`"epub"`/`"html"`, or native `"paged"` for PDF), reading it from `sys.inputs.rheo-context.target`. Authored files should detect the format with `target()` (e.g. `target() == "epub"`); it is the only per-file API. The underlying `sys.inputs.rheo-context.target` is the same value for every vertebra but is not in scope where the polyfill isn't (it is global, so reachable via `sys.inputs`). The older `sys.inputs.rheo-target` key has been **removed**.
 
-**Section-label namespacing is a package concern, not core.** rheo does not rewrite or prefix authored labels; label semantics stay exactly as Typst defines them (two vertebrae defining the same label collide as an ordinary Typst duplicate-label error). Packages such as `@rheo/zettelkasten` use `rheo-context` to *additively* synthesize globally-unique `<handle:label>` section anchors alongside the author's own labels.
+**Section-label namespacing is a package concern, not core.** rheo does not rewrite or prefix authored labels; label semantics stay exactly as Typst defines them (two vertebrae defining the same label collide as an ordinary Typst duplicate-label error). Packages such as `@rheo/notebox` use `rheo-context` to *additively* synthesize globally-unique `<handle:label>` section anchors alongside the author's own labels.
 
 ## Spine configuration
 
-**Spine vertebrae:** The `vertebrae` array in `[pdf.spine]` or `[epub.spine]` specifies which source files to include and in what order. Glob patterns are supported (e.g., `chapters/**/*.typ`).
+**Directory-scan default:** with no `[spine]`/`[<format>.spine]` at all, the spine is every `.typ` file under `content_dir`, recursively, ordered alphabetically per directory level. A directory whose landing file is `index.typ` or `<dirname>.typ` gets that directory's own handle (e.g. `chapters/chapters.typ` → `<chapters>`, not `<chapters:chapters>`); a directory with no landing file becomes a non-clickable group node with a prettified title (`01-intro/` → "Intro").
+
+**`[spine] exclude`:** glob patterns (relative to `content_dir`) for files/folders to omit from the scan.
+
+**`[[spine.section]]`:** groups matched files under a virtual directory without moving them on disk (e.g. `include = ["ch-*.typ"]` under `name = "chapters"` gives those files handles like `<chapters:ch-1>`). Nests via `[[spine.section.section]]`.
+
+**Precedence — field-by-field, not whole-table:** a per-format `[<format>.spine]` table can set `title`/`exclude`/`section` independently; any field it leaves unset falls back to the matching field on the global `[spine]` table (not the whole table at once). For example, `[pdf.spine] title = "My Book"` with no `exclude` of its own still inherits the global `[spine] exclude` — it does *not* silently drop it just because `[pdf.spine]` exists.
+
+The retired `vertebrae` glob-list key (pre-0.5.0) is no longer read; `rheo migrate` converts an old inclusion-filter `vertebrae` list into an equivalent `exclude`.
 
 PDF combines its spine into a single document by default; HTML and EPUB always produce per-page outputs. A `merge` key left in an old `rheo.toml` is silently ignored.
 
