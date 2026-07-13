@@ -12,19 +12,13 @@ pub mod validation;
 pub use manifest_version::ManifestVersion;
 use validation::ValidateConfig;
 
-/// Spine configuration from `rheo.toml`: glob patterns and title.
+/// Spine configuration from `rheo.toml`: directory-scan knobs and title.
 ///
 /// All format plugins share this single config type.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Spine {
     /// Title for the combined output document, when applicable.
     pub title: Option<String>,
-
-    /// Glob patterns for files to include, evaluated relative to content_dir.
-    /// Results are sorted lexicographically within each pattern.
-    /// Empty = auto-discover all .typ files.
-    #[serde(default)]
-    pub vertebrae: Vec<String>,
 
     /// Glob patterns (relative to content_dir) for files/folders to omit from
     /// the directory-scanned spine.
@@ -35,6 +29,13 @@ pub struct Spine {
     /// matched files under a virtual subdirectory without moving them on disk.
     #[serde(default)]
     pub section: Vec<SpineSection>,
+
+    /// Unrecognized keys, captured so [`validation`](super::validation) can warn
+    /// when a field retired from `Spine` in a past version (e.g. the removed
+    /// `vertebrae` glob list) is still set in an older `rheo.toml`, rather than
+    /// silently dropping it.
+    #[serde(flatten, default)]
+    pub extra: toml::Table,
 }
 
 /// A virtual directory in the spine: groups flat files under a named node,
@@ -503,63 +504,29 @@ mod tests {
     }
 
     #[test]
-    fn test_pdf_spine_parses_title_and_vertebrae() {
+    fn test_pdf_spine_parses_title() {
         // A legacy `merge` key (removed) is silently ignored, so old configs
-        // still parse; title and vertebrae are read as usual.
-        let toml = versioned_toml(
-            "[pdf.spine]\ntitle = \"My Book\"\nvertebrae = [\"cover.typ\", \"chapters/*.typ\"]\nmerge = true",
-        );
+        // still parse; title is read as usual.
+        let toml = versioned_toml("[pdf.spine]\ntitle = \"My Book\"\nmerge = true");
         let config = parse(&toml);
         let spine = config.spine_for_plugin("pdf").unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "My Book");
-        assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
     }
 
     #[test]
     fn test_epub_spine() {
-        let toml = versioned_toml(
-            "[epub.spine]\ntitle = \"My EPUB\"\nvertebrae = [\"intro.typ\", \"chapter*.typ\", \"outro.typ\"]",
-        );
+        let toml = versioned_toml("[epub.spine]\ntitle = \"My EPUB\"");
         let config = parse(&toml);
         let spine = config.spine_for_plugin("epub").unwrap();
         assert_eq!(spine.title.as_deref().unwrap(), "My EPUB");
-        assert_eq!(
-            spine.vertebrae,
-            vec!["intro.typ", "chapter*.typ", "outro.typ"]
-        );
     }
 
     #[test]
     fn test_html_spine() {
-        let toml = versioned_toml(
-            "[html.spine]\ntitle = \"My Website\"\nvertebrae = [\"index.typ\", \"about.typ\"]",
-        );
+        let toml = versioned_toml("[html.spine]\ntitle = \"My Website\"");
         let config = parse(&toml);
         let spine = config.spine_for_plugin("html").unwrap();
         assert_eq!(spine.title.as_ref().unwrap(), "My Website");
-        assert_eq!(spine.vertebrae, vec!["index.typ", "about.typ"]);
-    }
-
-    #[test]
-    fn test_spine_empty_vertebrae() {
-        let toml = versioned_toml("[epub.spine]\ntitle = \"Single File Book\"\nvertebrae = []");
-        let config = parse(&toml);
-        let spine = config.spine_for_plugin("epub").unwrap();
-        assert_eq!(spine.title.as_deref().unwrap(), "Single File Book");
-        assert!(spine.vertebrae.is_empty());
-    }
-
-    #[test]
-    fn test_spine_complex_glob_patterns() {
-        let toml = versioned_toml(
-            "[pdf.spine]\ntitle = \"Complex Book\"\nvertebrae = [\"frontmatter/**/*.typ\", \"chapters/**/ch*.typ\", \"appendix.typ\"]\nmerge = true",
-        );
-        let config = parse(&toml);
-        let spine = config.spine_for_plugin("pdf").unwrap();
-        assert_eq!(spine.vertebrae.len(), 3);
-        assert_eq!(spine.vertebrae[0], "frontmatter/**/*.typ");
-        assert_eq!(spine.vertebrae[1], "chapters/**/ch*.typ");
-        assert_eq!(spine.vertebrae[2], "appendix.typ");
     }
 
     #[test]
@@ -805,11 +772,13 @@ mod tests {
     }
 
     #[test]
-    fn test_legacy_pdf_spine_without_exclude_or_section() {
+    fn test_legacy_vertebrae_only_config_still_parses() {
+        // A legacy config setting only the retired `vertebrae` key still
+        // parses (captured in `extra`, not a typed field) rather than erroring.
         let toml = versioned_toml("[pdf.spine]\nvertebrae = [\"cover.typ\", \"chapters/*.typ\"]");
         let config = parse(&toml);
         let spine = config.spine_for_plugin("pdf").unwrap();
-        assert_eq!(spine.vertebrae, vec!["cover.typ", "chapters/*.typ"]);
+        assert!(spine.extra.contains_key("vertebrae"));
         assert!(spine.exclude.is_empty());
         assert!(spine.section.is_empty());
     }

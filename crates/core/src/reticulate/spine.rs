@@ -1,7 +1,6 @@
 use crate::config::SpineSection;
 use crate::parser;
 use crate::parser::{DocumentDate, RheoValue};
-use crate::plugins::SpineOptions;
 use crate::reticulate::bundle_source::BundleSource;
 use crate::util::path::{sanitize_handle_segment, to_forward_slash};
 use crate::util::pdf::DocumentTitle;
@@ -12,63 +11,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use typst::syntax::Source;
-use walkdir::WalkDir;
-
-/// Generates a spine (ordered list of .typ files) based on configuration.
-impl SpineOptions {
-    /// Resolve vertebrae patterns into an ordered list of .typ files.
-    ///
-    /// If no vertebrae are configured, discovers all .typ files under `root`.
-    pub fn generate(&self, root: &Path) -> Result<Vec<PathBuf>> {
-        if self.vertebrae.is_empty() {
-            let mut typst_files = Self::collect_typst_files(root);
-            if typst_files.is_empty() {
-                return Err(RheoError::project_config("need at least one .typ file"));
-            }
-            typst_files.sort();
-            return Ok(typst_files);
-        }
-
-        let mut typst_files = Vec::new();
-        for pattern in &self.vertebrae {
-            let glob_pattern = root.join(pattern).display().to_string();
-            let glob = glob::glob(&glob_pattern).map_err(|e| {
-                RheoError::project_config(format!("invalid glob pattern '{}': {}", pattern, e))
-            })?;
-
-            let mut glob_files: Vec<PathBuf> = glob
-                .filter_map(|entry| entry.ok())
-                .filter(|path| path.is_file())
-                .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("typ"))
-                .collect();
-
-            // Sort by full path (lexicographic) for consistent ordering
-            glob_files.sort();
-            typst_files.extend(glob_files);
-        }
-
-        if typst_files.is_empty() {
-            return Err(RheoError::project_config("spine matched no .typ files"));
-        }
-
-        Ok(typst_files)
-    }
-
-    /// Discover every `.typ` file under `root` (unordered).
-    fn collect_typst_files(root: &Path) -> Vec<PathBuf> {
-        WalkDir::new(root)
-            .into_iter()
-            .filter_map(|entry| Some(entry.ok()?.path().to_path_buf()))
-            .filter(|entry| {
-                entry
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| ext == &TYP_EXT[1..])
-                    .unwrap_or(false)
-            })
-            .collect()
-    }
-}
 
 // ── Directory scan: SpineScan ────────────────────────────────────────────────
 
@@ -1053,97 +995,6 @@ mod tests {
             fs::write(&path, "").unwrap();
         }
         temp
-    }
-
-    fn spine_with_vertebrae(vertebrae: Vec<String>) -> SpineOptions {
-        SpineOptions {
-            title: Some("Test".to_string()),
-            vertebrae,
-        }
-    }
-
-    #[test]
-    fn test_generate_with_vertebrae() {
-        let temp = create_test_dir_with_files(&["a.typ", "b.typ", "c.typ"]);
-        let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
-        let result = spine.generate(temp.path());
-        assert!(result.is_ok());
-        let files = result.unwrap();
-        assert_eq!(files.len(), 3);
-    }
-
-    #[test]
-    fn test_generate_ordered_patterns() {
-        let temp = create_test_dir_with_files(&[
-            "cover.typ",
-            "chapters/ch1.typ",
-            "chapters/ch2.typ",
-            "appendix.typ",
-        ]);
-        let spine = SpineOptions {
-            title: Some("Book".to_string()),
-            vertebrae: vec![
-                "cover.typ".to_string(),
-                "chapters/*.typ".to_string(),
-                "appendix.typ".to_string(),
-            ],
-        };
-        let result = spine.generate(temp.path());
-        assert!(result.is_ok());
-        let files = result.unwrap();
-        assert_eq!(files.len(), 4);
-        assert_eq!(files[0].file_name().unwrap(), "cover.typ");
-        assert!(
-            files[1]
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .starts_with("ch")
-        );
-        assert!(
-            files[2]
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .starts_with("ch")
-        );
-        assert_eq!(files[3].file_name().unwrap(), "appendix.typ");
-    }
-
-    #[test]
-    fn test_generate_no_matches_error() {
-        let temp = create_test_dir_with_files(&["readme.md"]);
-        let spine = spine_with_vertebrae(vec!["*.typ".to_string()]);
-        let result = spine.generate(temp.path());
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("spine matched no .typ files")
-        );
-    }
-
-    #[test]
-    fn test_generate_empty_pattern_single_file() {
-        let temp = create_test_dir_with_files(&["single.typ"]);
-        let spine = spine_with_vertebrae(vec![]);
-        let result = spine.generate(temp.path());
-        assert!(result.is_ok());
-        let files = result.unwrap();
-        assert_eq!(files.len(), 1);
-    }
-
-    #[test]
-    fn test_generate_empty_pattern_multiple_files_returns_all() {
-        let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
-        let spine = spine_with_vertebrae(vec![]);
-        let result = spine.generate(temp.path());
-        assert!(result.is_ok());
-        let files = result.unwrap();
-        assert_eq!(files.len(), 2);
     }
 
     // ── VirtualSpine tests ──────────────────────────────────────────────────

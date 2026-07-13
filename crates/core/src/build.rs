@@ -11,7 +11,7 @@ use crate::config::PluginSection;
 use crate::config::output::OutputConfig;
 use crate::config::project::{ProjectConfig, ProjectMode};
 use crate::diagnostics::results::CompilationResults;
-use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, SpineOptions, spine_layout_for};
+use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, spine_layout_for};
 use crate::reticulate::spine::{SpineScan, VirtualSpine};
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
@@ -369,24 +369,19 @@ impl Build {
             let (virtual_spine, virtual_fs) =
                 self.compile_spine(plugin.as_ref(), plugin_section, &content_dir)?;
 
-            // `spine` (used by PluginContext below) is re-derived here; `compile_spine`
-            // resolves its own copy internally to build the VirtualSpine.
-            // Plugins read `ctx.spine.title` (e.g. the HTML feed title). Resolve
-            // it with the same precedence as the spine itself: per-format
-            // [plugin.spine] title, else the global [spine] title.
+            // Resolve the effective spine title, exposed to plugins as
+            // `ctx.spine_title`, with the same precedence as the spine itself:
+            // per-format [plugin.spine] title, else the global [spine] title.
             let spine_cfg = plugin_section
                 .spine
                 .as_ref()
                 .or(self.project.config.spine.as_ref());
-            let spine = SpineOptions {
-                title: spine_cfg.and_then(|s| s.title.clone()),
-                vertebrae: Vec::new(),
-            };
+            let spine_title = spine_cfg.and_then(|s| s.title.as_deref());
 
             let ctx = PluginContext {
                 project: &self.project,
                 output_dir: &plugin_output_dir,
-                spine: &spine,
+                spine_title,
                 config: plugin_section,
                 assets: &resolved_assets,
                 font_dirs: &self.font_dirs,

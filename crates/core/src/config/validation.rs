@@ -41,8 +41,13 @@ impl ValidateConfig for RheoConfig {
 /// warning: an inert key doesn't corrupt the build, but silently ignoring it
 /// entirely risks a project's spine membership changing without the author
 /// noticing (see https://rheo.ohrg.org/spines for the current model).
-fn warn_on_vertebrae(vertebrae: &[String]) {
-    if !vertebrae.is_empty() {
+///
+/// This is a one-off, named after the single retired field we currently have.
+/// If a second retired-key warning is ever needed, generalize both of these
+/// into a `RetiredKey` trait (key name + replacement message) rather than
+/// adding another standalone function like this one.
+fn warn_on_vertebrae(extra: &toml::Table) {
+    if extra.contains_key("vertebrae") {
         warn!(
             "`vertebrae` no longer has any effect as of rheo 0.5.0 — spine membership and \
              order now come from a directory scan plus `[spine] exclude` / `[[spine.section]]`. \
@@ -53,7 +58,7 @@ fn warn_on_vertebrae(vertebrae: &[String]) {
 
 impl ValidateConfig for Spine {
     fn validate(&self) -> Result<()> {
-        warn_on_vertebrae(&self.vertebrae);
+        warn_on_vertebrae(&self.extra);
 
         Ok(())
     }
@@ -67,7 +72,6 @@ mod tests {
     fn test_universal_spine_validate_empty() {
         let spine = Spine {
             title: Some("Test".to_string()),
-            vertebrae: vec![],
             ..Default::default()
         };
         assert!(spine.validate().is_ok());
@@ -75,11 +79,17 @@ mod tests {
 
     #[test]
     fn test_universal_spine_validate_ignores_now_inert_vertebrae() {
-        // `vertebrae` no longer affects the build, so even a glob-invalid entry
-        // is just a (untested-here) warning, not a validation error.
+        // `vertebrae` no longer affects the build, so its presence (even a
+        // glob-invalid entry) is just a (untested-here) warning, not a
+        // validation error.
+        let mut extra = toml::Table::new();
+        extra.insert(
+            "vertebrae".to_string(),
+            toml::Value::Array(vec![toml::Value::String("[invalid".to_string())]),
+        );
         let spine = Spine {
             title: Some("Test".to_string()),
-            vertebrae: vec!["[invalid".to_string()],
+            extra,
             ..Default::default()
         };
         assert!(spine.validate().is_ok());

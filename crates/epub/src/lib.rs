@@ -9,7 +9,7 @@ use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
 use rheo_core::{
     CastVertebra, FormatInitTemplate, FormatPlugin, PluginContext, PluginSection, Result,
-    RheoError, Spine, SpineLayoutKind, SpineOptions, eco_format, eco_vec,
+    RheoError, Spine, SpineLayoutKind, eco_format, eco_vec,
 };
 use rheo_core::{DocumentTitle, EcoString, OutlineNode};
 use serde::Deserialize;
@@ -88,7 +88,7 @@ impl FormatPlugin for EpubPlugin {
         let nav_xhtml = generate_nav_xhtml(&mut items, &language)?;
         let package_string = generate_package(
             &items,
-            ctx.spine,
+            ctx.spine_title,
             identifier.as_deref(),
             date.as_ref(),
             &language,
@@ -181,17 +181,19 @@ fn date_format(dt: &DateTime<Utc>) -> EcoString {
 }
 
 /// Generates the package.opf XML string from the generated EPUB items.
+///
+/// `spine_title` takes the plain `Option<&str>` shape of `PluginContext::spine_title`
+/// (the title is the only part of the old `SpineOptions` any plugin ever read;
+/// the rest was a dead glob-pattern list removed with it) rather than a dedicated type.
 pub fn generate_package(
     items: &[EpubItem],
-    spine: &SpineOptions,
+    spine_title: Option<&str>,
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
     language: &str,
     author: Option<&str>,
 ) -> Result<String> {
-    let title = spine
-        .title
-        .as_deref()
+    let title = spine_title
         .map(EcoString::from)
         .unwrap_or_else(|| items[0].title());
 

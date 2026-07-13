@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn test_feed_exclude_omits_entry() {
         use rheo_core::config::project::{ProjectConfig, ProjectMode};
-        use rheo_core::{PluginSection, RheoConfig, RheoValue, SpineOptions, TypstFormat};
+        use rheo_core::{PluginSection, RheoConfig, RheoValue, TypstFormat};
         use std::collections::HashMap;
         use typst::foundations::Bytes;
 
@@ -287,17 +287,13 @@ mod tests {
             mode: ProjectMode::Directory,
             config_path: None,
         };
-        let spine = SpineOptions {
-            title: None,
-            vertebrae: vec![],
-        };
         let section = PluginSection::default();
         let assets = HashMap::new();
         let font_dirs: Vec<std::path::PathBuf> = vec![];
         let ctx = PluginContext {
             project: &project,
             output_dir: &output_dir,
-            spine: &spine,
+            spine_title: None,
             config: &section,
             assets: &assets,
             font_dirs: &font_dirs,
