@@ -58,7 +58,7 @@ impl FormatPlugin for HtmlPlugin {
                 ("style.css", include_str!("templates/style.css")),
                 ("index.js", include_str!("templates/index.js")),
             ],
-            options_toml: Some(include_str!("templates/init/rheo_section.toml")),
+            options_toml: None,
         }
     }
 
