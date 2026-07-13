@@ -64,9 +64,15 @@ dest           = "subdir"  # optional; output subdirectory for this block's file
 css_stylesheet = "two.css"
 js_scripts     = "two.js"
 
+[spine]
+exclude = ["drafts/**"]  # optional; glob patterns (relative to content_dir) omitted from every format's scan
+
+[[spine.section]]
+name = "chapters"        # optional; virtual-directory regrouping without moving files on disk
+include = ["ch-*.typ"]
+
 [pdf.spine]
-title = "My Book"
-vertebrae = ["cover.typ", "chapters/**/*.typ"]
+title = "My Book"        # per-format override; only the fields set here replace the global [spine]'s
 
 [epub]
 identifier = "urn:uuid:..."  # optional, auto-generated
@@ -74,7 +80,6 @@ date = 2025-01-15T00:00:00Z
 
 [epub.spine]
 title = "My Book"
-vertebrae = ["cover.typ", "chapters/**/*.typ"]
 ```
 
 Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title and spine are inferred from filename/directory.
@@ -137,7 +142,15 @@ A package needing only the shared spine can read `sys.inputs.rheo-context.spine`
 
 ## Spine configuration
 
-**Spine vertebrae:** The `vertebrae` array in `[pdf.spine]` or `[epub.spine]` specifies which source files to include and in what order. Glob patterns are supported (e.g., `chapters/**/*.typ`).
+**Directory-scan default:** with no `[spine]`/`[<format>.spine]` at all, the spine is every `.typ` file under `content_dir`, recursively, ordered alphabetically per directory level. A directory whose landing file is `index.typ` or `<dirname>.typ` gets that directory's own handle (e.g. `chapters/chapters.typ` → `<chapters>`, not `<chapters:chapters>`); a directory with no landing file becomes a non-clickable group node with a prettified title (`01-intro/` → "Intro").
+
+**`[spine] exclude`:** glob patterns (relative to `content_dir`) for files/folders to omit from the scan.
+
+**`[[spine.section]]`:** groups matched files under a virtual directory without moving them on disk (e.g. `include = ["ch-*.typ"]` under `name = "chapters"` gives those files handles like `<chapters:ch-1>`). Nests via `[[spine.section.section]]`.
+
+**Precedence — field-by-field, not whole-table:** a per-format `[<format>.spine]` table can set `title`/`exclude`/`section` independently; any field it leaves unset falls back to the matching field on the global `[spine]` table (not the whole table at once). For example, `[pdf.spine] title = "My Book"` with no `exclude` of its own still inherits the global `[spine] exclude` — it does *not* silently drop it just because `[pdf.spine]` exists.
+
+The retired `vertebrae` glob-list key (pre-0.5.0) is no longer read; `rheo migrate` converts an old inclusion-filter `vertebrae` list into an equivalent `exclude`.
 
 PDF combines its spine into a single document by default; HTML and EPUB always produce per-page outputs. A `merge` key left in an old `rheo.toml` is silently ignored.
 

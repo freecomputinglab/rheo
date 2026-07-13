@@ -22,13 +22,21 @@ pub struct Spine {
 
     /// Glob patterns (relative to content_dir) for files/folders to omit from
     /// the directory-scanned spine.
+    ///
+    /// `None` when unset in this table (as opposed to `Some(vec![])`, an
+    /// explicit empty list) so a per-format `[plugin.spine]` that doesn't set
+    /// `exclude` falls back to the global `[spine] exclude` field-by-field,
+    /// rather than a per-format table's mere presence blanking every global
+    /// spine key at once (rheo-9vl.2).
     #[serde(default)]
-    pub exclude: Vec<String>,
+    pub exclude: Option<Vec<String>>,
 
     /// Virtual-directory layering over flat files (knob 2). Each section groups
     /// matched files under a virtual subdirectory without moving them on disk.
+    ///
+    /// `None` when unset, for the same per-field fallback reason as `exclude`.
     #[serde(default)]
-    pub section: Vec<SpineSection>,
+    pub section: Option<Vec<SpineSection>>,
 
     /// Unrecognized keys, captured so [`validation`](super::validation) can warn
     /// when a field retired from `Spine` in a past version (e.g. the removed
@@ -743,11 +751,15 @@ mod tests {
         );
         let config = parse(&toml);
         let spine = config.spine.as_ref().unwrap();
-        assert_eq!(spine.exclude, vec!["drafts/**", "*.tmp.typ"]);
-        assert_eq!(spine.section.len(), 1);
-        assert_eq!(spine.section[0].name, "guides");
-        assert_eq!(spine.section[0].section.len(), 1);
-        assert_eq!(spine.section[0].section[0].name, "advanced");
+        assert_eq!(
+            spine.exclude.clone().unwrap(),
+            vec!["drafts/**", "*.tmp.typ"]
+        );
+        let sections = spine.section.clone().unwrap();
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].name, "guides");
+        assert_eq!(sections[0].section.len(), 1);
+        assert_eq!(sections[0].section[0].name, "advanced");
         assert!(!config.plugin_sections.contains_key("spine"));
     }
 
@@ -765,10 +777,11 @@ mod tests {
         );
         let config = parse(&toml);
         let spine = config.spine_for_plugin("pdf").unwrap();
-        assert_eq!(spine.exclude, vec!["scratch/**"]);
-        assert_eq!(spine.section.len(), 1);
-        assert_eq!(spine.section[0].name, "appendix");
-        assert_eq!(spine.section[0].include, vec!["appendix/*.typ"]);
+        assert_eq!(spine.exclude.clone().unwrap(), vec!["scratch/**"]);
+        let sections = spine.section.clone().unwrap();
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].name, "appendix");
+        assert_eq!(sections[0].include, vec!["appendix/*.typ"]);
     }
 
     #[test]
@@ -779,8 +792,8 @@ mod tests {
         let config = parse(&toml);
         let spine = config.spine_for_plugin("pdf").unwrap();
         assert!(spine.extra.contains_key("vertebrae"));
-        assert!(spine.exclude.is_empty());
-        assert!(spine.section.is_empty());
+        assert!(spine.exclude.is_none());
+        assert!(spine.section.is_none());
     }
 
     #[test]

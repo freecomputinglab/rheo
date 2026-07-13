@@ -172,15 +172,24 @@ impl Build {
         plugin_section: &PluginSection,
         content_dir: &Path,
     ) -> Result<(VirtualSpine, typst_bundle::VirtualFs)> {
-        // Effective spine config: a per-format [plugin.spine] fully replaces the
-        // global [spine]; with neither, the spine is a pure directory scan.
-        let spine_cfg = plugin_section
-            .spine
-            .as_ref()
-            .or(self.project.config.spine.as_ref());
-        let exclude = spine_cfg.map(|s| s.exclude.clone()).unwrap_or_default();
-        let sections = spine_cfg.map(|s| s.section.clone()).unwrap_or_default();
-        let title = spine_cfg.and_then(|s| s.title.clone());
+        // Effective spine config: each field on a per-format [plugin.spine]
+        // falls back to the global [spine] independently when unset, rather
+        // than the per-format table's mere presence blanking every global
+        // spine key at once (a footgun since fixed — rheo-9vl.2: e.g. setting
+        // only `[pdf.spine] title` used to silently drop a global `exclude`).
+        let plugin_spine = plugin_section.spine.as_ref();
+        let global_spine = self.project.config.spine.as_ref();
+        let exclude = plugin_spine
+            .and_then(|s| s.exclude.clone())
+            .or_else(|| global_spine.and_then(|s| s.exclude.clone()))
+            .unwrap_or_default();
+        let sections = plugin_spine
+            .and_then(|s| s.section.clone())
+            .or_else(|| global_spine.and_then(|s| s.section.clone()))
+            .unwrap_or_default();
+        let title = plugin_spine
+            .and_then(|s| s.title.clone())
+            .or_else(|| global_spine.and_then(|s| s.title.clone()));
 
         let layout = spine_layout_for(plugin.spine_layout_kind(), plugin, &self.project.name);
 
