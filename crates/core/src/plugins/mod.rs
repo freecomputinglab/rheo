@@ -1,6 +1,6 @@
 use crate::config::PluginSection;
 use crate::config::project::ProjectConfig;
-use crate::reticulate::spine::SpineLayout;
+use crate::reticulate::spine::{SpineLayout, VirtualSpine};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::info;
@@ -147,15 +147,16 @@ pub struct PluginContext<'a> {
     pub project: &'a ProjectConfig,
     /// Plugin output directory (e.g., `build/html/`). Write outputs here.
     pub output_dir: &'a PathBuf,
+    /// The resolved spine — same tree and flat vertebra list as the Typst-side
+    /// `rheo-context` (`spine`/`spine-flat`), available on the Rust side too.
+    /// `compile()`'s `outputs: &[CastVertebra]` parameter is a separate,
+    /// already-cast view of each output's title/date/vars; use `spine` for
+    /// the tree structure and cross-vertebra queries, `outputs` for per-output
+    /// compiled bytes.
+    pub spine: &'a VirtualSpine,
     /// Resolved spine title, when configured (per-format `[plugin.spine] title`
-    /// or the global `[spine] title`).
-    ///
-    /// This is the only piece of the Typst-side `rheo-context` a plugin reads
-    /// through `PluginContext` — the rest (the spine tree, the flat page list)
-    /// isn't duplicated here. `compile()`'s `outputs: &[CastVertebra]` parameter
-    /// is the Rust-side equivalent of the flat page list, carrying each
-    /// output's title/date/vars directly, so plugins read spine data from
-    /// there rather than from a second copy on `PluginContext`.
+    /// or the global `[spine] title`). Distinct from any vertebra's own title —
+    /// this is the combined-document/feed-level title override.
     pub spine_title: Option<&'a str>,
     /// Full parsed plugin section from rheo.toml (or default if not configured).
     ///

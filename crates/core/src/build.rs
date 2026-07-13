@@ -381,6 +381,7 @@ impl Build {
             let ctx = PluginContext {
                 project: &self.project,
                 output_dir: &plugin_output_dir,
+                spine: &virtual_spine,
                 spine_title,
                 config: plugin_section,
                 assets: &resolved_assets,

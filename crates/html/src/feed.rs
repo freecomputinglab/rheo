@@ -248,6 +248,7 @@ mod tests {
     #[test]
     fn test_feed_exclude_omits_entry() {
         use rheo_core::config::project::{ProjectConfig, ProjectMode};
+        use rheo_core::reticulate::{SpineLayout, SpineScan, VirtualSpine};
         use rheo_core::{PluginSection, RheoConfig, RheoValue, TypstFormat};
         use std::collections::HashMap;
         use typst::foundations::Bytes;
@@ -290,9 +291,17 @@ mod tests {
         let section = PluginSection::default();
         let assets = HashMap::new();
         let font_dirs: Vec<std::path::PathBuf> = vec![];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let virtual_spine =
+            VirtualSpine::build(SpineScan::flat(&[], &output_dir), &output_dir, layout)
+                .expect("build empty spine");
         let ctx = PluginContext {
             project: &project,
             output_dir: &output_dir,
+            spine: &virtual_spine,
             spine_title: None,
             config: &section,
             assets: &assets,
