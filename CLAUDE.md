@@ -104,13 +104,14 @@ rheo assigns each vertebra a canonical label derived from its path relative to t
 
 rheo injects a per-vertebra Typst variable `rheo-context` into every spine file, exposing rheo's view of the project to authored Typst and to packages. It is a plain top-level `#let` binding prepended to each file's source — an ordinary dictionary, **not** a Typst `context` value. Each vertebra gets its own values because rheo injects a distinct literal per file, not through Typst's context mechanism. Reading it therefore does **not** require the `#context` keyword:
 
-Fields (v1; the value is a dictionary and may gain fields later):
+Fields (the value is a dictionary and may gain fields later):
 - `handle` — this file's `:`-separated handle (its ID; the same handle used for the cross-file links above).
-- `spine` — a flat list of every vertebra in spine order, each an entry `(handle, path, title)`.
+- `spine` — the structured spine **tree**, mirroring directory/section nesting. Each node is a dict `(title, handle, path, children)`: a leaf (a vertebra) carries its own `handle`/`path`/`title`; a group node (a directory or `[[spine.section]]` with no landing file) carries `handle: none`, `path: none`, and its own group title, nesting its children.
+- `spine-flat` — the flat pre-order list of every *clickable* vertebra (groups excluded), each an entry `(handle, path, title)` — the same shape the old flat `spine` used to be.
 - `target` — the rheo output-format name (`"epub"`/`"html"`/…). Present only for formats that set one; **absent for PDF**, where documents fall back to Typst's native `target()` == `"paged"`. Identical across vertebrae, so it also rides on the global `sys.inputs.rheo-context`.
 
 ```typst
-This is #rheo-context.handle of #rheo-context.spine.len() pages.
+This is #rheo-context.handle of #rheo-context.spine-flat.len() pages.
 ```
 
 **Passing it to packages:** a package template can't read the file's local `rheo-context` implicitly — Typst functions capture their definition scope, not the call site — so hand it in explicitly:

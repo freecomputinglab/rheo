@@ -107,8 +107,7 @@ impl SpineScan {
                     node.collect_indices(&mut indices);
                 }
                 let unique: HashSet<usize> = indices.iter().copied().collect();
-                indices.len() == unique.len()
-                    && indices.iter().all(|&i| i < files.len())
+                indices.len() == unique.len() && indices.iter().all(|&i| i < files.len())
             },
             "spine scan tree indices must be unique and in range"
         );
@@ -183,7 +182,9 @@ impl SpineScan {
         files: &mut Vec<PathBuf>,
     ) -> Result<Vec<SpineNode>> {
         let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)
-            .map_err(|e| RheoError::project_config(format!("failed to read dir '{}': {}", dir.display(), e)))?
+            .map_err(|e| {
+                RheoError::project_config(format!("failed to read dir '{}': {}", dir.display(), e))
+            })?
             .filter_map(|e| e.ok())
             .collect();
         entries.sort_by_key(|e| e.file_name());
@@ -238,7 +239,9 @@ impl SpineScan {
             .to_string();
 
         let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)
-            .map_err(|e| RheoError::project_config(format!("failed to read dir '{}': {}", dir.display(), e)))?
+            .map_err(|e| {
+                RheoError::project_config(format!("failed to read dir '{}': {}", dir.display(), e))
+            })?
             .filter_map(|e| e.ok())
             .collect();
         entries.sort_by_key(|e| e.file_name());
@@ -317,13 +320,8 @@ impl SpineScan {
     /// order prefix (e.g. `01-`, `1_`), replace `-`/`_` with spaces, and Title
     /// Case each word.
     fn prettify(dirname: &str) -> String {
-        let digits_end = dirname
-            .find(|c: char| !c.is_ascii_digit())
-            .unwrap_or(0);
-        let stripped = if digits_end > 0
-            && dirname[digits_end..]
-                .starts_with(['-', '_'])
-        {
+        let digits_end = dirname.find(|c: char| !c.is_ascii_digit()).unwrap_or(0);
+        let stripped = if digits_end > 0 && dirname[digits_end..].starts_with(['-', '_']) {
             &dirname[digits_end + 1..]
         } else {
             dirname
@@ -336,8 +334,7 @@ impl SpineScan {
                 let mut chars = w.chars();
                 match chars.next() {
                     Some(first) => {
-                        first.to_uppercase().collect::<String>()
-                            + &chars.as_str().to_lowercase()
+                        first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
                     }
                     None => String::new(),
                 }
@@ -356,7 +353,11 @@ impl SpineScan {
     /// lived in `content/guide/`. Only leaf files are movable; a directory
     /// landing page (`index.typ`) stays where it is. Returns `self` unchanged
     /// when there are no sections.
-    pub fn apply_sections(self, content_dir: &Path, sections: &[SpineSection]) -> Result<SpineScan> {
+    pub fn apply_sections(
+        self,
+        content_dir: &Path,
+        sections: &[SpineSection],
+    ) -> Result<SpineScan> {
         if sections.is_empty() {
             return Ok(self);
         }
@@ -490,10 +491,7 @@ impl SpineScan {
             }
 
             for p in matched {
-                let stem = p
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_default();
+                let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
                 children.push(PathNode {
                     segment: sanitize_handle_segment(stem),
                     title: None,
@@ -840,23 +838,31 @@ impl VirtualSpine {
     /// Per-vertebra `rheo-context` Typst preludes, keyed by include path (`rel_path`).
     ///
     /// Each vertebra is injected with `#let rheo-context = (handle: <its handle>,
-    /// spine: <flat list of every vertebra>)` so package templates can read the
-    /// file's own handle and the whole spine. The `handle` varies per file; the
-    /// `spine` literal is identical across files. The shape is a dictionary so
-    /// attributes can be added later (e.g. by format plugins) without breaking
-    /// consumers.
+    /// spine: <tree>, spine-flat: <flat list>)` so package templates can read the
+    /// file's own handle plus the spine, either as the structural tree or as a
+    /// flat pre-order list. The `handle` varies per file; `spine`/`spine-flat` are
+    /// identical across files. The shape is a dictionary so attributes can be
+    /// added later (e.g. by format plugins) without breaking consumers.
+    ///
+    /// Node key set for `spine` (recursive): `title` (str), `handle` (str or
+    /// `none`), `path` (str or `none`), `children` (array of nodes). A leaf
+    /// (`vertebra: Some`) carries its vertebra's `handle`/`path`/`title`; a group
+    /// node (`vertebra: None`, e.g. a directory or `[[spine.section]]` with no
+    /// landing file) carries `handle: none, path: none` and its own group title.
     ///
     /// `target` is the output-format name (e.g. `"html"`/`"epub"`); when
     /// `Some`, a `target` field is added to the dict, and when `None` (PDF) it
     /// is omitted so consumers fall back to Typst's native `target()`.
     pub fn rheo_context_preludes(&self, target: Option<&str>) -> HashMap<String, String> {
-        let spine = self.spine_data();
+        let spine = self.spine_tree();
+        let spine_flat = self.spine_flat();
         self.vertebrae
             .iter()
             .map(|v| {
                 let mut fields = vec![
                     ("handle".to_string(), TypstLiteral::str(v.handle.as_str())),
                     ("spine".to_string(), spine.clone()),
+                    ("spine-flat".to_string(), spine_flat.clone()),
                 ];
                 if let Some(t) = target {
                     fields.push(("target".to_string(), TypstLiteral::str(t)));
@@ -871,27 +877,61 @@ impl VirtualSpine {
     /// The file-independent `rheo-context` data exposed via `sys.inputs`.
     ///
     /// `sys.inputs` is global to the whole bundle compile, so it carries only the
-    /// parts of `rheo-context` identical across vertebrae — the spine. Packages
-    /// read `sys.inputs.rheo-context` to detect a rheo build (and reach the shared
-    /// spine) without referencing the per-file `#let rheo-context`, which
-    /// additionally carries this file's `handle`.
+    /// parts of `rheo-context` identical across vertebrae — `spine`/`spine-flat`.
+    /// Packages read `sys.inputs.rheo-context` to detect a rheo build (and reach
+    /// the shared spine) without referencing the per-file `#let rheo-context`,
+    /// which additionally carries this file's `handle`.
     ///
     /// `target` follows the same rule as [`Self::rheo_context_preludes`]: a
     /// `target` field is added when `Some`, omitted for PDF (`None`).
     pub fn global_context(&self, target: Option<&str>) -> TypstLiteral {
-        let mut fields = vec![("spine".to_string(), self.spine_data())];
+        let mut fields = vec![
+            ("spine".to_string(), self.spine_tree()),
+            ("spine-flat".to_string(), self.spine_flat()),
+        ];
         if let Some(t) = target {
             fields.push(("target".to_string(), TypstLiteral::str(t)));
         }
         TypstLiteral::Dict(fields)
     }
 
-    /// The flat spine as a [`TypstLiteral`] array-of-dictionaries: one entry per
-    /// vertebra with `handle`, `path`, and `title`.
-    fn spine_data(&self) -> TypstLiteral {
+    /// The structured spine tree as a [`TypstLiteral`] array of recursive node
+    /// dicts. See [`Self::rheo_context_preludes`] for the node key set.
+    fn spine_tree(&self) -> TypstLiteral {
+        TypstLiteral::Array(self.tree.iter().map(|n| self.node_literal(n)).collect())
+    }
+
+    /// Serialize one [`SpineNode`] (and its descendants) to its `spine` dict shape.
+    fn node_literal(&self, node: &SpineNode) -> TypstLiteral {
+        let (handle, path, title) = match node.vertebra.and_then(|i| self.vertebrae.get(i)) {
+            Some(v) => (
+                TypstLiteral::str(v.handle.as_str()),
+                TypstLiteral::str(v.rel_path.as_str()),
+                TypstLiteral::str(v.title.as_str()),
+            ),
+            None => (
+                TypstLiteral::None,
+                TypstLiteral::None,
+                TypstLiteral::str(node.title.as_deref().unwrap_or(node.segment.as_str())),
+            ),
+        };
+        let children =
+            TypstLiteral::Array(node.children.iter().map(|c| self.node_literal(c)).collect());
+        TypstLiteral::Dict(vec![
+            ("title".to_string(), title),
+            ("handle".to_string(), handle),
+            ("path".to_string(), path),
+            ("children".to_string(), children),
+        ])
+    }
+
+    /// The flat spine as a [`TypstLiteral`] array-of-dictionaries, in the same
+    /// pre-order as [`Self::flat_vertebrae`]: one entry per clickable vertebra
+    /// (group nodes excluded) with `handle`, `path`, and `title`.
+    fn spine_flat(&self) -> TypstLiteral {
         TypstLiteral::Array(
-            self.vertebrae
-                .iter()
+            self.flat_vertebrae()
+                .into_iter()
                 .map(|v| {
                     TypstLiteral::Dict(vec![
                         ("handle".to_string(), TypstLiteral::str(v.handle.as_str())),
@@ -1202,12 +1242,50 @@ mod tests {
         // Each carries its OWN handle...
         assert!(root_prelude.contains("handle: \"intro\""));
         assert!(nested_prelude.contains("handle: \"chapters:intro\""));
-        // ...and the full flat spine (both vertebrae, with path).
+        // ...and the full flat spine (both vertebrae, with path), both as the
+        // tree (`spine`) and the flat pre-order list (`spine-flat`).
         for p in [root_prelude, nested_prelude] {
             assert!(p.starts_with("#let rheo-context = "));
+            assert!(p.contains("spine-flat"));
             assert!(p.contains("path: \"content/intro.typ\""));
             assert!(p.contains("path: \"content/chapters/intro.typ\""));
         }
+    }
+
+    #[test]
+    fn spine_tree_nests_group_nodes_with_none_handle_and_path() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        let chapters = content.join("chapters");
+        fs::create_dir_all(&chapters).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro\n").unwrap();
+        fs::write(chapters.join("one.typ"), "= One\n").unwrap();
+
+        let scan = SpineScan::run(&content, &[]).unwrap();
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(scan, root, layout).unwrap();
+
+        let tree = spine.spine_tree().serialize();
+        // Root leaf carries its own handle/path/title.
+        assert!(tree.contains("handle: \"intro\""));
+        assert!(tree.contains("path: \"content/intro.typ\""));
+        // The `chapters` directory has no landing page: a group node with
+        // handle/path `none` and its own title, nesting `one` as a child.
+        assert!(tree.contains("handle: none"));
+        assert!(tree.contains("path: none"));
+        assert!(tree.contains("title: \"Chapters\""));
+        assert!(tree.contains("children:"));
+        assert!(tree.contains("handle: \"chapters:one\""));
+
+        // spine-flat only lists clickable vertebrae, in pre-order.
+        let flat = spine.spine_flat().serialize();
+        assert!(flat.contains("handle: \"intro\""));
+        assert!(flat.contains("handle: \"chapters:one\""));
+        assert!(!flat.contains("title: \"Chapters\""));
     }
 
     #[test]
@@ -1441,7 +1519,12 @@ mod tests {
         nodes
             .iter()
             .find(|n| n.segment == segment)
-            .unwrap_or_else(|| panic!("node '{segment}' not found among {:?}", nodes.iter().map(|n| &n.segment).collect::<Vec<_>>()))
+            .unwrap_or_else(|| {
+                panic!(
+                    "node '{segment}' not found among {:?}",
+                    nodes.iter().map(|n| &n.segment).collect::<Vec<_>>()
+                )
+            })
     }
 
     #[test]
@@ -1537,7 +1620,11 @@ mod tests {
         assert_eq!(guide.title.as_deref(), Some("Guide")); // derived from name
         let child_segs: Vec<&str> = guide.children.iter().map(|c| c.segment.as_str()).collect();
         assert_eq!(child_segs, vec!["a", "b"]);
-        assert!(out.tree.iter().any(|n| n.segment == "c" && n.vertebra.is_some()));
+        assert!(
+            out.tree
+                .iter()
+                .any(|n| n.segment == "c" && n.vertebra.is_some())
+        );
         // Children reindexed to valid file positions.
         for c in &guide.children {
             let idx = c.vertebra.expect("section child is a leaf vertebra");
@@ -1556,7 +1643,11 @@ mod tests {
         let guide = out.tree.iter().find(|n| n.segment == "guide").unwrap();
         // guide holds leaf a, then nested group advanced holding c.
         assert_eq!(guide.children[0].segment, "a");
-        let advanced = guide.children.iter().find(|n| n.segment == "advanced").unwrap();
+        let advanced = guide
+            .children
+            .iter()
+            .find(|n| n.segment == "advanced")
+            .unwrap();
         assert!(advanced.vertebra.is_none());
         assert_eq!(advanced.children[0].segment, "c");
         assert!(out.tree.iter().any(|n| n.segment == "b"));

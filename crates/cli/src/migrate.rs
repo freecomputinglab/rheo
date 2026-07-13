@@ -124,7 +124,11 @@ fn migrate_link_syntax(project: &ProjectConfig, apply: bool) -> Result<()> {
         ext: "html".into(),
         format: "html".into(),
     };
-    let spine = VirtualSpine::build(SpineScan::flat(&typ_files, &content_dir), &project.root, layout)?;
+    let spine = VirtualSpine::build(
+        SpineScan::flat(&typ_files, &content_dir),
+        &project.root,
+        layout,
+    )?;
 
     // Canonical absolute source path -> label to emit.
     // The primary handle is always unique: bare (`intro`) for root-level files,
