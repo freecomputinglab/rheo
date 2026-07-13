@@ -33,19 +33,27 @@ impl ValidateConfig for RheoConfig {
     }
 }
 
-/// Validate glob patterns in a vertebrae list.
-fn validate_vertebrae(vertebrae: &[String]) -> Result<()> {
-    for pattern in vertebrae {
-        glob::Pattern::new(pattern).map_err(|e| {
-            RheoError::project_config(format!("invalid glob pattern '{}': {}", pattern, e))
-        })?;
+/// Warn when a `rheo.toml` still sets the retired `vertebrae` glob list.
+///
+/// Since the structured-spine directory scan landed, `vertebrae` has no effect
+/// on spine membership or order — that now comes from the directory scan plus
+/// `[spine] exclude` / `[[spine.section]]`. Unlike a hard error, this stays a
+/// warning: an inert key doesn't corrupt the build, but silently ignoring it
+/// entirely risks a project's spine membership changing without the author
+/// noticing (see https://rheo.ohrg.org/spines for the current model).
+fn warn_on_vertebrae(vertebrae: &[String]) {
+    if !vertebrae.is_empty() {
+        warn!(
+            "`vertebrae` no longer has any effect as of rheo 0.5.0 — spine membership and \
+             order now come from a directory scan plus `[spine] exclude` / `[[spine.section]]`. \
+             See https://rheo.ohrg.org/spines for the current model."
+        );
     }
-    Ok(())
 }
 
 impl ValidateConfig for Spine {
     fn validate(&self) -> Result<()> {
-        validate_vertebrae(&self.vertebrae)?;
+        warn_on_vertebrae(&self.vertebrae);
 
         Ok(())
     }
@@ -66,26 +74,15 @@ mod tests {
     }
 
     #[test]
-    fn test_universal_spine_validate_valid_patterns() {
-        let spine = Spine {
-            title: Some("Test".to_string()),
-            vertebrae: vec!["*.typ".to_string(), "chapters/**/*.typ".to_string()],
-            ..Default::default()
-        };
-        assert!(spine.validate().is_ok());
-    }
-
-    #[test]
-    fn test_universal_spine_validate_invalid_pattern() {
+    fn test_universal_spine_validate_ignores_now_inert_vertebrae() {
+        // `vertebrae` no longer affects the build, so even a glob-invalid entry
+        // is just a (untested-here) warning, not a validation error.
         let spine = Spine {
             title: Some("Test".to_string()),
             vertebrae: vec!["[invalid".to_string()],
             ..Default::default()
         };
-        let result = spine.validate();
-        assert!(result.is_err());
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains("invalid glob pattern"));
+        assert!(spine.validate().is_ok());
     }
 
     #[test]
@@ -124,20 +121,13 @@ mod tests {
     }
 
     #[test]
-    fn test_rheo_config_rejects_invalid_glob_in_section() {
+    fn test_rheo_config_ignores_now_inert_vertebrae_in_section() {
         let toml = format!(
             "version = \"{}\"\n[pdf.spine]\nvertebrae = [\"[invalid\"]",
             env!("CARGO_PKG_VERSION")
         );
         let raw: crate::config::RheoConfigRaw = toml::from_str(&toml).unwrap();
         let config = RheoConfig::try_from(raw).unwrap();
-        let result = config.validate();
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("invalid glob pattern")
-        );
+        assert!(config.validate().is_ok());
     }
 }
