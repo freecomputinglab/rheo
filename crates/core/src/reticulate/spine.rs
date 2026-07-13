@@ -582,9 +582,21 @@ pub struct VirtualSpine {
     /// Structural overlay over `vertebrae`; a flat one-level tree today, but the
     /// foundation for arbitrary nesting later.
     pub tree: Vec<SpineNode>,
+    /// Resolved title for the combined output document, when configured
+    /// (per-format `[plugin.spine] title`, else the global `[spine] title`).
+    /// Not set by `build()` itself — callers resolve it from config and apply
+    /// it with [`Self::with_title`], since `VirtualSpine` is built from a pure
+    /// directory scan with no config access of its own.
+    pub title: Option<String>,
 }
 
 impl VirtualSpine {
+    /// Attach a resolved spine title, builder-style.
+    pub fn with_title(mut self, title: Option<String>) -> Self {
+        self.title = title;
+        self
+    }
+
     /// Pre-order walk of `self.tree`, yielding `&Vertebra` for every node that
     /// points at one, in the same order as `self.vertebrae` for the trivial flat
     /// tree built by `build()`. Group nodes with `vertebra: None` still recurse
@@ -774,6 +786,7 @@ impl VirtualSpine {
             vertebrae,
             layout,
             tree,
+            title: None,
         })
     }
 
@@ -1222,6 +1235,7 @@ mod tests {
                 format: "html".into(),
             },
             tree: Vec::new(),
+            title: None,
         };
         let src = spine.source();
         assert!(src.contains("#document(\"intro.html\", format: \"html\""));
@@ -1264,6 +1278,7 @@ mod tests {
                 format: "pdf".into(),
             },
             tree: Vec::new(),
+            title: None,
         };
         let src = spine.source();
         assert!(src.contains("#document(\"doc.pdf\", format: \"pdf\""));
@@ -1308,6 +1323,7 @@ mod tests {
                 format: "pdf".into(),
             },
             tree: Vec::new(),
+            title: None,
         };
         assert!(spine.check_output_collisions().is_ok());
     }

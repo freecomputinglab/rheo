@@ -88,7 +88,7 @@ impl FormatPlugin for EpubPlugin {
         let nav_xhtml = generate_nav_xhtml(&mut items, &language)?;
         let package_string = generate_package(
             &items,
-            ctx.spine_title,
+            ctx.spine.title.as_deref(),
             identifier.as_deref(),
             date.as_ref(),
             &language,

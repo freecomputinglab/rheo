@@ -148,16 +148,14 @@ pub struct PluginContext<'a> {
     /// Plugin output directory (e.g., `build/html/`). Write outputs here.
     pub output_dir: &'a PathBuf,
     /// The resolved spine — same tree and flat vertebra list as the Typst-side
-    /// `rheo-context` (`spine`/`spine-flat`), available on the Rust side too.
-    /// `compile()`'s `outputs: &[CastVertebra]` parameter is a separate,
-    /// already-cast view of each output's title/date/vars; use `spine` for
-    /// the tree structure and cross-vertebra queries, `outputs` for per-output
-    /// compiled bytes.
+    /// `rheo-context` (`spine`/`spine-flat`), available on the Rust side too,
+    /// plus the resolved combined-document/feed title (`spine.title`, distinct
+    /// from any individual vertebra's own title). `compile()`'s
+    /// `outputs: &[CastVertebra]` parameter is a separate, already-cast view of
+    /// each output's title/date/vars; use `spine` for the tree structure,
+    /// cross-vertebra queries, and the resolved title, `outputs` for
+    /// per-output compiled bytes.
     pub spine: &'a VirtualSpine,
-    /// Resolved spine title, when configured (per-format `[plugin.spine] title`
-    /// or the global `[spine] title`). Distinct from any vertebra's own title —
-    /// this is the combined-document/feed-level title override.
-    pub spine_title: Option<&'a str>,
     /// Full parsed plugin section from rheo.toml (or default if not configured).
     ///
     /// # Reading format-specific configuration

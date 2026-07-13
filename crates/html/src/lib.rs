@@ -122,7 +122,7 @@ impl FormatPlugin for HtmlPlugin {
             .unwrap_or_default();
 
         let html_cfg = ctx.config.parse_extra::<HtmlConfig>()?;
-        let feed_title = html_cfg.resolve_title(ctx.spine_title, &ctx.project.name);
+        let feed_title = html_cfg.resolve_title(ctx.spine.title.as_deref(), &ctx.project.name);
         let feed_link = html_cfg
             .base_url()
             .map(|base| (format!("{base}/feed.xml"), feed_title.clone()));

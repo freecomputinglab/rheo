@@ -302,7 +302,6 @@ mod tests {
             project: &project,
             output_dir: &output_dir,
             spine: &virtual_spine,
-            spine_title: None,
             config: &section,
             assets: &assets,
             font_dirs: &font_dirs,

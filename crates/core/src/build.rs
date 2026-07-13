@@ -180,6 +180,7 @@ impl Build {
             .or(self.project.config.spine.as_ref());
         let exclude = spine_cfg.map(|s| s.exclude.clone()).unwrap_or_default();
         let sections = spine_cfg.map(|s| s.section.clone()).unwrap_or_default();
+        let title = spine_cfg.and_then(|s| s.title.clone());
 
         let layout = spine_layout_for(plugin.spine_layout_kind(), plugin, &self.project.name);
 
@@ -201,7 +202,8 @@ impl Build {
             "building virtual spine"
         );
 
-        let virtual_spine = VirtualSpine::build(scan, &self.project.root, layout)?;
+        let virtual_spine =
+            VirtualSpine::build(scan, &self.project.root, layout)?.with_title(title);
         virtual_spine.check_output_collisions()?;
 
         let moulded = virtual_spine.mould();
@@ -369,20 +371,10 @@ impl Build {
             let (virtual_spine, virtual_fs) =
                 self.compile_spine(plugin.as_ref(), plugin_section, &content_dir)?;
 
-            // Resolve the effective spine title, exposed to plugins as
-            // `ctx.spine_title`, with the same precedence as the spine itself:
-            // per-format [plugin.spine] title, else the global [spine] title.
-            let spine_cfg = plugin_section
-                .spine
-                .as_ref()
-                .or(self.project.config.spine.as_ref());
-            let spine_title = spine_cfg.and_then(|s| s.title.as_deref());
-
             let ctx = PluginContext {
                 project: &self.project,
                 output_dir: &plugin_output_dir,
                 spine: &virtual_spine,
-                spine_title,
                 config: plugin_section,
                 assets: &resolved_assets,
                 font_dirs: &self.font_dirs,
