@@ -24,24 +24,9 @@
   }
 }
 
-// For #link(<handle>)[text] cross-vertebra links, strip the redundant fragment
-// (#handle) from the URL — the handle anchor is always at the top of the page,
-// so "llm.html" and "llm.html#llm" navigate to the same place. PDF is left
-// alone because all vertebrae share one file (internal anchors stay intact).
-#show link: it => context {
-  if type(it.dest) == label {
-    let matches = query(it.dest)
-    if matches.len() > 0 {
-      let elem = matches.first()
-      if elem.func() == figure and elem.kind == "rheo-handle" {
-        let fmt = target()
-        let ext = if fmt == "epub" { ".xhtml" } else if fmt == "html" { ".html" } else { none }
-        if ext != none {
-          let handle = repr(it.dest).slice(1, -1)
-          return link(handle + ext, it.body)
-        }
-      }
-    }
-  }
-  it
-}
+// The #show link rule that rewrites #link(<handle>)[text] cross-vertebra links
+// into per-format hrefs lives in the per-vertebra `rheo-context` prelude, not
+// here: it needs each file's own `rheo-context.handle` to compute a depth-
+// relative href (e.g. "../intro.html" from a nested page), and a show rule in
+// this shared main-file template captures only the main scope, never a
+// vertebra's local binding. See `VirtualSpine::rheo_context_preludes`.

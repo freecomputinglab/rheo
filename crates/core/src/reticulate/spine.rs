@@ -12,6 +12,41 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use typst::syntax::Source;
 
+/// Typst `#show link` rule injected into every plugin-format (html/epub)
+/// vertebra prelude, after its `#let rheo-context`.
+///
+/// It rewrites `#link(<handle>)[text]` cross-vertebra links (only those whose
+/// target is a rheo-synthesized `rheo-handle` figure — authored labels pass
+/// through untouched) into a per-format href. The href is **depth-relative** to
+/// the current page: the handle's `:` separators become `/`, and a `../` prefix
+/// is prepended once per level the current page (`rheo-context.handle`) is
+/// nested, so a page at `chapters/ch1.html` links to `<intro>` as
+/// `../intro.html` and to `<chapters:ch2>` as `../chapters/ch2.html`. The
+/// redundant `#handle` fragment is dropped — the anchor sits at the top of the
+/// target page. Depends on `rheo-context.handle` and the `target()` polyfill
+/// being in scope, which the prelude and world both guarantee.
+const RHEO_LINK_SHOW_RULE: &str = r#"#show link: it => context {
+  if type(it.dest) == label {
+    let matches = query(it.dest)
+    if matches.len() > 0 {
+      let elem = matches.first()
+      if elem.func() == figure and elem.kind == "rheo-handle" {
+        let fmt = target()
+        let ext = if fmt == "epub" { ".xhtml" } else if fmt == "html" { ".html" } else { none }
+        if ext != none {
+          let handle = repr(it.dest).slice(1, -1)
+          let depth = rheo-context.handle.split(":").len() - 1
+          let prefix = if depth == 0 { "./" } else { range(depth).map(x => "../").join() }
+          return link(prefix + handle.replace(":", "/") + ext, it.body)
+        }
+      }
+    }
+  }
+  it
+}
+
+"#;
+
 // ── Directory scan: SpineScan ────────────────────────────────────────────────
 
 /// A content directory scanned into a structured spine tree.
@@ -680,7 +715,13 @@ impl VirtualSpine {
                 let escape = format!("{handle}.typ");
 
                 let output_path = match &layout {
-                    SpineLayout::OnePerVertebra { ext, .. } => format!("{handle}.{ext}"),
+                    // The handle joins nesting with ':' (a valid Typst label
+                    // char; '/' is not). output_path is a real file path, so
+                    // translate those separators back to '/' — nested vertebrae
+                    // land in on-disk subdirectories, not colon-flattened files.
+                    SpineLayout::OnePerVertebra { ext, .. } => {
+                        format!("{}.{ext}", handle.replace(':', "/"))
+                    }
                     SpineLayout::SingleCombined { output_name, .. } => output_name.clone(),
                 };
 
@@ -823,7 +864,16 @@ impl VirtualSpine {
                     fields.push(("target".to_string(), TypstLiteral::str(t)));
                 }
                 let context = TypstLiteral::Dict(fields);
-                let prelude = format!("#let rheo-context = {}\n\n", context.serialize());
+                let mut prelude = format!("#let rheo-context = {}\n\n", context.serialize());
+                // For plugin formats (html/epub) append a #show link rule that
+                // rewrites #link(<handle>) cross-vertebra links into a depth-
+                // relative href. It reads this file's own rheo-context.handle to
+                // count how deep the page sits, so a nested page links out
+                // correctly (e.g. "../intro.html"). PDF (target None) keeps
+                // Typst's native link handling.
+                if target.is_some() {
+                    prelude.push_str(RHEO_LINK_SHOW_RULE);
+                }
                 (v.rel_path.clone(), prelude)
             })
             .collect()
@@ -1033,6 +1083,28 @@ mod tests {
         assert_eq!(spine.vertebrae[0].output_path, "intro.html");
         assert_eq!(spine.vertebrae[1].handle, "closing");
         assert_eq!(spine.vertebrae[1].output_path, "closing.html");
+    }
+
+    #[test]
+    fn nested_handle_maps_to_slash_output_path() {
+        // The handle joins nesting with ':' (a valid Typst label char), but the
+        // per-vertebra output_path is a real file path, so nested vertebrae must
+        // land in on-disk subdirectories: handle "pages:about" → "pages/about.html".
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(content.join("pages")).unwrap();
+        fs::write(content.join("pages").join("about.typ"), "= About\n").unwrap();
+
+        let files = vec![content.join("pages").join("about.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
+
+        assert_eq!(spine.vertebrae[0].handle, "pages:about");
+        assert_eq!(spine.vertebrae[0].output_path, "pages/about.html");
     }
 
     #[test]
