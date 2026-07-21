@@ -10,18 +10,25 @@ source text** before compilation — `DocumentMetadata`/`DocumentDate` in
 the bundle source rheo generates, so it must exist before Typst runs.
 
 Because it is a static scan of literal syntax — not evaluation — it only sees a
-`#set document(...)` rule written literally in the vertebra file itself. Typst,
-however, applies document set rules no matter where they are evaluated: set rules
-propagate up to the document element regardless of nesting. Verified with typst
-0.15.0 — all of these produce the given compiled document title, but only the
-last is visible to rheo's harvest:
+`#set document(...)` rule written at the **top (file-scope) level of the vertebra
+file itself**. Typst, however, applies document set rules no matter where they are
+evaluated: set rules propagate up to the document element regardless of nesting.
+Verified with typst 0.15.0 — all of these produce the given compiled document
+title, but only the last is visible to rheo's harvest:
 
 | How the title is set | Compiled `document.title` | Harvested by rheo? |
 | --- | --- | --- |
 | In an imported module fn, applied via `#show: book` | `FromModule` | **No** |
 | Inside `#show: doc => { set document(...); doc }` | `FromShow` | **No** |
-| In a code block *in the same file* — `#{ set document(...) }` | `FromCodeBlock` | Yes |
-| Literal top-level — `#set document(title: "…")` | `Literal` | Yes |
+| Inside a `#let` helper's body (even if applied) | — | **No** |
+| In a code block — `#{ set document(...) }` | `FromCodeBlock` | **No** |
+| Literal top-level — `#set document(title: "…")` | `Literal` | **Yes** |
+
+Harvesting is gated to file scope (the same rule `rheo-*` variables use): a set
+rule nested in a closure, code block, or `#let` binding is skipped, because such a
+rule may apply only where a helper is *invoked* (a different file), not where it is
+defined. The cost is that a top-level `#{ set document(...) }` code block — an
+unusual way to write what `#set document(...)` expresses directly — is also missed.
 
 ### What this means
 

@@ -78,16 +78,22 @@ pub struct DocumentMetadata(pub Vec<(String, MetaValue)>);
 impl SyntaxSite for DocumentMetadata {
     const MAX_SITES: Option<usize> = Some(1);
 
-    /// Match a `set` rule targeting `document` and capture each of its named
-    /// arguments whose value is a representable literal.
+    /// Match a top-level `set` rule targeting `document` and capture each of its
+    /// named arguments whose value is a representable literal.
+    ///
+    /// Gated on `ctx.file_scope` so a `set document(...)` buried in a function
+    /// body or closure — e.g. a `#let template(doc) = { set document(...); .. }`
+    /// helper that this vertebra defines but never invokes — is not harvested:
+    /// that rule only applies where the function is *called*, not here.
     fn visit(
         _source: &Source,
         node: &SyntaxNode,
         _offset: usize,
-        _ctx: WalkCtx,
+        ctx: WalkCtx,
         out: &mut Vec<Self>,
     ) {
-        if let Some(set_rule) = node.cast::<ast::SetRule>()
+        if ctx.file_scope
+            && let Some(set_rule) = node.cast::<ast::SetRule>()
             && let ast::Expr::Ident(target) = set_rule.target()
             && target.as_str() == "document"
         {
@@ -123,19 +129,23 @@ impl DocumentMetadata {
     }
 }
 
-/// Flatten a markup subtree to its plain text: concatenate every `Text`/`Space`
-/// leaf, dropping markup markers (emphasis underscores, `#strong[...]`, brackets)
-/// so `[Good news - #emph[Severance]]` becomes `Good news - Severance`.
+/// Flatten a markup subtree to its plain text: concatenate every textual leaf,
+/// dropping markup markers (emphasis underscores, `#strong[...]`, brackets) so
+/// `[Good news - #emph[Severance]]` becomes `Good news - Severance`. Smart quotes
+/// are kept as their source character, so `[She said "hi"]` keeps its quotes.
 fn markup_plain_text(node: &SyntaxNode) -> String {
     let mut out = String::new();
     collect_text(node, &mut out);
     out.trim().to_string()
 }
 
-/// Append the text of every `Text`/`Space` leaf under `node`, in order.
+/// Append the text of every textual leaf (`Text`/`Space`/`SmartQuote`) under
+/// `node`, in order, recursing through wrapper nodes (emphasis, strong, …).
 fn collect_text(node: &SyntaxNode, out: &mut String) {
     match node.kind() {
-        SyntaxKind::Text | SyntaxKind::Space => out.push_str(node.leaf_text()),
+        SyntaxKind::Text | SyntaxKind::Space | SyntaxKind::SmartQuote => {
+            out.push_str(node.leaf_text())
+        }
         _ => {
             for child in node.children() {
                 collect_text(child, out);
@@ -244,5 +254,38 @@ mod tests {
     fn test_empty_metadata_serializes_to_empty_dict() {
         let m = metadata("= Heading");
         assert_eq!(m.to_literal().serialize(), "(:)");
+    }
+
+    #[test]
+    fn test_set_rule_inside_function_body_not_harvested() {
+        // A `set document(...)` inside a `#let` helper only applies where the
+        // helper is invoked, not in the file that merely defines it.
+        let m = metadata(
+            r#"#let template(doc) = {
+  set document(title: "From Template")
+  doc
+}
+= Heading"#,
+        );
+        assert!(m.get("title").is_none());
+        assert!(m.0.is_empty());
+    }
+
+    #[test]
+    fn test_top_level_set_rule_still_harvested() {
+        let m = metadata(r#"#set document(title: "Top Level")"#);
+        assert_eq!(
+            m.get("title").and_then(MetaValue::as_str),
+            Some("Top Level")
+        );
+    }
+
+    #[test]
+    fn test_smart_quotes_survive_bracket_title() {
+        let m = metadata(r#"#set document(title: [She said "hello"])"#);
+        assert_eq!(
+            m.get("title").and_then(MetaValue::as_str),
+            Some("She said \"hello\"")
+        );
     }
 }

@@ -701,7 +701,6 @@ impl VirtualSpine {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
-                let title = DocumentTitle::from_source(&source, &stem).extract();
                 let rel_path = to_forward_slash(file.strip_prefix(project_root).unwrap_or(file));
 
                 let source_obj = Source::detached(&source);
@@ -709,6 +708,19 @@ impl VirtualSpine {
                 let date = extracted.document_date;
                 let metadata = extracted.document_metadata;
                 let sites = extracted.labels;
+
+                // Title from the harvested `#set document(title: …)` value — a
+                // real AST read that understands both string and bracket-content
+                // forms — falling back to the filename, title-cased. (Sourcing
+                // this from metadata rather than a raw-text scan is what fixes
+                // the string-form / link-text mis-parse.)
+                let title = metadata
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| DocumentTitle::to_readable_name(&stem));
                 let mut vars = HashMap::new();
                 for v in extracted.rheo_vars {
                     match v.value {
