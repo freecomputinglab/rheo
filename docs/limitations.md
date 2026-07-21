@@ -53,8 +53,25 @@ vertebra's own source** if you want its metadata reflected in the spine.
 - **Non-literal argument values are dropped**, not errored: `title: my-var`
   (an identifier), `title: "a" + "b"`, `title: upper("x")`, `keywords: ..spread`,
   and `if`/`context` expressions all yield no harvested value for that field.
-- **Content that isn't plain text** (math, images, raw blocks inside a bracket
-  value) flattens to nothing for those spans; only `Text`/`Space` leaves survive.
+
+### Harvested titles/values are plain text, not content
+
+Every harvested value is a plain string, not Typst content — the spine `title`
+and each `metadata` value feed plain-text sinks (nav labels, `@handle` display
+text, the Atom/RSS `<title>`, PDF Info `/Title`), none of which render markup.
+When a bracket value carries formatting, only its `Text`/`Space`/`SmartQuote`
+leaves survive; everything else is flattened:
+
+- **Inline formatting markers are stripped**, keeping the words:
+  `[_italic_ text]` → `italic text`, `[*bold* text]` → `bold text`,
+  `[Good news — #emph[Severance]]` → `Good news — Severance`.
+- **Spans that aren't textual leaves drop entirely**, not just their markers:
+  `[Chapter $x^2$]` → `Chapter` (math gone), `[See #image("x.png")]` → `See`,
+  inline raw `` [`code`] `` contributes nothing.
+
+There is no way to carry a *formatted* title through the spine; if a vertebra
+needs to display rich text, author it in the body/heading as content, separate
+from the `#set document(title: …)` value.
 
 ### The proper fix (not yet done)
 
