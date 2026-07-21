@@ -6,22 +6,16 @@ use typst::syntax::{Source, SyntaxKind, SyntaxNode, ast, ast::AstNode};
 
 /// A value harvested from a `#set document(...)` named argument.
 ///
-/// Covers the literal shapes a static AST walk can faithfully round-trip back
-/// into a Typst value: strings (including bracket-content, flattened to plain
-/// text), booleans, integers, floats, and arrays thereof. Non-literal arguments
-/// (e.g. `date: datetime(...)`, which is a function call) are not representable
-/// here and are dropped by [`MetaValue::from_expr`]; the document date has its
-/// own dedicated extractor, [`DocumentDate`](super::DocumentDate).
+/// Typst's `document` element is not extensible: a `#set document(...)` rule only
+/// accepts its defined parameters — `title` (content/str), `author` and
+/// `keywords` (str or array of str), and `date` (a `datetime(...)` call, skipped
+/// here as a non-literal and handled by [`DocumentDate`](super::DocumentDate)).
+/// So the only literal shapes reachable through a compilable rule are strings
+/// (including bracket-content, flattened to plain text) and arrays of them.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MetaValue {
     /// A string literal, or the plain text of a bracket-content value.
     Str(String),
-    /// A boolean literal (`true`/`false`).
-    Bool(bool),
-    /// An integer literal.
-    Int(i64),
-    /// A floating-point literal.
-    Float(f64),
     /// An array literal, e.g. `("DiH", "MiT")` for `keywords`.
     Array(Vec<MetaValue>),
 }
@@ -41,9 +35,6 @@ impl MetaValue {
     fn from_expr(expr: ast::Expr) -> Option<Self> {
         match expr {
             ast::Expr::Str(s) => Some(MetaValue::Str(s.get().to_string())),
-            ast::Expr::Bool(b) => Some(MetaValue::Bool(b.get())),
-            ast::Expr::Int(i) => Some(MetaValue::Int(i.get())),
-            ast::Expr::Float(f) => Some(MetaValue::Float(f.get())),
             // Bracket-content (`title: [My Title]`) flattens to its plain text,
             // dropping markup markers so a spine/feed title is clean text.
             ast::Expr::ContentBlock(c) => {
@@ -66,9 +57,6 @@ impl MetaValue {
     pub fn to_literal(&self) -> TypstLiteral {
         match self {
             MetaValue::Str(s) => TypstLiteral::str(s.as_str()),
-            MetaValue::Bool(b) => TypstLiteral::bool(*b),
-            MetaValue::Int(i) => TypstLiteral::Int(*i),
-            MetaValue::Float(f) => TypstLiteral::Float(*f),
             MetaValue::Array(items) => {
                 TypstLiteral::Array(items.iter().map(MetaValue::to_literal).collect())
             }
@@ -206,11 +194,13 @@ mod tests {
     }
 
     #[test]
-    fn test_int_and_bool_and_float_args() {
-        let m = metadata(r#"#set document(reading-time: 5, draft: true, ratio: 1.5)"#);
-        assert_eq!(m.get("reading-time"), Some(&MetaValue::Int(5)));
-        assert_eq!(m.get("draft"), Some(&MetaValue::Bool(true)));
-        assert_eq!(m.get("ratio"), Some(&MetaValue::Float(1.5)));
+    fn test_non_literal_scalar_args_skipped() {
+        // Typst's document element rejects such args at compile time; even if
+        // present in source, non-string scalars are not harvested.
+        let m = metadata(r#"#set document(title: [T], count: 5, flag: true)"#);
+        assert!(m.get("count").is_none());
+        assert!(m.get("flag").is_none());
+        assert_eq!(m.get("title").and_then(MetaValue::as_str), Some("T"));
     }
 
     #[test]
