@@ -435,9 +435,7 @@ mod tests {
 
         // Explicit false on [html] is honored, and is per-format: [epub] still
         // defaults to true.
-        let config = parse(&versioned_toml(
-            "[html]\nreset_footnotes = false\n[epub]\n",
-        ));
+        let config = parse(&versioned_toml("[html]\nreset_footnotes = false\n[epub]\n"));
         assert!(!config.plugin_section("html").reset_footnotes());
         assert!(config.plugin_section("epub").reset_footnotes());
 
