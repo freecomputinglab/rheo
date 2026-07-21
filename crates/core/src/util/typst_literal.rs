@@ -15,6 +15,10 @@ pub enum TypstLiteral {
     Str(String),
     /// A boolean literal (`true`/`false`).
     Bool(bool),
+    /// An integer literal.
+    Int(i64),
+    /// A floating-point literal.
+    Float(f64),
     /// The `none` literal.
     None,
     /// An array literal, e.g. `(a, b,)`.
@@ -43,6 +47,8 @@ impl TypstLiteral {
         match self {
             TypstLiteral::Str(s) => serialize_string(s),
             TypstLiteral::Bool(b) => b.to_string(),
+            TypstLiteral::Int(i) => i.to_string(),
+            TypstLiteral::Float(f) => f.to_string(),
             TypstLiteral::None => "none".to_string(),
             TypstLiteral::Array(items) if items.is_empty() => "()".to_string(),
             TypstLiteral::Array(items) => {
@@ -67,6 +73,8 @@ impl TypstLiteral {
         match self {
             TypstLiteral::Str(s) => Value::Str(s.as_str().into()),
             TypstLiteral::Bool(b) => Value::Bool(*b),
+            TypstLiteral::Int(i) => Value::Int(*i),
+            TypstLiteral::Float(f) => Value::Float(*f),
             TypstLiteral::None => Value::None,
             TypstLiteral::Array(items) => {
                 Value::Array(items.iter().map(TypstLiteral::to_value).collect::<Array>())

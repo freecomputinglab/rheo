@@ -111,8 +111,9 @@ rheo injects a per-vertebra Typst binding `rheo-context()` into every spine file
 
 Fields (the returned dictionary may gain fields later):
 - `handle` — this file's `:`-separated handle (its ID; the same handle used for the cross-file links above). The only per-file field.
-- `spine` — the structured spine **tree**, mirroring directory/section nesting. Each node is a dict `(title, handle, path, children)`: a leaf (a vertebra) carries its own `handle`/`path`/`title`; a group node (a directory or `[[spine.section]]` with no landing file) carries `handle: none`, `path: none`, and its own group title, nesting its children.
-- `spine-flat` — the flat pre-order list of every *clickable* vertebra (groups excluded), each an entry `(handle, path, title)`.
+- `spine` — the structured spine **tree**, mirroring directory/section nesting. Each node is a dict `(title, handle, path, metadata, children)`: a leaf (a vertebra) carries its own `handle`/`path`/`title`/`metadata`; a group node (a directory or `[[spine.section]]` with no landing file) carries `handle: none`, `path: none`, an empty `metadata: (:)`, and its own group title, nesting its children.
+- `spine-flat` — the flat pre-order list of every *clickable* vertebra (groups excluded), each an entry `(handle, path, title, metadata)`.
+- `metadata` (per entry) — every representable named argument of that vertebra's `#set document(...)` rule, harvested generically into a dict: e.g. `entry.metadata.at("keywords", default: ())` or `entry.metadata.at("author", default: none)`. Strings (including bracket-content, flattened to plain text), booleans, integers, floats, and arrays thereof round-trip; non-literal arguments like `date: datetime(...)` are omitted (the document date has its own handling for the feed). An entry with no `#set document(...)` has an empty `metadata: (:)`.
 - `target` — the rheo output-format name (`"epub"`/`"html"`/…). Present only for formats that set one; **absent for PDF**, where documents fall back to Typst's native `target()` == `"paged"`.
 - `ext` — the output file extension (`"html"`/`"xhtml"`), gated like `target` (present for html/epub, absent for PDF). The value core reads to build depth-relative cross-vertebra link hrefs.
 

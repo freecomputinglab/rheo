@@ -1,6 +1,6 @@
 use crate::config::SpineSection;
 use crate::parser;
-use crate::parser::{DocumentDate, RheoValue};
+use crate::parser::{DocumentDate, DocumentMetadata, RheoValue};
 use crate::reticulate::bundle_source::BundleSource;
 use crate::util::path::{sanitize_handle_segment, to_forward_slash};
 use crate::util::pdf::DocumentTitle;
@@ -530,6 +530,9 @@ pub struct Vertebra {
     pub title: String,
     /// Parsed `#set document(date: datetime(...))` timestamp, if present.
     pub date: Option<DocumentDate>,
+    /// All representable named arguments of this vertebra's `#set document(...)`
+    /// rule, exposed to Typst as the spine entry's `metadata` field.
+    pub metadata: DocumentMetadata,
     /// Harvested `rheo-*` variables from this vertebra's source file.
     pub vars: std::collections::HashMap<String, RheoValue>,
     /// The vertebra's raw source text, retained for the Mould stage.
@@ -663,6 +666,7 @@ impl VirtualSpine {
             rel_path: String,
             title: String,
             date: Option<DocumentDate>,
+            metadata: DocumentMetadata,
             vars: HashMap<String, RheoValue>,
             source: String,
         }
@@ -703,6 +707,7 @@ impl VirtualSpine {
                 let source_obj = Source::detached(&source);
                 let extracted = parser::extract_nodes(&source_obj);
                 let date = extracted.document_date;
+                let metadata = extracted.document_metadata;
                 let sites = extracted.labels;
                 let mut vars = HashMap::new();
                 for v in extracted.rheo_vars {
@@ -731,6 +736,7 @@ impl VirtualSpine {
                     rel_path,
                     title,
                     date,
+                    metadata,
                     vars,
                     source,
                 })
@@ -769,6 +775,7 @@ impl VirtualSpine {
                     emit_handle,
                     title: fi.title,
                     date: fi.date,
+                    metadata: fi.metadata,
                     vars: fi.vars,
                     source: fi.source,
                 })
@@ -867,24 +874,29 @@ impl VirtualSpine {
 
     /// Serialize one [`SpineNode`] (and its descendants) to its `spine` dict shape.
     fn node_literal(&self, node: &SpineNode) -> TypstLiteral {
-        let (handle, path, title) = match node.vertebra.and_then(|i| self.vertebrae.get(i)) {
-            Some(v) => (
-                TypstLiteral::str(v.handle.as_str()),
-                TypstLiteral::str(v.rel_path.as_str()),
-                TypstLiteral::str(v.title.as_str()),
-            ),
-            None => (
-                TypstLiteral::None,
-                TypstLiteral::None,
-                TypstLiteral::str(node.title.as_deref().unwrap_or(node.segment.as_str())),
-            ),
-        };
+        let (handle, path, title, metadata) =
+            match node.vertebra.and_then(|i| self.vertebrae.get(i)) {
+                Some(v) => (
+                    TypstLiteral::str(v.handle.as_str()),
+                    TypstLiteral::str(v.rel_path.as_str()),
+                    TypstLiteral::str(v.title.as_str()),
+                    v.metadata.to_literal(),
+                ),
+                None => (
+                    TypstLiteral::None,
+                    TypstLiteral::None,
+                    TypstLiteral::str(node.title.as_deref().unwrap_or(node.segment.as_str())),
+                    // Group nodes have no source document, so no metadata.
+                    TypstLiteral::Dict(vec![]),
+                ),
+            };
         let children =
             TypstLiteral::Array(node.children.iter().map(|c| self.node_literal(c)).collect());
         TypstLiteral::Dict(vec![
             ("title".to_string(), title),
             ("handle".to_string(), handle),
             ("path".to_string(), path),
+            ("metadata".to_string(), metadata),
             ("children".to_string(), children),
         ])
     }
@@ -901,6 +913,7 @@ impl VirtualSpine {
                         ("handle".to_string(), TypstLiteral::str(v.handle.as_str())),
                         ("path".to_string(), TypstLiteral::str(v.rel_path.as_str())),
                         ("title".to_string(), TypstLiteral::str(v.title.as_str())),
+                        ("metadata".to_string(), v.metadata.to_literal()),
                     ])
                 })
                 .collect(),
@@ -1189,6 +1202,44 @@ mod tests {
     }
 
     #[test]
+    fn spine_exposes_document_metadata_on_entries() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        // A post whose `#set document(...)` carries keywords (tags) and an author.
+        fs::write(
+            content.join("post.typ"),
+            "#set document(title: [My Post], keywords: (\"DiH\",), author: \"Jane\")\n= Body\n",
+        )
+        .unwrap();
+        // A page with no `#set document(...)`: metadata is an empty dict.
+        fs::write(content.join("bare.typ"), "= Bare\n").unwrap();
+
+        let scan = SpineScan::run(&content, &[]).unwrap();
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(scan, root, layout).unwrap();
+
+        // The metadata dict is exposed on both spine (tree) and spine-flat entries.
+        for serialized in [
+            spine.spine_tree().serialize(),
+            spine.spine_flat().serialize(),
+        ] {
+            assert!(
+                serialized.contains(
+                    "metadata: (title: \"My Post\", keywords: (\"DiH\",), author: \"Jane\")"
+                ),
+                "metadata dict missing/instructed wrong: {serialized}"
+            );
+            // The bare page still carries a `metadata` key, as an empty dict.
+            assert!(serialized.contains("metadata: (:)"));
+        }
+    }
+
+    #[test]
     fn rheo_context_target_and_ext_present_when_some_absent_when_none() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -1270,6 +1321,7 @@ mod tests {
             emit_handle: true,
             title: "Introduction".into(),
             date: None,
+            metadata: DocumentMetadata::default(),
             vars: HashMap::new(),
             source: String::new(),
         };
@@ -1305,6 +1357,7 @@ mod tests {
                     emit_handle: true,
                     title: "A".into(),
                     date: None,
+                    metadata: DocumentMetadata::default(),
                     vars: HashMap::new(),
                     source: String::new(),
                 },
@@ -1316,6 +1369,7 @@ mod tests {
                     emit_handle: true,
                     title: "B".into(),
                     date: None,
+                    metadata: DocumentMetadata::default(),
                     vars: HashMap::new(),
                     source: String::new(),
                 },
@@ -1353,6 +1407,7 @@ mod tests {
                     emit_handle: true,
                     title: "A".into(),
                     date: None,
+                    metadata: DocumentMetadata::default(),
                     vars: Default::default(),
                     source: String::new(),
                 },
@@ -1364,6 +1419,7 @@ mod tests {
                     emit_handle: true,
                     title: "B".into(),
                     date: None,
+                    metadata: DocumentMetadata::default(),
                     vars: Default::default(),
                     source: String::new(),
                 },
