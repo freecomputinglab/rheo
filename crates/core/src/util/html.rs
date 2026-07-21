@@ -120,28 +120,11 @@ impl HtmlDom {
         Ok(())
     }
 
-    /// Embed CSS content directly into the HTML `<head>` as `<style>` elements.
-    ///
-    /// Each block in `css_blocks` becomes one `<style>` element appended to `<head>`.
-    /// Text is stored verbatim — the raw-text serializer ensures `>` and `&` in CSS
-    /// selectors are not entity-escaped.
-    pub fn inject_inline_styles(&mut self, css_blocks: &[&str]) -> Result<()> {
-        if css_blocks.is_empty() {
-            return Ok(());
-        }
-        let head = self
-            .find_element("head")
-            .ok_or_else(|| RheoError::HtmlGeneration {
-                count: 1,
-                errors: "HTML document does not contain a <head> element".to_string(),
-            })?;
-        for css in css_blocks {
-            head.insert_child_at(usize::MAX, Element::create_style(css));
-        }
-        Ok(())
-    }
-
     /// Inject `<link>` and `<script>` elements into the HTML `<head>`.
+    ///
+    /// Refs are inserted verbatim, so callers that link a build-root asset from a
+    /// page in a subdirectory must first make each ref depth-relative — see
+    /// [`depth_prefix`].
     ///
     /// Nodes are inserted after the last `<meta>` tag (or at position 0 if none),
     /// in order: fonts, stylesheets, scripts.
@@ -274,16 +257,6 @@ impl Element {
     /// Create a `<script src="..."></script>` element.
     pub fn create_script(src: &str) -> Self {
         Self::create_element("script", &[("src", src), ("defer", "")])
-    }
-
-    /// Create a `<style>` element containing `css` as a raw text child.
-    pub fn create_style(css: &str) -> Self {
-        let elem = Self::create_element("style", &[]);
-        let text = Node::new(NodeData::Text {
-            contents: RefCell::new(StrTendril::from(css)),
-        });
-        elem.handle.children.borrow_mut().push(text);
-        elem
     }
 
     /// Prepend a child element to this element.
@@ -442,38 +415,12 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
     Ok(())
 }
 
-// ─── Head injection utilities ─────────────────────────────────────────────────
-
-/// Embed CSS content directly into the HTML `<head>` as `<style>` blocks.
-///
-/// Uses string manipulation rather than DOM parsing to avoid escaping issues
-/// with CSS selectors (e.g. `p > span`).
-///
-/// Returns an error if the HTML does not contain a `</head>` tag.
-pub fn inject_inline_styles(html: &str, css_blocks: &[&str]) -> Result<String> {
-    if css_blocks.is_empty() {
-        return Ok(html.to_string());
-    }
-
-    let mut styles = String::new();
-    for css in css_blocks {
-        styles.push_str("<style>");
-        styles.push_str(css);
-        styles.push_str("</style>");
-    }
-
-    if let Some(pos) = html.find("</head>") {
-        let mut result = String::with_capacity(html.len() + styles.len());
-        result.push_str(&html[..pos]);
-        result.push_str(&styles);
-        result.push_str(&html[pos..]);
-        Ok(result)
-    } else {
-        Err(RheoError::HtmlGeneration {
-            count: 1,
-            errors: "HTML document does not contain a </head> element".to_string(),
-        })
-    }
+/// The `../` prefix that makes a build-root asset ref resolve from a page at the
+/// given output path. `index.html` → `""`; `chapters/ch1.html` → `"../"`;
+/// `a/b/c.html` → `"../../"`. Assets are written relative to the plugin output
+/// root, so a page one directory deep must climb one level to reach them.
+pub fn depth_prefix(output_rel_path: &str) -> String {
+    "../".repeat(output_rel_path.matches('/').count())
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -549,70 +496,11 @@ mod tests {
         assert!(serialized.contains("<link rel=\"stylesheet\" href=\"style.css\">"));
     }
 
-    // inject_inline_styles tests (free fn — kept for backwards compat)
-
     #[test]
-    fn test_inject_inline_styles_basic() {
-        let html = "<!DOCTYPE html><html><head></head><body></body></html>";
-        let result = inject_inline_styles(html, &["body { color: red; }"]).unwrap();
-        assert!(result.contains("<style>body { color: red; }</style>"));
-    }
-
-    #[test]
-    fn test_inject_inline_styles_empty() {
-        let html = "<!DOCTYPE html><html><head></head><body></body></html>";
-        let result = inject_inline_styles(html, &[]).unwrap();
-        assert_eq!(result, html);
-    }
-
-    #[test]
-    fn test_inject_inline_styles_no_head() {
-        let html = "<html><body></body></html>";
-        let result = inject_inline_styles(html, &["body {}"]);
-        assert!(result.is_err());
-    }
-
-    // HtmlDom::inject_inline_styles tests
-
-    #[test]
-    fn test_dom_inject_inline_styles_basic() {
-        let html = "<!DOCTYPE html><html><head></head><body></body></html>";
-        let mut dom = HtmlDom::parse(html).unwrap();
-        dom.inject_inline_styles(&["body { color: red; }"]).unwrap();
-        let result = dom.serialize().unwrap();
-        assert!(result.contains("<style>body { color: red; }</style>"));
-    }
-
-    #[test]
-    fn test_dom_inject_inline_styles_raw_chars_unescaped() {
-        let html = "<!DOCTYPE html><html><head></head><body></body></html>";
-        let mut dom = HtmlDom::parse(html).unwrap();
-        dom.inject_inline_styles(&["p > span { content: \"a & b\"; }"])
-            .unwrap();
-        let result = dom.serialize().unwrap();
-        assert!(result.contains("p > span { content: \"a & b\"; }"));
-        assert!(!result.contains("&gt;"));
-        assert!(!result.contains("&amp;"));
-    }
-
-    #[test]
-    fn test_dom_inject_inline_styles_empty() {
-        let html = "<!DOCTYPE html><html><head></head><body></body></html>";
-        let mut dom = HtmlDom::parse(html).unwrap();
-        dom.inject_inline_styles(&[]).unwrap();
-        let result = dom.serialize().unwrap();
-        assert!(!result.contains("<style>"));
-    }
-
-    #[test]
-    fn test_dom_inject_inline_styles_multi_block() {
-        let html = "<!DOCTYPE html><html><head></head><body></body></html>";
-        let mut dom = HtmlDom::parse(html).unwrap();
-        dom.inject_inline_styles(&["a { color: red; }", "p > span { display: none; }"])
-            .unwrap();
-        let result = dom.serialize().unwrap();
-        assert!(result.contains("<style>a { color: red; }</style>"));
-        assert!(result.contains("<style>p > span { display: none; }</style>"));
+    fn test_depth_prefix() {
+        assert_eq!(depth_prefix("index.html"), "");
+        assert_eq!(depth_prefix("chapters/ch1.html"), "../");
+        assert_eq!(depth_prefix("a/b/c.html"), "../../");
     }
 
     // inject_head_links tests (via HtmlDom)

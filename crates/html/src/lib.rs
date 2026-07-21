@@ -7,9 +7,13 @@ use serde::Deserialize;
 /// Used when the project doesn't provide its own style.css.
 pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 
+/// Output filename for the bundled default stylesheet when no user CSS resolves.
+/// Distinct from `style.css` so it never clashes with a user's own stylesheet.
+pub const DEFAULT_STYLESHEET_NAME: &str = "rheo-default.css";
+
 use rheo_core::{
-    AssetConfig, CastVertebra, FormatInitTemplate, FormatPlugin, OpenHandle, PluginContext, Result,
-    RheoError, ServerHandle,
+    AssetConfig, CastVertebra, EmbeddedDefault, FormatInitTemplate, FormatPlugin, OpenHandle,
+    PluginContext, Result, RheoError, ServerHandle,
 };
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -93,11 +97,18 @@ impl FormatPlugin for HtmlPlugin {
                 name: STYLESHEETS,
                 default_path: "style.css",
                 required: false,
+                // No user/override stylesheet → ship the built-in default as a
+                // real linked file (rheo-default.css) rather than an inline <style>.
+                default_content: Some(EmbeddedDefault {
+                    name: DEFAULT_STYLESHEET_NAME,
+                    content: DEFAULT_STYLESHEET,
+                }),
             },
             AssetConfig {
                 name: SCRIPTS,
                 default_path: "index.js",
                 required: false,
+                default_content: None,
             },
         ]
     }
@@ -115,7 +126,6 @@ impl FormatPlugin for HtmlPlugin {
                     .collect()
             })
             .unwrap_or_default();
-        let use_default_css = css_paths.is_empty();
 
         let js_paths: Vec<String> = js_assets
             .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
@@ -128,18 +138,21 @@ impl FormatPlugin for HtmlPlugin {
             .map(|base| (format!("{base}/feed.xml"), feed_title.clone()));
 
         let needs_head_links = !css_paths.is_empty() || !js_paths.is_empty();
-        let css_refs: Vec<&str> = css_paths.iter().map(|s| s.as_str()).collect();
-        let js_refs: Vec<&str> = js_paths.iter().map(|s| s.as_str()).collect();
 
         for output in outputs {
-            let html_string = if use_default_css || needs_head_links || feed_link.is_some() {
+            let html_string = if needs_head_links || feed_link.is_some() {
                 let mut dom = output.html()?;
-                if use_default_css {
-                    info!("No stylesheet found, using default");
-                    dom.inject_inline_styles(&[DEFAULT_STYLESHEET])?;
-                }
                 if needs_head_links {
-                    dom.inject_head_links(&[], &css_refs, &js_refs)?;
+                    // Assets are written at the output root; make each ref
+                    // depth-relative so nested pages resolve them.
+                    let prefix = rheo_core::util::html::depth_prefix(&output.output_path);
+                    let css_refs: Vec<String> =
+                        css_paths.iter().map(|s| format!("{prefix}{s}")).collect();
+                    let js_refs: Vec<String> =
+                        js_paths.iter().map(|s| format!("{prefix}{s}")).collect();
+                    let css: Vec<&str> = css_refs.iter().map(|s| s.as_str()).collect();
+                    let js: Vec<&str> = js_refs.iter().map(|s| s.as_str()).collect();
+                    dom.inject_head_links(&[], &css, &js)?;
                 }
                 if let Some((href, title)) = &feed_link {
                     dom.inject_feed_link(href, title)?;

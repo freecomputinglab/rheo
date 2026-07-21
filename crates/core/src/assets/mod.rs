@@ -193,6 +193,42 @@ impl<'a> AssetResolver<'a> {
                         paths.join(", ")
                     )));
                 }
+                // No on-disk source: fall back to the plugin's embedded default
+                // (if any), written as a real file so it is copied + linked like
+                // any other asset instead of being inlined.
+                if let Some(embedded) = asset_config.default_content {
+                    let rel = embedded.name.to_string();
+                    if let Some(prev) = seen_relative_paths.get(&rel) {
+                        return Err(RheoError::project_config(format!(
+                            "asset path collision: output '{}' would be written by both '{}' and the embedded default for '{}'",
+                            rel,
+                            prev.display(),
+                            asset_config.name
+                        )));
+                    }
+                    let dest = self.plugin_output_dir.join(&rel);
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| {
+                            RheoError::io(
+                                e,
+                                format!("creating directory for embedded default '{}'", rel),
+                            )
+                        })?;
+                    }
+                    std::fs::write(&dest, embedded.content).map_err(|e| {
+                        RheoError::io(e, format!("writing embedded default asset to {:?}", dest))
+                    })?;
+                    seen_relative_paths.insert(rel.clone(), dest.clone());
+                    resolved.insert(
+                        asset_config.name,
+                        vec![Asset {
+                            config: asset_config.clone(),
+                            source_path: dest.clone(),
+                            resolved_path: dest.clone(),
+                            built_relative_path: rel,
+                        }],
+                    );
+                }
                 continue;
             }
 
@@ -360,6 +396,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                default_content: None,
             }],
         };
         let section = PluginSection::default();
@@ -387,6 +424,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                default_content: None,
             }],
         };
         let mut asset_extra = toml::map::Map::new();
@@ -423,6 +461,7 @@ mod tests {
                 name: "missing_asset",
                 default_path: "nonexistent.css",
                 required: true,
+                default_content: None,
             }],
         };
         let section = PluginSection::default();
@@ -450,6 +489,7 @@ mod tests {
                 name: "optional_asset",
                 default_path: "nonexistent.css",
                 required: false,
+                default_content: None,
             }],
         };
         let section = PluginSection::default();
@@ -479,6 +519,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                default_content: None,
             }],
         };
         let mut asset_extra = toml::map::Map::new();
@@ -522,6 +563,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                default_content: None,
             }],
         };
 
@@ -570,6 +612,7 @@ mod tests {
                 name: "missing_asset",
                 default_path: "nonexistent.css",
                 required: true,
+                default_content: None,
             }],
         };
         let section = PluginSection::default();
@@ -599,6 +642,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: true,
+                default_content: None,
             }],
         };
 
@@ -652,6 +696,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                default_content: None,
             }],
         };
 
@@ -714,6 +759,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                default_content: None,
             }],
         };
 
@@ -758,6 +804,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                default_content: None,
             }],
         };
 
@@ -799,6 +846,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                default_content: None,
             }],
         };
 
@@ -851,6 +899,7 @@ mod tests {
                 name: "js_scripts",
                 default_path: "script.js",
                 required: false,
+                default_content: None,
             }],
         };
 
@@ -897,6 +946,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                default_content: None,
             }],
         };
         let section = PluginSection::default();
@@ -939,6 +989,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                default_content: None,
             }],
         };
         let section = PluginSection::default();
@@ -984,6 +1035,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                default_content: None,
             }],
         };
         let mut user_extra = toml::map::Map::new();
@@ -1035,6 +1087,7 @@ mod tests {
                 name: "css_stylesheet",
                 default_path: "style.css",
                 required: false,
+                default_content: None,
             }],
         };
         // User declares custom.css for dest "pkg"
