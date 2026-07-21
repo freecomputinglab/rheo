@@ -53,3 +53,16 @@
   }
   it
 }
+
+// Per-document init hook, called once at the top of each #document block by the
+// bundle source (crates/core/src/reticulate/bundle_source.rs). Publishes this
+// page's handle to state("rheo-handle") for the cross-vertebra link rule above,
+// and — for per-page output (html/epub, where rheo-context carries an `ext`) —
+// resets the footnote counter so each page numbers its footnotes from 1. The
+// combined PDF has no `ext`, so its footnotes stay continuous across the book.
+#let rheo-page-init(handle) = {
+  state("rheo-handle").update(handle)
+  if sys.inputs.rheo-context.at("ext", default: none) != none {
+    counter(footnote).update(0)
+  }
+}

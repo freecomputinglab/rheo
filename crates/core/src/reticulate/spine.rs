@@ -1264,6 +1264,8 @@ mod tests {
         };
         let src = spine.source();
         assert!(src.contains("#document(\"intro.html\", format: \"html\""));
+        // Per-document init hook: publishes the handle and (per-page) resets footnotes.
+        assert!(src.contains("#rheo-page-init(\"intro\")"));
         assert!(src.contains("rheo-handle"));
         assert!(src.contains("[Introduction]"));
         assert!(src.contains("<intro>"));
@@ -1307,6 +1309,9 @@ mod tests {
         };
         let src = spine.source();
         assert!(src.contains("#document(\"doc.pdf\", format: \"pdf\""));
+        // Combined PDF is one document with an empty handle; the hook still runs
+        // (no `ext` at compile time -> the footnote reset inside it is skipped).
+        assert!(src.contains("#rheo-page-init(\"\")"));
         assert!(src.contains("#include \"content/a.typ\""));
         assert!(src.contains("#include \"content/b.typ\""));
         // Synthesized handle anchors are now injected into the combined document so

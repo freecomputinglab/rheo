@@ -39,6 +39,11 @@ pub enum TypstStmt {
     ContextBinding { handle: String },
     /// `#state("<key>").update(<value>)`.
     StateUpdate { key: String, value: TypstLiteral },
+    /// `#rheo-page-init("<handle>")` — the per-document init hook defined in
+    /// `typ/rheo.typ`: it publishes the page handle to `state` and, for per-page
+    /// (html/epub) output, resets the footnote counter so each page numbers its
+    /// footnotes from 1.
+    PageInit { handle: String },
     /// A cross-vertebra handle anchor: a labeled, hidden `rheo-handle` `#figure`
     /// so `@label` / `#link(<label>)` resolve across the bundle.
     HandleAnchor { label: String, title: String },
@@ -71,6 +76,11 @@ impl fmt::Display for TypstStmt {
                 "#state({}).update({})",
                 TypstLiteral::str(key.as_str()).serialize(),
                 value.serialize()
+            ),
+            TypstStmt::PageInit { handle } => write!(
+                f,
+                "#rheo-page-init({})",
+                TypstLiteral::str(handle.as_str()).serialize()
             ),
             TypstStmt::HandleAnchor { label, title } => write!(
                 f,
@@ -135,6 +145,14 @@ mod tests {
             stmt.to_string(),
             "#state(\"rheo-handle\").update(\"chapters:ch1\")"
         );
+    }
+
+    #[test]
+    fn page_init_quotes_handle() {
+        let stmt = TypstStmt::PageInit {
+            handle: "chapters:ch1".into(),
+        };
+        assert_eq!(stmt.to_string(), "#rheo-page-init(\"chapters:ch1\")");
     }
 
     #[test]
