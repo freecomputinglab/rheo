@@ -18,12 +18,14 @@
 //!   enforced by `extract_nodes_parses_and_traverses_once`.
 
 mod document_date;
+mod document_metadata;
 mod imports;
 mod labels;
 mod rheo_var;
 mod syntax_site;
 
 pub use document_date::DocumentDate;
+pub use document_metadata::{DocumentMetadata, MetaValue};
 pub use imports::ImportInfo;
 pub use labels::{LabelRole, LabelSite, LabelSites};
 pub use rheo_var::{RheoValue, RheoVar};
@@ -41,6 +43,8 @@ pub struct ExtractedNodes {
     pub labels: LabelSites,
     /// Parsed `#set document(date: datetime(...))` timestamp, if present.
     pub document_date: Option<DocumentDate>,
+    /// All representable named arguments of the first `#set document(...)` rule.
+    pub document_metadata: DocumentMetadata,
 }
 
 /// Harvest labels, `rheo-*` bindings, and the document date from `source` in a
@@ -55,10 +59,12 @@ pub fn extract_nodes(source: &Source) -> ExtractedNodes {
     let mut labels = Vec::new();
     let mut rheo_vars = Vec::new();
     let mut dates = Vec::new();
+    let mut metadata = Vec::new();
     syntax_site::walk_once(source, &root, |s, n, o, c| {
         LabelSite::visit(s, n, o, c, &mut labels);
         RheoVar::visit(s, n, o, c, &mut rheo_vars);
         DocumentDate::visit(s, n, o, c, &mut dates);
+        DocumentMetadata::visit(s, n, o, c, &mut metadata);
     });
     let mut label_sites = LabelSites::default();
     for site in labels {
@@ -71,6 +77,7 @@ pub fn extract_nodes(source: &Source) -> ExtractedNodes {
         rheo_vars,
         labels: label_sites,
         document_date: dates.into_iter().next(),
+        document_metadata: metadata.into_iter().next().unwrap_or_default(),
     }
 }
 
