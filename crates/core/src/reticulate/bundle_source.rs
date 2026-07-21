@@ -1,11 +1,5 @@
-use crate::util::typst_literal::TypstLiteral;
 use crate::util::typst_source::TypstStmt;
 use std::fmt;
-
-/// Typst `state` key carrying the current page's handle, published per-document
-/// so `typ/rheo.typ`'s cross-vertebra link rule can read it (see the rule and
-/// [`BundleDocument::to_stmt`]).
-const HANDLE_STATE_KEY: &str = "rheo-handle";
 
 /// A handle anchor emitted into a `BundleDocument` body so that `@label` cross-references
 /// resolve across vertebrae during bundle compilation.
@@ -56,13 +50,13 @@ impl fmt::Display for BundleSource {
 }
 
 impl BundleDocument {
-    /// Render this document as a [`TypstStmt::Document`]: a per-page handle
-    /// `state` update, then each segment's handle anchors followed by its
-    /// `#include`, in order.
+    /// Render this document as a [`TypstStmt::Document`]: a per-page init hook
+    /// (`#rheo-page-init`, which publishes the handle to `state` and resets the
+    /// footnote counter for per-page output), then each segment's handle anchors
+    /// followed by its `#include`, in order.
     fn to_stmt(&self) -> TypstStmt {
-        let mut body = vec![TypstStmt::StateUpdate {
-            key: HANDLE_STATE_KEY.to_string(),
-            value: TypstLiteral::str(self.handle.as_str()),
+        let mut body = vec![TypstStmt::PageInit {
+            handle: self.handle.clone(),
         }];
         for segment in &self.segments {
             for anchor in &segment.anchors {

@@ -44,6 +44,12 @@
       let elem = matches.first()
       if elem.func() == figure and elem.kind == "rheo-handle" {
         let target-handle = repr(it.dest).slice(1, -1)
+        // The `<handle.typ>` escape alias resolves to the same vertebra output
+        // as the canonical `<handle>`, so drop a trailing `.typ` before building
+        // the href — otherwise it would point at a nonexistent `…/x.typ.html`.
+        if target-handle.ends-with(".typ") {
+          target-handle = target-handle.slice(0, -4)
+        }
         let here-handle = state("rheo-handle").get()
         let depth = here-handle.split(":").len() - 1
         let prefix = if depth == 0 { "./" } else { range(depth).map(x => "../").join() }
@@ -52,4 +58,20 @@
     }
   }
   it
+}
+
+// Per-document init hook, called once at the top of each #document block by the
+// bundle source (crates/core/src/reticulate/bundle_source.rs). Publishes this
+// page's handle to state("rheo-handle") for the cross-vertebra link rule above,
+// and — for per-page output (html/epub, where rheo-context carries an `ext`) —
+// resets the footnote counter so each page numbers its footnotes from 1 —
+// unless the format's `reset_footnotes` toggle is set false. The combined PDF
+// has no `ext`, so its footnotes stay continuous across the book regardless.
+#let rheo-page-init(handle) = {
+  state("rheo-handle").update(handle)
+  let per-page = sys.inputs.rheo-context.at("ext", default: none) != none
+  let reset = sys.inputs.rheo-context.at("reset-footnotes", default: true)
+  if per-page and reset {
+    counter(footnote).update(0)
+  }
 }

@@ -831,7 +831,17 @@ impl VirtualSpine {
     /// each field is added when `Some`, omitted for PDF (`None`). `ext` is the
     /// output file extension (e.g. `"html"`/`"xhtml"`) — the value `typ/rheo.typ`
     /// reads to build cross-vertebra link hrefs.
-    pub fn global_context(&self, target: Option<&str>, ext: Option<&str>) -> TypstLiteral {
+    ///
+    /// `reset_footnotes` is the resolved per-format `reset-footnotes` toggle:
+    /// unlike `target`/`ext` it is always present (a resolved bool, not an
+    /// `Option`), and `typ/rheo.typ` ANDs it with the per-page `ext` gate before
+    /// resetting the footnote counter (so it only ever takes effect for HTML/EPUB).
+    pub fn global_context(
+        &self,
+        target: Option<&str>,
+        ext: Option<&str>,
+        reset_footnotes: bool,
+    ) -> TypstLiteral {
         let mut fields = vec![
             ("spine".to_string(), self.spine_tree()),
             ("spine-flat".to_string(), self.spine_flat()),
@@ -842,6 +852,10 @@ impl VirtualSpine {
         if let Some(e) = ext {
             fields.push(("ext".to_string(), TypstLiteral::str(e)));
         }
+        fields.push((
+            "reset-footnotes".to_string(),
+            TypstLiteral::bool(reset_footnotes),
+        ));
         TypstLiteral::Dict(fields)
     }
 
@@ -1191,21 +1205,27 @@ mod tests {
 
         // target/ext live on the global context (sys.inputs); the per-file
         // prelude only spreads them in, so they are asserted on global_context.
-        let global_html = spine.global_context(Some("html"), Some("html")).serialize();
+        let global_html = spine
+            .global_context(Some("html"), Some("html"), true)
+            .serialize();
         assert!(global_html.contains("target: \"html\""));
         assert!(global_html.contains("ext: \"html\""));
+        // The resolved reset-footnotes toggle is always present (unlike target/ext).
+        assert!(global_html.contains("reset-footnotes: true"));
 
-        // Epub keeps `target` "epub" but `ext` "xhtml".
+        // Epub keeps `target` "epub" but `ext` "xhtml"; a false toggle is threaded through.
         let global_epub = spine
-            .global_context(Some("epub"), Some("xhtml"))
+            .global_context(Some("epub"), Some("xhtml"), false)
             .serialize();
         assert!(global_epub.contains("target: \"epub\""));
         assert!(global_epub.contains("ext: \"xhtml\""));
+        assert!(global_epub.contains("reset-footnotes: false"));
 
-        // None (PDF) -> no `target` or `ext` field.
-        let global_without = spine.global_context(None, None).serialize();
+        // None (PDF) -> no `target` or `ext` field, but reset-footnotes is still present.
+        let global_without = spine.global_context(None, None, true).serialize();
         assert!(!global_without.contains("target:"));
         assert!(!global_without.contains("ext:"));
+        assert!(global_without.contains("reset-footnotes: true"));
     }
 
     #[test]
@@ -1264,6 +1284,8 @@ mod tests {
         };
         let src = spine.source();
         assert!(src.contains("#document(\"intro.html\", format: \"html\""));
+        // Per-document init hook: publishes the handle and (per-page) resets footnotes.
+        assert!(src.contains("#rheo-page-init(\"intro\")"));
         assert!(src.contains("rheo-handle"));
         assert!(src.contains("[Introduction]"));
         assert!(src.contains("<intro>"));
@@ -1307,6 +1329,9 @@ mod tests {
         };
         let src = spine.source();
         assert!(src.contains("#document(\"doc.pdf\", format: \"pdf\""));
+        // Combined PDF is one document with an empty handle; the hook still runs
+        // (no `ext` at compile time -> the footnote reset inside it is skipped).
+        assert!(src.contains("#rheo-page-init(\"\")"));
         assert!(src.contains("#include \"content/a.typ\""));
         assert!(src.contains("#include \"content/b.typ\""));
         // Synthesized handle anchors are now injected into the combined document so
