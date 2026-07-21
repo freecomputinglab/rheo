@@ -58,11 +58,14 @@
 // bundle source (crates/core/src/reticulate/bundle_source.rs). Publishes this
 // page's handle to state("rheo-handle") for the cross-vertebra link rule above,
 // and — for per-page output (html/epub, where rheo-context carries an `ext`) —
-// resets the footnote counter so each page numbers its footnotes from 1. The
-// combined PDF has no `ext`, so its footnotes stay continuous across the book.
+// resets the footnote counter so each page numbers its footnotes from 1 —
+// unless the format's `reset_footnotes` toggle is set false. The combined PDF
+// has no `ext`, so its footnotes stay continuous across the book regardless.
 #let rheo-page-init(handle) = {
   state("rheo-handle").update(handle)
-  if sys.inputs.rheo-context.at("ext", default: none) != none {
+  let per-page = sys.inputs.rheo-context.at("ext", default: none) != none
+  let reset = sys.inputs.rheo-context.at("reset-footnotes", default: true)
+  if per-page and reset {
     counter(footnote).update(0)
   }
 }

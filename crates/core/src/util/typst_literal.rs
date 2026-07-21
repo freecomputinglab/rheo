@@ -13,6 +13,8 @@
 pub enum TypstLiteral {
     /// A string literal (escaped on serialize).
     Str(String),
+    /// A boolean literal (`true`/`false`).
+    Bool(bool),
     /// The `none` literal.
     None,
     /// An array literal, e.g. `(a, b,)`.
@@ -27,6 +29,11 @@ impl TypstLiteral {
         TypstLiteral::Str(s.into())
     }
 
+    /// A boolean value.
+    pub fn bool(b: bool) -> Self {
+        TypstLiteral::Bool(b)
+    }
+
     /// Serialize to a Typst literal.
     ///
     /// Empty array serializes to `()`, empty dictionary to `(:)`. String values
@@ -35,6 +42,7 @@ impl TypstLiteral {
     pub fn serialize(&self) -> String {
         match self {
             TypstLiteral::Str(s) => serialize_string(s),
+            TypstLiteral::Bool(b) => b.to_string(),
             TypstLiteral::None => "none".to_string(),
             TypstLiteral::Array(items) if items.is_empty() => "()".to_string(),
             TypstLiteral::Array(items) => {
@@ -58,6 +66,7 @@ impl TypstLiteral {
         use typst::foundations::{Array, Dict, Value};
         match self {
             TypstLiteral::Str(s) => Value::Str(s.as_str().into()),
+            TypstLiteral::Bool(b) => Value::Bool(*b),
             TypstLiteral::None => Value::None,
             TypstLiteral::Array(items) => {
                 Value::Array(items.iter().map(TypstLiteral::to_value).collect::<Array>())
@@ -108,6 +117,14 @@ mod tests {
     fn empty_array_and_dict_use_typst_syntax() {
         assert_eq!(TypstLiteral::Array(vec![]).serialize(), "()");
         assert_eq!(TypstLiteral::Dict(vec![]).serialize(), "(:)");
+    }
+
+    #[test]
+    fn bool_serializes_and_converts_to_value_bool() {
+        use typst::foundations::Value;
+        assert_eq!(TypstLiteral::bool(true).serialize(), "true");
+        assert_eq!(TypstLiteral::bool(false).serialize(), "false");
+        assert_eq!(TypstLiteral::bool(true).to_value(), Value::Bool(true));
     }
 
     #[test]

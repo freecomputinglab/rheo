@@ -222,6 +222,13 @@ impl Build {
         let target = plugin.rheo_target();
         let ext = target.map(|_| plugin.extension());
         let rheo_context = virtual_spine.rheo_context_preludes();
+        // Per-format footnote-reset toggle (default true); only takes effect for
+        // per-page formats, since rheo.typ ANDs it with the `ext` gate.
+        let reset_footnotes = self
+            .project
+            .config
+            .plugin_section(plugin.name())
+            .reset_footnotes();
 
         // Single Typst bundle compile for this plugin.
         let world = RheoWorld::new_for_bundle(
@@ -229,7 +236,7 @@ impl Build {
             moulded.main,
             moulded.sources,
             rheo_context,
-            Some(virtual_spine.global_context(target, ext)),
+            Some(virtual_spine.global_context(target, ext, reset_footnotes)),
             plugin.rheo_target(),
             self.font_dirs.clone(),
         )?;

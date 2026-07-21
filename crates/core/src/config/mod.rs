@@ -130,6 +130,14 @@ pub struct PluginSection {
     #[serde(default)]
     pub auto_detect_packages: Option<bool>,
 
+    /// When true (default), per-page output for this format resets the footnote
+    /// counter to 1 on every page; false lets footnotes accumulate across the
+    /// bundle. Only meaningful for the per-page formats (HTML/EPUB); PDF combines
+    /// into a single document with no `ext`, so the reset gate in `typ/rheo.typ`
+    /// never fires there regardless. Read via [`PluginSection::reset_footnotes`].
+    #[serde(default)]
+    pub reset_footnotes: Option<bool>,
+
     /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
     /// `fonts` for HTML; `identifier`, `date` for EPUB).
     #[serde(flatten, default)]
@@ -332,6 +340,12 @@ impl PluginSection {
         self.auto_detect_packages.unwrap_or(true)
     }
 
+    /// Per-page footnote-counter reset (HTML/EPUB) defaults to true; users can
+    /// disable per-format with `reset_footnotes = false`.
+    pub fn reset_footnotes(&self) -> bool {
+        self.reset_footnotes.unwrap_or(true)
+    }
+
     /// Deserialize the format-specific `extra` fields into a typed config struct.
     ///
     /// Plugins define a `#[derive(Deserialize, Default)]` struct for their own
@@ -411,6 +425,25 @@ mod tests {
         let toml = versioned_toml(r#"formats = ["pdf"]"#);
         let config = parse(&toml);
         assert_eq!(config.formats, vec!["pdf"]);
+    }
+
+    #[test]
+    fn test_reset_footnotes_defaults_true_and_honors_false_per_format() {
+        // No [html] section at all -> default section, defaults to true.
+        let config = parse(&versioned_toml(r#"formats = ["html"]"#));
+        assert!(config.plugin_section("html").reset_footnotes());
+
+        // Explicit false on [html] is honored, and is per-format: [epub] still
+        // defaults to true.
+        let config = parse(&versioned_toml(
+            "[html]\nreset_footnotes = false\n[epub]\n",
+        ));
+        assert!(!config.plugin_section("html").reset_footnotes());
+        assert!(config.plugin_section("epub").reset_footnotes());
+
+        // Explicit true.
+        let config = parse(&versioned_toml("[html]\nreset_footnotes = true\n"));
+        assert!(config.plugin_section("html").reset_footnotes());
     }
 
     #[test]
