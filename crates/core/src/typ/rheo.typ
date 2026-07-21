@@ -44,6 +44,12 @@
       let elem = matches.first()
       if elem.func() == figure and elem.kind == "rheo-handle" {
         let target-handle = repr(it.dest).slice(1, -1)
+        // The `<handle.typ>` escape alias resolves to the same vertebra output
+        // as the canonical `<handle>`, so drop a trailing `.typ` before building
+        // the href — otherwise it would point at a nonexistent `…/x.typ.html`.
+        if target-handle.ends-with(".typ") {
+          target-handle = target-handle.slice(0, -4)
+        }
         let here-handle = state("rheo-handle").get()
         let depth = here-handle.split(":").len() - 1
         let prefix = if depth == 0 { "./" } else { range(depth).map(x => "../").join() }
