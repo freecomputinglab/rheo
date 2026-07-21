@@ -309,19 +309,25 @@ fn directory_listing(html_dir: &Path, path: &str) -> Response {
         Err(_) => return (StatusCode::NOT_FOUND, "Directory not found").into_response(),
     };
 
-    let mut html_files: Vec<String> = entries
+    // List HTML files plus subdirectories: nested vertebrae land in real
+    // subdirectories (e.g. `chapters/ch1.html`), so a subdir gets a trailing-
+    // slash entry the user drills into rather than a flat colon filename.
+    let mut names: Vec<String> = entries
         .filter_map(|entry| {
             let entry = entry.ok()?;
-            let path = entry.path();
-            if path.extension()? == "html" {
-                Some(path.file_name()?.to_string_lossy().to_string())
+            let entry_path = entry.path();
+            let file_name = entry_path.file_name()?.to_string_lossy().to_string();
+            if entry_path.is_dir() {
+                Some(format!("{file_name}/"))
+            } else if entry_path.extension().is_some_and(|e| e == "html") {
+                Some(file_name)
             } else {
                 None
             }
         })
         .collect();
 
-    html_files.sort();
+    names.sort();
 
     let mut html = String::from(
         r#"<!DOCTYPE html>
@@ -344,17 +350,16 @@ fn directory_listing(html_dir: &Path, path: &str) -> Response {
 "#,
     );
 
-    if html_files.is_empty() {
+    if names.is_empty() {
         html.push_str("<li>No HTML files found</li>");
     } else {
-        for file in html_files {
-            // Prefix the href with `./` so a colon in a nested vertebra's
-            // filename (e.g. `chapters:intro.html`) isn't parsed as a URL
-            // scheme by the browser, which would break the link.
+        for name in names {
+            // Prefix each href with `./` so it resolves relative to the current
+            // directory regardless of how the listing URL is written.
             html.push_str(&format!(
                 r#"        <li><a href="./{}">{}</a></li>
 "#,
-                file, file
+                name, name
             ));
         }
     }
@@ -419,13 +424,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_directory_listing_prefixes_href_for_colon_filenames() {
-        // Nested vertebrae land on disk as flat, colon-separated filenames
-        // (e.g. `chapters:intro.html`). The listing must not emit a bare
-        // `href="chapters:intro.html"` — the browser would read `chapters:`
-        // as a URL scheme and break the link. A `./` prefix fixes it.
+    async fn test_directory_listing_lists_files_and_subdirs() {
+        // Nested vertebrae land in real subdirectories (e.g. `chapters/ch1.html`).
+        // The root listing shows top-level HTML files plus a trailing-slash entry
+        // per subdirectory to drill into; every href is `./`-prefixed so it
+        // resolves relative to the current directory.
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("chapters:intro.html"), "<html></html>").unwrap();
+        std::fs::write(dir.path().join("intro.html"), "<html></html>").unwrap();
+        std::fs::create_dir(dir.path().join("chapters")).unwrap();
+        std::fs::write(
+            dir.path().join("chapters").join("ch1.html"),
+            "<html></html>",
+        )
+        .unwrap();
 
         let response = directory_listing(dir.path(), "");
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -434,12 +445,12 @@ mod tests {
         let html = String::from_utf8(body.to_vec()).unwrap();
 
         assert!(
-            html.contains(r#"href="./chapters:intro.html""#),
-            "expected a `./`-prefixed href, got: {html}"
+            html.contains(r#"href="./intro.html""#),
+            "expected the root HTML file, got: {html}"
         );
         assert!(
-            !html.contains(r#"href="chapters:intro.html""#),
-            "bare colon href would be parsed as a URL scheme: {html}"
+            html.contains(r#"href="./chapters/""#),
+            "expected a drill-in link for the subdirectory, got: {html}"
         );
     }
 }

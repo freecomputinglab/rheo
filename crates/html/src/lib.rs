@@ -153,6 +153,11 @@ impl FormatPlugin for HtmlPlugin {
 
             let out_path = ctx.output_dir.join(&output.output_path);
             debug!(size = html_string.len(), "writing HTML file");
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    RheoError::io(e, format!("creating output directory {:?}", parent))
+                })?;
+            }
             std::fs::write(&out_path, &html_string)
                 .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", out_path)))?;
             info!(output = %out_path.display(), "successfully compiled to HTML");

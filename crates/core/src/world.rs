@@ -560,7 +560,7 @@ mod tests {
         let mut rheo_context = HashMap::new();
         rheo_context.insert(
             "content/intro.typ".to_string(),
-            "#let rheo-context = (handle: \"intro\", spine: ())\n\n".to_string(),
+            "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)\n\n".to_string(),
         );
         let world = RheoWorld::new_for_bundle(
             root,
@@ -580,7 +580,7 @@ mod tests {
         .intern();
         let text = World::source(&world, id).unwrap().text().to_string();
         // The prelude is prepended ahead of the file's own body.
-        assert!(text.contains("#let rheo-context = (handle: \"intro\""));
+        assert!(text.contains("#let rheo-context() = (handle: \"intro\""));
         assert!(text.find("rheo-context").unwrap() < text.find("= Intro").unwrap());
     }
 

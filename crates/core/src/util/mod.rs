@@ -8,4 +8,5 @@ pub mod html;
 pub mod path;
 pub mod pdf;
 pub mod typst_literal;
+pub mod typst_source;
 pub mod typst_types;

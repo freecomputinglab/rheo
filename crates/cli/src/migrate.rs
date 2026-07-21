@@ -79,6 +79,10 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     // in the same release as the rheo-target removal above — same threshold.
     let needs_vertebrae_migration = from < to;
 
+    // The per-vertebra `rheo-context` binding became a function `rheo-context()`;
+    // any older project's references are rewritten.
+    let needs_context_rewrite = from < to;
+
     println!("\nMigrations:");
     if needs_link_rewrite {
         println!("  - rewrite #link(\"./file.typ\") syntax to #link(<handle>)");
@@ -90,6 +94,9 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     }
     if needs_vertebrae_migration {
         println!("  - convert retired [spine] vertebrae glob lists to [spine] exclude");
+    }
+    if needs_context_rewrite {
+        println!("  - shim `rheo-context` binding for its new `rheo-context()` function form");
     }
     println!("  - bump rheo.toml version to {to}");
 
@@ -106,6 +113,11 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     if needs_vertebrae_migration {
         println!("\nSpine config:");
         migrate_vertebrae_to_exclude(&project, config_path, apply)?;
+    }
+
+    if needs_context_rewrite {
+        println!("\nContext references:");
+        migrate_context_references(&project, apply)?;
     }
 
     if apply {
@@ -282,6 +294,65 @@ fn migrate_target_references(project: &ProjectConfig, apply: bool) -> Result<()>
 
         if changed && apply {
             fs::write(file, content.as_bytes())
+                .map_err(|e| RheoError::io(e, format!("failed to write {}", file.display())))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// The compatibility shim prepended to files that read the per-vertebra
+/// `rheo-context` binding, which changed from a bare dict to a zero-arg function
+/// `rheo-context()`.
+const CONTEXT_SHIM: &str = "#let rheo-context = rheo-context()";
+
+/// Keep authored files that read the per-vertebra `rheo-context` binding working
+/// after it changed from a bare dict to a function `rheo-context()`.
+///
+/// Rather than rewrite every reference (a `rheo-context` identifier also appears
+/// as a label `<rheo-context>`, a ref `@rheo-context`, a raw span, a `.rheo-context`
+/// field, and a `"rheo-context"` string — regex can't safely splice `()` into all
+/// those), this prepends a one-line shim, `#let rheo-context = rheo-context()`,
+/// to each file that reads the binding. The shim calls the injected function once
+/// and rebinds the name to its dict, so existing `rheo-context.field` /
+/// `ctx: rheo-context` code keeps working untouched.
+///
+/// The detection regex only decides *whether* a file needs the shim (a false
+/// positive would add a harmless extra shim, so it errs toward precision without
+/// needing to be exact). It matches a `rheo-context` value reference: `pre`
+/// excludes the lead-in chars of the non-binding forms — `.` (`sys.inputs.rheo-context`
+/// field), `"` (string), `<` (label), `@` (ref), a backtick (raw span), and word/`-`
+/// (a longer identifier); `post` excludes `(` (already a call) and word/`-`.
+fn migrate_context_references(project: &ProjectConfig, apply: bool) -> Result<()> {
+    let content_dir = resolve_effective_content_dir(project);
+    let typ_files = collect_typ_files(&content_dir);
+    if typ_files.is_empty() {
+        return Ok(());
+    }
+
+    let re = Regex::new(r#"(?:^|[^.\w"<@`-])rheo-context(?:$|[^\w(-])"#)
+        .expect("hardcoded context regex must compile");
+
+    for file in &typ_files {
+        let content = match fs::read_to_string(file) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(file = %file.display(), error = %e, "skipping unreadable file");
+                continue;
+            }
+        };
+        // Already shimmed (e.g. a re-run) or no binding use: nothing to do.
+        if content.contains(CONTEXT_SHIM) || !re.is_match(&content) {
+            continue;
+        }
+
+        let label = "prepend `#let rheo-context = rheo-context()` compatibility shim";
+        info!(file = %file.display(), rewrite = label, "shim context binding");
+        println!("{}: {}", file.display(), label);
+
+        if apply {
+            let shimmed = format!("{CONTEXT_SHIM}\n{content}");
+            fs::write(file, shimmed.as_bytes())
                 .map_err(|e| RheoError::io(e, format!("failed to write {}", file.display())))?;
         }
     }
@@ -649,6 +720,70 @@ mod tests {
         assert!(!out.contains("rheo-target"));
         // Unrelated content untouched.
         assert!(out.contains("= Unrelated Title"));
+    }
+
+    #[test]
+    fn shims_files_that_read_the_context_binding() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        // A file that reads the binding, alongside a label, a ref, a raw span,
+        // the global dict, and the detection string — none of which must change.
+        fs::write(
+            content.join("page.typ"),
+            "#show: t.with(ctx: rheo-context)\n\
+             This is #rheo-context.handle of #rheo-context.spine-flat.len() pages.\n\
+             #if \"rheo-context\" in sys.inputs { sys.inputs.rheo-context.spine }\n\
+             See #link(<rheo-context>)[the page], @rheo-context, and `rheo-context.target`.\n\
+             = Unrelated Title\n",
+        )
+        .unwrap();
+        // A file that only links to / mentions the handle (label + global dict),
+        // never reading the binding value — must NOT be shimmed.
+        fs::write(
+            content.join("link_only.typ"),
+            "See #link(<rheo-context>)[the context page]; sys.inputs.rheo-context.spine.\n",
+        )
+        .unwrap();
+
+        let project = ProjectConfig {
+            root: root.to_path_buf(),
+            name: "test".into(),
+            config: rheo_core::RheoConfig {
+                version: ManifestVersion::parse("0.5.0").unwrap(),
+                content_dir: Some("content".into()),
+                ..Default::default()
+            },
+            typ_files: vec![content.join("page.typ"), content.join("link_only.typ")],
+            mode: rheo_core::config::project::ProjectMode::Directory,
+            config_path: Some(root.join("rheo.toml")),
+        };
+        fs::write(
+            root.join("rheo.toml"),
+            "version = \"0.5.0\"\ncontent_dir = \"content\"\n",
+        )
+        .unwrap();
+
+        migrate_context_references(&project, true).unwrap();
+
+        let out = fs::read_to_string(content.join("page.typ")).unwrap();
+        // The shim is prepended once, ahead of the body.
+        assert!(out.starts_with("#let rheo-context = rheo-context()\n"));
+        assert_eq!(out.matches("#let rheo-context = rheo-context()").count(), 1);
+        // Every original reference is left exactly as written — nothing rewritten.
+        assert!(out.contains("#show: t.with(ctx: rheo-context)\n"));
+        assert!(out.contains("#rheo-context.handle of #rheo-context.spine-flat.len()"));
+        assert!(out.contains("\"rheo-context\" in sys.inputs"));
+        assert!(out.contains("sys.inputs.rheo-context.spine"));
+        assert!(out.contains("#link(<rheo-context>)"));
+        assert!(out.contains("@rheo-context,"));
+        assert!(out.contains("`rheo-context.target`"));
+        assert!(out.contains("= Unrelated Title"));
+
+        // The link-only file reads no binding value, so it is left untouched.
+        let link_only = fs::read_to_string(content.join("link_only.typ")).unwrap();
+        assert!(!link_only.contains(CONTEXT_SHIM));
     }
 
     #[test]

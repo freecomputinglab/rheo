@@ -107,38 +107,41 @@ rheo assigns each vertebra a canonical label derived from its path relative to t
 
 ## rheo-context
 
-rheo injects a per-vertebra Typst variable `rheo-context` into every spine file, exposing rheo's view of the project to authored Typst and to packages. It is a plain top-level `#let` binding prepended to each file's source — an ordinary dictionary, **not** a Typst `context` value. Each vertebra gets its own values because rheo injects a distinct literal per file, not through Typst's context mechanism. Reading it therefore does **not** require the `#context` keyword:
+rheo injects a per-vertebra Typst binding `rheo-context()` into every spine file, exposing rheo's view of the project to authored Typst and to packages. It is a zero-arg **function** prepended to each file's source, returning a dictionary composed of this file's own `handle` plus the format-global values spread from `sys.inputs.rheo-context`: `#let rheo-context() = (handle: <handle>, ..sys.inputs.rheo-context)`. Only the per-file `handle` is baked per vertebra; the shared (potentially large) `spine` is stored once on `sys.inputs`, not duplicated into every file. `sys.inputs` reads need no `#context`, so reading its fields (`rheo-context().handle`) does **not** require the `#context` keyword. The function form also lets an author mock it under vanilla Typst.
 
-Fields (the value is a dictionary and may gain fields later):
-- `handle` — this file's `:`-separated handle (its ID; the same handle used for the cross-file links above).
+Fields (the returned dictionary may gain fields later):
+- `handle` — this file's `:`-separated handle (its ID; the same handle used for the cross-file links above). The only per-file field.
 - `spine` — the structured spine **tree**, mirroring directory/section nesting. Each node is a dict `(title, handle, path, children)`: a leaf (a vertebra) carries its own `handle`/`path`/`title`; a group node (a directory or `[[spine.section]]` with no landing file) carries `handle: none`, `path: none`, and its own group title, nesting its children.
-- `spine-flat` — the flat pre-order list of every *clickable* vertebra (groups excluded), each an entry `(handle, path, title)` — the same shape the old flat `spine` used to be.
-- `target` — the rheo output-format name (`"epub"`/`"html"`/…). Present only for formats that set one; **absent for PDF**, where documents fall back to Typst's native `target()` == `"paged"`. Identical across vertebrae, so it also rides on the global `sys.inputs.rheo-context`.
+- `spine-flat` — the flat pre-order list of every *clickable* vertebra (groups excluded), each an entry `(handle, path, title)`.
+- `target` — the rheo output-format name (`"epub"`/`"html"`/…). Present only for formats that set one; **absent for PDF**, where documents fall back to Typst's native `target()` == `"paged"`.
+- `ext` — the output file extension (`"html"`/`"xhtml"`), gated like `target` (present for html/epub, absent for PDF). The value core reads to build depth-relative cross-vertebra link hrefs.
+
+`spine`/`spine-flat`/`target`/`ext` are format-global (identical across vertebrae), stored once on `sys.inputs.rheo-context`; `rheo-context()` composes them with the per-file `handle`.
 
 ```typst
-This is #rheo-context.handle of #rheo-context.spine-flat.len() pages.
+This is #rheo-context().handle of #rheo-context().spine-flat.len() pages.
 ```
 
-**Passing it to packages:** a package template can't read the file's local `rheo-context` implicitly — Typst functions capture their definition scope, not the call site — so hand it in explicitly:
+**Passing it to packages:** a package template can't read the file's local `rheo-context()` implicitly — Typst functions capture their definition scope, not the call site — so hand it in explicitly:
 
 ```typst
 #import "@rheo/somepackage": template
-#show: template.with(ctx: rheo-context)
+#show: template.with(ctx: rheo-context())
 ```
 
-**Detecting a rheo build (for a friendly native-Typst error).** rheo also seeds `sys.inputs` with a `rheo-context` key carrying the file-independent context (the `spine`). Because `sys.inputs` is global to the whole bundle compile, it does **not** carry the per-file `handle` — that stays on the per-vertebra `#let rheo-context`. A package (or author) uses `sys.inputs` to detect a rheo build and turn native-Typst compilation into a friendly message, without tripping the unbound-variable error (`rheo-context` referenced inside an untaken `if` branch is never evaluated):
+**Detecting a rheo build (for a friendly native-Typst error).** rheo also seeds `sys.inputs` with a `rheo-context` key (a plain **data dict**, not a function) carrying the file-independent context (`spine`/`spine-flat`/`target`/`ext`). Because `sys.inputs` is global to the whole bundle compile, it does **not** carry the per-file `handle` — that comes from calling the per-vertebra `rheo-context()`. A package (or author) uses `sys.inputs` to detect a rheo build and turn native-Typst compilation into a friendly message:
 
 ```typst
-#show: template.with(ctx: if "rheo-context" in sys.inputs { rheo-context } else {
+#show: template.with(ctx: if "rheo-context" in sys.inputs { rheo-context() } else {
   panic("This document must be compiled with Rheo — https://rheo.ohrg.org")
 })
 ```
 
-A package needing only the shared spine can read `sys.inputs.rheo-context.spine` directly and never touch the per-file `#let`.
+A package needing only the shared spine can read `sys.inputs.rheo-context.spine` directly and never call the per-file `rheo-context()`. (`rheo migrate` rewrites the old bare `rheo-context` binding to the `rheo-context()` call form.)
 
 **Output format.** rheo injects a `target()` polyfill into every file so Typst's own `target()` returns the output format (`"epub"`/`"html"`, or native `"paged"` for PDF), reading it from `sys.inputs.rheo-context.target`. Authored files should detect the format with `target()` (e.g. `target() == "epub"`); it is the only per-file API. The underlying `sys.inputs.rheo-context.target` is the same value for every vertebra but is not in scope where the polyfill isn't (it is global, so reachable via `sys.inputs`). The older `sys.inputs.rheo-target` key has been **removed**.
 
-**Section-label namespacing is a package concern, not core.** rheo does not rewrite or prefix authored labels; label semantics stay exactly as Typst defines them (two vertebrae defining the same label collide as an ordinary Typst duplicate-label error). Packages such as `@rheo/notebox` use `rheo-context` to *additively* synthesize globally-unique `<handle:label>` section anchors alongside the author's own labels.
+**Section-label namespacing is a package concern, not core.** rheo does not rewrite or prefix authored labels; label semantics stay exactly as Typst defines them (two vertebrae defining the same label collide as an ordinary Typst duplicate-label error). Packages such as `@rheo/notebox` use `rheo-context()` to *additively* synthesize globally-unique `<handle:label>` section anchors alongside the author's own labels.
 
 ## Spine configuration
 

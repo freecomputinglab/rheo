@@ -70,6 +70,14 @@ impl RheoVar {
             .find(|c| c.kind() == SyntaxKind::Ident)?;
         let key = name.leaf_text().strip_prefix("rheo-")?;
 
+        // `rheo-context` is rheo's reserved per-vertebra binding, not a
+        // harvestable `rheo-<key>` variable — its value is a dict/function, not a
+        // string/boolean literal. Skip it so a `#let rheo-context = ...` (e.g. the
+        // `rheo migrate` compatibility shim) is not mis-harvested and rejected.
+        if key == "context" {
+            return None;
+        }
+
         // The value is the first meaningful node after `=` (skipping whitespace).
         // String and boolean literals are supported; any other RHS yields `None`.
         let value = let_binding
