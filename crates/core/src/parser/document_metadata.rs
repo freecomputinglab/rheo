@@ -38,7 +38,7 @@ impl MetaValue {
             // Bracket-content (`title: [My Title]`) flattens to its plain text,
             // dropping markup markers so a spine/feed title is clean text.
             ast::Expr::ContentBlock(c) => {
-                Some(MetaValue::Str(markup_plain_text(c.body().to_untyped())))
+                Some(MetaValue::Str(markup_plain_text(c.body().to_untyped()).0))
             }
             ast::Expr::Array(a) => Some(MetaValue::Array(
                 a.items()
@@ -64,16 +64,33 @@ impl MetaValue {
     }
 }
 
+/// A document title whose bracket content lost information when flattened to the
+/// plain string rheo uses in the spine — carrying both forms so the caller can
+/// warn the author.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LossyTitle {
+    /// The original title content as written (markup intact), e.g. `_Italic_ Title`.
+    pub raw: String,
+    /// The plain-text form kept in the spine, e.g. `Italic Title`.
+    pub stripped: String,
+}
+
 /// All named arguments of the first `#set document(...)` rule in a vertebra,
 /// captured generically as `(name, value)` pairs in source order.
 ///
-/// A [`SyntaxSite`] capped at one site: the first such rule in the tree, read
-/// via `DocumentMetadata::first(source)`. Only literal-valued arguments are
-/// retained (see [`MetaValue`]); an argument whose value cannot be represented
-/// as a literal is silently skipped rather than erroring, so an ordinary
-/// `date: datetime(...)` argument does not abort the harvest.
+/// Built from the first such rule in the tree (see [`SyntaxSite::first`]). Only
+/// literal-valued arguments are retained (see [`MetaValue`]); an argument whose
+/// value cannot be represented as a literal is silently skipped rather than
+/// erroring, so an ordinary `date: datetime(...)` argument does not abort the
+/// harvest.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct DocumentMetadata(pub Vec<(String, MetaValue)>);
+pub struct DocumentMetadata {
+    /// The harvested `(name, value)` pairs, in source order.
+    pub fields: Vec<(String, MetaValue)>,
+    /// Set when the `title` was bracket content that lost information (styling or
+    /// sophisticated content) in the flattening to plain text.
+    pub lossy_title: Option<LossyTitle>,
+}
 
 impl SyntaxSite for DocumentMetadata {
     const MAX_SITES: Option<usize> = Some(1);
@@ -97,16 +114,39 @@ impl SyntaxSite for DocumentMetadata {
             && let ast::Expr::Ident(target) = set_rule.target()
             && target.as_str() == "document"
         {
-            let fields = set_rule
-                .args()
-                .items()
-                .filter_map(|item| match item {
-                    ast::Arg::Named(named) => MetaValue::from_expr(named.expr())
-                        .map(|v| (named.name().as_str().to_string(), v)),
-                    _ => None,
-                })
-                .collect();
-            out.push(DocumentMetadata(fields));
+            let mut fields = Vec::new();
+            let mut lossy_title = None;
+            for item in set_rule.args().items() {
+                let ast::Arg::Named(named) = item else {
+                    continue;
+                };
+                let name = named.name().as_str().to_string();
+                let expr = named.expr();
+
+                // A bracket-content title flattens to plain text; if that drops
+                // any styling or sophisticated content, keep both forms so the
+                // caller can warn the author.
+                if name == "title"
+                    && let ast::Expr::ContentBlock(c) = expr
+                {
+                    let body = c.body().to_untyped();
+                    let (stripped, lossy) = markup_plain_text(body);
+                    if lossy {
+                        lossy_title = Some(LossyTitle {
+                            raw: body.full_text().trim().to_string(),
+                            stripped,
+                        });
+                    }
+                }
+
+                if let Some(v) = MetaValue::from_expr(expr) {
+                    fields.push((name, v));
+                }
+            }
+            out.push(DocumentMetadata {
+                fields,
+                lossy_title,
+            });
         }
     }
 }
@@ -114,14 +154,14 @@ impl SyntaxSite for DocumentMetadata {
 impl DocumentMetadata {
     /// The value of a named argument (e.g. `title`), if present.
     pub fn get(&self, name: &str) -> Option<&MetaValue> {
-        self.0.iter().find(|(k, _)| k == name).map(|(_, v)| v)
+        self.fields.iter().find(|(k, _)| k == name).map(|(_, v)| v)
     }
 
     /// Serialize the captured metadata to a [`TypstLiteral`] dictionary for the
     /// spine's `metadata` field. Empty metadata serializes to `(:)`.
     pub fn to_literal(&self) -> TypstLiteral {
         TypstLiteral::Dict(
-            self.0
+            self.fields
                 .iter()
                 .map(|(k, v)| (k.clone(), v.to_literal()))
                 .collect(),
@@ -129,26 +169,41 @@ impl DocumentMetadata {
     }
 }
 
-/// Flatten a markup subtree to its plain text: concatenate every textual leaf,
-/// dropping markup markers (emphasis underscores, `#strong[...]`, brackets) so
-/// `[Good news - #emph[Severance]]` becomes `Good news - Severance`. Smart quotes
-/// are kept as their source character, so `[She said "hi"]` keeps its quotes.
-fn markup_plain_text(node: &SyntaxNode) -> String {
+/// Flatten a markup subtree to its plain text and report whether anything was
+/// lost: concatenate every textual leaf, dropping markup markers (emphasis
+/// underscores, `#strong[...]`, brackets) so `[Good news - #emph[Severance]]`
+/// becomes `Good news - Severance`. Smart quotes are kept as their source
+/// character, so `[She said "hi"]` keeps its quotes.
+///
+/// The returned bool is `true` when the content held anything beyond plain text
+/// — styling (`_x_`, `*x*`) or sophisticated content (`$math$`, images, raw) —
+/// i.e. the plain string is a lossy rendering of what the author wrote.
+fn markup_plain_text(node: &SyntaxNode) -> (String, bool) {
     let mut out = String::new();
-    collect_text(node, &mut out);
-    out.trim().to_string()
+    let mut lossy = false;
+    collect_text(node, &mut out, &mut lossy);
+    (out.trim().to_string(), lossy)
 }
 
 /// Append the text of every textual leaf (`Text`/`Space`/`SmartQuote`) under
-/// `node`, in order, recursing through wrapper nodes (emphasis, strong, …).
-fn collect_text(node: &SyntaxNode, out: &mut String) {
+/// `node`, in order, recursing through wrapper nodes. `Markup`/`ContentBlock`
+/// are transparent structure; encountering any *other* non-textual node (an
+/// emphasis/strong wrapper, an equation, raw, an element call, …) means the
+/// plain-text form drops something, so `lossy` is set.
+fn collect_text(node: &SyntaxNode, out: &mut String, lossy: &mut bool) {
     match node.kind() {
         SyntaxKind::Text | SyntaxKind::Space | SyntaxKind::SmartQuote => {
             out.push_str(node.leaf_text())
         }
-        _ => {
+        SyntaxKind::Markup | SyntaxKind::ContentBlock => {
             for child in node.children() {
-                collect_text(child, out);
+                collect_text(child, out, lossy);
+            }
+        }
+        _ => {
+            *lossy = true;
+            for child in node.children() {
+                collect_text(child, out, lossy);
             }
         }
     }
@@ -228,7 +283,7 @@ mod tests {
     #[test]
     fn test_no_document_rule_is_empty() {
         let m = metadata("= Heading\n\nBody text.");
-        assert!(m.0.is_empty());
+        assert!(m.fields.is_empty());
     }
 
     #[test]
@@ -268,7 +323,7 @@ mod tests {
 = Heading"#,
         );
         assert!(m.get("title").is_none());
-        assert!(m.0.is_empty());
+        assert!(m.fields.is_empty());
     }
 
     #[test]
@@ -287,5 +342,43 @@ mod tests {
             m.get("title").and_then(MetaValue::as_str),
             Some("She said \"hello\"")
         );
+    }
+
+    #[test]
+    fn test_lossy_title_flags_styling() {
+        let m = metadata(r#"#set document(title: [_Italic_ Title])"#);
+        assert_eq!(
+            m.lossy_title,
+            Some(LossyTitle {
+                raw: "_Italic_ Title".to_string(),
+                stripped: "Italic Title".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_lossy_title_flags_sophisticated_content() {
+        let m = metadata(r#"#set document(title: [Chapter $x^2$])"#);
+        let lossy = m.lossy_title.expect("math title should be lossy");
+        assert_eq!(lossy.stripped, "Chapter");
+    }
+
+    #[test]
+    fn test_plain_bracket_title_not_lossy() {
+        let m = metadata(r#"#set document(title: [Hello World])"#);
+        assert!(m.lossy_title.is_none());
+    }
+
+    #[test]
+    fn test_string_title_not_lossy() {
+        let m = metadata(r#"#set document(title: "Plain String")"#);
+        assert!(m.lossy_title.is_none());
+    }
+
+    #[test]
+    fn test_smart_quote_title_not_lossy() {
+        // Quotes are preserved, so nothing is lost.
+        let m = metadata(r#"#set document(title: [She said "hi"])"#);
+        assert!(m.lossy_title.is_none());
     }
 }

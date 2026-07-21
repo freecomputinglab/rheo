@@ -709,6 +709,18 @@ impl VirtualSpine {
                 let metadata = extracted.document_metadata;
                 let sites = extracted.labels;
 
+                // A styled or otherwise non-plain document title cannot survive
+                // the flattening to the plain string rheo uses in the spine; warn
+                // the author, showing both the original and the stripped form.
+                if let Some(lossy) = &metadata.lossy_title {
+                    tracing::warn!(
+                        file = %file.display(),
+                        original = %lossy.raw,
+                        stripped = %lossy.stripped,
+                        "Warning: Rheo uses document titles as unique identifiers, and does not retain styling or sophisticated forms of Typst content when constructing spines."
+                    );
+                }
+
                 // Title from the harvested `#set document(title: …)` value — a
                 // real AST read that understands both string and bracket-content
                 // forms — falling back to the filename, title-cased. (Sourcing

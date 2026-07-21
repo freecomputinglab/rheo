@@ -73,6 +73,11 @@ There is no way to carry a *formatted* title through the spine; if a vertebra
 needs to display rich text, author it in the body/heading as content, separate
 from the `#set document(title: …)` value.
 
+rheo does not fail on this, but it **warns**: whenever a bracket title loses
+anything in the flattening (styling or non-text content), the build prints a
+warning naming the file and showing both the original and the stripped title, so
+the loss is never silent.
+
 ### The proper fix (not yet done)
 
 Reading `document.title` from the *compiled* output (Typst introspection) would
