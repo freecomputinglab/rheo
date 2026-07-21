@@ -5,6 +5,7 @@ use crate::reticulate::bundle_source::BundleSource;
 use crate::util::path::{sanitize_handle_segment, to_forward_slash};
 use crate::util::pdf::DocumentTitle;
 use crate::util::typst_literal::TypstLiteral;
+use crate::util::typst_source::TypstStmt;
 use crate::{Result, RheoError, TYP_EXT};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use std::collections::{HashMap, HashSet};
@@ -836,8 +837,11 @@ impl VirtualSpine {
                     fields.push(("ext".to_string(), TypstLiteral::str(e)));
                 }
                 let context = TypstLiteral::Dict(fields);
-                let prelude = format!("#let rheo-context = {}\n\n", context.serialize());
-                (v.rel_path.clone(), prelude)
+                let binding = TypstStmt::Let {
+                    name: "rheo-context".to_string(),
+                    value: context,
+                };
+                (v.rel_path.clone(), format!("{binding}\n\n"))
             })
             .collect()
     }
