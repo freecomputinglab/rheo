@@ -216,7 +216,12 @@ impl Build {
         virtual_spine.check_output_collisions()?;
 
         let moulded = virtual_spine.mould();
-        let rheo_context = virtual_spine.rheo_context_preludes(plugin.rheo_target());
+        // `ext` rides on rheo-context alongside `target` (present for per-page
+        // plugin formats, omitted for the combined PDF) so typ/rheo.typ can build
+        // cross-vertebra hrefs without hardcoding the extension.
+        let target = plugin.rheo_target();
+        let ext = target.map(|_| plugin.extension());
+        let rheo_context = virtual_spine.rheo_context_preludes(target, ext);
 
         // Single Typst bundle compile for this plugin.
         let world = RheoWorld::new_for_bundle(
@@ -224,7 +229,7 @@ impl Build {
             moulded.main,
             moulded.sources,
             rheo_context,
-            Some(virtual_spine.global_context(plugin.rheo_target())),
+            Some(virtual_spine.global_context(target, ext)),
             plugin.rheo_target(),
             self.font_dirs.clone(),
         )?;

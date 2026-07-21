@@ -12,41 +12,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use typst::syntax::Source;
 
-/// Typst `#show link` rule injected into every plugin-format (html/epub)
-/// vertebra prelude, after its `#let rheo-context`.
-///
-/// It rewrites `#link(<handle>)[text]` cross-vertebra links (only those whose
-/// target is a rheo-synthesized `rheo-handle` figure — authored labels pass
-/// through untouched) into a per-format href. The href is **depth-relative** to
-/// the current page: the handle's `:` separators become `/`, and a `../` prefix
-/// is prepended once per level the current page (`rheo-context.handle`) is
-/// nested, so a page at `chapters/ch1.html` links to `<intro>` as
-/// `../intro.html` and to `<chapters:ch2>` as `../chapters/ch2.html`. The
-/// redundant `#handle` fragment is dropped — the anchor sits at the top of the
-/// target page. Depends on `rheo-context.handle` and the `target()` polyfill
-/// being in scope, which the prelude and world both guarantee.
-const RHEO_LINK_SHOW_RULE: &str = r#"#show link: it => context {
-  if type(it.dest) == label {
-    let matches = query(it.dest)
-    if matches.len() > 0 {
-      let elem = matches.first()
-      if elem.func() == figure and elem.kind == "rheo-handle" {
-        let fmt = target()
-        let ext = if fmt == "epub" { ".xhtml" } else if fmt == "html" { ".html" } else { none }
-        if ext != none {
-          let handle = repr(it.dest).slice(1, -1)
-          let depth = rheo-context.handle.split(":").len() - 1
-          let prefix = if depth == 0 { "./" } else { range(depth).map(x => "../").join() }
-          return link(prefix + handle.replace(":", "/") + ext, it.body)
-        }
-      }
-    }
-  }
-  it
-}
-
-"#;
-
 // ── Directory scan: SpineScan ────────────────────────────────────────────────
 
 /// A content directory scanned into a structured spine tree.
@@ -849,7 +814,11 @@ impl VirtualSpine {
     /// `target` is the output-format name (e.g. `"html"`/`"epub"`); when
     /// `Some`, a `target` field is added to the dict, and when `None` (PDF) it
     /// is omitted so consumers fall back to Typst's native `target()`.
-    pub fn rheo_context_preludes(&self, target: Option<&str>) -> HashMap<String, String> {
+    pub fn rheo_context_preludes(
+        &self,
+        target: Option<&str>,
+        ext: Option<&str>,
+    ) -> HashMap<String, String> {
         let spine = self.spine_tree();
         let spine_flat = self.spine_flat();
         self.vertebrae
@@ -863,17 +832,11 @@ impl VirtualSpine {
                 if let Some(t) = target {
                     fields.push(("target".to_string(), TypstLiteral::str(t)));
                 }
-                let context = TypstLiteral::Dict(fields);
-                let mut prelude = format!("#let rheo-context = {}\n\n", context.serialize());
-                // For plugin formats (html/epub) append a #show link rule that
-                // rewrites #link(<handle>) cross-vertebra links into a depth-
-                // relative href. It reads this file's own rheo-context.handle to
-                // count how deep the page sits, so a nested page links out
-                // correctly (e.g. "../intro.html"). PDF (target None) keeps
-                // Typst's native link handling.
-                if target.is_some() {
-                    prelude.push_str(RHEO_LINK_SHOW_RULE);
+                if let Some(e) = ext {
+                    fields.push(("ext".to_string(), TypstLiteral::str(e)));
                 }
+                let context = TypstLiteral::Dict(fields);
+                let prelude = format!("#let rheo-context = {}\n\n", context.serialize());
                 (v.rel_path.clone(), prelude)
             })
             .collect()
@@ -887,15 +850,20 @@ impl VirtualSpine {
     /// the shared spine) without referencing the per-file `#let rheo-context`,
     /// which additionally carries this file's `handle`.
     ///
-    /// `target` follows the same rule as [`Self::rheo_context_preludes`]: a
-    /// `target` field is added when `Some`, omitted for PDF (`None`).
-    pub fn global_context(&self, target: Option<&str>) -> TypstLiteral {
+    /// `target` and `ext` follow the same rule as [`Self::rheo_context_preludes`]:
+    /// each field is added when `Some`, omitted for PDF (`None`). `ext` is the
+    /// output file extension (e.g. `"html"`/`"xhtml"`) — the value `typ/rheo.typ`
+    /// reads to build cross-vertebra link hrefs.
+    pub fn global_context(&self, target: Option<&str>, ext: Option<&str>) -> TypstLiteral {
         let mut fields = vec![
             ("spine".to_string(), self.spine_tree()),
             ("spine-flat".to_string(), self.spine_flat()),
         ];
         if let Some(t) = target {
             fields.push(("target".to_string(), TypstLiteral::str(t)));
+        }
+        if let Some(e) = ext {
+            fields.push(("ext".to_string(), TypstLiteral::str(e)));
         }
         TypstLiteral::Dict(fields)
     }
@@ -1016,6 +984,7 @@ impl VirtualSpine {
                     output_path: v.output_path.clone(),
                     format: format.clone(),
                     title: v.title.clone(),
+                    handle: v.handle.clone(),
                     segments: vec![segment_for(v)],
                 })
                 .collect(),
@@ -1033,6 +1002,9 @@ impl VirtualSpine {
                     output_path: output_name.clone(),
                     format: format.clone(),
                     title,
+                    // Combined PDF is one document with no cross-vertebra link
+                    // rule; the handle is unused.
+                    handle: String::new(),
                     segments: self.vertebrae.iter().map(segment_for).collect(),
                 }]
             }
@@ -1169,7 +1141,7 @@ mod tests {
         };
         let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
 
-        let preludes = spine.rheo_context_preludes(Some("html"));
+        let preludes = spine.rheo_context_preludes(Some("html"), Some("html"));
         // One prelude per vertebra, keyed by include path.
         assert_eq!(preludes.len(), 2);
         let root_prelude = &preludes["content/intro.typ"];
@@ -1225,7 +1197,7 @@ mod tests {
     }
 
     #[test]
-    fn rheo_context_target_present_when_some_absent_when_none() {
+    fn rheo_context_target_and_ext_present_when_some_absent_when_none() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let content = root.join("content");
@@ -1239,20 +1211,27 @@ mod tests {
         };
         let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
 
-        // Some(target) -> `target` field in both prelude and global context.
-        let with = spine.rheo_context_preludes(Some("html"));
+        // Some(target)/Some(ext) -> `target` and `ext` fields in both prelude
+        // and global context.
+        let with = spine.rheo_context_preludes(Some("html"), Some("html"));
         assert!(with["content/intro.typ"].contains("target: \"html\""));
-        assert!(
-            spine
-                .global_context(Some("html"))
-                .serialize()
-                .contains("target: \"html\"")
-        );
+        assert!(with["content/intro.typ"].contains("ext: \"html\""));
+        let global_with = spine.global_context(Some("html"), Some("html")).serialize();
+        assert!(global_with.contains("target: \"html\""));
+        assert!(global_with.contains("ext: \"html\""));
 
-        // None (PDF) -> no `target` field anywhere.
-        let without = spine.rheo_context_preludes(None);
+        // Epub keeps `target` "epub" but `ext` "xhtml".
+        let epub = spine.rheo_context_preludes(Some("epub"), Some("xhtml"));
+        assert!(epub["content/intro.typ"].contains("target: \"epub\""));
+        assert!(epub["content/intro.typ"].contains("ext: \"xhtml\""));
+
+        // None (PDF) -> no `target` or `ext` field anywhere.
+        let without = spine.rheo_context_preludes(None, None);
         assert!(!without["content/intro.typ"].contains("target:"));
-        assert!(!spine.global_context(None).serialize().contains("target:"));
+        assert!(!without["content/intro.typ"].contains("ext:"));
+        let global_without = spine.global_context(None, None).serialize();
+        assert!(!global_without.contains("target:"));
+        assert!(!global_without.contains("ext:"));
     }
 
     #[test]

@@ -24,9 +24,32 @@
   }
 }
 
-// The #show link rule that rewrites #link(<handle>)[text] cross-vertebra links
-// into per-format hrefs lives in the per-vertebra `rheo-context` prelude, not
-// here: it needs each file's own `rheo-context.handle` to compute a depth-
-// relative href (e.g. "../intro.html" from a nested page), and a show rule in
-// this shared main-file template captures only the main scope, never a
-// vertebra's local binding. See `VirtualSpine::rheo_context_preludes`.
+// Rewrite #link(<handle>)[text] cross-vertebra links into per-format hrefs.
+// Only links whose target is a rheo-synthesized `rheo-handle` figure are
+// touched; authored labels pass through. The href is depth-relative to the
+// current page: the current page's handle is read from `state("rheo-handle")`
+// (published per-#document by the bundle source, since a show rule here in the
+// shared main-file template cannot see a vertebra's local `rheo-context`), and
+// the target handle's `:` separators become `/`, prefixed with one `../` per
+// level the current page is nested. The output extension comes from
+// `sys.inputs.rheo-context.ext`; when it is absent (PDF) the rule is a no-op and
+// native link handling applies. The redundant `#handle` fragment is dropped —
+// the anchor sits at the top of the target page.
+#show link: it => context {
+  let ext = sys.inputs.rheo-context.at("ext", default: none)
+  if ext == none { return it }
+  if type(it.dest) == label {
+    let matches = query(it.dest)
+    if matches.len() > 0 {
+      let elem = matches.first()
+      if elem.func() == figure and elem.kind == "rheo-handle" {
+        let target-handle = repr(it.dest).slice(1, -1)
+        let here-handle = state("rheo-handle").get()
+        let depth = here-handle.split(":").len() - 1
+        let prefix = if depth == 0 { "./" } else { range(depth).map(x => "../").join() }
+        return link(prefix + target-handle.replace(":", "/") + "." + ext, it.body)
+      }
+    }
+  }
+  it
+}

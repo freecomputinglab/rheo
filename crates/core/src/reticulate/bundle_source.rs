@@ -21,6 +21,10 @@ pub struct BundleDocument {
     pub output_path: String,
     pub format: String,
     pub title: String,
+    /// The `:`-joined handle of this document's page, published per-document via
+    /// Typst `state` so `typ/rheo.typ`'s cross-vertebra link rule can read the
+    /// current page's handle (empty for the combined PDF, which has no rule).
+    pub handle: String,
     /// Vertebra segments, in order. Each segment's anchors are emitted immediately
     /// before its include so cross-references resolve to the right location.
     pub segments: Vec<BundleSegment>,
@@ -42,6 +46,9 @@ impl fmt::Display for BundleSource {
                 "#document(\"{}\", format: \"{}\", title: [{escaped_title}])[",
                 doc.output_path, doc.format
             )?;
+            // Publish this page's handle so the link rule in typ/rheo.typ can read
+            // it via `state("rheo-handle").get()` to compute depth-relative hrefs.
+            writeln!(f, "  #state(\"rheo-handle\").update(\"{}\")", doc.handle)?;
             for segment in &doc.segments {
                 for anchor in &segment.anchors {
                     let escaped = escape_typst_content(&anchor.title);
