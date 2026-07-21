@@ -79,6 +79,10 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     // in the same release as the rheo-target removal above — same threshold.
     let needs_vertebrae_migration = from < to;
 
+    // The per-vertebra `rheo-context` binding became a function `rheo-context()`;
+    // any older project's references are rewritten.
+    let needs_context_rewrite = from < to;
+
     println!("\nMigrations:");
     if needs_link_rewrite {
         println!("  - rewrite #link(\"./file.typ\") syntax to #link(<handle>)");
@@ -90,6 +94,9 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     }
     if needs_vertebrae_migration {
         println!("  - convert retired [spine] vertebrae glob lists to [spine] exclude");
+    }
+    if needs_context_rewrite {
+        println!("  - rewrite rheo-context -> rheo-context() (function form)");
     }
     println!("  - bump rheo.toml version to {to}");
 
@@ -106,6 +113,11 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     if needs_vertebrae_migration {
         println!("\nSpine config:");
         migrate_vertebrae_to_exclude(&project, config_path, apply)?;
+    }
+
+    if needs_context_rewrite {
+        println!("\nContext references:");
+        migrate_context_references(&project, apply)?;
     }
 
     if apply {
@@ -282,6 +294,59 @@ fn migrate_target_references(project: &ProjectConfig, apply: bool) -> Result<()>
 
         if changed && apply {
             fs::write(file, content.as_bytes())
+                .map_err(|e| RheoError::io(e, format!("failed to write {}", file.display())))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Rewrite author references to the per-vertebra `rheo-context` binding into its
+/// zero-arg function form `rheo-context()` (the binding changed from a bare dict
+/// to a function).
+///
+/// Rewrites bare `rheo-context` tokens — `rheo-context.field`, `ctx: rheo-context`,
+/// `#let x = rheo-context` — to `rheo-context()`. Deliberately does NOT touch:
+/// - `sys.inputs.rheo-context` (the global data dict, still a value) — guarded by
+///   the preceding `.`;
+/// - the string literal `"rheo-context"` (build detection) — guarded by the
+///   surrounding quotes;
+/// - an already-converted `rheo-context()` call — guarded by the following `(`.
+///
+/// Rust's `regex` has no lookaround, so the single delimiter char on each side is
+/// captured (`pre`/`post`) and reinserted. `pre` excludes `.`/`"`/word/`-`; `post`
+/// excludes `(`/word/`-`; string boundaries (`^`/`$`) and newlines count as
+/// delimiters.
+fn migrate_context_references(project: &ProjectConfig, apply: bool) -> Result<()> {
+    let content_dir = resolve_effective_content_dir(project);
+    let typ_files = collect_typ_files(&content_dir);
+    if typ_files.is_empty() {
+        return Ok(());
+    }
+
+    let re = Regex::new(r#"(?P<pre>^|[^.\w"-])rheo-context(?P<post>$|[^\w(-])"#)
+        .expect("hardcoded context regex must compile");
+
+    for file in &typ_files {
+        let content = match fs::read_to_string(file) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(file = %file.display(), error = %e, "skipping unreadable file");
+                continue;
+            }
+        };
+        let mut hit = false;
+        let out = re.replace_all(&content, |caps: &Captures| -> String {
+            let line = line_number(&content, caps.get(0).unwrap().start());
+            let label = "rheo-context  ->  rheo-context()";
+            info!(file = %file.display(), line, rewrite = label, "rewrite context reference");
+            println!("{}:{}: {}", file.display(), line, label);
+            hit = true;
+            format!("{}rheo-context(){}", &caps["pre"], &caps["post"])
+        });
+
+        if hit && apply {
+            fs::write(file, out.as_bytes())
                 .map_err(|e| RheoError::io(e, format!("failed to write {}", file.display())))?;
         }
     }
@@ -647,6 +712,55 @@ mod tests {
         assert!(out.contains("{ sys.inputs.rheo-context.target }"));
         // No trace of the removed key/helper remains.
         assert!(!out.contains("rheo-target"));
+        // Unrelated content untouched.
+        assert!(out.contains("= Unrelated Title"));
+    }
+
+    #[test]
+    fn rewrite_replaces_context_references() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(
+            content.join("page.typ"),
+            "#show: t.with(ctx: rheo-context)\n\
+             This is #rheo-context.handle of #rheo-context.spine-flat.len() pages.\n\
+             #if \"rheo-context\" in sys.inputs { sys.inputs.rheo-context.spine }\n\
+             = Unrelated Title\n",
+        )
+        .unwrap();
+
+        let project = ProjectConfig {
+            root: root.to_path_buf(),
+            name: "test".into(),
+            config: rheo_core::RheoConfig {
+                version: ManifestVersion::parse("0.5.0").unwrap(),
+                content_dir: Some("content".into()),
+                ..Default::default()
+            },
+            typ_files: vec![content.join("page.typ")],
+            mode: rheo_core::config::project::ProjectMode::Directory,
+            config_path: Some(root.join("rheo.toml")),
+        };
+        fs::write(
+            root.join("rheo.toml"),
+            "version = \"0.5.0\"\ncontent_dir = \"content\"\n",
+        )
+        .unwrap();
+
+        migrate_context_references(&project, true).unwrap();
+
+        let out = fs::read_to_string(content.join("page.typ")).unwrap();
+        // The per-file binding, passed and field-accessed, becomes a call.
+        assert!(out.contains("#show: t.with(ctx: rheo-context())"));
+        assert!(out.contains("#rheo-context().handle"));
+        assert!(out.contains("#rheo-context().spine-flat.len()"));
+        // The global data dict and the detection string literal are untouched.
+        assert!(out.contains("\"rheo-context\" in sys.inputs"));
+        assert!(out.contains("sys.inputs.rheo-context.spine"));
+        // No double-conversion.
+        assert!(!out.contains("rheo-context()()"));
         // Unrelated content untouched.
         assert!(out.contains("= Unrelated Title"));
     }

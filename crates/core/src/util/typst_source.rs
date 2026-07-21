@@ -28,6 +28,15 @@ pub enum TypstStmt {
     Raw(String),
     /// `#let <name> = <value>`.
     Let { name: String, value: TypstLiteral },
+    /// The per-vertebra `rheo-context` binding, as a zero-arg function that
+    /// composes this file's `handle` with the format-global values spread from
+    /// `sys.inputs.rheo-context`:
+    /// `#let rheo-context() = (handle: "<handle>", ..sys.inputs.rheo-context)`.
+    /// The function form lets authors mock it under vanilla Typst; the spread
+    /// keeps the (potentially large) `spine` stored once in `sys.inputs` rather
+    /// than baked into every vertebra. `sys.inputs` reads need no `#context`, so
+    /// authors still read `rheo-context().handle` directly.
+    ContextBinding { handle: String },
     /// `#state("<key>").update(<value>)`.
     StateUpdate { key: String, value: TypstLiteral },
     /// A cross-vertebra handle anchor: a labeled, hidden `rheo-handle` `#figure`
@@ -52,6 +61,11 @@ impl fmt::Display for TypstStmt {
             TypstStmt::Let { name, value } => {
                 write!(f, "#let {} = {}", name, value.serialize())
             }
+            TypstStmt::ContextBinding { handle } => write!(
+                f,
+                "#let rheo-context() = (handle: {}, ..sys.inputs.rheo-context)",
+                TypstLiteral::str(handle.as_str()).serialize()
+            ),
             TypstStmt::StateUpdate { key, value } => write!(
                 f,
                 "#state({}).update({})",
@@ -98,6 +112,17 @@ mod tests {
             value: TypstLiteral::Dict(vec![("handle".into(), TypstLiteral::str("intro"))]),
         };
         assert_eq!(stmt.to_string(), "#let rheo-context = (handle: \"intro\")");
+    }
+
+    #[test]
+    fn context_binding_composes_handle_with_sys_inputs() {
+        let stmt = TypstStmt::ContextBinding {
+            handle: "chapters:ch1".into(),
+        };
+        assert_eq!(
+            stmt.to_string(),
+            "#let rheo-context() = (handle: \"chapters:ch1\", ..sys.inputs.rheo-context)"
+        );
     }
 
     #[test]

@@ -221,7 +221,7 @@ impl Build {
         // cross-vertebra hrefs without hardcoding the extension.
         let target = plugin.rheo_target();
         let ext = target.map(|_| plugin.extension());
-        let rheo_context = virtual_spine.rheo_context_preludes(target, ext);
+        let rheo_context = virtual_spine.rheo_context_preludes();
 
         // Single Typst bundle compile for this plugin.
         let world = RheoWorld::new_for_bundle(

@@ -799,47 +799,20 @@ impl VirtualSpine {
 
     /// Per-vertebra `rheo-context` Typst preludes, keyed by include path (`rel_path`).
     ///
-    /// Each vertebra is injected with `#let rheo-context = (handle: <its handle>,
-    /// spine: <tree>, spine-flat: <flat list>)` so package templates can read the
-    /// file's own handle plus the spine, either as the structural tree or as a
-    /// flat pre-order list. The `handle` varies per file; `spine`/`spine-flat` are
-    /// identical across files. The shape is a dictionary so attributes can be
-    /// added later (e.g. by format plugins) without breaking consumers.
-    ///
-    /// Node key set for `spine` (recursive): `title` (str), `handle` (str or
-    /// `none`), `path` (str or `none`), `children` (array of nodes). A leaf
-    /// (`vertebra: Some`) carries its vertebra's `handle`/`path`/`title`; a group
-    /// node (`vertebra: None`, e.g. a directory or `[[spine.section]]` with no
-    /// landing file) carries `handle: none, path: none` and its own group title.
-    ///
-    /// `target` is the output-format name (e.g. `"html"`/`"epub"`); when
-    /// `Some`, a `target` field is added to the dict, and when `None` (PDF) it
-    /// is omitted so consumers fall back to Typst's native `target()`.
-    pub fn rheo_context_preludes(
-        &self,
-        target: Option<&str>,
-        ext: Option<&str>,
-    ) -> HashMap<String, String> {
-        let spine = self.spine_tree();
-        let spine_flat = self.spine_flat();
+    /// Each vertebra is injected with a `rheo-context()` function that composes
+    /// this file's own `handle` with the format-global values (`spine`,
+    /// `spine-flat`, `target`, `ext`) spread from `sys.inputs.rheo-context`:
+    /// `#let rheo-context() = (handle: <its handle>, ..sys.inputs.rheo-context)`.
+    /// Only the per-file `handle` is baked here; the shared (potentially large)
+    /// spine lives once in [`Self::global_context`], not duplicated per vertebra.
+    /// `sys.inputs` reads need no `#context`, so authors read `rheo-context()`
+    /// fields directly.
+    pub fn rheo_context_preludes(&self) -> HashMap<String, String> {
         self.vertebrae
             .iter()
             .map(|v| {
-                let mut fields = vec![
-                    ("handle".to_string(), TypstLiteral::str(v.handle.as_str())),
-                    ("spine".to_string(), spine.clone()),
-                    ("spine-flat".to_string(), spine_flat.clone()),
-                ];
-                if let Some(t) = target {
-                    fields.push(("target".to_string(), TypstLiteral::str(t)));
-                }
-                if let Some(e) = ext {
-                    fields.push(("ext".to_string(), TypstLiteral::str(e)));
-                }
-                let context = TypstLiteral::Dict(fields);
-                let binding = TypstStmt::Let {
-                    name: "rheo-context".to_string(),
-                    value: context,
+                let binding = TypstStmt::ContextBinding {
+                    handle: v.handle.clone(),
                 };
                 (v.rel_path.clone(), format!("{binding}\n\n"))
             })
@@ -1129,7 +1102,7 @@ mod tests {
     }
 
     #[test]
-    fn rheo_context_prelude_carries_handle_and_full_spine() {
+    fn rheo_context_prelude_is_composed_function_with_own_handle() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let content = root.join("content");
@@ -1145,22 +1118,23 @@ mod tests {
         };
         let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
 
-        let preludes = spine.rheo_context_preludes(Some("html"), Some("html"));
+        let preludes = spine.rheo_context_preludes();
         // One prelude per vertebra, keyed by include path.
         assert_eq!(preludes.len(), 2);
         let root_prelude = &preludes["content/intro.typ"];
         let nested_prelude = &preludes["content/chapters/intro.typ"];
 
-        // Each carries its OWN handle...
+        // Each bakes only its OWN handle...
         assert!(root_prelude.contains("handle: \"intro\""));
         assert!(nested_prelude.contains("handle: \"chapters:intro\""));
-        // ...and the full flat spine (both vertebrae, with path), both as the
-        // tree (`spine`) and the flat pre-order list (`spine-flat`).
         for p in [root_prelude, nested_prelude] {
-            assert!(p.starts_with("#let rheo-context = "));
-            assert!(p.contains("spine-flat"));
-            assert!(p.contains("path: \"content/intro.typ\""));
-            assert!(p.contains("path: \"content/chapters/intro.typ\""));
+            // ...as a function that spreads the format-global values from
+            // sys.inputs (composed, not baked)...
+            assert!(p.starts_with("#let rheo-context() = "));
+            assert!(p.contains("..sys.inputs.rheo-context"));
+            // ...so the large spine is NOT duplicated into the per-file prelude.
+            assert!(!p.contains("spine-flat"));
+            assert!(!p.contains("path:"));
         }
     }
 
@@ -1215,24 +1189,20 @@ mod tests {
         };
         let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
 
-        // Some(target)/Some(ext) -> `target` and `ext` fields in both prelude
-        // and global context.
-        let with = spine.rheo_context_preludes(Some("html"), Some("html"));
-        assert!(with["content/intro.typ"].contains("target: \"html\""));
-        assert!(with["content/intro.typ"].contains("ext: \"html\""));
-        let global_with = spine.global_context(Some("html"), Some("html")).serialize();
-        assert!(global_with.contains("target: \"html\""));
-        assert!(global_with.contains("ext: \"html\""));
+        // target/ext live on the global context (sys.inputs); the per-file
+        // prelude only spreads them in, so they are asserted on global_context.
+        let global_html = spine.global_context(Some("html"), Some("html")).serialize();
+        assert!(global_html.contains("target: \"html\""));
+        assert!(global_html.contains("ext: \"html\""));
 
         // Epub keeps `target` "epub" but `ext` "xhtml".
-        let epub = spine.rheo_context_preludes(Some("epub"), Some("xhtml"));
-        assert!(epub["content/intro.typ"].contains("target: \"epub\""));
-        assert!(epub["content/intro.typ"].contains("ext: \"xhtml\""));
+        let global_epub = spine
+            .global_context(Some("epub"), Some("xhtml"))
+            .serialize();
+        assert!(global_epub.contains("target: \"epub\""));
+        assert!(global_epub.contains("ext: \"xhtml\""));
 
-        // None (PDF) -> no `target` or `ext` field anywhere.
-        let without = spine.rheo_context_preludes(None, None);
-        assert!(!without["content/intro.typ"].contains("target:"));
-        assert!(!without["content/intro.typ"].contains("ext:"));
+        // None (PDF) -> no `target` or `ext` field.
         let global_without = spine.global_context(None, None).serialize();
         assert!(!global_without.contains("target:"));
         assert!(!global_without.contains("ext:"));
