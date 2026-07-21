@@ -320,8 +320,6 @@ impl Build {
         // Inject CSS/JS link tags into each HTML entry in memory.
         let needs_injection = !css_paths.is_empty() || !js_paths.is_empty();
         if needs_injection {
-            let css_refs: Vec<&str> = css_paths.iter().map(|s| s.as_str()).collect();
-            let js_refs: Vec<&str> = js_paths.iter().map(|s| s.as_str()).collect();
             let injected: Result<typst_bundle::VirtualFs> = virtual_fs
                 .into_iter()
                 .map(|(vpath, bytes)| {
@@ -329,7 +327,15 @@ impl Build {
                     if path_str.ends_with(".html") {
                         let html = String::from_utf8_lossy(&bytes);
                         let mut dom = crate::util::html::HtmlDom::parse(&html)?;
-                        dom.inject_head_links(&[], &css_refs, &js_refs)?;
+                        // Depth-relative asset refs so nested pages resolve them.
+                        let prefix = crate::util::html::depth_prefix(&path_str);
+                        let css_refs: Vec<String> =
+                            css_paths.iter().map(|s| format!("{prefix}{s}")).collect();
+                        let js_refs: Vec<String> =
+                            js_paths.iter().map(|s| format!("{prefix}{s}")).collect();
+                        let css: Vec<&str> = css_refs.iter().map(|s| s.as_str()).collect();
+                        let js: Vec<&str> = js_refs.iter().map(|s| s.as_str()).collect();
+                        dom.inject_head_links(&[], &css, &js)?;
                         let modified = dom.serialize()?;
                         Ok((vpath, typst::foundations::Bytes::new(modified.into_bytes())))
                     } else {

@@ -33,6 +33,18 @@ pub enum OpenHandle {
 
 use crate::config::PluginAssets;
 
+/// An embedded fallback for an asset: content the plugin ships built in, written
+/// into the output directory (under `name`) when no on-disk source resolves, then
+/// linked like any copied asset. Lets a plugin ship a default (e.g. the HTML
+/// default stylesheet) as a real linked file rather than inlining it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmbeddedDefault {
+    /// Output filename (relative to the plugin output dir) to write the content as.
+    pub name: &'static str,
+    /// The verbatim bytes to write.
+    pub content: &'static str,
+}
+
 /// Declares an additional non-Typst input file needed from the project directory.
 #[derive(Debug, Clone)]
 pub struct AssetConfig {
@@ -43,6 +55,9 @@ pub struct AssetConfig {
     pub default_path: &'static str,
     /// If true, a missing file is a compile error; if false, it is absent from ctx.inputs
     pub required: bool,
+    /// Embedded fallback written to the output dir and linked when no on-disk
+    /// source (default path or override) resolves. `None` = no fallback.
+    pub default_content: Option<EmbeddedDefault>,
 }
 
 #[derive(Debug, Clone)]
