@@ -24,6 +24,14 @@
 //! an older version have their direct references rewritten (`migrate_target_references`).
 //! Authors using the polyfilled `target()` need no change — it already reports
 //! the output format.
+//!
+//! # Context binding: `rheo-context` dict → `rheo-context()` function
+//!
+//! The per-vertebra `rheo-context` binding, first injected as a bare data dict,
+//! was encapsulated behind a zero-arg function `rheo-context()`. Projects on the
+//! dict-era version have a one-line compatibility shim prepended to each file
+//! that reads the binding (`migrate_context_references`), so existing
+//! `rheo-context.field` / `ctx: rheo-context` code keeps working untouched.
 
 use regex::{Captures, Regex};
 use rheo_core::build::resolve_effective_content_dir;
@@ -41,6 +49,21 @@ use walkdir::WalkDir;
 /// Version at which the `#link("./file.typ")` syntax was replaced by the
 /// `#link(<handle>)` label syntax. Projects older than this need a link rewrite.
 const LINK_SYNTAX_VERSION: &str = "0.4.0";
+
+/// Version at which `sys.inputs.rheo-target` and the `rheo-target()` helper were
+/// removed in favour of `sys.inputs.rheo-context.target` / the polyfilled
+/// `target()`. Projects older than this have their direct references rewritten.
+const TARGET_REMOVED_VERSION: &str = "0.5.0";
+
+/// Version at which the `[spine] vertebrae` inclusion-filter glob list was retired
+/// by the directory-scan default. Projects older than this have any `vertebrae`
+/// list converted to an equivalent `exclude`.
+const VERTEBRAE_RETIRED_VERSION: &str = "0.5.0";
+
+/// Version at which the per-vertebra `rheo-context` binding changed from a bare
+/// dict to a zero-arg function `rheo-context()`. Projects older than this have a
+/// compatibility shim prepended to each file that reads the binding.
+const CONTEXT_FN_VERSION: &str = "0.5.1";
 
 /// Run migration for the project at `path`.
 ///
@@ -67,21 +90,15 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
         return Ok(());
     }
 
-    let link_threshold = ManifestVersion::parse(LINK_SYNTAX_VERSION).expect("valid semver");
-    let needs_link_rewrite = from < link_threshold;
-
-    // `rheo-target` was removed as of the current release, so any project on an
-    // older version (i.e. every project reaching this point past the up-to-date
-    // check above) has its direct references rewritten.
-    let needs_target_rewrite = from < to;
-
-    // `vertebrae` was retired by the structured-spine directory-scan default,
-    // in the same release as the rheo-target removal above — same threshold.
-    let needs_vertebrae_migration = from < to;
-
-    // The per-vertebra `rheo-context` binding became a function `rheo-context()`;
-    // any older project's references are rewritten.
-    let needs_context_rewrite = from < to;
+    // Each migration is gated on the version at which its change actually landed,
+    // so a patch/minor bump only runs the migrations introduced since the
+    // project's recorded version — not every historical migration on every bump.
+    let threshold =
+        |v: &str| ManifestVersion::parse(v).expect("hardcoded threshold must be valid semver");
+    let needs_link_rewrite = from < threshold(LINK_SYNTAX_VERSION);
+    let needs_target_rewrite = from < threshold(TARGET_REMOVED_VERSION);
+    let needs_vertebrae_migration = from < threshold(VERTEBRAE_RETIRED_VERSION);
+    let needs_context_rewrite = from < threshold(CONTEXT_FN_VERSION);
 
     println!("\nMigrations:");
     if needs_link_rewrite {
