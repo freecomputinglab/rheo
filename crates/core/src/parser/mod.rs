@@ -73,11 +73,14 @@ pub fn extract_nodes(source: &Source) -> ExtractedNodes {
             LabelRole::Reference => label_sites.references.push(site),
         }
     }
+    let document_date = dates.into_iter().next();
+    let mut document_metadata = metadata.into_iter().next().unwrap_or_default();
+    document_metadata.date = document_date.map(|d| d.0);
     ExtractedNodes {
         rheo_vars,
         labels: label_sites,
-        document_date: dates.into_iter().next(),
-        document_metadata: metadata.into_iter().next().unwrap_or_default(),
+        document_date,
+        document_metadata,
     }
 }
 
@@ -119,5 +122,44 @@ See @h and #link(<h>)[here]."#,
         assert_eq!(extracted.rheo_vars.len(), 2);
         assert_eq!(extracted.rheo_vars[0].key, "feed-title");
         assert_eq!(extracted.rheo_vars[1].key, "feed-updated");
+    }
+
+    #[test]
+    fn test_document_date_threaded_into_metadata() {
+        use chrono::Datelike;
+        let source = Source::detached(
+            r#"#set document(title: [T], date: datetime(year: 2025, month: 1, day: 2))"#,
+        );
+        let extracted = extract_nodes(&source);
+        let date = extracted
+            .document_metadata
+            .date
+            .expect("date should be threaded into metadata");
+        assert_eq!((date.year(), date.month(), date.day()), (2025, 1, 2));
+        assert_eq!(
+            extracted.document_metadata.to_literal().serialize(),
+            r#"(title: "T", date: datetime(year: 2025, month: 1, day: 2, hour: 0, minute: 0, second: 0))"#
+        );
+    }
+
+    #[test]
+    fn test_document_date_none_auto_today_partial_omit_date_key() {
+        for src in [
+            r#"#set document(title: [T], date: none)"#,
+            r#"#set document(title: [T], date: auto)"#,
+            r#"#set document(title: [T], date: datetime.today())"#,
+            r#"#set document(title: [T], date: datetime(year: 2025, month: 1))"#,
+        ] {
+            let extracted = extract_nodes(&Source::detached(src));
+            assert!(
+                extracted.document_metadata.date.is_none(),
+                "expected no date for {src:?}"
+            );
+            assert_eq!(
+                extracted.document_metadata.to_literal().serialize(),
+                r#"(title: "T")"#,
+                "expected no date key for {src:?}"
+            );
+        }
     }
 }
