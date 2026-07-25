@@ -9,7 +9,8 @@ use typst::syntax::{Source, SyntaxKind, SyntaxNode, ast, ast::AstNode};
 /// Typst's `document` element is not extensible: a `#set document(...)` rule only
 /// accepts its defined parameters — `title` (content/str), `author` and
 /// `keywords` (str or array of str), and `date` (a `datetime(...)` call, skipped
-/// here as a non-literal and handled by [`DocumentDate`](super::DocumentDate)).
+/// here as a non-literal and handled by [`DocumentDate`](super::DocumentDate),
+/// which [`DocumentMetadata::to_literal`] later folds back in as a `date` key).
 /// So the only literal shapes reachable through a compilable rule are strings
 /// (including bracket-content, flattened to plain text) and arrays of them.
 #[derive(Debug, Clone, PartialEq)]
@@ -82,7 +83,10 @@ pub struct LossyTitle {
 /// literal-valued arguments are retained (see [`MetaValue`]); an argument whose
 /// value cannot be represented as a literal is silently skipped rather than
 /// erroring, so an ordinary `date: datetime(...)` argument does not abort the
-/// harvest.
+/// harvest. The `date` itself is filled in separately from
+/// [`DocumentDate`](super::DocumentDate), which parses that same
+/// `datetime(...)` call, and is folded back into [`to_literal`](Self::to_literal)
+/// as a `date` key.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DocumentMetadata {
     /// The harvested `(name, value)` pairs, in source order.
@@ -90,6 +94,10 @@ pub struct DocumentMetadata {
     /// Set when the `title` was bracket content that lost information (styling or
     /// sophisticated content) in the flattening to plain text.
     pub lossy_title: Option<LossyTitle>,
+    /// The `#set document(date: datetime(...))` timestamp, harvested separately
+    /// by [`DocumentDate`](super::DocumentDate) and threaded in by the caller
+    /// (see `extract_nodes`). `None` when absent, `none`/`auto`, or malformed.
+    pub date: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl SyntaxSite for DocumentMetadata {
@@ -146,6 +154,7 @@ impl SyntaxSite for DocumentMetadata {
             out.push(DocumentMetadata {
                 fields,
                 lossy_title,
+                date: None,
             });
         }
     }
@@ -158,14 +167,31 @@ impl DocumentMetadata {
     }
 
     /// Serialize the captured metadata to a [`TypstLiteral`] dictionary for the
-    /// spine's `metadata` field. Empty metadata serializes to `(:)`.
+    /// spine's `metadata` field. Empty metadata serializes to `(:)`. When
+    /// [`date`](Self::date) is set, it is appended as a `date` key holding a real
+    /// Typst `datetime(...)` literal.
     pub fn to_literal(&self) -> TypstLiteral {
-        TypstLiteral::Dict(
-            self.fields
-                .iter()
-                .map(|(k, v)| (k.clone(), v.to_literal()))
-                .collect(),
-        )
+        use chrono::{Datelike, Timelike};
+
+        let mut pairs: Vec<(String, TypstLiteral)> = self
+            .fields
+            .iter()
+            .map(|(k, v)| (k.clone(), v.to_literal()))
+            .collect();
+        if let Some(date) = self.date {
+            pairs.push((
+                "date".to_string(),
+                TypstLiteral::Datetime {
+                    year: date.year(),
+                    month: date.month() as u8,
+                    day: date.day() as u8,
+                    hour: date.hour() as u8,
+                    minute: date.minute() as u8,
+                    second: date.second() as u8,
+                },
+            ));
+        }
+        TypstLiteral::Dict(pairs)
     }
 }
 
@@ -270,12 +296,15 @@ mod tests {
 
     #[test]
     fn test_datetime_arg_skipped_not_errored() {
-        // `date: datetime(...)` is a function call, not a literal → dropped, but
-        // the other representable args are still harvested.
+        // `date: datetime(...)` is a function call, not a `MetaValue` literal → not
+        // harvested into `fields`; the real date is threaded in separately by the
+        // caller from `DocumentDate` (see `extract_nodes` and its tests in
+        // `parser::mod`). The other representable args are still harvested.
         let m = metadata(
             r#"#set document(title: [T], date: datetime(year: 2025, month: 1, day: 2), keywords: ("A",))"#,
         );
         assert!(m.get("date").is_none());
+        assert!(m.date.is_none());
         assert_eq!(m.get("title").and_then(MetaValue::as_str), Some("T"));
         assert!(m.get("keywords").is_some());
     }
@@ -309,6 +338,24 @@ mod tests {
     fn test_empty_metadata_serializes_to_empty_dict() {
         let m = metadata("= Heading");
         assert_eq!(m.to_literal().serialize(), "(:)");
+    }
+
+    #[test]
+    fn test_date_serializes_to_datetime_literal() {
+        use chrono::TimeZone;
+        let mut m = metadata(r#"#set document(title: [T])"#);
+        m.date = Some(chrono::Utc.with_ymd_and_hms(2025, 3, 9, 14, 30, 5).unwrap());
+        assert_eq!(
+            m.to_literal().serialize(),
+            r#"(title: "T", date: datetime(year: 2025, month: 3, day: 9, hour: 14, minute: 30, second: 5))"#
+        );
+    }
+
+    #[test]
+    fn test_no_date_omits_date_key() {
+        let m = metadata(r#"#set document(title: [T])"#);
+        assert!(m.date.is_none());
+        assert_eq!(m.to_literal().serialize(), r#"(title: "T")"#);
     }
 
     #[test]
