@@ -2729,7 +2729,7 @@ dependencies = [
 
 [[package]]
 name = "rheo"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "atty",
  "axum",
@@ -2766,7 +2766,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "atty",
  "chrono",
@@ -2806,7 +2806,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-epub"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "chrono",
  "iref",
@@ -2825,7 +2825,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-html"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "atom_syndication",
  "axum",
@@ -2848,7 +2848,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-pdf"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "rheo-core",
  "thiserror 2.0.18",
