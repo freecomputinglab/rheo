@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 # Core
 rheo-core = { workspace = true }
+typst = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
@@ -28,6 +29,7 @@ markup5ever_rcdom = { workspace = true }
 iref = { workspace = true }
 uuid = { workspace = true }
 itertools = { workspace = true }
+mime_guess = { workspace = true }
 
 # Logging
 tracing = { workspace = true }

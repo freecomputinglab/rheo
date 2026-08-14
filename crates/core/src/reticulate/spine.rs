@@ -6,11 +6,12 @@ use crate::util::path::{sanitize_handle_segment, to_forward_slash};
 use crate::util::pdf::DocumentTitle;
 use crate::util::typst_literal::TypstLiteral;
 use crate::util::typst_source::TypstStmt;
-use crate::{Result, RheoError, TYP_EXT};
+use crate::{MARROW_FILE, Result, RheoError, TYP_EXT};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 use typst::syntax::Source;
 
 // ── Directory scan: SpineScan ────────────────────────────────────────────────
@@ -34,13 +35,48 @@ impl SpineScan {
     /// path relative to `content_dir` (forward-slash separated); matching
     /// files or directories are dropped entirely.
     pub fn run(content_dir: &Path, exclude: &[String]) -> Result<SpineScan> {
-        let exclude_set = Self::build_exclude_set(exclude)?;
+        Self::run_with_marrow(content_dir, exclude, MARROW_FILE)
+    }
+
+    /// As [`Self::run`], but with the project's configured marrow filename —
+    /// that file is inlined at bundle root rather than compiled as a vertebra,
+    /// so the scan must skip it whatever it is called.
+    pub fn run_with_marrow(
+        content_dir: &Path,
+        exclude: &[String],
+        marrow_file: &str,
+    ) -> Result<SpineScan> {
+        // The marrow file is inlined at bundle root, never compiled as a
+        // vertebra, so the scan must not see it. Injected as an escaped literal
+        // pattern rather than read from the user's `exclude`, which stays their
+        // own knob; `literal_separator` keeps it matching only at the top level,
+        // where marrow is actually read from.
+        let mut exclude_patterns = exclude.to_vec();
+        exclude_patterns.push(globset::escape(marrow_file));
+        let exclude_set = Self::build_exclude_set(&exclude_patterns)?;
 
         let mut files = Vec::new();
         let tree = Self::scan_dir(content_dir, content_dir, &exclude_set, &mut files)?;
 
         if files.is_empty() {
             return Err(RheoError::project_config("need at least one .typ file"));
+        }
+
+        // Only the marrow file directly under content_dir is inlined at the
+        // bundle root. A same-named file deeper in the tree is compiled as an
+        // ordinary vertebra — visible, but almost certainly not what the author
+        // meant, and its leading dot is sanitized into a page named _marrow, so
+        // say so rather than letting it look like marrow that silently did
+        // nothing.
+        for file in &files {
+            if file.file_name().and_then(|n| n.to_str()) == Some(marrow_file) {
+                let shown = file.strip_prefix(content_dir).unwrap_or(file);
+                warn!(
+                    path = %to_forward_slash(shown),
+                    "marrow is only read from the top level of the content directory; \
+                     this nested file is being compiled as an ordinary page"
+                );
+            }
         }
 
         debug_assert!(
@@ -592,12 +628,24 @@ pub struct VirtualSpine {
     /// it with [`Self::with_title`], since `VirtualSpine` is built from a pure
     /// directory scan with no config access of its own.
     pub title: Option<String>,
+    /// Marrow: raw Typst blobs emitted at bundle root, outside every document,
+    /// so they can mint extra output files. Resolved by callers (the author's
+    /// `.marrow.typ`, later also package-declared contributions) and applied
+    /// with [`Self::with_marrow`], for the same no-config-access reason as
+    /// `title`.
+    pub marrow: Vec<String>,
 }
 
 impl VirtualSpine {
     /// Attach a resolved spine title, builder-style.
     pub fn with_title(mut self, title: Option<String>) -> Self {
         self.title = title;
+        self
+    }
+
+    /// Attach marrow contributions, builder-style.
+    pub fn with_marrow(mut self, marrow: Vec<String>) -> Self {
+        self.marrow = marrow;
         self
     }
 
@@ -825,6 +873,7 @@ impl VirtualSpine {
             layout,
             tree,
             title: None,
+            marrow: Vec::new(),
         })
     }
 
@@ -1038,7 +1087,14 @@ impl VirtualSpine {
             }
         };
 
-        BundleSource { documents }
+        BundleSource {
+            documents,
+            marrow: self
+                .marrow
+                .iter()
+                .map(|text| TypstStmt::Raw(text.clone()))
+                .collect(),
+        }
     }
 }
 
@@ -1357,6 +1413,7 @@ mod tests {
             },
             tree: Vec::new(),
             title: None,
+            marrow: Vec::new(),
         };
         let src = spine.source();
         assert!(src.contains("#document(\"intro.html\", format: \"html\""));
@@ -1404,6 +1461,7 @@ mod tests {
             },
             tree: Vec::new(),
             title: None,
+            marrow: Vec::new(),
         };
         let src = spine.source();
         assert!(src.contains("#document(\"doc.pdf\", format: \"pdf\""));
@@ -1454,6 +1512,7 @@ mod tests {
             },
             tree: Vec::new(),
             title: None,
+            marrow: Vec::new(),
         };
         assert!(spine.check_output_collisions().is_ok());
     }
@@ -1560,6 +1619,102 @@ mod tests {
         let extras = find_node(&result.tree, "extras");
         assert!(extras.vertebra.is_none());
         assert_eq!(extras.title, Some("Extras".to_string()));
+    }
+
+    /// Marrow is emitted at the bundle root, outside every document, so the
+    /// scan must never turn it into a vertebra of its own.
+    #[test]
+    fn scan_skips_marrow_file() {
+        let temp = create_test_dir_with_files(&["index.typ", ".marrow.typ"]);
+        let result = SpineScan::run(temp.path(), &[]).unwrap();
+
+        assert_eq!(result.files.len(), 1, "only index.typ is a vertebra");
+        assert!(
+            result
+                .files
+                .iter()
+                .all(|p| p.file_name().unwrap() != MARROW_FILE),
+            ".marrow.typ must not be scanned as a vertebra"
+        );
+    }
+
+    /// Only the marrow file directly under `content_dir` is special — that is
+    /// the one rheo reads and inlines. A same-named file in a subdirectory is
+    /// an ordinary vertebra, so it stays visible rather than silently vanishing
+    /// from both the spine and the bundle root.
+    #[test]
+    fn scan_keeps_a_nested_marrow_named_file_as_a_vertebra() {
+        let temp = create_test_dir_with_files(&["index.typ", ".marrow.typ", "sub/.marrow.typ"]);
+        let result = SpineScan::run(temp.path(), &[]).unwrap();
+
+        assert_eq!(
+            result.files.len(),
+            2,
+            "expected index.typ and sub/.marrow.typ, got {:?}",
+            result.files
+        );
+        assert!(
+            result.files.iter().any(|p| p.ends_with("sub/.marrow.typ")),
+            "a nested marrow-named file must remain a vertebra"
+        );
+        assert!(
+            !result
+                .files
+                .iter()
+                .any(|p| p.ends_with("index.typ") && p.parent().unwrap().ends_with("sub")),
+            "sanity: no stray nesting"
+        );
+    }
+
+    /// The marrow filename is configurable, so the scan must skip whatever the
+    /// project named it — and treat the default name as an ordinary vertebra
+    /// once it no longer is the marrow.
+    #[test]
+    fn scan_skips_the_configured_marrow_file() {
+        let temp = create_test_dir_with_files(&["index.typ", "bundle-root.typ"]);
+        let result = SpineScan::run_with_marrow(temp.path(), &[], "bundle-root.typ").unwrap();
+
+        assert_eq!(result.files.len(), 1, "only index.typ is a vertebra");
+        assert!(
+            result
+                .files
+                .iter()
+                .all(|p| p.file_name().unwrap() != "bundle-root.typ"),
+            "the configured marrow file must not be scanned as a vertebra"
+        );
+    }
+
+    /// Marrow statements are emitted after every `#document` block, at bundle
+    /// root, where `document()`/`asset()` are legal.
+    #[test]
+    fn bundle_source_emits_marrow_after_documents() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("index.typ"), "= Index").unwrap();
+
+        let scan = SpineScan::run(&content, &[]).unwrap();
+        let spine = VirtualSpine::build(
+            scan,
+            root,
+            SpineLayout::OnePerVertebra {
+                ext: "html".into(),
+                format: "html".into(),
+            },
+        )
+        .unwrap()
+        .with_marrow(vec!["#asset(\"extra/hello.txt\", \"hi\")".to_string()]);
+
+        let source = spine.bundle_source().to_string();
+        let marrow_at = source
+            .find("#asset(\"extra/hello.txt\", \"hi\")")
+            .expect("marrow statement emitted");
+        let last_document_at = source.rfind("#document(").expect("a document is emitted");
+        assert!(
+            marrow_at > last_document_at,
+            "marrow must follow every document, got:\n{source}"
+        );
     }
 
     #[test]

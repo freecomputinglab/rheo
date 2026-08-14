@@ -75,3 +75,22 @@
     counter(footnote).update(0)
   }
 }
+
+// A page minted at the bundle root (via a `.marrow.typ` contribution) is built
+// by calling Typst's own `document()` directly, so it skips `rheo-page-init`
+// and inherits whatever `state("rheo-handle")` and footnote count the last
+// spine document left behind. `rheo-document` wraps `document()` and
+// `rheo-page-init` together so a contributed page gets the same per-document
+// init a spine vertebra gets for free. Bare `document()` keeps working — this
+// is a convenience, not a requirement — but a marrow contribution SHOULD use
+// `rheo-document` and pass a handle unique across the project. `format`
+// defaults to "html": both per-page plugins (html and epub) compile
+// HTML-shaped documents (`FormatPlugin::typst_format` defaults to
+// `TypstFormat::Html` and neither plugin overrides it, crates/core/src/plugins/mod.rs:297).
+// A future per-page plugin that is not HTML-shaped would need this default revisited.
+#let rheo-document(path, handle: "", title: [], format: "html", body) = {
+  document(path, format: format, title: title)[
+    #rheo-page-init(handle)
+    #body
+  ]
+}
