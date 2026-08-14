@@ -11,6 +11,7 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 use typst::syntax::Source;
 
 // ── Directory scan: SpineScan ────────────────────────────────────────────────
@@ -34,13 +35,48 @@ impl SpineScan {
     /// path relative to `content_dir` (forward-slash separated); matching
     /// files or directories are dropped entirely.
     pub fn run(content_dir: &Path, exclude: &[String]) -> Result<SpineScan> {
-        let exclude_set = Self::build_exclude_set(exclude)?;
+        Self::run_with_marrow(content_dir, exclude, MARROW_FILE)
+    }
+
+    /// As [`Self::run`], but with the project's configured marrow filename —
+    /// that file is inlined at bundle root rather than compiled as a vertebra,
+    /// so the scan must skip it whatever it is called.
+    pub fn run_with_marrow(
+        content_dir: &Path,
+        exclude: &[String],
+        marrow_file: &str,
+    ) -> Result<SpineScan> {
+        // The marrow file is inlined at bundle root, never compiled as a
+        // vertebra, so the scan must not see it. Injected as an escaped literal
+        // pattern rather than read from the user's `exclude`, which stays their
+        // own knob; `literal_separator` keeps it matching only at the top level,
+        // where marrow is actually read from.
+        let mut exclude_patterns = exclude.to_vec();
+        exclude_patterns.push(globset::escape(marrow_file));
+        let exclude_set = Self::build_exclude_set(&exclude_patterns)?;
 
         let mut files = Vec::new();
         let tree = Self::scan_dir(content_dir, content_dir, &exclude_set, &mut files)?;
 
         if files.is_empty() {
             return Err(RheoError::project_config("need at least one .typ file"));
+        }
+
+        // Only the marrow file directly under content_dir is inlined at the
+        // bundle root. A same-named file deeper in the tree is compiled as an
+        // ordinary vertebra — visible, but almost certainly not what the author
+        // meant, and its leading dot is sanitized into a page named _marrow, so
+        // say so rather than letting it look like marrow that silently did
+        // nothing.
+        for file in &files {
+            if file.file_name().and_then(|n| n.to_str()) == Some(marrow_file) {
+                let shown = file.strip_prefix(content_dir).unwrap_or(file);
+                warn!(
+                    path = %to_forward_slash(shown),
+                    "marrow is only read from the top level of the content directory; \
+                     this nested file is being compiled as an ordinary page"
+                );
+            }
         }
 
         debug_assert!(
@@ -146,12 +182,6 @@ impl SpineScan {
                     nodes.push(node);
                 }
             } else if path.extension().and_then(|e| e.to_str()) == Some(&TYP_EXT[1..]) {
-                // Marrow is emitted at the bundle root, outside every document,
-                // so it is never a vertebra. Skipped by exact filename rather
-                // than through the `exclude` globs, which stay a user knob.
-                if path.file_name().and_then(|n| n.to_str()) == Some(MARROW_FILE) {
-                    continue;
-                }
                 // Root-level index.typ is a normal leaf; only nested dirs treat
                 // it as a landing page (handled in scan_subdir).
                 let stem = path
@@ -1605,6 +1635,52 @@ mod tests {
                 .iter()
                 .all(|p| p.file_name().unwrap() != MARROW_FILE),
             ".marrow.typ must not be scanned as a vertebra"
+        );
+    }
+
+    /// Only the marrow file directly under `content_dir` is special — that is
+    /// the one rheo reads and inlines. A same-named file in a subdirectory is
+    /// an ordinary vertebra, so it stays visible rather than silently vanishing
+    /// from both the spine and the bundle root.
+    #[test]
+    fn scan_keeps_a_nested_marrow_named_file_as_a_vertebra() {
+        let temp = create_test_dir_with_files(&["index.typ", ".marrow.typ", "sub/.marrow.typ"]);
+        let result = SpineScan::run(temp.path(), &[]).unwrap();
+
+        assert_eq!(
+            result.files.len(),
+            2,
+            "expected index.typ and sub/.marrow.typ, got {:?}",
+            result.files
+        );
+        assert!(
+            result.files.iter().any(|p| p.ends_with("sub/.marrow.typ")),
+            "a nested marrow-named file must remain a vertebra"
+        );
+        assert!(
+            !result
+                .files
+                .iter()
+                .any(|p| p.ends_with("index.typ") && p.parent().unwrap().ends_with("sub")),
+            "sanity: no stray nesting"
+        );
+    }
+
+    /// The marrow filename is configurable, so the scan must skip whatever the
+    /// project named it — and treat the default name as an ordinary vertebra
+    /// once it no longer is the marrow.
+    #[test]
+    fn scan_skips_the_configured_marrow_file() {
+        let temp = create_test_dir_with_files(&["index.typ", "bundle-root.typ"]);
+        let result = SpineScan::run_with_marrow(temp.path(), &[], "bundle-root.typ").unwrap();
+
+        assert_eq!(result.files.len(), 1, "only index.typ is a vertebra");
+        assert!(
+            result
+                .files
+                .iter()
+                .all(|p| p.file_name().unwrap() != "bundle-root.typ"),
+            "the configured marrow file must not be scanned as a vertebra"
         );
     }
 

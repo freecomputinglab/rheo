@@ -177,6 +177,15 @@ pub struct RheoConfig {
 
     /// Global spine configuration (applies when no per-plugin spine is set).
     pub spine: Option<Spine>,
+
+    /// Filename, relative to `content_dir`, whose Typst is inlined at the
+    /// bundle root instead of being compiled as a vertebra. Defaults to
+    /// [`crate::MARROW_FILE`] when unset.
+    ///
+    /// This names the *project's* marrow only. An imported package always
+    /// contributes its own `.marrow.typ`, so renaming this cannot suppress a
+    /// package's contribution or vice versa — both are inlined.
+    pub marrow: Option<String>,
 }
 
 impl Default for RheoConfig {
@@ -190,6 +199,7 @@ impl Default for RheoConfig {
             font_dirs: vec![],
             plugin_sections: HashMap::new(),
             spine: None,
+            marrow: None,
         }
     }
 }
@@ -206,6 +216,7 @@ pub struct RheoConfigRaw {
     copy: Vec<String>,
     #[serde(default)]
     font_dirs: Vec<String>,
+    marrow: Option<String>,
     #[serde(flatten)]
     extra: HashMap<String, toml::Value>,
 }
@@ -235,6 +246,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             font_dirs: raw.font_dirs,
             plugin_sections,
             spine,
+            marrow: raw.marrow,
         })
     }
 }
@@ -286,6 +298,11 @@ impl RheoConfig {
 
         config.validate()?;
         Ok(config)
+    }
+
+    /// The project's marrow filename, relative to `content_dir`.
+    pub fn marrow_file(&self) -> &str {
+        self.marrow.as_deref().unwrap_or(crate::MARROW_FILE)
     }
 
     /// Resolve content_dir to an absolute path if configured.

@@ -149,6 +149,51 @@ pub fn detect_manifest_package_assets(
     detect_manifest_package_assets_in_dirs(import_paths, format_name, &dirs)
 }
 
+/// Reads a package's own marrow file, if it ships one.
+///
+/// A package contributes to the bundle root exactly the way a project does —
+/// by shipping a `.marrow.typ` whose text is inlined verbatim — so there is one
+/// concept to learn rather than a separate package-only mechanism.
+///
+/// The text is spliced into the synthesized main, so paths inside it resolve
+/// against the project root, not the package directory: a package's marrow must
+/// reach its own code through its package spec (`@ns/name:version`), never a
+/// relative import. Files the package imports that way may use relative paths
+/// among themselves as usual.
+pub fn package_marrow_source(pkg: &ResolvedPackage) -> Option<String> {
+    let marrow_path = pkg.source_root.join(crate::MARROW_FILE);
+    if !marrow_path.is_file() {
+        return None;
+    }
+    match std::fs::read_to_string(&marrow_path) {
+        Ok(text) => Some(text),
+        Err(e) => {
+            warn!(path = %marrow_path.display(), error = %e, "could not read package marrow file");
+            None
+        }
+    }
+}
+
+/// Scans `import_paths`, locates each package via `find_package_in_dirs`, and
+/// returns the marrow source of every package that ships one, in import order.
+/// Silently skips packages not present locally or contributing no marrow.
+pub fn detect_package_marrow_in_dirs(
+    import_paths: &[String],
+    search_dirs: &[PathBuf],
+) -> Vec<String> {
+    import_paths
+        .iter()
+        .filter_map(|p| find_package_in_dirs(p, search_dirs))
+        .filter_map(|pkg| package_marrow_source(&pkg))
+        .collect()
+}
+
+/// Production wrapper using Typst's system data/cache dirs.
+pub fn detect_package_marrow(import_paths: &[String]) -> Vec<String> {
+    let dirs = typst_package_search_dirs(None);
+    detect_package_marrow_in_dirs(import_paths, &dirs)
+}
+
 /// Ensure each `@preview/name:version` import is present in the local
 /// Typst package cache, downloading if necessary. Non-`@preview` namespaces
 /// are skipped — they are either local packages (already on disk) or not

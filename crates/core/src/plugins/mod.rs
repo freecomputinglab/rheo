@@ -8,8 +8,9 @@ use typst::foundations::Bytes;
 
 pub mod typst_manifest;
 pub use typst_manifest::{
-    detect_manifest_package_assets, detect_manifest_package_assets_in_dirs, find_package_in_dirs,
-    manifest_package_assets, prewarm_packages, scan_project_package_imports,
+    detect_manifest_package_assets, detect_manifest_package_assets_in_dirs, detect_package_marrow,
+    detect_package_marrow_in_dirs, find_package_in_dirs, manifest_package_assets,
+    package_marrow_source, prewarm_packages, scan_project_package_imports,
     typst_package_search_dirs,
 };
 

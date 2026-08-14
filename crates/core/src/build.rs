@@ -206,9 +206,12 @@ impl Build {
             ProjectMode::SingleFile => {
                 SpineScan::flat(&[self.project.typ_files[0].clone()], content_dir)
             }
-            ProjectMode::Directory => {
-                SpineScan::run(content_dir, &exclude)?.apply_sections(content_dir, &sections)?
-            }
+            ProjectMode::Directory => SpineScan::run_with_marrow(
+                content_dir,
+                &exclude,
+                self.project.config.marrow_file(),
+            )?
+            .apply_sections(content_dir, &sections)?,
         };
 
         debug!(
@@ -227,11 +230,22 @@ impl Build {
         // `asset()` both hard-error under the combined PDF target ("setting the
         // document format is only supported in the bundle target"), so the same
         // `ext` gate that marks a per-page format decides whether to emit it.
-        let marrow = if ext.is_some() {
-            let marrow_path = content_dir.join(crate::MARROW_FILE);
+        let mut marrow = Vec::new();
+        if ext.is_some() {
+            // Imported packages contribute their own marrow first, in import
+            // order, so the project's own file is spliced last and can build on
+            // what they registered. Behind the same opt-out that governs every
+            // other package-driven behaviour.
+            if plugin_section.auto_detect_packages_enabled() {
+                let package_imports =
+                    crate::plugins::scan_project_package_imports(&self.project.typ_files);
+                marrow.extend(crate::plugins::detect_package_marrow(&package_imports));
+            }
+
+            let marrow_path = content_dir.join(self.project.config.marrow_file());
             match std::fs::read_to_string(&marrow_path) {
-                Ok(text) => vec![text],
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                Ok(text) => marrow.push(text),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => {
                     return Err(RheoError::io(
                         e,
@@ -239,9 +253,7 @@ impl Build {
                     ));
                 }
             }
-        } else {
-            Vec::new()
-        };
+        }
 
         let virtual_spine = VirtualSpine::build(scan, &self.project.root, layout)?
             .with_title(title)
