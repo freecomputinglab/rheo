@@ -270,6 +270,7 @@ mod tests {
                 title: path.to_string(),
                 date: Some(ts()),
                 vars,
+                contributed: false,
             }
         };
 

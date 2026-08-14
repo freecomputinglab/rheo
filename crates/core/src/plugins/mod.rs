@@ -105,6 +105,12 @@ pub struct CastVertebra {
     pub date: Option<chrono::DateTime<chrono::Utc>>,
     /// Harvested `rheo-*` variables from the vertebra's source file.
     pub vars: std::collections::HashMap<String, crate::parser::RheoValue>,
+    /// True when this output has no matching spine [`Vertebra`](crate::reticulate::spine::Vertebra) —
+    /// a page minted at the bundle root by a `.marrow.typ` contribution, or (for
+    /// `SingleCombined` layouts) the merged multi-vertebra output. Plugins that
+    /// build reading-order indices (EPUB spine, nav) should exclude these; the
+    /// output itself still belongs in the format's container.
+    pub contributed: bool,
 }
 
 impl CastVertebra {

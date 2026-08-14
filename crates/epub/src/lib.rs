@@ -81,7 +81,7 @@ impl FormatPlugin for EpubPlugin {
                 let html_string = String::from_utf8(o.bytes.to_vec()).map_err(|e| {
                     RheoError::invalid_data(format!("EPUB HTML output is not valid UTF-8: {}", e))
                 })?;
-                EpubItem::from_html_string(o.output_path.clone(), html_string)
+                EpubItem::from_html_string(o.output_path.clone(), html_string, o.contributed)
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -145,13 +145,17 @@ pub fn generate_nav_xhtml(items: &mut [EpubItem], language: &str) -> Result<Stri
         writeln!(buf, "{indent_str}</ol>").unwrap();
     }
 
-    let outline = if items.len() == 1 {
-        items[0]
+    // Marrow-contributed pages (no matching spine vertebra) get no nav entry —
+    // they stay in the EPUB container but are not part of the reading order.
+    let mut nav_items: Vec<&mut EpubItem> = items.iter_mut().filter(|i| !i.contributed).collect();
+
+    let outline = if nav_items.len() == 1 {
+        nav_items[0]
             .outline
             .take()
             .ok_or_else(|| RheoError::invalid_data("EPUB item missing outline"))?
     } else {
-        items
+        nav_items
             .iter_mut()
             .map(|item| {
                 let entry = eco_format!(r#"<a href="{}">{}</a>"#, item.href, item.title());
@@ -242,17 +246,21 @@ pub fn generate_package(
 
         let id = item.id();
 
-        builder = builder
-            .add_item(Item {
-                id: id.clone(),
-                href: item.href.clone(),
-                media_type: XHTML_MEDIATYPE.into(),
-                properties,
-            })
-            .add_spine_ref(ItemRef {
+        builder = builder.add_item(Item {
+            id: id.clone(),
+            href: item.href.clone(),
+            media_type: XHTML_MEDIATYPE.into(),
+            properties,
+        });
+
+        // Marrow-contributed pages stay in the manifest (and the physical
+        // container) but are not part of the reading order.
+        if !item.contributed {
+            builder = builder.add_spine_ref(ItemRef {
                 id: Some(eco_format!("{id}ref")),
                 idref: id,
             });
+        }
     }
 
     let package = builder
@@ -463,6 +471,10 @@ pub struct EpubItem {
     xhtml: String,
     info: HtmlInfo,
     outline: Option<Vec<OutlineNode<EcoString>>>,
+    /// True for a marrow-contributed page (no matching spine vertebra). Kept in
+    /// the manifest and physical container, but excluded from the spine
+    /// reading order and the nav.xhtml table of contents.
+    contributed: bool,
 }
 
 fn text_to_id(s: &str) -> EcoString {
@@ -496,8 +508,13 @@ impl EpubItem {
     /// Build an EPUB item from HTML bytes produced by the bundle compiler.
     ///
     /// `output_path` is the filename from VirtualFs (e.g. `"chapter1.xhtml"`).
-    /// The `.xhtml` extension is preserved as the EPUB item href.
-    pub fn from_html_string(output_path: String, html_string: String) -> Result<Self> {
+    /// The `.xhtml` extension is preserved as the EPUB item href. `contributed`
+    /// is true for a marrow-contributed page with no matching spine vertebra.
+    pub fn from_html_string(
+        output_path: String,
+        html_string: String,
+        contributed: bool,
+    ) -> Result<Self> {
         // Ensure the href ends in .xhtml regardless of what the compiler produced.
         use std::path::Path as StdPath;
         let xhtml_name = StdPath::new(&output_path)
@@ -516,6 +533,7 @@ impl EpubItem {
             xhtml,
             info,
             outline: Some(outline),
+            contributed,
         })
     }
 

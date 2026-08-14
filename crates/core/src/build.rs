@@ -561,7 +561,8 @@ fn flatten_bundle_outputs(
             continue;
         }
         // Find the corresponding Vertebra to get its title, date, and vars.
-        // No match (e.g. a combined output) defaults to empty title / no date.
+        // No match (e.g. a combined output, or a marrow contribution) defaults
+        // to empty title / no date and marks the output `contributed`.
         let vertebra = spine
             .vertebrae
             .iter()
@@ -573,6 +574,7 @@ fn flatten_bundle_outputs(
             title: vertebra.map(|v| v.title.clone()).unwrap_or_default(),
             date: vertebra.and_then(|v| v.date.map(|d| d.0)),
             vars: vertebra.map(|v| v.vars.clone()).unwrap_or_default(),
+            contributed: vertebra.is_none(),
         });
     }
 
