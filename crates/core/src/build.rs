@@ -20,6 +20,12 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, error, info};
 
 /// Inputs for preparing a [`Build`], typically mapped from CLI flags and config.
+///
+/// Every field defaults to "unset" — no formats requested, no directory
+/// overrides, no debug artifacts — so library callers should set only what they
+/// mean and spread the rest (`..BuildOptions::default()`), which keeps later
+/// field additions from breaking them.
+#[derive(Default)]
 pub struct BuildOptions {
     /// Format names explicitly requested (e.g. from `--html`). Empty means
     /// "fall back to the config `formats` list, then to all plugins".
