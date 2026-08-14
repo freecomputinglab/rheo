@@ -4,6 +4,10 @@ use regex::Regex;
 
 // File extensions
 pub const TYP_EXT: &str = ".typ";
+
+/// Filename, directly under `content_dir`, whose Typst is emitted as marrow — at
+/// the bundle root, outside every document — rather than compiled as a vertebra.
+pub const MARROW_FILE: &str = ".marrow.typ";
 pub const PDF_EXT: &str = ".pdf";
 pub const HTML_EXT: &str = ".html";
 pub const XHTML_EXT: &str = ".xhtml";

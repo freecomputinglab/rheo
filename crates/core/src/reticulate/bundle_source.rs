@@ -35,6 +35,12 @@ pub struct BundleDocument {
 /// Constructed from a `VirtualSpine`; serialized to a `String` via `Display`.
 pub struct BundleSource {
     pub documents: Vec<BundleDocument>,
+    /// Raw Typst emitted at bundle root AFTER all documents, outside any
+    /// `#document` block, so it may itself mint `document()` and `asset()`
+    /// elements. Typst has no nested bundles — those elements are legal only as
+    /// root children — so this is the one place author or package code can add
+    /// output files that no vertebra backs.
+    pub marrow: Vec<TypstStmt>,
 }
 
 impl fmt::Display for BundleSource {
@@ -44,6 +50,9 @@ impl fmt::Display for BundleSource {
             // a blank line separates successive documents.
             writeln!(f, "{}", doc.to_stmt())?;
             writeln!(f)?;
+        }
+        for stmt in &self.marrow {
+            writeln!(f, "{stmt}")?;
         }
         Ok(())
     }

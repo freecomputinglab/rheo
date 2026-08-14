@@ -217,16 +217,38 @@ impl Build {
             "building virtual spine"
         );
 
-        let virtual_spine =
-            VirtualSpine::build(scan, &self.project.root, layout)?.with_title(title);
-        virtual_spine.check_output_collisions()?;
-
-        let moulded = virtual_spine.mould();
         // `ext` rides on rheo-context alongside `target` (present for per-page
         // plugin formats, omitted for the combined PDF) so typ/rheo.typ can build
         // cross-vertebra hrefs without hardcoding the extension.
         let target = plugin.rheo_target();
         let ext = target.map(|_| plugin.extension());
+
+        // Marrow only makes sense for per-page targets: `document()` and
+        // `asset()` both hard-error under the combined PDF target ("setting the
+        // document format is only supported in the bundle target"), so the same
+        // `ext` gate that marks a per-page format decides whether to emit it.
+        let marrow = if ext.is_some() {
+            let marrow_path = content_dir.join(crate::MARROW_FILE);
+            match std::fs::read_to_string(&marrow_path) {
+                Ok(text) => vec![text],
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                Err(e) => {
+                    return Err(RheoError::io(
+                        e,
+                        format!("reading marrow file '{}'", marrow_path.display()),
+                    ));
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        let virtual_spine = VirtualSpine::build(scan, &self.project.root, layout)?
+            .with_title(title)
+            .with_marrow(marrow);
+        virtual_spine.check_output_collisions()?;
+
+        let moulded = virtual_spine.mould();
         let rheo_context = virtual_spine.rheo_context_preludes();
         // Per-format footnote-reset toggle (default true); only takes effect for
         // per-page formats, since rheo.typ ANDs it with the `ext` gate.
@@ -696,6 +718,7 @@ mod tests {
             },
             tree: vec![],
             title: None,
+            marrow: Vec::new(),
         };
 
         let mut virtual_fs = typst_bundle::VirtualFs::default();
