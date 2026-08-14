@@ -11,10 +11,11 @@ use crate::config::PluginSection;
 use crate::config::output::OutputConfig;
 use crate::config::project::{ProjectConfig, ProjectMode};
 use crate::diagnostics::results::CompilationResults;
-use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, spine_layout_for};
+use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, TypstFormat, spine_layout_for};
 use crate::reticulate::spine::{SpineScan, VirtualSpine};
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info};
 
@@ -166,12 +167,17 @@ impl Build {
     /// options, generates the spine files for the project mode, builds and
     /// collision-checks the `VirtualSpine`, then moulds it and compiles the Typst
     /// bundle into a `VirtualFs`.
+    ///
+    /// The third return value is the set of output paths that are raw *assets*
+    /// rather than compiled documents. Export flattens both kinds into one
+    /// path→bytes map, so this set is the only surviving record of which entries
+    /// must bypass the format plugin and be written verbatim.
     fn compile_spine(
         &self,
         plugin: &dyn FormatPlugin,
         plugin_section: &PluginSection,
         content_dir: &Path,
-    ) -> Result<(VirtualSpine, typst_bundle::VirtualFs)> {
+    ) -> Result<(VirtualSpine, typst_bundle::VirtualFs, HashSet<String>)> {
         // Effective spine config: each field on a per-format [plugin.spine]
         // falls back to the global [spine] independently when unset, rather
         // than the per-format table's mere presence blanking every global
@@ -241,9 +247,17 @@ impl Build {
             self.font_dirs.clone(),
         )?;
         let bundle = world.compile_bundle()?;
+        // Record which entries are assets before export collapses the
+        // document/asset distinction into plain bytes; `bundle` is not retained.
+        let assets: HashSet<String> = bundle
+            .files
+            .iter()
+            .filter(|(_, file)| matches!(file, typst_bundle::BundleFile::Asset(_)))
+            .map(|(path, _)| path.get_with_slash().trim_start_matches('/').to_string())
+            .collect();
         let virtual_fs = export_bundle(&bundle)?;
 
-        Ok((virtual_spine, virtual_fs))
+        Ok((virtual_spine, virtual_fs, assets))
     }
 
     /// Compile HTML to an in-memory VirtualFs for the dev server.
@@ -314,17 +328,19 @@ impl Build {
             .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
             .unwrap_or_default();
 
-        let (_virtual_spine, virtual_fs) =
+        let (_virtual_spine, virtual_fs, assets) =
             self.compile_spine(html_plugin.as_ref(), plugin_section, &content_dir)?;
 
-        // Inject CSS/JS link tags into each HTML entry in memory.
+        // Inject CSS/JS link tags into each HTML entry in memory. Assets stay in
+        // the returned VirtualFs so the dev server still serves them, but they
+        // are raw author bytes: an `.html` asset must not be rewritten.
         let needs_injection = !css_paths.is_empty() || !js_paths.is_empty();
         if needs_injection {
             let injected: Result<typst_bundle::VirtualFs> = virtual_fs
                 .into_iter()
                 .map(|(vpath, bytes)| {
                     let path_str = vpath.get_with_slash().trim_start_matches('/').to_string();
-                    if path_str.ends_with(".html") {
+                    if path_str.ends_with(".html") && !assets.contains(&path_str) {
                         let html = String::from_utf8_lossy(&bytes);
                         let mut dom = crate::util::html::HtmlDom::parse(&html)?;
                         // Depth-relative asset refs so nested pages resolve them.
@@ -395,7 +411,7 @@ impl Build {
             let resolved_assets =
                 resolver.resolve(plugin.as_ref(), plugin_section, &manifest_blocks)?;
 
-            let (virtual_spine, virtual_fs) =
+            let (virtual_spine, virtual_fs, assets) =
                 self.compile_spine(plugin.as_ref(), plugin_section, &content_dir)?;
 
             let ctx = PluginContext {
@@ -407,39 +423,29 @@ impl Build {
                 font_dirs: &self.font_dirs,
             };
 
-            // Flatten VirtualFs entries into plugin-facing CastVertebra list.
-            // VirtualPath::get_with_slash() gives the path string (e.g. "/intro.html").
-            // Strip the leading "/" to produce a relative filename.
-            // Match each output back to its Vertebra to include harvested rheo-vars.
-            let outputs: Vec<CastVertebra> = virtual_fs
-                .into_iter()
-                .map(|(vpath, bytes)| {
-                    let output_path = vpath.get_with_slash().trim_start_matches('/').to_string();
-                    // Find the corresponding Vertebra to get its title, date, and vars.
-                    // No match (e.g. a combined output) defaults to empty title / no date.
-                    let vertebra = virtual_spine
-                        .vertebrae
-                        .iter()
-                        .find(|v| v.output_path == output_path);
-                    let title = vertebra.map(|v| v.title.clone()).unwrap_or_default();
-                    let date = vertebra.and_then(|v| v.date.map(|d| d.0));
-                    let vars = vertebra.map(|v| v.vars.clone()).unwrap_or_default();
-                    CastVertebra {
-                        output_path,
-                        bytes,
-                        format: plugin.typst_format(),
-                        title,
-                        date,
-                        vars,
-                    }
-                })
-                .collect();
+            let (outputs, asset_files) =
+                flatten_bundle_outputs(virtual_fs, &assets, &virtual_spine, plugin.typst_format());
 
             debug!(
                 plugin = plugin.name(),
                 outputs = outputs.len(),
+                assets = asset_files.len(),
                 "spine compile produced outputs"
             );
+
+            // Assets are the lowest precedence tier — asset() < spine documents
+            // < copy globs — so they land before the plugin writes its pages and
+            // long before `copy_globs` runs below.
+            for (path, bytes) in &asset_files {
+                let dest = plugin_output_dir.join(path);
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        RheoError::io(e, format!("creating directory for asset {path}"))
+                    })?;
+                }
+                std::fs::write(&dest, bytes.as_slice())
+                    .map_err(|e| RheoError::io(e, format!("writing asset {path}")))?;
+            }
 
             match plugin.compile(ctx, &outputs) {
                 Ok(_) => {
@@ -494,6 +500,49 @@ impl Build {
         info!("compilation complete");
         Ok(results)
     }
+}
+
+/// Split a compiled bundle's flat path→bytes map into plugin-facing documents
+/// and raw assets.
+///
+/// `VirtualPath::get_with_slash()` gives the path string (e.g. `"/intro.html"`);
+/// the leading `/` is stripped to produce a relative filename. Each document is
+/// matched back to its `Vertebra` so harvested `rheo-*` vars, title and date
+/// ride along. Paths in `assets` came from an `asset()` element rather than a
+/// `document()` one, so they are returned separately to be written verbatim —
+/// handing them to the format plugin would treat raw bytes as a page.
+fn flatten_bundle_outputs(
+    virtual_fs: typst_bundle::VirtualFs,
+    assets: &HashSet<String>,
+    spine: &VirtualSpine,
+    format: TypstFormat,
+) -> (Vec<CastVertebra>, Vec<(String, typst::foundations::Bytes)>) {
+    let mut documents = Vec::new();
+    let mut asset_files = Vec::new();
+
+    for (vpath, bytes) in virtual_fs {
+        let output_path = vpath.get_with_slash().trim_start_matches('/').to_string();
+        if assets.contains(&output_path) {
+            asset_files.push((output_path, bytes));
+            continue;
+        }
+        // Find the corresponding Vertebra to get its title, date, and vars.
+        // No match (e.g. a combined output) defaults to empty title / no date.
+        let vertebra = spine
+            .vertebrae
+            .iter()
+            .find(|v| v.output_path == output_path);
+        documents.push(CastVertebra {
+            output_path,
+            bytes,
+            format,
+            title: vertebra.map(|v| v.title.clone()).unwrap_or_default(),
+            date: vertebra.and_then(|v| v.date.map(|d| d.0)),
+            vars: vertebra.map(|v| v.vars.clone()).unwrap_or_default(),
+        });
+    }
+
+    (documents, asset_files)
 }
 
 /// Determine which format names to compile.
@@ -617,6 +666,61 @@ mod tests {
             Box::new(FakePlugin("pdf")),
             Box::new(FakePlugin("epub")),
         ]
+    }
+
+    /// A bundle flattens documents and assets into one path→bytes map, so an
+    /// `asset()` output would otherwise reach the format plugin as if it were a
+    /// page. `flatten_bundle_outputs` keeps the two apart.
+    #[test]
+    fn test_flatten_bundle_outputs_separates_assets_from_documents() {
+        use crate::reticulate::spine::{SpineLayout, Vertebra, VirtualSpine};
+        use typst::foundations::Bytes;
+        use typst_syntax::VirtualPath;
+
+        let spine = VirtualSpine {
+            vertebrae: vec![Vertebra {
+                rel_path: "content/index.typ".into(),
+                output_path: "index.html".into(),
+                handle: "index".into(),
+                extra_handles: vec![],
+                emit_handle: true,
+                title: "Index".into(),
+                date: None,
+                metadata: Default::default(),
+                vars: Default::default(),
+                source: String::new(),
+            }],
+            layout: SpineLayout::OnePerVertebra {
+                ext: "html".into(),
+                format: "html".into(),
+            },
+            tree: vec![],
+            title: None,
+        };
+
+        let mut virtual_fs = typst_bundle::VirtualFs::default();
+        virtual_fs.insert(
+            VirtualPath::new("index.html").expect("valid virtual path"),
+            Bytes::new(b"<html></html>".to_vec()),
+        );
+        virtual_fs.insert(
+            VirtualPath::new("data/x.json").expect("valid virtual path"),
+            Bytes::new(b"{}".to_vec()),
+        );
+
+        let assets = HashSet::from(["data/x.json".to_string()]);
+        let (documents, asset_files) =
+            flatten_bundle_outputs(virtual_fs, &assets, &spine, TypstFormat::Html);
+
+        assert_eq!(documents.len(), 1, "the asset must not become a page");
+        assert_eq!(documents[0].output_path, "index.html");
+        assert_eq!(
+            documents[0].title, "Index",
+            "vertebra metadata still rides along"
+        );
+        assert_eq!(asset_files.len(), 1);
+        assert_eq!(asset_files[0].0, "data/x.json");
+        assert_eq!(asset_files[0].1.as_slice(), b"{}");
     }
 
     #[test]
