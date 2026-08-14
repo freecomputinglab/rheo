@@ -13,6 +13,7 @@ rheo-core = { workspace = true }
 toml = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }
+globset = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

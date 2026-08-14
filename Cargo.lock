@@ -2832,6 +2832,7 @@ dependencies = [
  "atom_syndication",
  "axum",
  "chrono",
+ "globset",
  "mime_guess",
  "rheo-core",
  "serde",

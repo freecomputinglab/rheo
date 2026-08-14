@@ -185,12 +185,26 @@ impl FormatPlugin for HtmlPlugin {
     }
 }
 
+/// One `[[html.feed_include]]` entry: opts a marrow-contributed page (no
+/// source vertebra, so no `rheo-feed-title` var to read) back into the Atom
+/// feed. `path` matches the plugin-output-relative output path via a glob;
+/// `title` supplies the entry's title directly, since a contributed page's
+/// title cannot be synthesised from its compiled HTML.
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct FeedInclude {
+    pub path: String,
+    #[serde(default)]
+    pub title: String,
+}
+
 /// Typed view of the `[html]` section's format-specific keys.
 #[derive(Debug, Deserialize, Default)]
 pub struct HtmlConfig {
     feed_base_url: Option<String>,
     feed_author: Option<String>,
     feed_title: Option<String>,
+    #[serde(default)]
+    feed_include: Vec<FeedInclude>,
 }
 
 impl HtmlConfig {

@@ -7,6 +7,7 @@
 
 use atom_syndication as atom;
 use chrono::{DateTime, Utc};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use rheo_core::util::html as html_utils;
 use rheo_core::{CastVertebra, PluginContext, RheoError};
 
@@ -80,12 +81,37 @@ fn link(rel: &str, href: &str) -> atom::Link {
     l
 }
 
+/// Compile `feed_include` path globs into a matcher, alongside the include
+/// list itself so a match can be resolved back to its `title`.
+fn build_feed_include_set(feed_include: &[super::FeedInclude]) -> Result<GlobSet, RheoError> {
+    let mut builder = GlobSetBuilder::new();
+    for inc in feed_include {
+        let glob = GlobBuilder::new(&inc.path)
+            .literal_separator(true)
+            .build()
+            .map_err(|e| {
+                RheoError::project_config(format!(
+                    "invalid feed_include path glob '{}': {}",
+                    inc.path, e
+                ))
+            })?;
+        builder.add(glob);
+    }
+    builder
+        .build()
+        .map_err(|e| RheoError::project_config(format!("invalid feed_include globs: {}", e)))
+}
+
 /// Generate Atom feed from spine outputs when feed_base_url is configured.
 ///
 /// Every vertebra produces a feed entry by default. Each entry's title defaults
 /// to the parsed `#document` title (overridable with `rheo-feed-title`), and its
 /// timestamp defaults to the parsed `#document` date, then the output file mtime
-/// (overridable with `rheo-feed-updated`).
+/// (overridable with `rheo-feed-updated`). A marrow-contributed output (no
+/// source vertebra) is excluded by default — it has no `rheo-feed-title` to
+/// read and no title should be scraped from its compiled HTML — unless an
+/// `[[html.feed_include]]` entry's path glob matches it, in which case that
+/// entry's `title` is used directly.
 pub fn generate_feed(
     ctx: PluginContext<'_>,
     outputs: &[CastVertebra],
@@ -94,6 +120,7 @@ pub fn generate_feed(
     html_cfg: &super::HtmlConfig,
 ) -> Result<(), RheoError> {
     let feed_author = html_cfg.feed_author.as_deref().unwrap_or("Rheo");
+    let feed_include_set = build_feed_include_set(&html_cfg.feed_include)?;
 
     let mut entries = Vec::new();
     let mut max_updated = DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z")
@@ -101,15 +128,33 @@ pub fn generate_feed(
         .with_timezone(&Utc);
 
     for output in outputs {
-        // Opt-out: skip vertebrae that declare rheo-feed-exclude = true.
-        if output.vars.get("feed-exclude").and_then(|v| v.as_bool()) == Some(true) {
-            continue;
-        }
+        // Marrow-contributed pages are excluded by default; opt one back in
+        // with an explicit [[html.feed_include]] entry.
+        let feed_include = if output.contributed {
+            match feed_include_set
+                .matches(&output.output_path)
+                .first()
+                .map(|&i| &html_cfg.feed_include[i])
+            {
+                Some(inc) => Some(inc),
+                None => continue,
+            }
+        } else {
+            // Opt-out: skip vertebrae that declare rheo-feed-exclude = true.
+            if output.vars.get("feed-exclude").and_then(|v| v.as_bool()) == Some(true) {
+                continue;
+            }
+            None
+        };
 
-        // Entry title: rheo-feed-title override, else the parsed #document title.
-        let title = match output.vars.get("feed-title").and_then(|v| v.as_str()) {
-            Some(t) => t.to_string(),
-            None => output.title.clone(),
+        // Entry title: feed_include override (contributed pages), else
+        // rheo-feed-title override, else the parsed #document title.
+        let title = match feed_include {
+            Some(inc) => inc.title.clone(),
+            None => match output.vars.get("feed-title").and_then(|v| v.as_str()) {
+                Some(t) => t.to_string(),
+                None => output.title.clone(),
+            },
         };
 
         // Entry timestamp precedence: rheo-feed-updated override, else the
