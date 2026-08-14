@@ -30,6 +30,11 @@ pub struct BuildOptions {
     /// Additional font directories from `--font-dir`, appended on top of the
     /// autoscan/config-derived directories.
     pub font_dirs: Vec<PathBuf>,
+    /// `--emit-bundle-source`: write each plugin's synthesized bundle main to
+    /// `<build_dir>/<plugin>/.rheo-bundle.typ`. A read-only debug artifact —
+    /// never read back — for diagnosing marrow/spine authoring errors. Off by
+    /// default.
+    pub emit_bundle_source: bool,
 }
 
 /// A prepared, runnable build: a project, the selected plugins, the resolved
@@ -43,6 +48,7 @@ pub struct Build {
     plugins: Vec<Box<dyn FormatPlugin>>,
     output: OutputConfig,
     font_dirs: Vec<PathBuf>,
+    emit_bundle_source: bool,
 }
 
 impl Build {
@@ -78,6 +84,7 @@ impl Build {
             plugins,
             output,
             font_dirs,
+            emit_bundle_source: opts.emit_bundle_source,
         })
     }
 
@@ -172,12 +179,21 @@ impl Build {
     /// rather than compiled documents. Export flattens both kinds into one
     /// path→bytes map, so this set is the only surviving record of which entries
     /// must bypass the format plugin and be written verbatim.
+    ///
+    /// The fourth return value is the synthesized bundle main, present only
+    /// when `self.emit_bundle_source` is set (the caller writes it to
+    /// `.rheo-bundle.typ`; `compile_spine` has no `plugin_output_dir`).
     fn compile_spine(
         &self,
         plugin: &dyn FormatPlugin,
         plugin_section: &PluginSection,
         content_dir: &Path,
-    ) -> Result<(VirtualSpine, typst_bundle::VirtualFs, HashSet<String>)> {
+    ) -> Result<(
+        VirtualSpine,
+        typst_bundle::VirtualFs,
+        HashSet<String>,
+        Option<String>,
+    )> {
         // Effective spine config: each field on a per-format [plugin.spine]
         // falls back to the global [spine] independently when unset, rather
         // than the per-format table's mere presence blanking every global
@@ -261,6 +277,7 @@ impl Build {
         virtual_spine.check_output_collisions()?;
 
         let moulded = virtual_spine.mould();
+        let bundle_source = self.emit_bundle_source.then(|| moulded.main.clone());
         let rheo_context = virtual_spine.rheo_context_preludes();
         // Per-format footnote-reset toggle (default true); only takes effect for
         // per-page formats, since rheo.typ ANDs it with the `ext` gate.
@@ -291,7 +308,7 @@ impl Build {
             .collect();
         let virtual_fs = export_bundle(&bundle)?;
 
-        Ok((virtual_spine, virtual_fs, assets))
+        Ok((virtual_spine, virtual_fs, assets, bundle_source))
     }
 
     /// Compile HTML to an in-memory VirtualFs for the dev server.
@@ -362,7 +379,7 @@ impl Build {
             .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
             .unwrap_or_default();
 
-        let (_virtual_spine, virtual_fs, assets) =
+        let (_virtual_spine, virtual_fs, assets, _bundle_source) =
             self.compile_spine(html_plugin.as_ref(), plugin_section, &content_dir)?;
 
         // Inject CSS/JS link tags into each HTML entry in memory. Assets stay in
@@ -445,8 +462,21 @@ impl Build {
             let resolved_assets =
                 resolver.resolve(plugin.as_ref(), plugin_section, &manifest_blocks)?;
 
-            let (virtual_spine, virtual_fs, assets) =
+            let (virtual_spine, virtual_fs, assets, bundle_source) =
                 self.compile_spine(plugin.as_ref(), plugin_section, &content_dir)?;
+
+            // Read-only debug artifact — never read back as an input. Written
+            // under the plugin's build-dir output, which the watcher already
+            // excludes wholesale, so this cannot self-trigger a rebuild loop.
+            if let Some(source) = bundle_source {
+                let debug_path = plugin_output_dir.join(".rheo-bundle.typ");
+                std::fs::write(&debug_path, source).map_err(|e| {
+                    RheoError::io(
+                        e,
+                        format!("writing bundle debug source to {}", debug_path.display()),
+                    )
+                })?;
+            }
 
             let (outputs, asset_files) =
                 flatten_bundle_outputs(virtual_fs, &assets, &virtual_spine, plugin.typst_format());
