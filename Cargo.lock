@@ -2812,6 +2812,7 @@ dependencies = [
  "iref",
  "itertools",
  "markup5ever_rcdom",
+ "mime_guess",
  "rheo-core",
  "serde",
  "serde-xml-rs",
@@ -2819,6 +2820,7 @@ dependencies = [
  "thiserror 2.0.18",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
+ "typst",
  "uuid",
  "zip",
 ]

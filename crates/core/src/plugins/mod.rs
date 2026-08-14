@@ -206,6 +206,13 @@ pub struct PluginContext<'a> {
     /// Additional font directories to search, resolved by the build (autoscan +
     /// config + `--font-dir`). Threaded into worlds the plugin creates if needed.
     pub font_dirs: &'a [PathBuf],
+    /// Bundle-emitted `asset()` bytes with no matching spine vertebra (e.g. a
+    /// marrow contribution), keyed by their path relative to the plugin output
+    /// directory. Core writes these as loose files in the output directory
+    /// unless [`FormatPlugin::embeds_bundle_assets`] returns `true`, in which
+    /// case the plugin takes over placing them (e.g. EPUB embeds them in the
+    /// container and adds a manifest item).
+    pub bundle_assets: &'a [(String, Bytes)],
 }
 
 /// Parse `@namespace/name:version` into its components. Returns None on malformed input.
@@ -302,6 +309,19 @@ pub trait FormatPlugin: Send + Sync {
     /// `.xhtml` filenames but compiles via the `html` target).
     fn typst_format(&self) -> TypstFormat {
         TypstFormat::Html
+    }
+
+    /// Whether this plugin takes over placing bundle-emitted `asset()` bytes
+    /// (`PluginContext::bundle_assets`) into its own output, instead of core
+    /// writing them as loose files in the output directory.
+    ///
+    /// Default `false` — most plugins produce a directory of files where a
+    /// loose asset sits usefully alongside the pages that reference it. A
+    /// plugin that packages its output into a single container (e.g. EPUB)
+    /// overrides this to embed the bytes instead, since a loose file next to
+    /// the container is unreachable from inside it.
+    fn embeds_bundle_assets(&self) -> bool {
+        false
     }
 
     /// The output-format name written into `sys.inputs.rheo-context.target`,

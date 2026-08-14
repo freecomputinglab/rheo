@@ -299,6 +299,7 @@ mod tests {
         let virtual_spine =
             VirtualSpine::build(SpineScan::flat(&[], &output_dir), &output_dir, layout)
                 .expect("build empty spine");
+        let bundle_assets: Vec<(String, Bytes)> = vec![];
         let ctx = PluginContext {
             project: &project,
             output_dir: &output_dir,
@@ -306,6 +307,7 @@ mod tests {
             config: &section,
             assets: &assets,
             font_dirs: &font_dirs,
+            bundle_assets: &bundle_assets,
         };
         let html_cfg = crate::HtmlConfig::default();
 

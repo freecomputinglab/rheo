@@ -21,6 +21,7 @@ use std::{
     path::Path,
 };
 use tracing::info;
+use typst::foundations::Bytes;
 use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 
@@ -38,6 +39,12 @@ impl FormatPlugin for EpubPlugin {
 
     fn spine_layout_kind(&self) -> SpineLayoutKind {
         SpineLayoutKind::OnePerVertebra
+    }
+
+    /// A marrow asset() has no page to sit beside inside the EPUB's own output
+    /// directory — the container is the only place it can usefully land.
+    fn embeds_bundle_assets(&self) -> bool {
+        true
     }
 
     /// Set EPUB smart defaults: infer spine title from project name when no config exists.
@@ -88,6 +95,7 @@ impl FormatPlugin for EpubPlugin {
         let nav_xhtml = generate_nav_xhtml(&mut items, &language)?;
         let package_string = generate_package(
             &items,
+            ctx.bundle_assets,
             ctx.spine.title.as_deref(),
             identifier.as_deref(),
             date.as_ref(),
@@ -96,7 +104,13 @@ impl FormatPlugin for EpubPlugin {
         )?;
         let epub_name = format!("{}.epub", ctx.project.name);
         let epub_path = ctx.output_dir.join(&epub_name);
-        zip_epub(&epub_path, package_string, nav_xhtml, &items)?;
+        zip_epub(
+            &epub_path,
+            package_string,
+            nav_xhtml,
+            &items,
+            ctx.bundle_assets,
+        )?;
 
         info!(output = %epub_path.display(), "successfully generated EPUB");
         Ok(())
@@ -191,6 +205,7 @@ fn date_format(dt: &DateTime<Utc>) -> EcoString {
 /// the rest was a dead glob-pattern list removed with it) rather than a dedicated type.
 pub fn generate_package(
     items: &[EpubItem],
+    bundle_assets: &[(String, Bytes)],
     spine_title: Option<&str>,
     identifier: Option<&str>,
     date: Option<&DateTime<Utc>>,
@@ -263,6 +278,24 @@ pub fn generate_package(
         }
     }
 
+    // Bundle assets (marrow `asset()` output) get a manifest item so the
+    // physical bytes `zip_epub` writes are declared, but no spine ref — an
+    // arbitrary data file has no reading-order position.
+    for (path, _bytes) in bundle_assets {
+        let media_type = mime_guess::from_path(path)
+            .first_or_octet_stream()
+            .to_string();
+        let href = IriRefBuf::new(path.clone()).map_err(|e| {
+            RheoError::invalid_data(format!("invalid href for EPUB asset {path}: {e}"))
+        })?;
+        builder = builder.add_item(Item {
+            id: asset_item_id(path),
+            href,
+            media_type: media_type.into(),
+            properties: None,
+        });
+    }
+
     let package = builder
         .build()
         .map_err(|e| RheoError::epub_generation(format!("Package validation failed: {}", e)))?;
@@ -280,6 +313,7 @@ pub fn zip_epub(
     package_string: String,
     nav_xhtml: String,
     items: &[EpubItem],
+    bundle_assets: &[(String, Bytes)],
 ) -> Result<()> {
     let file = File::create(epub_path).map_err(|e| RheoError::io(e, "creating EPUB file"))?;
     let file = BufWriter::new(file);
@@ -322,6 +356,15 @@ pub fn zip_epub(
             RheoError::epub_generation(format!("failed to start file {}: {}", filename, e))
         })?;
         zip.write_all(item.xhtml.as_bytes())
+            .map_err(|e| RheoError::io(e, format!("writing {}", filename)))?;
+    }
+
+    for (path, bytes) in bundle_assets {
+        let filename = format!("EPUB/{}", path);
+        zip.start_file(&filename, opts).map_err(|e| {
+            RheoError::epub_generation(format!("failed to start file {}: {}", filename, e))
+        })?;
+        zip.write_all(bytes.as_slice())
             .map_err(|e| RheoError::io(e, format!("writing {}", filename)))?;
     }
 
@@ -475,6 +518,13 @@ pub struct EpubItem {
     /// the manifest and physical container, but excluded from the spine
     /// reading order and the nav.xhtml table of contents.
     contributed: bool,
+}
+
+/// Manifest id for a bundle asset, distinct from any `EpubItem::id()` (which
+/// derives from path segments minus extension) since two assets differing
+/// only by extension (`hello.txt` / `hello.json`) would otherwise collide.
+fn asset_item_id(path: &str) -> EcoString {
+    format!("asset-{}", path.replace(['/', '.'], "-")).into()
 }
 
 fn text_to_id(s: &str) -> EcoString {

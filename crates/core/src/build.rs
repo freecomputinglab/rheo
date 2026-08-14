@@ -448,15 +448,6 @@ impl Build {
             let (virtual_spine, virtual_fs, assets) =
                 self.compile_spine(plugin.as_ref(), plugin_section, &content_dir)?;
 
-            let ctx = PluginContext {
-                project: &self.project,
-                output_dir: &plugin_output_dir,
-                spine: &virtual_spine,
-                config: plugin_section,
-                assets: &resolved_assets,
-                font_dirs: &self.font_dirs,
-            };
-
             let (outputs, asset_files) =
                 flatten_bundle_outputs(virtual_fs, &assets, &virtual_spine, plugin.typst_format());
 
@@ -467,18 +458,33 @@ impl Build {
                 "spine compile produced outputs"
             );
 
+            let ctx = PluginContext {
+                project: &self.project,
+                output_dir: &plugin_output_dir,
+                spine: &virtual_spine,
+                config: plugin_section,
+                assets: &resolved_assets,
+                font_dirs: &self.font_dirs,
+                bundle_assets: &asset_files,
+            };
+
             // Assets are the lowest precedence tier — asset() < spine documents
             // < copy globs — so they land before the plugin writes its pages and
-            // long before `copy_globs` runs below.
-            for (path, bytes) in &asset_files {
-                let dest = plugin_output_dir.join(path);
-                if let Some(parent) = dest.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        RheoError::io(e, format!("creating directory for asset {path}"))
-                    })?;
+            // long before `copy_globs` runs below. A plugin that embeds bundle
+            // assets itself (e.g. EPUB, via `ctx.bundle_assets`) takes over
+            // placing them instead — a loose file next to a packaged container
+            // would be unreachable from inside it.
+            if !plugin.embeds_bundle_assets() {
+                for (path, bytes) in &asset_files {
+                    let dest = plugin_output_dir.join(path);
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| {
+                            RheoError::io(e, format!("creating directory for asset {path}"))
+                        })?;
+                    }
+                    std::fs::write(&dest, bytes.as_slice())
+                        .map_err(|e| RheoError::io(e, format!("writing asset {path}")))?;
                 }
-                std::fs::write(&dest, bytes.as_slice())
-                    .map_err(|e| RheoError::io(e, format!("writing asset {path}")))?;
             }
 
             match plugin.compile(ctx, &outputs) {
