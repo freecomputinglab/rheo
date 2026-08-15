@@ -140,7 +140,16 @@ impl FormatPlugin for HtmlPlugin {
         let needs_head_links = !css_paths.is_empty() || !js_paths.is_empty();
 
         for output in outputs {
-            let html_string = if needs_head_links || feed_link.is_some() {
+            // A `<rheo-head>` wrapper needs hoisting even when neither
+            // CSS/JS nor a feed link is configured, so we need the raw
+            // string up front to peek for one before deciding whether a DOM
+            // parse is required at all.
+            let html_string = String::from_utf8(output.bytes.to_vec()).map_err(|e| {
+                RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e))
+            })?;
+            let has_rheo_head = html_string.contains("<rheo-head");
+
+            let html_string = if needs_head_links || feed_link.is_some() || has_rheo_head {
                 let mut dom = output.html()?;
                 if needs_head_links {
                     // Assets are written at the output root; make each ref
@@ -157,11 +166,10 @@ impl FormatPlugin for HtmlPlugin {
                 if let Some((href, title)) = &feed_link {
                     dom.inject_feed_link(href, title)?;
                 }
+                dom.hoist_rheo_head()?;
                 dom.serialize()?
             } else {
-                String::from_utf8(output.bytes.to_vec()).map_err(|e| {
-                    RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e))
-                })?
+                html_string
             };
 
             let out_path = ctx.output_dir.join(&output.output_path);

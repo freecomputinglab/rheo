@@ -120,6 +120,52 @@ impl HtmlDom {
         Ok(())
     }
 
+    /// Hoists every `<rheo-head>` wrapper element's children into `<head>`,
+    /// removing the (now-empty) wrapper from wherever in the body it appears.
+    ///
+    /// This is a general escape hatch for putting arbitrary elements into a
+    /// page's own `<head>` from authored Typst or an imported package, neither
+    /// of which can otherwise reach `<head>` (Typst only ever builds `<head>`
+    /// from `DocumentInfo`). `html.elem("rheo-head", html.elem("meta", ..))`
+    /// anywhere in the body moves that `<meta>` into `<head>` and leaves no
+    /// `<rheo-head>` trace in the output. Multiple wrappers are all hoisted,
+    /// in the document order they appear in the body; an empty
+    /// `<rheo-head></rheo-head>` simply disappears, contributing nothing.
+    ///
+    /// Hoisted children are appended to `<head>` after everything already
+    /// there (native Typst metadata, `inject_head_links`'s stylesheets/
+    /// scripts, `inject_feed_link`'s autodiscovery tag), in the order the
+    /// wrappers were collected — author-supplied content lands last rather
+    /// than splicing ahead of rheo's own head management.
+    ///
+    /// If no `<rheo-head>` element exists anywhere in the document, this is a
+    /// complete no-op: the document serializes byte-identical to before the
+    /// call (and `<head>` need not even exist in that case).
+    ///
+    /// HTML-plugin only: EPUB output (`crates/epub`) never calls this, so a
+    /// `<rheo-head>` wrapper left in an EPUB page passes through untouched.
+    pub fn hoist_rheo_head(&mut self) -> Result<()> {
+        let mut collected = Vec::new();
+        hoist_rheo_head_children(&self.dom.document, &mut collected);
+
+        if collected.is_empty() {
+            return Ok(());
+        }
+
+        let head = self
+            .find_element("head")
+            .ok_or_else(|| RheoError::HtmlGeneration {
+                count: 1,
+                errors: "HTML document does not contain a <head> element".to_string(),
+            })?;
+
+        for handle in collected {
+            head.append_child(Element { handle });
+        }
+
+        Ok(())
+    }
+
     /// Inject `<link>` and `<script>` elements into the HTML `<head>`.
     ///
     /// Refs are inserted verbatim, so callers that link a build-root asset from a
@@ -296,6 +342,12 @@ impl Element {
         children.insert(0, child.handle);
     }
 
+    /// Append a child element to this element.
+    pub fn append_child(&self, child: Element) {
+        let mut children = self.handle.children.borrow_mut();
+        children.push(child.handle);
+    }
+
     /// Insert a child element at the given index (clamped to children length).
     pub fn insert_child_at(&self, index: usize, child: Element) {
         let mut children = self.handle.children.borrow_mut();
@@ -340,6 +392,37 @@ fn find_element_by_tag(handle: &Handle, tag_name: &str) -> Option<Handle> {
     }
 
     None
+}
+
+/// Rewrites `handle`'s own children in place: any child that is itself a
+/// `<rheo-head>` element is removed from the list and its children are
+/// appended, in order, to `collected`; every remaining child is recursed
+/// into first (so a wrapper nested deeper in the tree, or appearing later in
+/// a sibling list, is still found) before being kept. Walking children in
+/// their existing left-to-right order and recursing into each before moving
+/// to the next preserves document order in `collected` across multiple
+/// wrappers anywhere in the tree.
+fn hoist_rheo_head_children(handle: &Handle, collected: &mut Vec<Handle>) {
+    let old_children = std::mem::take(&mut *handle.children.borrow_mut());
+    let mut new_children = Vec::with_capacity(old_children.len());
+
+    for child in old_children {
+        let is_wrapper = matches!(&child.data, NodeData::Element { name, .. } if name.local.as_ref() == "rheo-head");
+
+        if is_wrapper {
+            // Recurse into the wrapper first in case it contains a nested
+            // `<rheo-head>` of its own, then move its (now-cleaned) children
+            // into the accumulator. The wrapper itself is dropped.
+            hoist_rheo_head_children(&child, collected);
+            let wrapper_children = std::mem::take(&mut *child.children.borrow_mut());
+            collected.extend(wrapper_children);
+        } else {
+            hoist_rheo_head_children(&child, collected);
+            new_children.push(child);
+        }
+    }
+
+    *handle.children.borrow_mut() = new_children;
 }
 
 /// Find the first element (depth-first) whose `class` attribute contains
@@ -718,6 +801,69 @@ mod tests {
         let result = dom.inject_feed_link("/feed.xml", "Blog");
         // html5ever creates a <head> automatically per HTML5 spec
         assert!(result.is_ok());
+    }
+
+    // hoist_rheo_head tests (via HtmlDom)
+
+    #[test]
+    fn test_hoist_rheo_head_single_wrapper() {
+        let html = r#"<!DOCTYPE html><html><head><title>Test</title></head><body>
+<p>Before</p>
+<rheo-head><link rel="canonical" href="/a"></rheo-head>
+<p>After</p>
+</body></html>"#;
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.hoist_rheo_head().unwrap();
+        let result = dom.serialize().unwrap();
+
+        assert!(!result.contains("rheo-head"));
+        let head_pos = result.find("<head>").unwrap();
+        let head_end = result.find("</head>").unwrap();
+        let link_pos = result.find(r#"<link rel="canonical" href="/a">"#).unwrap();
+        assert!(
+            link_pos > head_pos && link_pos < head_end,
+            "canonical link should be inside <head>"
+        );
+    }
+
+    #[test]
+    fn test_hoist_rheo_head_multiple_wrappers_preserve_order() {
+        let html = r#"<!DOCTYPE html><html><head><title>Test</title></head><body>
+<p>First</p>
+<rheo-head><meta name="b-first" content="one"></rheo-head>
+<p>Middle</p>
+<rheo-head><meta name="b-second" content="two"></rheo-head>
+<p>Last</p>
+</body></html>"#;
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.hoist_rheo_head().unwrap();
+        let result = dom.serialize().unwrap();
+
+        assert!(!result.contains("rheo-head"));
+        let head_end = result.find("</head>").unwrap();
+        let first_pos = result.find(r#"name="b-first""#).unwrap();
+        let second_pos = result.find(r#"name="b-second""#).unwrap();
+        assert!(first_pos < head_end && second_pos < head_end);
+        assert!(
+            first_pos < second_pos,
+            "hoisted metas must land in <head> in the same order the wrappers appeared in the body"
+        );
+    }
+
+    #[test]
+    fn test_hoist_rheo_head_no_wrapper_is_noop() {
+        let html = "<!DOCTYPE html><html><head><title>Test</title></head><body><p>Just text</p></body></html>";
+        let dom_before = HtmlDom::parse(html).unwrap();
+        let before = dom_before.serialize().unwrap();
+
+        let mut dom_after = HtmlDom::parse(html).unwrap();
+        dom_after.hoist_rheo_head().unwrap();
+        let after = dom_after.serialize().unwrap();
+
+        assert_eq!(
+            before, after,
+            "hoist_rheo_head must be a no-op with no <rheo-head>"
+        );
     }
 
     // body_inner_html tests (via HtmlDom)
