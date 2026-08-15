@@ -599,4 +599,76 @@ mod tests {
         assert!(!empty.contains("rheo-context"));
         assert!(!empty.contains("rheo-target"));
     }
+
+    /// SPIKE (docs/spikes/typst-native-metadata.md, Q8): does `#set
+    /// document(date: auto)` stay `Smart::Auto` in the bundle's real
+    /// `DocumentInfo`, and does `datetime.today()` resolve to a concrete date?
+    /// Contrast with `DocumentDate`'s static AST scan
+    /// (`parser::document_date`), which deliberately yields `None` for both
+    /// `auto` and `datetime.today()` — a real `datetime.today()` resolving
+    /// here would newly populate feed timestamps that change on every build.
+    #[test]
+    fn document_date_auto_and_today_resolve_in_bundle_info() {
+        use typst::foundations::Smart;
+        use typst_bundle::BundleFile;
+        use typst_library::model::Document;
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let main = r#"
+#document("auto.html", format: "html")[
+  #set document(date: auto)
+  Auto date page.
+]
+
+#document("today.html", format: "html")[
+  #set document(date: datetime.today())
+  Today date page.
+]
+"#
+        .to_string();
+
+        let world = RheoWorld::new_for_bundle(
+            root,
+            main,
+            HashMap::new(),
+            HashMap::new(),
+            None,
+            Some("html"),
+            vec![],
+        )
+        .unwrap();
+
+        let bundle = world.compile_bundle().unwrap();
+
+        let mut checked_auto = false;
+        let mut checked_today = false;
+        for (path, file) in bundle.files.iter() {
+            let BundleFile::Document(doc) = file else {
+                continue;
+            };
+            let info = doc.info();
+            if path.get_without_slash().contains("auto") {
+                assert_eq!(
+                    info.date,
+                    Smart::Auto,
+                    "`date: auto` should stay Smart::Auto in DocumentInfo, not resolve to a concrete date"
+                );
+                checked_auto = true;
+            } else if path.get_without_slash().contains("today") {
+                match info.date {
+                    Smart::Custom(Some(_)) => {}
+                    other => panic!(
+                        "expected datetime.today() to resolve to a concrete date in DocumentInfo, got {other:?}"
+                    ),
+                }
+                checked_today = true;
+            }
+        }
+        assert!(
+            checked_auto && checked_today,
+            "both documents must be found in the bundle"
+        );
+    }
 }
