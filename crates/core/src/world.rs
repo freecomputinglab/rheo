@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::packages::RheoPackages;
 use crate::reticulate::VertebraInjection;
 use crate::util::typst_literal::TypstLiteral;
+use crate::util::typst_source::TypstStmt;
 use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
@@ -395,9 +396,36 @@ impl World for RheoWorld {
         if id == self.main {
             let rheo_content = include_str!("typ/rheo.typ");
             let plugin_lib_content = self.plugin_library.as_deref().unwrap_or("");
+            // `rheo-metadata`/`rheo-metadata-all` at bundle-root (marrow) scope.
+            //
+            // The per-vertebra prelude (`VirtualSpine::vertebra_injections`)
+            // already defines `rheo-metadata` ahead of each vertebra's own
+            // body, via this exact same `TypstStmt::MetadataHelper` — reusing
+            // its `Display` here guarantees the two injection sites render
+            // byte-for-byte identical text, so they cannot drift apart.
+            // `MetadataAllHelper` (calling `rheo-metadata` internally) is
+            // deliberately injected ONLY here, not into the per-vertebra
+            // prelude — it's for marrow's "every vertebra's metadata at
+            // once" case (feeds, sitemaps, search indexes), not something an
+            // individual vertebra needs.
+            //
+            // No extra format gate is needed here: `TypstStmt::MetadataBeacon`
+            // is only ever emitted for `OnePerVertebra` layouts (HTML/EPUB;
+            // see `vertebra_injections`'s doc comment), and marrow text itself
+            // is only ever assembled into the bundle for those same per-page
+            // targets — `document()`/`asset()` both hard-error under the
+            // combined-PDF target, so `build.rs`'s `compile_spine` never adds
+            // marrow to a PDF main at all. The two gates already agree; do
+            // not add a third check here thinking one of them is missing one.
+            let metadata_helper = TypstStmt::MetadataHelper;
+            let metadata_all_helper = TypstStmt::MetadataAllHelper;
             let template_inject = format!(
-                "{}{}\n{}\n#show: rheo_template\n\n",
-                target_polyfill, rheo_content, plugin_lib_content
+                "{}{}\n\n{}\n\n{}\n\n{}\n#show: rheo_template\n\n",
+                target_polyfill,
+                rheo_content,
+                metadata_helper,
+                metadata_all_helper,
+                plugin_lib_content
             );
             text = format!("{}{}", template_inject, text);
         } else {
@@ -723,5 +751,113 @@ mod tests {
             checked_auto && checked_today,
             "both documents must be found in the bundle"
         );
+    }
+
+    /// rheo-meta-beacons-2o5's follow-up: `rheo-metadata` is now also injected
+    /// into the MAIN file (marrow scope), not just each vertebra's own
+    /// prelude — so bundle-root Typst (a `.marrow.typ`) can call it. Before
+    /// this change, `rheo-metadata` was simply not in scope at bundle root
+    /// and this would fail to compile with "unknown variable: rheo-metadata".
+    #[test]
+    fn rheo_metadata_is_callable_from_marrow_scope() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let mut source_overlay = HashMap::new();
+        source_overlay.insert(
+            "content/intro.typ".to_string(),
+            "#set document(title: [Intro Title])\n= Intro\n".to_string(),
+        );
+
+        // Hand-built the same shape `VirtualSpine::vertebra_injections` produces
+        // for an `OnePerVertebra` layout: `rheo-metadata` + `rheo-context()` as
+        // the prelude, the metadata beacon as the epilogue.
+        let mut rheo_context = HashMap::new();
+        rheo_context.insert(
+            "content/intro.typ".to_string(),
+            VertebraInjection {
+                prelude: format!(
+                    "{}\n\n{}\n\n",
+                    TypstStmt::MetadataHelper,
+                    TypstStmt::ContextBinding {
+                        handle: "intro".to_string()
+                    }
+                ),
+                epilogue: format!(
+                    "\n{}\n",
+                    TypstStmt::MetadataBeacon {
+                        handle: "intro".to_string()
+                    }
+                ),
+            },
+        );
+
+        // Main: one vertebra document (so its beacon epilogue is emitted),
+        // followed by marrow-scope Typst calling `rheo-metadata` directly —
+        // exactly the seam this bead widens.
+        let main = r#"
+#document("intro.html", format: "html")[
+  #include "content/intro.typ"
+]
+
+#context { assert(rheo-metadata("intro").title != none) }
+"#
+        .to_string();
+
+        let world = RheoWorld::new_for_bundle(
+            root,
+            main,
+            source_overlay,
+            rheo_context,
+            None,
+            Some("html"),
+            vec![],
+        )
+        .unwrap();
+
+        world
+            .compile_bundle()
+            .expect("rheo-metadata must be callable from marrow scope");
+    }
+
+    /// The companion `rheo-metadata-all()` — marrow-scope only (never in the
+    /// per-vertebra prelude) — returns one entry per `spine-flat` vertebra.
+    #[test]
+    fn rheo_metadata_all_returns_one_entry_per_vertebra() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let global_context = TypstLiteral::Dict(vec![(
+            "spine-flat".to_string(),
+            TypstLiteral::Array(vec![
+                TypstLiteral::Dict(vec![
+                    ("handle".to_string(), TypstLiteral::str("intro")),
+                    ("path".to_string(), TypstLiteral::str("content/intro.typ")),
+                    ("title".to_string(), TypstLiteral::str("Intro")),
+                ]),
+                TypstLiteral::Dict(vec![
+                    ("handle".to_string(), TypstLiteral::str("second")),
+                    ("path".to_string(), TypstLiteral::str("content/second.typ")),
+                    ("title".to_string(), TypstLiteral::str("Second")),
+                ]),
+            ]),
+        )]);
+
+        let main = "#context { assert(rheo-metadata-all().len() == 2) }\n".to_string();
+
+        let world = RheoWorld::new_for_bundle(
+            root,
+            main,
+            HashMap::new(),
+            HashMap::new(),
+            Some(global_context),
+            Some("html"),
+            vec![],
+        )
+        .unwrap();
+
+        world
+            .compile_bundle()
+            .expect("rheo-metadata-all() must return one entry per spine-flat vertebra");
     }
 }

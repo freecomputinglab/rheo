@@ -49,6 +49,21 @@ pub enum TypstStmt {
     /// that handle was found — e.g. under a `SingleCombined` layout, where no
     /// beacon is emitted at all).
     MetadataHelper,
+    /// The `rheo-metadata-all` helper: the bundle-root ("marrow scope") only
+    /// companion to [`TypstStmt::MetadataHelper`], for the common marrow case
+    /// of "every vertebra's metadata at once" (an Atom feed, a sitemap, a
+    /// search index). Maps `sys.inputs.rheo-context.spine-flat` — which
+    /// carries only `handle`/`path`/`title` per entry, since the per-vertebra
+    /// `metadata` key was removed from the spine by the already-landed
+    /// `rheo-meta-beacons-2o5` — through [`TypstStmt::MetadataHelper`]'s
+    /// `rheo-metadata`, overlaying its resolved fields
+    /// (`title`/`author`/`description`/`keywords`/`date`, when present) onto
+    /// each `(handle, path)` pair. Deliberately injected only at the bundle
+    /// root (see `world.rs`'s `source()`), never into the per-vertebra
+    /// prelude — a vertebra itself has no need to enumerate every vertebra's
+    /// metadata, only marrow-authored code (feeds, sitemaps, search indexes)
+    /// does.
+    MetadataAllHelper,
     /// A per-vertebra metadata "beacon": a labelled, hidden `#metadata(...)`
     /// element publishing this vertebra's own resolved `#set document(...)`
     /// values (`title`/`author`/`description`/`keywords`/`date`), queryable by
@@ -121,6 +136,10 @@ impl fmt::Display for TypstStmt {
                  \x20 }}\n\
                  \x20 out\n\
                  }}"
+            ),
+            TypstStmt::MetadataAllHelper => write!(
+                f,
+                "#let rheo-metadata-all() = sys.inputs.rheo-context.spine-flat.map(e => (handle: e.handle, path: e.path, ..rheo-metadata(e.handle)))"
             ),
             TypstStmt::MetadataBeacon { handle } => write!(
                 f,
@@ -214,6 +233,15 @@ mod tests {
              \x20 }\n\
              \x20 out\n\
              }"
+        );
+    }
+
+    #[test]
+    fn metadata_all_helper_renders_spine_flat_map_over_rheo_metadata() {
+        let stmt = TypstStmt::MetadataAllHelper;
+        assert_eq!(
+            stmt.to_string(),
+            "#let rheo-metadata-all() = sys.inputs.rheo-context.spine-flat.map(e => (handle: e.handle, path: e.path, ..rheo-metadata(e.handle)))"
         );
     }
 
