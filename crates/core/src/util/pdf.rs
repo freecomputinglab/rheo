@@ -17,9 +17,10 @@ pub fn sanitize_label_name(name: &str) -> String {
 
 /// Filename-to-title helper.
 ///
-/// Document titles are read from `#set document(title: …)` via the AST-based
-/// [`DocumentMetadata`](crate::parser::DocumentMetadata) extractor; this type
-/// only carries the filename fallback used when a vertebra sets no title.
+/// The real document title is read from `#set document(title: …)` by Typst
+/// itself, post-compile (see `crate::plugins::document_meta::DocumentMeta`);
+/// this type only carries the filename-derived fallback used pre-compile, and
+/// when a vertebra's output has no resolved title at all.
 pub struct DocumentTitle;
 
 impl DocumentTitle {

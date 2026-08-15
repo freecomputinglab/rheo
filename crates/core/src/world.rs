@@ -684,10 +684,10 @@ mod tests {
     /// SPIKE (docs/spikes/typst-native-metadata.md, Q8): does `#set
     /// document(date: auto)` stay `Smart::Auto` in the bundle's real
     /// `DocumentInfo`, and does `datetime.today()` resolve to a concrete date?
-    /// Contrast with `DocumentDate`'s static AST scan
-    /// (`parser::document_date`), which deliberately yields `None` for both
-    /// `auto` and `datetime.today()` — a real `datetime.today()` resolving
-    /// here would newly populate feed timestamps that change on every build.
+    /// Contrast with the retired pre-compile static AST date scan, which
+    /// deliberately yielded `None` for both `auto` and `datetime.today()` — a
+    /// real `datetime.today()` resolving here would newly populate feed
+    /// timestamps that change on every build.
     #[test]
     fn document_date_auto_and_today_resolve_in_bundle_info() {
         use typst::foundations::Smart;

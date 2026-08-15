@@ -5,8 +5,8 @@
 //! [`Build::compile_spine`](crate::build::Build)) — so Rust-side plugins
 //! (EPUB) can read a vertebra's title/author/description/keywords/date from
 //! the same fully-resolved values the Typst-side `metadata-of` beacon
-//! publishes, instead of re-deriving them from rheo's pre-compile AST scan
-//! (`crate::parser::document_metadata`/`document_date`).
+//! publishes, instead of re-deriving them from a pre-compile AST scan (the
+//! retired `document_metadata`/`document_date` extractors).
 
 use ecow::EcoString;
 use typst::foundations::{Datetime, Smart};
@@ -50,14 +50,13 @@ impl DocumentMeta {
     ///
     /// `Smart::Auto` (no `#set document(date:)` rule at all) and
     /// `Smart::Custom(None)` (an explicit `date: none`) both map to `None`,
-    /// deliberately preserving what the retired AST scan
-    /// (`crate::parser::document_date::DocumentDate`) does today for those
-    /// two forms.
+    /// deliberately preserving what the retired pre-compile AST date scan
+    /// used to do for those two forms.
     ///
     /// **Behavior change to accept**: `#set document(date: datetime.today())`
-    /// is rejected by the AST scan (it can't tell a literal `datetime(...)`
-    /// call from `datetime.today()` once resolved — text alone doesn't say).
-    /// This reads the already-*resolved* value instead, so it can't
+    /// was rejected by the retired AST scan (it couldn't tell a literal
+    /// `datetime(...)` call from `datetime.today()` once resolved — text
+    /// alone doesn't say). This reads the already-*resolved* value instead, so it can't
     /// distinguish either, and will now populate a real, build-varying date
     /// for that form. Not special-cased — just noted here.
     pub fn date(&self) -> Option<chrono::DateTime<chrono::Utc>> {

@@ -713,8 +713,9 @@ impl Build {
 /// title/date/description/keywords/author are read from its Typst-resolved
 /// `DocumentMeta` in `meta` (Typst's own realization — see
 /// [`Build::compile_spine`]), falling back to the matching spine `Vertebra`'s
-/// AST-scanned title/date when no `DocumentMeta` exists for the output
-/// (shouldn't normally happen for a real document, but keeps nothing blank).
+/// purely path-derived title when no `DocumentMeta` exists for the output
+/// (shouldn't normally happen for a real document, but keeps nothing blank);
+/// `date` has no such fallback, since `Vertebra` no longer carries one.
 /// The matching `Vertebra` is still used for harvested `rheo-*` `vars` — an
 /// unrelated, unchanged harvest — and to detect `contributed` outputs (no
 /// matching vertebra at all, e.g. a combined output or a marrow contribution).
@@ -748,9 +749,7 @@ fn flatten_bundle_outputs(
                 .map(str::to_string)
                 .or_else(|| vertebra.map(|v| v.title.clone()))
                 .unwrap_or_default(),
-            date: doc_meta
-                .and_then(DocumentMeta::date)
-                .or_else(|| vertebra.and_then(|v| v.date.map(|d| d.0))),
+            date: doc_meta.and_then(DocumentMeta::date),
             description: doc_meta
                 .and_then(DocumentMeta::description)
                 .map(str::to_string),
@@ -908,7 +907,7 @@ mod tests {
     /// `asset()` output would otherwise reach the format plugin as if it were a
     /// page. `flatten_bundle_outputs` keeps the two apart. No `DocumentMeta` is
     /// supplied for this test's output, so its title falls back to the matching
-    /// `Vertebra`'s AST-scanned title.
+    /// `Vertebra`'s path-derived title.
     #[test]
     fn test_flatten_bundle_outputs_separates_assets_from_documents() {
         use crate::reticulate::spine::{SpineLayout, Vertebra, VirtualSpine};
@@ -923,8 +922,6 @@ mod tests {
                 extra_handles: vec![],
                 emit_handle: true,
                 title: "Index".into(),
-                date: None,
-                metadata: Default::default(),
                 vars: Default::default(),
                 source: String::new(),
             }],
@@ -956,7 +953,7 @@ mod tests {
         assert_eq!(documents[0].output_path, "index.html");
         assert_eq!(
             documents[0].title, "Index",
-            "no DocumentMeta for this output falls back to vertebra metadata"
+            "no DocumentMeta for this output falls back to vertebra's path-derived title"
         );
         assert_eq!(asset_files.len(), 1);
         assert_eq!(asset_files[0].0, "data/x.json");
@@ -964,11 +961,12 @@ mod tests {
     }
 
     /// When a `DocumentMeta` exists for an output, it wins over the matching
-    /// `Vertebra`'s AST-scanned title/date — the Typst-resolved value is the
-    /// real authored one, which can differ from what static AST scanning saw
-    /// (e.g. a title set via an imported `#show:` template). `vars` still
-    /// comes from the `Vertebra` (an unrelated harvest), and the new
-    /// description/keywords/author fields come from `DocumentMeta` alone.
+    /// `Vertebra`'s path-derived title (and there is no `date` fallback at
+    /// all) — the Typst-resolved value is the real authored one, which can
+    /// differ from a filename-derived guess (e.g. a title set via an
+    /// imported `#show:` template). `vars` still comes from the `Vertebra`
+    /// (an unrelated harvest), and the new description/keywords/author
+    /// fields come from `DocumentMeta` alone.
     #[test]
     fn test_flatten_bundle_outputs_prefers_document_meta_over_vertebra() {
         use crate::reticulate::spine::{SpineLayout, Vertebra, VirtualSpine};
@@ -984,8 +982,6 @@ mod tests {
                 extra_handles: vec![],
                 emit_handle: true,
                 title: "Fallback Title".into(),
-                date: None,
-                metadata: Default::default(),
                 vars: Default::default(),
                 source: String::new(),
             }],

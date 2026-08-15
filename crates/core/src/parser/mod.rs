@@ -2,30 +2,26 @@
 //!
 //! Everything here is built on one abstraction: [`SyntaxSite`]. A `SyntaxSite`
 //! says *what* to pull out of the tree — a label, a reference, a `rheo-*`
-//! binding, the document date, a package import — while the shared walker in
-//! [`syntax_site`] owns the *how*: one depth-first pass that threads each node's
-//! byte offset and markup/code context and visits every node exactly once.
+//! binding, a package import — while the shared walker in [`syntax_site`] owns
+//! the *how*: one depth-first pass that threads each node's byte offset and
+//! markup/code context and visits every node exactly once.
 //!
 //! Module layout:
 //!
 //! * [`syntax_site`] — the [`SyntaxSite`] trait and the traversal engine.
-//! * [`labels`], [`document_date`], [`rheo_var`], [`imports`] — one extractor
-//!   each: a small `impl SyntaxSite` plus its public collectors.
+//! * [`labels`], [`rheo_var`], [`imports`] — one extractor each: a small
+//!   `impl SyntaxSite` plus its public collectors.
 //! * this file — the aggregate [`extract_nodes`], which gathers all per-vertebra
-//!   metadata (labels, `rheo-*` vars, document date) in a **single** parse and a
-//!   **single** traversal by fanning one walk out to every visitor. That
-//!   once-only pass is a design constraint on the spine-building hot path,
-//!   enforced by `extract_nodes_parses_and_traverses_once`.
+//!   metadata (labels, `rheo-*` vars) in a **single** parse and a **single**
+//!   traversal by fanning one walk out to every visitor. That once-only pass
+//!   is a design constraint on the spine-building hot path, enforced by
+//!   `extract_nodes_parses_and_traverses_once`.
 
-mod document_date;
-mod document_metadata;
 mod imports;
 mod labels;
 mod rheo_var;
 mod syntax_site;
 
-pub use document_date::DocumentDate;
-pub use document_metadata::{DocumentMetadata, MetaValue};
 pub use imports::ImportInfo;
 pub use labels::{LabelRole, LabelSite, LabelSites};
 pub use rheo_var::{RheoValue, RheoVar};
@@ -41,15 +37,10 @@ pub struct ExtractedNodes {
     /// role. Definition names drive the canonical-handle machinery; the full
     /// sites are retained so the Mould stage can rewrite them.
     pub labels: LabelSites,
-    /// Parsed `#set document(date: datetime(...))` timestamp, if present.
-    pub document_date: Option<DocumentDate>,
-    /// All representable named arguments of the first `#set document(...)` rule.
-    pub document_metadata: DocumentMetadata,
 }
 
-/// Harvest labels, `rheo-*` bindings, and the document date from `source` in a
-/// **single** parse and a **single** traversal, fanning each node out to every
-/// visitor.
+/// Harvest labels and `rheo-*` bindings from `source` in a **single** parse
+/// and a **single** traversal, fanning each node out to every visitor.
 ///
 /// Parsing and traversing exactly once is a design constraint (parse is the
 /// costly step; this runs per vertebra during spine building). Enforced by
@@ -58,13 +49,9 @@ pub fn extract_nodes(source: &Source) -> ExtractedNodes {
     let root = syntax_site::parse_source(source);
     let mut labels = Vec::new();
     let mut rheo_vars = Vec::new();
-    let mut dates = Vec::new();
-    let mut metadata = Vec::new();
     syntax_site::walk_once(source, &root, |s, n, o, c| {
         LabelSite::visit(s, n, o, c, &mut labels);
         RheoVar::visit(s, n, o, c, &mut rheo_vars);
-        DocumentDate::visit(s, n, o, c, &mut dates);
-        DocumentMetadata::visit(s, n, o, c, &mut metadata);
     });
     let mut label_sites = LabelSites::default();
     for site in labels {
@@ -73,14 +60,9 @@ pub fn extract_nodes(source: &Source) -> ExtractedNodes {
             LabelRole::Reference => label_sites.references.push(site),
         }
     }
-    let document_date = dates.into_iter().next();
-    let mut document_metadata = metadata.into_iter().next().unwrap_or_default();
-    document_metadata.date = document_date.map(|d| d.0);
     ExtractedNodes {
         rheo_vars,
         labels: label_sites,
-        document_date,
-        document_metadata,
     }
 }
 
@@ -92,8 +74,7 @@ mod tests {
     fn extract_nodes_parses_and_traverses_once() {
         // Source exercising every visitor, so no extractor can justify a second pass.
         let source = Source::detached(
-            r#"#set document(date: datetime(year: 2025, month: 1, day: 2))
-#let rheo-feed-title = "T"
+            r#"#let rheo-feed-title = "T"
 = Heading <h>
 See @h and #link(<h>)[here]."#,
         );
@@ -122,44 +103,5 @@ See @h and #link(<h>)[here]."#,
         assert_eq!(extracted.rheo_vars.len(), 2);
         assert_eq!(extracted.rheo_vars[0].key, "feed-title");
         assert_eq!(extracted.rheo_vars[1].key, "feed-updated");
-    }
-
-    #[test]
-    fn test_document_date_threaded_into_metadata() {
-        use chrono::Datelike;
-        let source = Source::detached(
-            r#"#set document(title: [T], date: datetime(year: 2025, month: 1, day: 2))"#,
-        );
-        let extracted = extract_nodes(&source);
-        let date = extracted
-            .document_metadata
-            .date
-            .expect("date should be threaded into metadata");
-        assert_eq!((date.year(), date.month(), date.day()), (2025, 1, 2));
-        assert_eq!(
-            extracted.document_metadata.to_literal().serialize(),
-            r#"(title: "T", date: datetime(year: 2025, month: 1, day: 2, hour: 0, minute: 0, second: 0))"#
-        );
-    }
-
-    #[test]
-    fn test_document_date_none_auto_today_partial_omit_date_key() {
-        for src in [
-            r#"#set document(title: [T], date: none)"#,
-            r#"#set document(title: [T], date: auto)"#,
-            r#"#set document(title: [T], date: datetime.today())"#,
-            r#"#set document(title: [T], date: datetime(year: 2025, month: 1))"#,
-        ] {
-            let extracted = extract_nodes(&Source::detached(src));
-            assert!(
-                extracted.document_metadata.date.is_none(),
-                "expected no date for {src:?}"
-            );
-            assert_eq!(
-                extracted.document_metadata.to_literal().serialize(),
-                r#"(title: "T")"#,
-                "expected no date key for {src:?}"
-            );
-        }
     }
 }

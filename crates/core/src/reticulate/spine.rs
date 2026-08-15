@@ -1,6 +1,6 @@
 use crate::config::SpineSection;
 use crate::parser;
-use crate::parser::{DocumentDate, DocumentMetadata, RheoValue};
+use crate::parser::RheoValue;
 use crate::reticulate::bundle_source::BundleSource;
 use crate::util::path::{sanitize_handle_segment, to_forward_slash};
 use crate::util::pdf::DocumentTitle;
@@ -564,11 +564,6 @@ pub struct Vertebra {
     pub emit_handle: bool,
     /// Document title for `#document title:` and `@handle` display text.
     pub title: String,
-    /// Parsed `#set document(date: datetime(...))` timestamp, if present.
-    pub date: Option<DocumentDate>,
-    /// All representable named arguments of this vertebra's `#set document(...)`
-    /// rule, exposed to Typst as the spine entry's `metadata` field.
-    pub metadata: DocumentMetadata,
     /// Harvested `rheo-*` variables from this vertebra's source file.
     pub vars: std::collections::HashMap<String, RheoValue>,
     /// The vertebra's raw source text, retained for the Mould stage.
@@ -726,8 +721,6 @@ impl VirtualSpine {
             output_path: String,
             rel_path: String,
             title: String,
-            date: Option<DocumentDate>,
-            metadata: DocumentMetadata,
             vars: HashMap<String, RheoValue>,
             source: String,
         }
@@ -766,34 +759,17 @@ impl VirtualSpine {
 
                 let source_obj = Source::detached(&source);
                 let extracted = parser::extract_nodes(&source_obj);
-                let date = extracted.document_date;
-                let metadata = extracted.document_metadata;
                 let sites = extracted.labels;
 
-                // A styled or otherwise non-plain document title cannot survive
-                // the flattening to the plain string rheo uses in the spine; warn
-                // the author, showing both the original and the stripped form.
-                if let Some(lossy) = &metadata.lossy_title {
-                    tracing::warn!(
-                        file = %file.display(),
-                        original = %lossy.raw,
-                        stripped = %lossy.stripped,
-                        "Warning: Rheo uses document titles as unique identifiers, and does not retain styling or sophisticated forms of Typst content when constructing spines."
-                    );
-                }
-
-                // Title from the harvested `#set document(title: …)` value — a
-                // real AST read that understands both string and bracket-content
-                // forms — falling back to the filename, title-cased. (Sourcing
-                // this from metadata rather than a raw-text scan is what fixes
-                // the string-form / link-text mis-parse.)
-                let title = metadata
-                    .get("title")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| DocumentTitle::to_readable_name(&stem));
+                // Title is purely path-derived (filename, title-cased). The
+                // real authored title (e.g. via `#set document(title: ...)`,
+                // including through an imported `#show:` template) is resolved
+                // by Typst itself and read post-compile from `DocumentInfo`
+                // (see `crate::plugins::document_meta::DocumentMeta` and
+                // `crate::build::flatten_bundle_outputs`); this path-derived
+                // value is only a pre-compile placeholder (spine ordering,
+                // `@handle` display text before the bundle compiles, etc.).
+                let title = DocumentTitle::to_readable_name(&stem);
                 let mut vars = HashMap::new();
                 for v in extracted.rheo_vars {
                     match v.value {
@@ -840,8 +816,6 @@ impl VirtualSpine {
                     output_path,
                     rel_path,
                     title,
-                    date,
-                    metadata,
                     vars,
                     source,
                 })
@@ -879,8 +853,6 @@ impl VirtualSpine {
                     extra_handles: vec![fi.escape],
                     emit_handle,
                     title: fi.title,
-                    date: fi.date,
-                    metadata: fi.metadata,
                     vars: fi.vars,
                     source: fi.source,
                 })
@@ -1385,7 +1357,10 @@ mod tests {
         // Superseded by the Typst-native metadata-beacon mechanism
         // (`rheo-context().metadata-of`, docs/spikes/typst-native-metadata.md):
         // the Rust-parsed `metadata` key is no longer serialized into either
-        // the spine tree or spine-flat entries.
+        // the spine tree or spine-flat entries, and `#set document(...)` is no
+        // longer statically scanned at all — `Vertebra.title` is purely
+        // path-derived, so this vertebra's spine-entry title is "Post" (from
+        // the filename), not the `#set document(title: ...)` value.
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let content = root.join("content");
@@ -1415,7 +1390,7 @@ mod tests {
                 "metadata key should no longer be serialized: {serialized}"
             );
             // The other spine entry fields remain.
-            assert!(serialized.contains("title: \"My Post\""));
+            assert!(serialized.contains("title: \"Post\""));
             assert!(serialized.contains("handle: \"post\""));
         }
     }
@@ -1501,8 +1476,6 @@ mod tests {
             extra_handles: vec!["intro.typ".into()],
             emit_handle: true,
             title: "Introduction".into(),
-            date: None,
-            metadata: DocumentMetadata::default(),
             vars: HashMap::new(),
             source: String::new(),
         };
@@ -1538,8 +1511,6 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "A".into(),
-                    date: None,
-                    metadata: DocumentMetadata::default(),
                     vars: HashMap::new(),
                     source: String::new(),
                 },
@@ -1550,8 +1521,6 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "B".into(),
-                    date: None,
-                    metadata: DocumentMetadata::default(),
                     vars: HashMap::new(),
                     source: String::new(),
                 },
@@ -1589,8 +1558,6 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "A".into(),
-                    date: None,
-                    metadata: DocumentMetadata::default(),
                     vars: Default::default(),
                     source: String::new(),
                 },
@@ -1601,8 +1568,6 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "B".into(),
-                    date: None,
-                    metadata: DocumentMetadata::default(),
                     vars: Default::default(),
                     source: String::new(),
                 },
