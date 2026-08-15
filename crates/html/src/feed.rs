@@ -345,6 +345,7 @@ mod tests {
             VirtualSpine::build(SpineScan::flat(&[], &output_dir), &output_dir, layout)
                 .expect("build empty spine");
         let bundle_assets: Vec<(String, Bytes)> = vec![];
+        let control = rheo_core::ControlAssets::default();
         let ctx = PluginContext {
             project: &project,
             output_dir: &output_dir,
@@ -353,6 +354,7 @@ mod tests {
             assets: &assets,
             font_dirs: &font_dirs,
             bundle_assets: &bundle_assets,
+            control: &control,
         };
         let html_cfg = crate::HtmlConfig::default();
 

@@ -13,7 +13,7 @@ use crate::config::project::{ProjectConfig, ProjectMode};
 use crate::diagnostics::results::CompilationResults;
 use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, TypstFormat, spine_layout_for};
 use crate::reticulate::spine::{SpineScan, VirtualSpine};
-use crate::transclude::ContentTransclusion;
+use crate::transclude::{ContentTransclusion, ControlAssetKind, ControlAssets};
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use std::collections::{HashMap, HashSet};
@@ -411,46 +411,76 @@ impl Build {
             })
             .collect();
 
+        // Scan for a `.rheo/head.html` control asset before consuming
+        // `virtual_fs` below — reuses the same decode-or-error/unrecognized-warn
+        // classification `ControlAssets::extract` uses on the `run()` path, so
+        // an unrecognized `.rheo/*` member only ever warns in one shared place.
+        let mut control_head_fragment: Option<String> = None;
+        for (vpath, bytes) in virtual_fs.iter() {
+            let path_str = vpath.get_with_slash().trim_start_matches('/').to_string();
+            if let ControlAssetKind::HeadFragment(text) =
+                ControlAssets::classify_asset(&path_str, bytes)?
+            {
+                control_head_fragment = Some(text);
+            }
+        }
+
         // Inject CSS/JS link tags into each HTML entry in memory, and rewrite
         // `<rheo-content>` placeholders in bundle-emitted assets, so `rheo
         // watch` serves the same transcluded bytes `rheo compile` writes to
         // disk. Assets stay in the returned VirtualFs so the dev server still
-        // serves them.
+        // serves them. `.rheo/*` control assets are dropped entirely — never
+        // served — mirroring the `run()` path's `ControlAssets::extract`.
         let needs_injection = !css_paths.is_empty() || !js_paths.is_empty();
+        let needs_head_mutation = needs_injection || control_head_fragment.is_some();
         let injected: Result<typst_bundle::VirtualFs> = virtual_fs
             .into_iter()
-            .map(|(vpath, bytes)| {
+            .filter_map(|(vpath, bytes)| {
                 let path_str = vpath.get_with_slash().trim_start_matches('/').to_string();
+
+                if ControlAssets::is_control_asset(&path_str) {
+                    return None;
+                }
 
                 if assets.contains(&path_str) {
                     let Ok(text) = std::str::from_utf8(bytes.as_slice()) else {
-                        return Ok((vpath, bytes));
+                        return Some(Ok((vpath, bytes)));
                     };
-                    return match ContentTransclusion::rewrite_from_map(&path_str, text, &pages)? {
-                        Some(rewritten) => Ok((
-                            vpath,
-                            typst::foundations::Bytes::new(rewritten.into_bytes()),
-                        )),
-                        None => Ok((vpath, bytes)),
-                    };
+                    return Some(
+                        match ContentTransclusion::rewrite_from_map(&path_str, text, &pages) {
+                            Ok(Some(rewritten)) => Ok((
+                                vpath,
+                                typst::foundations::Bytes::new(rewritten.into_bytes()),
+                            )),
+                            Ok(None) => Ok((vpath, bytes)),
+                            Err(e) => Err(e),
+                        },
+                    );
                 }
 
-                if needs_injection && path_str.ends_with(".html") {
-                    let html = String::from_utf8_lossy(&bytes);
-                    let mut dom = crate::util::html::HtmlDom::parse(&html)?;
-                    // Depth-relative asset refs so nested pages resolve them.
-                    let prefix = crate::util::html::depth_prefix(&path_str);
-                    let css_refs: Vec<String> =
-                        css_paths.iter().map(|s| format!("{prefix}{s}")).collect();
-                    let js_refs: Vec<String> =
-                        js_paths.iter().map(|s| format!("{prefix}{s}")).collect();
-                    let css: Vec<&str> = css_refs.iter().map(|s| s.as_str()).collect();
-                    let js: Vec<&str> = js_refs.iter().map(|s| s.as_str()).collect();
-                    dom.inject_head_links(&[], &css, &js)?;
-                    let modified = dom.serialize()?;
-                    Ok((vpath, typst::foundations::Bytes::new(modified.into_bytes())))
+                if needs_head_mutation && path_str.ends_with(".html") {
+                    Some((|| {
+                        let html = String::from_utf8_lossy(&bytes);
+                        let mut dom = crate::util::html::HtmlDom::parse(&html)?;
+                        if needs_injection {
+                            // Depth-relative asset refs so nested pages resolve them.
+                            let prefix = crate::util::html::depth_prefix(&path_str);
+                            let css_refs: Vec<String> =
+                                css_paths.iter().map(|s| format!("{prefix}{s}")).collect();
+                            let js_refs: Vec<String> =
+                                js_paths.iter().map(|s| format!("{prefix}{s}")).collect();
+                            let css: Vec<&str> = css_refs.iter().map(|s| s.as_str()).collect();
+                            let js: Vec<&str> = js_refs.iter().map(|s| s.as_str()).collect();
+                            dom.inject_head_links(&[], &css, &js)?;
+                        }
+                        if let Some(fragment) = &control_head_fragment {
+                            dom.append_head_fragment(fragment)?;
+                        }
+                        let modified = dom.serialize()?;
+                        Ok((vpath, typst::foundations::Bytes::new(modified.into_bytes())))
+                    })())
                 } else {
-                    Ok((vpath, bytes))
+                    Some(Ok((vpath, bytes)))
                 }
             })
             .collect();
@@ -531,6 +561,12 @@ impl Build {
             // for an asset with no placeholder or non-UTF-8 bytes.
             ContentTransclusion::rewrite_assets(&outputs, &mut asset_files)?;
 
+            // Pull bundle-root control assets (`.rheo/*`) out of the plugin
+            // asset list before the plugin — or the EPUB embedding path,
+            // which embeds straight from this same `asset_files` — ever sees
+            // them. A no-op when the project has no `.rheo/*` assets.
+            let (asset_files, control) = ControlAssets::extract(asset_files)?;
+
             debug!(
                 plugin = plugin.name(),
                 outputs = outputs.len(),
@@ -546,6 +582,7 @@ impl Build {
                 assets: &resolved_assets,
                 font_dirs: &self.font_dirs,
                 bundle_assets: &asset_files,
+                control: &control,
             };
 
             // Assets are the lowest precedence tier — asset() < spine documents

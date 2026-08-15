@@ -30,11 +30,12 @@
 
 use crate::plugins::CastVertebra;
 use crate::util::html::{HtmlDom, escape_text};
-use crate::{Result, RheoError};
+use crate::{CONTROL_ASSET_PREFIX, Result, RheoError};
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashMap;
 use std::ops::Range;
+use tracing::warn;
 use typst::foundations::Bytes;
 
 lazy_static! {
@@ -210,6 +211,102 @@ impl ContentTransclusion {
     }
 }
 
+/// The outcome of classifying a single bundle-asset path against
+/// [`CONTROL_ASSET_PREFIX`]: an ordinary asset that must pass through
+/// untouched, the recognized site-wide head fragment (decoded), or an
+/// unrecognized `.rheo/*` member (already warned about, must be dropped).
+pub(crate) enum ControlAssetKind {
+    /// Not a control asset — leave it in the caller's asset list.
+    NotControl,
+    /// `.rheo/head.html`, decoded to UTF-8 text.
+    HeadFragment(String),
+    /// An unrecognized `.rheo/*` path. Already logged via `warn!`; the caller
+    /// must drop it rather than write/serve/embed it.
+    UnrecognizedDropped,
+}
+
+/// Bundle-root control assets consumed internally by rheo rather than
+/// forwarded to a format plugin.
+///
+/// A `.marrow.typ` runs at the bundle root, outside every page's own
+/// `#document`, so it cannot place an element inside any single page's
+/// `<head>` (that's what `<rheo-head>`/[`HtmlDom::hoist_rheo_head`] is for,
+/// per-page). `ControlAssets::extract` pulls the one currently-recognized
+/// member — `.rheo/head.html`, an HTML fragment whose top-level elements are
+/// appended to *every* compiled page's `<head>` — out of a plugin's asset
+/// list before that list reaches the plugin, so it is never written to disk,
+/// embedded in a container format, or served verbatim.
+///
+/// A project with no `.rheo/*` assets at all makes `extract` a complete
+/// no-op: `head_fragment: None`, and the returned asset list is unchanged in
+/// content and order.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ControlAssets {
+    /// Decoded contents of `.rheo/head.html`, if present — an HTML fragment
+    /// (no wrapping `<html>/<head>/<body>`) whose top-level elements are
+    /// appended to every compiled page's `<head>`, via
+    /// [`HtmlDom::append_head_fragment`].
+    pub head_fragment: Option<String>,
+}
+
+impl ControlAssets {
+    /// Classify one `(path, bytes)` bundle-asset entry.
+    ///
+    /// Shared by the main compile path (which owns and filters a
+    /// `Vec<(String, Bytes)>` via [`Self::extract`]) and the dev-server watch
+    /// path (which only needs to scan a borrowed `VirtualFs` for the same
+    /// recognized/unrecognized distinction), so the UTF-8-decode-or-error and
+    /// unrecognized-warn logic lives in exactly one place.
+    pub(crate) fn classify_asset(path: &str, bytes: &Bytes) -> Result<ControlAssetKind> {
+        let Some(rest) = path.strip_prefix(CONTROL_ASSET_PREFIX) else {
+            return Ok(ControlAssetKind::NotControl);
+        };
+
+        if rest == "head.html" {
+            let text = std::str::from_utf8(bytes.as_slice())
+                .map_err(|e| {
+                    RheoError::invalid_data(format!(
+                        "control asset '{path}' is not valid UTF-8: {e}"
+                    ))
+                })?
+                .to_string();
+            Ok(ControlAssetKind::HeadFragment(text))
+        } else {
+            warn!(path, "unrecognized control asset under .rheo/, dropping");
+            Ok(ControlAssetKind::UnrecognizedDropped)
+        }
+    }
+
+    /// Returns `true` when `path` names a control asset — anything under
+    /// [`CONTROL_ASSET_PREFIX`], recognized or not — that must never be
+    /// written, embedded, or served.
+    pub fn is_control_asset(path: &str) -> bool {
+        path.starts_with(CONTROL_ASSET_PREFIX)
+    }
+
+    /// Partition `assets` into control assets (consumed here) and everything
+    /// else (returned for the plugin to keep writing/embedding as before).
+    ///
+    /// Recognized control assets populate the returned `ControlAssets`;
+    /// unrecognized `.rheo/*` paths are logged via `warn!` and dropped
+    /// silently, so a newer package against an older rheo degrades
+    /// gracefully rather than hard-failing the build.
+    pub fn extract(assets: Vec<(String, Bytes)>) -> Result<(Vec<(String, Bytes)>, Self)> {
+        let mut head_fragment = None;
+        let mut remaining = Vec::with_capacity(assets.len());
+
+        for (path, bytes) in assets {
+            match Self::classify_asset(&path, &bytes)? {
+                ControlAssetKind::NotControl => remaining.push((path, bytes)),
+                ControlAssetKind::HeadFragment(text) => head_fragment = Some(text),
+                ControlAssetKind::UnrecognizedDropped => {}
+            }
+        }
+
+        Ok((remaining, Self { head_fragment }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,5 +446,70 @@ mod tests {
     fn test_scan_ignores_placeholder_missing_required_page() {
         let matches = ContentTransclusion::scan(r#"<rheo-content select="main"/>"#);
         assert!(matches.is_empty());
+    }
+
+    // ControlAssets::extract tests
+
+    fn asset(path: &str, bytes: &[u8]) -> (String, Bytes) {
+        (path.to_string(), Bytes::new(bytes.to_vec()))
+    }
+
+    #[test]
+    fn test_extract_recognizes_head_html_and_removes_it_from_remaining() {
+        let assets = vec![
+            asset(".rheo/head.html", b"<meta name=\"a\" content=\"1\">"),
+            asset("extra/hello.txt", b"hi"),
+        ];
+        let (remaining, control) = ControlAssets::extract(assets).unwrap();
+
+        assert_eq!(
+            control.head_fragment.as_deref(),
+            Some(r#"<meta name="a" content="1">"#)
+        );
+        assert_eq!(remaining.len(), 1, "the .rheo/head.html entry must be gone");
+        assert_eq!(remaining[0].0, "extra/hello.txt");
+    }
+
+    #[test]
+    fn test_extract_drops_unrecognized_control_asset() {
+        let assets = vec![
+            asset(".rheo/future-thing.json", b"{}"),
+            asset("extra/hello.txt", b"hi"),
+        ];
+        let (remaining, control) = ControlAssets::extract(assets).unwrap();
+
+        assert_eq!(control.head_fragment, None);
+        assert_eq!(
+            remaining.len(),
+            1,
+            "unrecognized control asset must be dropped, not written"
+        );
+        assert_eq!(remaining[0].0, "extra/hello.txt");
+    }
+
+    #[test]
+    fn test_extract_no_rheo_assets_is_complete_noop() {
+        let assets = vec![asset("extra/hello.txt", b"hi"), asset("a.css", b"body{}")];
+        let (remaining, control) = ControlAssets::extract(assets.clone()).unwrap();
+
+        assert_eq!(control.head_fragment, None);
+        assert_eq!(
+            remaining, assets,
+            "content and order must be byte-identical with no .rheo/* assets present"
+        );
+    }
+
+    #[test]
+    fn test_extract_non_utf8_head_html_errors() {
+        let assets = vec![asset(".rheo/head.html", &[0xff, 0xfe, 0xfd])];
+        let err = ControlAssets::extract(assets).unwrap_err();
+        assert!(err.to_string().contains(".rheo/head.html"));
+    }
+
+    #[test]
+    fn test_is_control_asset() {
+        assert!(ControlAssets::is_control_asset(".rheo/head.html"));
+        assert!(ControlAssets::is_control_asset(".rheo/whatever"));
+        assert!(!ControlAssets::is_control_asset("extra/hello.txt"));
     }
 }

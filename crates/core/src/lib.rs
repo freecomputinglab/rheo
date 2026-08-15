@@ -38,6 +38,7 @@ pub use plugins::{
     AssetConfig, CastVertebra, EmbeddedDefault, FormatInitTemplate, FormatPlugin, OpenHandle,
     PackageAssets, PluginContext, ResolvedPackage, ServerHandle, SpineLayoutKind, TypstFormat,
 };
+pub use transclude::ControlAssets;
 
 // HTML/PDF export utilities
 pub use compile::{compile_document_to_string, document_to_pdf_bytes};

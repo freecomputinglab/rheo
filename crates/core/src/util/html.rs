@@ -166,6 +166,51 @@ impl HtmlDom {
         Ok(())
     }
 
+    /// Appends the top-level elements of an HTML fragment into this
+    /// document's own `<head>`, after whatever is already there — including
+    /// anything [`Self::hoist_rheo_head`] already moved in for this page.
+    ///
+    /// This is the site-wide counterpart to `hoist_rheo_head`'s per-page
+    /// escape hatch: a bundle-root `.rheo/head.html` control asset (see
+    /// [`crate::transclude::ControlAssets`]) runs outside every page's own
+    /// `#document`, so it cannot use a `<rheo-head>` wrapper at all — instead
+    /// its whole decoded fragment is appended, once per page, via this
+    /// method. Site-wide content intentionally lands *after* per-page
+    /// `<rheo-head>` content, so an author's own page-level head content
+    /// takes precedence in reading order over a project-wide default.
+    ///
+    /// `fragment_html` has no wrapping `<html>/<head>/<body>` — just the
+    /// elements to append (e.g. `<link rel="alternate" ...><meta ...>`).
+    /// html5ever only exposes a full-document parser
+    /// ([`html5ever::parse_document`], used by [`Self::parse`]), not a
+    /// fragment parser, so `fragment_html` is parsed by wrapping it in a
+    /// minimal stub document (`<!DOCTYPE html><html><head>{fragment}</head>
+    /// <body></body></html>`); the stub's own `<head>` children are then
+    /// moved, in order, into this document's real `<head>`.
+    pub fn append_head_fragment(&mut self, fragment_html: &str) -> Result<()> {
+        let stub = format!("<!DOCTYPE html><html><head>{fragment_html}</head><body></body></html>");
+        let stub_dom = Self::parse(&stub)?;
+        let stub_head = stub_dom
+            .find_element("head")
+            .ok_or_else(|| RheoError::HtmlGeneration {
+                count: 1,
+                errors: "failed to parse head fragment: stub document has no <head>".to_string(),
+            })?;
+
+        let head = self
+            .find_element("head")
+            .ok_or_else(|| RheoError::HtmlGeneration {
+                count: 1,
+                errors: "HTML document does not contain a <head> element".to_string(),
+            })?;
+
+        for child in stub_head.take_children() {
+            head.append_child(child);
+        }
+
+        Ok(())
+    }
+
     /// Inject `<link>` and `<script>` elements into the HTML `<head>`.
     ///
     /// Refs are inserted verbatim, so callers that link a build-root asset from a
@@ -353,6 +398,16 @@ impl Element {
         let mut children = self.handle.children.borrow_mut();
         let index = index.min(children.len());
         children.insert(index, child.handle);
+    }
+
+    /// Take this element's children, leaving it with none. Used to move a
+    /// parsed fragment's top-level nodes into another document's tree (see
+    /// [`HtmlDom::append_head_fragment`]).
+    fn take_children(&self) -> Vec<Element> {
+        std::mem::take(&mut *self.handle.children.borrow_mut())
+            .into_iter()
+            .map(|handle| Element { handle })
+            .collect()
     }
 
     /// Returns the index of the last `<meta>` child in this element's children, if any.
@@ -863,6 +918,72 @@ mod tests {
         assert_eq!(
             before, after,
             "hoist_rheo_head must be a no-op with no <rheo-head>"
+        );
+    }
+
+    // append_head_fragment tests (via HtmlDom)
+
+    #[test]
+    fn test_append_head_fragment_appends_top_level_elements() {
+        let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.append_head_fragment(
+            r#"<link rel="alternate" type="application/atom+xml" href="/feed.xml"><meta name="site-wide" content="yes">"#,
+        )
+        .unwrap();
+        let result = dom.serialize().unwrap();
+
+        assert!(result.contains("<title>Test</title>"));
+        assert!(
+            result
+                .contains(r#"<link rel="alternate" type="application/atom+xml" href="/feed.xml">"#)
+        );
+        assert!(result.contains(r#"<meta name="site-wide" content="yes">"#));
+
+        let head_pos = result.find("<head>").unwrap();
+        let head_end = result.find("</head>").unwrap();
+        let link_pos = result.find("application/atom+xml").unwrap();
+        let meta_pos = result.find(r#"name="site-wide""#).unwrap();
+        assert!(link_pos > head_pos && link_pos < head_end);
+        assert!(meta_pos > head_pos && meta_pos < head_end);
+        assert!(
+            link_pos < meta_pos,
+            "fragment's own top-level elements must land in their original order"
+        );
+    }
+
+    #[test]
+    fn test_append_head_fragment_lands_after_existing_head_content() {
+        let html = r#"<!DOCTYPE html><html><head><title>Test</title><meta charset="UTF-8"></head><body></body></html>"#;
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.append_head_fragment(r#"<meta name="site-wide" content="yes">"#)
+            .unwrap();
+        let result = dom.serialize().unwrap();
+
+        let charset_pos = result.find(r#"charset="UTF-8""#).unwrap();
+        let site_wide_pos = result.find(r#"name="site-wide""#).unwrap();
+        assert!(
+            site_wide_pos > charset_pos,
+            "site-wide fragment must land after existing head content"
+        );
+    }
+
+    #[test]
+    fn test_append_head_fragment_lands_after_hoisted_rheo_head() {
+        let html = r#"<!DOCTYPE html><html><head><title>Test</title></head><body>
+<rheo-head><meta name="per-page" content="yes"></rheo-head>
+</body></html>"#;
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.hoist_rheo_head().unwrap();
+        dom.append_head_fragment(r#"<meta name="site-wide" content="yes">"#)
+            .unwrap();
+        let result = dom.serialize().unwrap();
+
+        let per_page_pos = result.find(r#"name="per-page""#).unwrap();
+        let site_wide_pos = result.find(r#"name="site-wide""#).unwrap();
+        assert!(
+            per_page_pos < site_wide_pos,
+            "site-wide head content must land after per-page <rheo-head> content"
         );
     }
 

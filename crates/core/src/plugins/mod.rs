@@ -1,6 +1,7 @@
 use crate::config::PluginSection;
 use crate::config::project::ProjectConfig;
 use crate::reticulate::spine::{SpineLayout, VirtualSpine};
+use crate::transclude::ControlAssets;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::info;
@@ -213,6 +214,12 @@ pub struct PluginContext<'a> {
     /// case the plugin takes over placing them (e.g. EPUB embeds them in the
     /// container and adds a manifest item).
     pub bundle_assets: &'a [(String, Bytes)],
+    /// Bundle-root control assets (currently just `.rheo/head.html`) already
+    /// extracted out of `bundle_assets` by core — never written, embedded, or
+    /// served. Plugins that render `<head>` (HTML) read
+    /// [`ControlAssets::head_fragment`] to append site-wide head content to
+    /// every page; other plugins can ignore this field entirely.
+    pub control: &'a ControlAssets,
 }
 
 /// Parse `@namespace/name:version` into its components. Returns None on malformed input.
