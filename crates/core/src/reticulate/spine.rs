@@ -6,7 +6,7 @@ use crate::util::path::{sanitize_handle_segment, to_forward_slash};
 use crate::util::pdf::DocumentTitle;
 use crate::util::typst_literal::TypstLiteral;
 use crate::util::typst_source::TypstStmt;
-use crate::{MARROW_FILE, Result, RheoError, TYP_EXT};
+use crate::{MARROW_FILE, RESERVED_META_LABEL_PREFIX, Result, RheoError, TYP_EXT};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -809,6 +809,26 @@ impl VirtualSpine {
                             )));
                         }
                     }
+                }
+
+                // The `rheo-meta:` namespace is reserved for the synthesized
+                // per-vertebra metadata beacon (`TypstStmt::MetadataBeacon`).
+                // Unlike the escape-collision check below (which only fires on
+                // an actual collision), any authored label squatting on this
+                // prefix is always a hard error — there is no useful silent
+                // fallback, and it doesn't matter whether the label happens to
+                // match a real beacon handle in this project.
+                if let Some(offending) = sites
+                    .definitions
+                    .iter()
+                    .find(|d| d.name.starts_with(RESERVED_META_LABEL_PREFIX))
+                {
+                    return Err(RheoError::invalid_data(format!(
+                        "{}: label <{}> uses the reserved `{}` prefix, which rheo uses internally for per-vertebra document metadata",
+                        file.display(),
+                        offending.name,
+                        RESERVED_META_LABEL_PREFIX
+                    )));
                 }
 
                 user_labels.extend(sites.definitions.iter().map(|d| d.name.clone()));
@@ -1648,6 +1668,50 @@ mod tests {
             }
             Ok(_) => panic!("expected escape collision error"),
         }
+    }
+
+    #[test]
+    fn reserved_meta_label_prefix_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        // intro.typ hand-authors a label squatting on the reserved beacon namespace.
+        fs::write(content.join("intro.typ"), "#let x = 1 <rheo-meta:intro>\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let result = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout);
+        match result {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("intro.typ") && msg.contains("rheo-meta:intro"),
+                    "error should name both file and label: {msg}"
+                );
+            }
+            Ok(_) => panic!("expected reserved meta-label prefix error"),
+        }
+    }
+
+    #[test]
+    fn no_reserved_meta_label_builds_unaffected() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro <intro-section>\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
+        assert_eq!(spine.vertebrae[0].handle, "intro");
     }
 
     // ── SpineScan tests ─────────────────────────────────────────────────────

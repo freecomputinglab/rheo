@@ -17,6 +17,12 @@ pub const MARROW_FILE: &str = ".marrow.typ";
 /// stripped out and consumed by core before plugins see it. See
 /// [`crate::transclude::ControlAssets`].
 pub const CONTROL_ASSET_PREFIX: &str = ".rheo/";
+
+/// Prefix reserved for the per-vertebra metadata beacon label rendered by
+/// [`crate::util::typst_source::TypstStmt::MetadataBeacon`] (`<rheo-meta:<handle>>`).
+/// An author-authored label starting with this prefix is a hard build error —
+/// see [`crate::reticulate::spine::VirtualSpine::build`].
+pub const RESERVED_META_LABEL_PREFIX: &str = "rheo-meta:";
 pub const PDF_EXT: &str = ".pdf";
 pub const HTML_EXT: &str = ".html";
 pub const XHTML_EXT: &str = ".xhtml";
