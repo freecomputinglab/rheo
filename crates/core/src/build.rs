@@ -285,7 +285,7 @@ impl Build {
 
         let moulded = virtual_spine.mould();
         let bundle_source = self.emit_bundle_source.then(|| moulded.main.clone());
-        let rheo_context = virtual_spine.rheo_context_preludes();
+        let rheo_context = virtual_spine.vertebra_injections();
         // Per-format footnote-reset toggle (default true); only takes effect for
         // per-page formats, since rheo.typ ANDs it with the `ext` gate.
         let reset_footnotes = self

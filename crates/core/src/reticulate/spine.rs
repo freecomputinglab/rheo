@@ -582,6 +582,19 @@ impl Vertebra {
     }
 }
 
+/// The Typst source injected around one vertebra's own body: a `prelude`
+/// prepended before it, an `epilogue` appended after it. See
+/// [`VirtualSpine::vertebra_injections`].
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct VertebraInjection {
+    /// Text prepended before the vertebra's own source (the `rheo-metadata`
+    /// helper and the `rheo-context()` binding).
+    pub prelude: String,
+    /// Text appended after the vertebra's own source (the metadata beacon,
+    /// when emitted for this layout — empty otherwise).
+    pub epilogue: String,
+}
+
 /// One node in the structured spine. Mirrors directory / section nesting to
 /// arbitrary depth as a structural overlay over the flat `vertebrae`.
 #[derive(Debug)]
@@ -877,24 +890,47 @@ impl VirtualSpine {
         })
     }
 
-    /// Per-vertebra `rheo-context` Typst preludes, keyed by include path (`rel_path`).
+    /// Per-vertebra Typst injections, keyed by include path (`rel_path`): a
+    /// `prelude` (prepended before the vertebra's own body) and an `epilogue`
+    /// (appended after it).
     ///
-    /// Each vertebra is injected with a `rheo-context()` function that composes
-    /// this file's own `handle` with the format-global values (`spine`,
-    /// `spine-flat`, `target`, `ext`) spread from `sys.inputs.rheo-context`:
-    /// `#let rheo-context() = (handle: <its handle>, ..sys.inputs.rheo-context)`.
-    /// Only the per-file `handle` is baked here; the shared (potentially large)
-    /// spine lives once in [`Self::global_context`], not duplicated per vertebra.
+    /// Each vertebra's `prelude` defines `rheo-metadata` (see
+    /// [`TypstStmt::MetadataHelper`]) followed by the `rheo-context()`
+    /// function, which composes this file's own `handle` and `metadata-of:
+    /// rheo-metadata` with the format-global values (`spine`, `spine-flat`,
+    /// `target`, `ext`) spread from `sys.inputs.rheo-context`. Only the
+    /// per-file `handle` is baked here; the shared (potentially large) spine
+    /// lives once in [`Self::global_context`], not duplicated per vertebra.
     /// `sys.inputs` reads need no `#context`, so authors read `rheo-context()`
     /// fields directly.
-    pub fn rheo_context_preludes(&self) -> HashMap<String, String> {
+    ///
+    /// Each vertebra's `epilogue` is its metadata beacon (see
+    /// [`TypstStmt::MetadataBeacon`]) — but only for `OnePerVertebra` layouts.
+    /// A `SingleCombined` (PDF) layout wraps every vertebra in one shared
+    /// `#document(...)`, where a beacon would leak the preceding vertebra's
+    /// `set document(...)` state into the next one (confirmed empirically in
+    /// `docs/spikes/typst-native-metadata.md`, Q6), so `epilogue` is empty
+    /// there; `rheo-metadata` is still defined (it just finds no beacon and
+    /// returns `(:)`).
+    pub fn vertebra_injections(&self) -> HashMap<String, VertebraInjection> {
+        let emit_beacon = matches!(self.layout, SpineLayout::OnePerVertebra { .. });
         self.vertebrae
             .iter()
             .map(|v| {
+                let helper = TypstStmt::MetadataHelper;
                 let binding = TypstStmt::ContextBinding {
                     handle: v.handle.clone(),
                 };
-                (v.rel_path.clone(), format!("{binding}\n\n"))
+                let prelude = format!("{helper}\n\n{binding}\n\n");
+                let epilogue = if emit_beacon {
+                    let beacon = TypstStmt::MetadataBeacon {
+                        handle: v.handle.clone(),
+                    };
+                    format!("\n{beacon}\n")
+                } else {
+                    String::new()
+                };
+                (v.rel_path.clone(), VertebraInjection { prelude, epilogue })
             })
             .collect()
     }
@@ -907,7 +943,7 @@ impl VirtualSpine {
     /// the shared spine) without referencing the per-file `#let rheo-context`,
     /// which additionally carries this file's `handle`.
     ///
-    /// `target` and `ext` follow the same rule as [`Self::rheo_context_preludes`]:
+    /// `target` and `ext` follow the same rule as [`Self::vertebra_injections`]:
     /// each field is added when `Some`, omitted for PDF (`None`). `ext` is the
     /// output file extension (e.g. `"html"`/`"xhtml"`) — the value `typ/rheo.typ`
     /// reads to build cross-vertebra link hrefs.
@@ -940,36 +976,34 @@ impl VirtualSpine {
     }
 
     /// The structured spine tree as a [`TypstLiteral`] array of recursive node
-    /// dicts. See [`Self::rheo_context_preludes`] for the node key set.
+    /// dicts. See [`Self::node_literal`] for the node key set.
     fn spine_tree(&self) -> TypstLiteral {
         TypstLiteral::Array(self.tree.iter().map(|n| self.node_literal(n)).collect())
     }
 
-    /// Serialize one [`SpineNode`] (and its descendants) to its `spine` dict shape.
+    /// Serialize one [`SpineNode`] (and its descendants) to its `spine` dict
+    /// shape: `title`/`handle`/`path`/`children`. Per-vertebra metadata is no
+    /// longer carried here — read it live via `rheo-context().metadata-of`
+    /// (see [`TypstStmt::MetadataHelper`]) instead.
     fn node_literal(&self, node: &SpineNode) -> TypstLiteral {
-        let (handle, path, title, metadata) =
-            match node.vertebra.and_then(|i| self.vertebrae.get(i)) {
-                Some(v) => (
-                    TypstLiteral::str(v.handle.as_str()),
-                    TypstLiteral::str(v.rel_path.as_str()),
-                    TypstLiteral::str(v.title.as_str()),
-                    v.metadata.to_literal(),
-                ),
-                None => (
-                    TypstLiteral::None,
-                    TypstLiteral::None,
-                    TypstLiteral::str(node.title.as_deref().unwrap_or(node.segment.as_str())),
-                    // Group nodes have no source document, so no metadata.
-                    TypstLiteral::Dict(vec![]),
-                ),
-            };
+        let (handle, path, title) = match node.vertebra.and_then(|i| self.vertebrae.get(i)) {
+            Some(v) => (
+                TypstLiteral::str(v.handle.as_str()),
+                TypstLiteral::str(v.rel_path.as_str()),
+                TypstLiteral::str(v.title.as_str()),
+            ),
+            None => (
+                TypstLiteral::None,
+                TypstLiteral::None,
+                TypstLiteral::str(node.title.as_deref().unwrap_or(node.segment.as_str())),
+            ),
+        };
         let children =
             TypstLiteral::Array(node.children.iter().map(|c| self.node_literal(c)).collect());
         TypstLiteral::Dict(vec![
             ("title".to_string(), title),
             ("handle".to_string(), handle),
             ("path".to_string(), path),
-            ("metadata".to_string(), metadata),
             ("children".to_string(), children),
         ])
     }
@@ -986,7 +1020,6 @@ impl VirtualSpine {
                         ("handle".to_string(), TypstLiteral::str(v.handle.as_str())),
                         ("path".to_string(), TypstLiteral::str(v.rel_path.as_str())),
                         ("title".to_string(), TypstLiteral::str(v.title.as_str())),
-                        ("metadata".to_string(), v.metadata.to_literal()),
                     ])
                 })
                 .collect(),
@@ -1209,7 +1242,7 @@ mod tests {
     }
 
     #[test]
-    fn rheo_context_prelude_is_composed_function_with_own_handle() {
+    fn vertebra_injection_prelude_is_composed_function_with_own_handle() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let content = root.join("content");
@@ -1225,24 +1258,69 @@ mod tests {
         };
         let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
 
-        let preludes = spine.rheo_context_preludes();
-        // One prelude per vertebra, keyed by include path.
-        assert_eq!(preludes.len(), 2);
-        let root_prelude = &preludes["content/intro.typ"];
-        let nested_prelude = &preludes["content/chapters/intro.typ"];
+        let injections = spine.vertebra_injections();
+        // One injection per vertebra, keyed by include path.
+        assert_eq!(injections.len(), 2);
+        let root_injection = &injections["content/intro.typ"];
+        let nested_injection = &injections["content/chapters/intro.typ"];
 
         // Each bakes only its OWN handle...
-        assert!(root_prelude.contains("handle: \"intro\""));
-        assert!(nested_prelude.contains("handle: \"chapters:intro\""));
-        for p in [root_prelude, nested_prelude] {
+        assert!(root_injection.prelude.contains("handle: \"intro\""));
+        assert!(
+            nested_injection
+                .prelude
+                .contains("handle: \"chapters:intro\"")
+        );
+        for inj in [root_injection, nested_injection] {
+            let p = &inj.prelude;
+            // ...the rheo-metadata helper is defined ahead of rheo-context()...
+            assert!(p.contains("#let rheo-metadata(handle) = "));
+            assert!(
+                p.find("rheo-metadata(handle)").unwrap()
+                    < p.find("#let rheo-context() = ").unwrap()
+            );
             // ...as a function that spreads the format-global values from
-            // sys.inputs (composed, not baked)...
-            assert!(p.starts_with("#let rheo-context() = "));
+            // sys.inputs (composed, not baked), and carries metadata-of...
+            assert!(p.contains("#let rheo-context() = "));
+            assert!(p.contains("metadata-of: rheo-metadata"));
             assert!(p.contains("..sys.inputs.rheo-context"));
             // ...so the large spine is NOT duplicated into the per-file prelude.
             assert!(!p.contains("spine-flat"));
             assert!(!p.contains("path:"));
+            // OnePerVertebra layouts get a beacon epilogue naming this vertebra.
+            assert!(inj.epilogue.contains("#metadata("));
         }
+        assert!(root_injection.epilogue.contains("<rheo-meta:intro>"));
+        assert!(
+            nested_injection
+                .epilogue
+                .contains("<rheo-meta:chapters:intro>")
+        );
+    }
+
+    #[test]
+    fn vertebra_injection_epilogue_empty_for_single_combined_layout() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("a.typ"), "= A\n").unwrap();
+
+        let files = vec![content.join("a.typ")];
+        let layout = SpineLayout::SingleCombined {
+            output_name: "book.pdf".into(),
+            format: "pdf".into(),
+        };
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
+
+        let injections = spine.vertebra_injections();
+        let injection = &injections["content/a.typ"];
+        // No beacon under combined PDF (Q6: it would leak into later vertebrae).
+        assert_eq!(injection.epilogue, "");
+        // The helper (and rheo-context's metadata-of field) are still defined,
+        // so `(rheo-context().metadata-of)(...)` is always callable.
+        assert!(injection.prelude.contains("#let rheo-metadata(handle) = "));
+        assert!(injection.prelude.contains("metadata-of: rheo-metadata"));
     }
 
     #[test]
@@ -1282,7 +1360,11 @@ mod tests {
     }
 
     #[test]
-    fn spine_exposes_document_metadata_on_entries() {
+    fn spine_no_longer_exposes_a_metadata_key_on_entries() {
+        // Superseded by the Typst-native metadata-beacon mechanism
+        // (`rheo-context().metadata-of`, docs/spikes/typst-native-metadata.md):
+        // the Rust-parsed `metadata` key is no longer serialized into either
+        // the spine tree or spine-flat entries.
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let content = root.join("content");
@@ -1293,7 +1375,7 @@ mod tests {
             "#set document(title: [My Post], keywords: (\"DiH\",), author: \"Jane\")\n= Body\n",
         )
         .unwrap();
-        // A page with no `#set document(...)`: metadata is an empty dict.
+        // A page with no `#set document(...)`.
         fs::write(content.join("bare.typ"), "= Bare\n").unwrap();
 
         let scan = SpineScan::run(&content, &[]).unwrap();
@@ -1303,19 +1385,17 @@ mod tests {
         };
         let spine = VirtualSpine::build(scan, root, layout).unwrap();
 
-        // The metadata dict is exposed on both spine (tree) and spine-flat entries.
         for serialized in [
             spine.spine_tree().serialize(),
             spine.spine_flat().serialize(),
         ] {
             assert!(
-                serialized.contains(
-                    "metadata: (title: \"My Post\", keywords: (\"DiH\",), author: \"Jane\")"
-                ),
-                "metadata dict missing/instructed wrong: {serialized}"
+                !serialized.contains("metadata:"),
+                "metadata key should no longer be serialized: {serialized}"
             );
-            // The bare page still carries a `metadata` key, as an empty dict.
-            assert!(serialized.contains("metadata: (:)"));
+            // The other spine entry fields remain.
+            assert!(serialized.contains("title: \"My Post\""));
+            assert!(serialized.contains("handle: \"post\""));
         }
     }
 

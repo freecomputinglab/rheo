@@ -30,13 +30,38 @@ pub enum TypstStmt {
     Let { name: String, value: TypstLiteral },
     /// The per-vertebra `rheo-context` binding, as a zero-arg function that
     /// composes this file's `handle` with the format-global values spread from
-    /// `sys.inputs.rheo-context`:
-    /// `#let rheo-context() = (handle: "<handle>", ..sys.inputs.rheo-context)`.
+    /// `sys.inputs.rheo-context`, plus a `metadata-of` closure (see
+    /// [`TypstStmt::MetadataHelper`]) any vertebra can call to read another
+    /// vertebra's beacon:
+    /// `#let rheo-context() = (handle: "<handle>", metadata-of: rheo-metadata, ..sys.inputs.rheo-context)`.
     /// The function form lets authors mock it under vanilla Typst; the spread
     /// keeps the (potentially large) `spine` stored once in `sys.inputs` rather
     /// than baked into every vertebra. `sys.inputs` reads need no `#context`, so
-    /// authors still read `rheo-context().handle` directly.
+    /// authors still read `rheo-context().handle` directly. Since `metadata-of`
+    /// is a dict field rather than a method, calling it needs the awkward but
+    /// necessary `(rheo-context().metadata-of)("some-handle")` form, not
+    /// `rheo-context().metadata-of("some-handle")`.
     ContextBinding { handle: String },
+    /// The `rheo-metadata` helper function, defined once per vertebra ahead of
+    /// [`TypstStmt::ContextBinding`] (which references it as `metadata-of`).
+    /// Reads another vertebra's [`TypstStmt::MetadataBeacon`] via `query()`,
+    /// returning its published fields as a dict (or `(:)` if no beacon with
+    /// that handle was found — e.g. under a `SingleCombined` layout, where no
+    /// beacon is emitted at all).
+    MetadataHelper,
+    /// A per-vertebra metadata "beacon": a labelled, hidden `#metadata(...)`
+    /// element publishing this vertebra's own resolved `#set document(...)`
+    /// values (`title`/`author`/`description`/`keywords`/`date`), queryable by
+    /// any other vertebra in the same bundle compile via
+    /// [`TypstStmt::MetadataHelper`]'s `rheo-metadata`. Emitted as a vertebra
+    /// *epilogue* (after the vertebra's own body), never injected after the
+    /// synthesized bundle main's `#include` — a `set document(...)` rule
+    /// inside an `#include`d module does not leak to bundle-root siblings, but
+    /// `document.title`/etc. do see it via Typst's realization/introspection.
+    /// Only emitted for `OnePerVertebra` layouts (HTML/EPUB); combined PDF
+    /// leaks cross-vertebra `set document(...)` state within its one shared
+    /// `#document(...)`, so no beacon is emitted there.
+    MetadataBeacon { handle: String },
     /// `#state("<key>").update(<value>)`.
     StateUpdate { key: String, value: TypstLiteral },
     /// `#rheo-page-init("<handle>")` — the per-document init hook defined in
@@ -68,8 +93,27 @@ impl fmt::Display for TypstStmt {
             }
             TypstStmt::ContextBinding { handle } => write!(
                 f,
-                "#let rheo-context() = (handle: {}, ..sys.inputs.rheo-context)",
+                "#let rheo-context() = (handle: {}, metadata-of: rheo-metadata, ..sys.inputs.rheo-context)",
                 TypstLiteral::str(handle.as_str()).serialize()
+            ),
+            TypstStmt::MetadataHelper => write!(
+                f,
+                "#let rheo-metadata(handle) = {{\n\
+                 \x20 let found = query(label(\"rheo-meta:\" + handle))\n\
+                 \x20 if found.len() == 0 {{ return (:) }}\n\
+                 \x20 let out = (:)\n\
+                 \x20 for (k, v) in found.first().value {{\n\
+                 \x20   if k == \"handle\" or v == none or v == auto {{ continue }}\n\
+                 \x20   if type(v) == array and v.len() == 0 {{ continue }}\n\
+                 \x20   out.insert(k, v)\n\
+                 \x20 }}\n\
+                 \x20 out\n\
+                 }}"
+            ),
+            TypstStmt::MetadataBeacon { handle } => write!(
+                f,
+                "#context [#metadata((handle: {handle_lit}, title: document.title, author: document.author, description: document.description, keywords: document.keywords, date: document.date)) <rheo-meta:{handle}>]",
+                handle_lit = TypstLiteral::str(handle.as_str()).serialize(),
             ),
             TypstStmt::StateUpdate { key, value } => write!(
                 f,
@@ -131,7 +175,37 @@ mod tests {
         };
         assert_eq!(
             stmt.to_string(),
-            "#let rheo-context() = (handle: \"chapters:ch1\", ..sys.inputs.rheo-context)"
+            "#let rheo-context() = (handle: \"chapters:ch1\", metadata-of: rheo-metadata, ..sys.inputs.rheo-context)"
+        );
+    }
+
+    #[test]
+    fn metadata_helper_renders_fixed_query_function() {
+        let stmt = TypstStmt::MetadataHelper;
+        assert_eq!(
+            stmt.to_string(),
+            "#let rheo-metadata(handle) = {\n\
+             \x20 let found = query(label(\"rheo-meta:\" + handle))\n\
+             \x20 if found.len() == 0 { return (:) }\n\
+             \x20 let out = (:)\n\
+             \x20 for (k, v) in found.first().value {\n\
+             \x20   if k == \"handle\" or v == none or v == auto { continue }\n\
+             \x20   if type(v) == array and v.len() == 0 { continue }\n\
+             \x20   out.insert(k, v)\n\
+             \x20 }\n\
+             \x20 out\n\
+             }"
+        );
+    }
+
+    #[test]
+    fn metadata_beacon_quotes_handle_in_value_and_label() {
+        let stmt = TypstStmt::MetadataBeacon {
+            handle: "chapters:intro".into(),
+        };
+        assert_eq!(
+            stmt.to_string(),
+            "#context [#metadata((handle: \"chapters:intro\", title: document.title, author: document.author, description: document.description, keywords: document.keywords, date: document.date)) <rheo-meta:chapters:intro>]"
         );
     }
 

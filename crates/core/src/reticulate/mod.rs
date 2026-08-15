@@ -4,4 +4,4 @@ pub mod spine;
 
 pub use bundle_source::BundleSource;
 pub use mould::{Rewrites, SpineMould, SyntaxRewrite};
-pub use spine::{SpineLayout, SpineScan, Vertebra, VirtualSpine};
+pub use spine::{SpineLayout, SpineScan, Vertebra, VertebraInjection, VirtualSpine};

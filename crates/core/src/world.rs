@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::packages::RheoPackages;
+use crate::reticulate::VertebraInjection;
 use crate::util::typst_literal::TypstLiteral;
 use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
@@ -56,10 +57,12 @@ pub struct RheoWorld {
     /// include path (e.g. `content/intro.typ`). When an included file matches, the
     /// world serves the rewritten source instead of reading it from disk.
     source_overlay: HashMap<String, String>,
-    /// Per-vertebra `rheo-context` prelude, keyed by project-relative include path.
-    /// Prepended to each matching vertebra's served source so authored Typst can
-    /// read `rheo-context` (its handle and the spine).
-    rheo_context: HashMap<String, String>,
+    /// Per-vertebra Typst injections (prelude + epilogue), keyed by
+    /// project-relative include path. The prelude is prepended to each
+    /// matching vertebra's served source so authored Typst can read
+    /// `rheo-context` (its handle and the spine); the epilogue (a metadata
+    /// beacon, when emitted for the layout) is appended after it.
+    rheo_context: HashMap<String, VertebraInjection>,
 }
 
 struct FileSlot {
@@ -115,17 +118,17 @@ impl RheoWorld {
     ///
     /// The caller passes the moulded spine: the synthesized main source, a
     /// per-vertebra source overlay (rewritten sources keyed by include path), and
-    /// per-vertebra `rheo-context` preludes (keyed the same way). The world serves
-    /// the main for the synthetic main file ID, each overlay entry for its
-    /// vertebra, and prepends the matching `rheo-context` prelude — all bypassing
-    /// disk. It also seeds `sys.inputs.rheo-context` with the global (spine)
-    /// context, so packages can detect a rheo build and reach the shared spine
-    /// without depending on the per-file `#let rheo-context`.
+    /// per-vertebra `rheo-context` injections (keyed the same way). The world
+    /// serves the main for the synthetic main file ID, each overlay entry for
+    /// its vertebra, and wraps the matching source with its prelude/epilogue —
+    /// all bypassing disk. It also seeds `sys.inputs.rheo-context` with the
+    /// global (spine) context, so packages can detect a rheo build and reach
+    /// the shared spine without depending on the per-file `#let rheo-context`.
     pub fn new_for_bundle(
         root: &Path,
         virtual_main_source: String,
         source_overlay: HashMap<String, String>,
-        rheo_context: HashMap<String, String>,
+        rheo_context: HashMap<String, VertebraInjection>,
         global_context: Option<TypstLiteral>,
         format_name: Option<&str>,
         font_dirs: Vec<PathBuf>,
@@ -399,19 +402,24 @@ impl World for RheoWorld {
             text = format!("{}{}", template_inject, text);
         } else {
             // Non-main files (vertebrae/partials): the target() polyfill, then any
-            // per-vertebra `rheo-context` prelude, then the file's own source.
+            // per-vertebra `rheo-context` prelude, then the file's own source,
+            // then any per-vertebra epilogue (the metadata beacon).
             let rel = id
                 .vpath()
                 .get_with_slash()
                 .trim_start_matches('/')
                 .to_string();
-            let context_prelude = self
-                .rheo_context
-                .get(&rel)
-                .map(String::as_str)
-                .unwrap_or("");
-            if !target_polyfill.is_empty() || !context_prelude.is_empty() {
-                text = format!("{}{}{}", target_polyfill, context_prelude, text);
+            let injection = self.rheo_context.get(&rel);
+            let context_prelude = injection.map(|inj| inj.prelude.as_str()).unwrap_or("");
+            let context_epilogue = injection.map(|inj| inj.epilogue.as_str()).unwrap_or("");
+            if !target_polyfill.is_empty()
+                || !context_prelude.is_empty()
+                || !context_epilogue.is_empty()
+            {
+                text = format!(
+                    "{}{}{}{}",
+                    target_polyfill, context_prelude, text, context_epilogue
+                );
             }
         }
 
@@ -560,7 +568,11 @@ mod tests {
         let mut rheo_context = HashMap::new();
         rheo_context.insert(
             "content/intro.typ".to_string(),
-            "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)\n\n".to_string(),
+            VertebraInjection {
+                prelude: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)\n\n"
+                    .to_string(),
+                epilogue: String::new(),
+            },
         );
         let world = RheoWorld::new_for_bundle(
             root,
@@ -582,6 +594,47 @@ mod tests {
         // The prelude is prepended ahead of the file's own body.
         assert!(text.contains("#let rheo-context() = (handle: \"intro\""));
         assert!(text.find("rheo-context").unwrap() < text.find("= Intro").unwrap());
+    }
+
+    #[test]
+    fn appends_rheo_context_epilogue_after_vertebra_body() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let mut source_overlay = HashMap::new();
+        source_overlay.insert("content/intro.typ".to_string(), "= Intro\n".to_string());
+        let mut rheo_context = HashMap::new();
+        rheo_context.insert(
+            "content/intro.typ".to_string(),
+            VertebraInjection {
+                prelude: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)\n\n"
+                    .to_string(),
+                epilogue: "\n#metadata((handle: \"intro\")) <rheo-meta:intro>\n".to_string(),
+            },
+        );
+        let world = RheoWorld::new_for_bundle(
+            root,
+            "#document(\"intro.html\", format: \"html\")[]".to_string(),
+            source_overlay,
+            rheo_context,
+            None,
+            Some("html"),
+            vec![],
+        )
+        .unwrap();
+
+        let id = RootedPath::new(
+            VirtualRoot::Project,
+            VirtualPath::new("content/intro.typ").unwrap(),
+        )
+        .intern();
+        let text = World::source(&world, id).unwrap().text().to_string();
+        // Order: prelude, then the vertebra's own body, then the epilogue.
+        let prelude_at = text.find("#let rheo-context()").unwrap();
+        let body_at = text.find("= Intro").unwrap();
+        let epilogue_at = text.find("<rheo-meta:intro>").unwrap();
+        assert!(prelude_at < body_at);
+        assert!(body_at < epilogue_at);
     }
 
     #[test]
