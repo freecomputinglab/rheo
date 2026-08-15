@@ -319,6 +319,9 @@ mod tests {
             format: TypstFormat::Html,
             title: String::new(),
             date: None,
+            description: None,
+            keywords: vec![],
+            author: vec![],
             vars: HashMap::new(),
             contributed: false,
         }

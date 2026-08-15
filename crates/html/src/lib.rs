@@ -382,6 +382,9 @@ mod tests {
             format: TypstFormat::Html,
             title: path.to_string(),
             date: None,
+            description: None,
+            keywords: vec![],
+            author: vec![],
             vars: HashMap::new(),
             contributed: false,
         };

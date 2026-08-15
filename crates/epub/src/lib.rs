@@ -70,17 +70,27 @@ impl FormatPlugin for EpubPlugin {
         let identifier = epub_config.identifier.clone();
         let date = epub_config.date_utc();
 
-        // Extract language and author from first output's HTML, default to "en" and no author.
-        let (language, author) = if let Some(first_output) = outputs.first() {
+        // Extract language from the first output's HTML; default to "en".
+        let language = if let Some(first_output) = outputs.first() {
             let html_string = String::from_utf8(first_output.bytes.to_vec()).map_err(|e| {
                 RheoError::invalid_data(format!("EPUB HTML output is not valid UTF-8: {}", e))
             })?;
-            let lang = extract_language(&html_string).unwrap_or_else(|| "en".to_string());
-            let author = extract_author(&first_output.vars, &html_string);
-            (lang, author)
+            extract_language(&html_string).unwrap_or_else(|| "en".to_string())
         } else {
-            ("en".to_string(), None)
+            "en".to_string()
         };
+
+        // Author comes straight from the first output's Typst-resolved
+        // metadata (`CastVertebra::author`, harvested from `DocumentInfo`
+        // during compilation) rather than an HTML `<meta name="author">` scrape.
+        // EPUB's `dc:creator` (see `Package::creator`) is a single optional
+        // string, while `DocumentInfo.author` can carry zero, one, or many
+        // authors (e.g. `#set document(author: ("A", "B"))`) — multiple
+        // authors are joined with `", "` rather than keeping only the first.
+        let author = outputs
+            .first()
+            .filter(|o| !o.author.is_empty())
+            .map(|o| o.author.join(", "));
 
         let mut items = outputs
             .iter()
@@ -433,80 +443,6 @@ fn extract_language(html_string: &str) -> Option<String> {
     }
 
     find_html_lang(dom.document_root())
-}
-
-/// Extract author from rheo-author var or HTML <meta name="author">.
-///
-/// Checks rheo-author var first, then falls back to HTML meta tag.
-/// Returns `None` if no author found.
-fn extract_author(
-    vars: &std::collections::HashMap<String, rheo_core::parser::RheoValue>,
-    html_string: &str,
-) -> Option<String> {
-    use markup5ever_rcdom::NodeData;
-    use rheo_core::util::html::HtmlDom;
-
-    // Check rheo-author var first.
-    if let Some(author_value) = vars.get("author").and_then(|v| v.as_str()) {
-        return Some(author_value.to_string());
-    }
-
-    // Fall back to HTML <meta name="author" content="...">.
-    let dom = HtmlDom::parse(html_string).ok()?;
-    let _head = dom.find_element("head")?;
-
-    fn find_author_meta(handle: &markup5ever_rcdom::Handle) -> Option<String> {
-        if let NodeData::Element { name, attrs, .. } = &handle.data {
-            if name.local.as_ref() == "meta" {
-                let mut is_author = false;
-                let mut content = None;
-                for attr in attrs.borrow().iter() {
-                    match attr.name.local.as_ref() {
-                        "name" if attr.value.as_ref() == "author" => is_author = true,
-                        "content" => content = Some(attr.value.to_string()),
-                        _ => {}
-                    }
-                }
-                if is_author {
-                    return content;
-                }
-            }
-            for child in handle.children.borrow().iter() {
-                if let Some(author) = find_author_meta(child) {
-                    return Some(author);
-                }
-            }
-        }
-        None
-    }
-
-    // Get the Handle from head by accessing document_root and walking to head element.
-    fn find_head_handle(handle: &markup5ever_rcdom::Handle) -> Option<markup5ever_rcdom::Handle> {
-        match &handle.data {
-            NodeData::Element { name, .. } => {
-                if name.local.as_ref() == "head" {
-                    return Some(handle.clone());
-                }
-                for child in handle.children.borrow().iter() {
-                    if let Some(found) = find_head_handle(child) {
-                        return Some(found);
-                    }
-                }
-            }
-            NodeData::Document => {
-                for child in handle.children.borrow().iter() {
-                    if let Some(found) = find_head_handle(child) {
-                        return Some(found);
-                    }
-                }
-            }
-            _ => {}
-        }
-        None
-    }
-
-    let head_handle = find_head_handle(dom.document_root())?;
-    find_author_meta(&head_handle)
 }
 
 pub struct EpubItem {

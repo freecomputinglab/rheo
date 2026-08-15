@@ -11,7 +11,9 @@ use crate::config::PluginSection;
 use crate::config::output::OutputConfig;
 use crate::config::project::{ProjectConfig, ProjectMode};
 use crate::diagnostics::results::CompilationResults;
-use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, TypstFormat, spine_layout_for};
+use crate::plugins::{
+    CastVertebra, DocumentMeta, FormatPlugin, PluginContext, TypstFormat, spine_layout_for,
+};
 use crate::reticulate::spine::{SpineScan, VirtualSpine};
 use crate::transclude::{ContentTransclusion, ControlAssetKind, ControlAssets};
 use crate::world::RheoWorld;
@@ -19,6 +21,7 @@ use crate::{Result, RheoError};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info};
+use typst::model::Document as _;
 
 /// Inputs for preparing a [`Build`], typically mapped from CLI flags and config.
 ///
@@ -56,6 +59,24 @@ pub struct Build {
     output: OutputConfig,
     font_dirs: Vec<PathBuf>,
     emit_bundle_source: bool,
+}
+
+/// The result of [`Build::compile_spine`]: the built spine, the compiled
+/// bundle's flattened files, which of those files are raw assets, the
+/// optional debug bundle source, and each document's Typst-resolved metadata.
+struct CompiledSpine {
+    /// The built, collision-checked `VirtualSpine`.
+    spine: VirtualSpine,
+    /// The compiled bundle's flattened path→bytes map (documents and assets
+    /// together; `assets` distinguishes them).
+    files: typst_bundle::VirtualFs,
+    /// Output paths in `files` that are raw assets rather than compiled documents.
+    assets: HashSet<String>,
+    /// The synthesized bundle main, present only when `emit_bundle_source` is set.
+    bundle_source: Option<String>,
+    /// Each compiled document's Typst-resolved `DocumentMeta`, keyed by the
+    /// same output-path string form as `assets`.
+    meta: HashMap<String, DocumentMeta>,
 }
 
 impl Build {
@@ -180,27 +201,25 @@ impl Build {
     /// Shared by the full build and the dev-server watch path: resolves the spine
     /// options, generates the spine files for the project mode, builds and
     /// collision-checks the `VirtualSpine`, then moulds it and compiles the Typst
-    /// bundle into a `VirtualFs`.
+    /// bundle into a `VirtualFs`. Returns a [`CompiledSpine`] bundling:
     ///
-    /// The third return value is the set of output paths that are raw *assets*
-    /// rather than compiled documents. Export flattens both kinds into one
-    /// path→bytes map, so this set is the only surviving record of which entries
-    /// must bypass the format plugin and be written verbatim.
-    ///
-    /// The fourth return value is the synthesized bundle main, present only
-    /// when `self.emit_bundle_source` is set (the caller writes it to
-    /// `.rheo-bundle.typ`; `compile_spine` has no `plugin_output_dir`).
+    /// - `spine` / `files`: the built `VirtualSpine` and the compiled bundle's
+    ///   flattened path→bytes map.
+    /// - `assets`: the set of output paths that are raw *assets* rather than
+    ///   compiled documents. Export flattens both kinds into one path→bytes map,
+    ///   so this set is the only surviving record of which entries must bypass
+    ///   the format plugin and be written verbatim.
+    /// - `bundle_source`: the synthesized bundle main, present only when
+    ///   `self.emit_bundle_source` is set (the caller writes it to
+    ///   `.rheo-bundle.typ`; `compile_spine` has no `plugin_output_dir`).
+    /// - `meta`: each compiled document's Typst-resolved `DocumentMeta`, keyed
+    ///   by the same output-path string form as `assets`.
     fn compile_spine(
         &self,
         plugin: &dyn FormatPlugin,
         plugin_section: &PluginSection,
         content_dir: &Path,
-    ) -> Result<(
-        VirtualSpine,
-        typst_bundle::VirtualFs,
-        HashSet<String>,
-        Option<String>,
-    )> {
+    ) -> Result<CompiledSpine> {
         // Effective spine config: each field on a per-format [plugin.spine]
         // falls back to the global [spine] independently when unset, rather
         // than the per-format table's mere presence blanking every global
@@ -305,17 +324,31 @@ impl Build {
             self.font_dirs.clone(),
         )?;
         let bundle = world.compile_bundle()?;
-        // Record which entries are assets before export collapses the
-        // document/asset distinction into plain bytes; `bundle` is not retained.
-        let assets: HashSet<String> = bundle
-            .files
-            .iter()
-            .filter(|(_, file)| matches!(file, typst_bundle::BundleFile::Asset(_)))
-            .map(|(path, _)| path.get_with_slash().trim_start_matches('/').to_string())
-            .collect();
+        // Record which entries are assets, and snapshot each document's
+        // Typst-resolved metadata, before export collapses the document/asset
+        // distinction into plain bytes and `bundle` itself is dropped.
+        let mut assets: HashSet<String> = HashSet::new();
+        let mut meta: HashMap<String, DocumentMeta> = HashMap::new();
+        for (path, file) in bundle.files.iter() {
+            let output_path = path.get_with_slash().trim_start_matches('/').to_string();
+            match file {
+                typst_bundle::BundleFile::Asset(_) => {
+                    assets.insert(output_path);
+                }
+                typst_bundle::BundleFile::Document(doc) => {
+                    meta.insert(output_path, DocumentMeta::new(doc.info().clone()));
+                }
+            }
+        }
         let virtual_fs = export_bundle(&bundle)?;
 
-        Ok((virtual_spine, virtual_fs, assets, bundle_source))
+        Ok(CompiledSpine {
+            spine: virtual_spine,
+            files: virtual_fs,
+            assets,
+            bundle_source,
+            meta,
+        })
     }
 
     /// Compile HTML to an in-memory VirtualFs for the dev server.
@@ -386,8 +419,11 @@ impl Build {
             .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
             .unwrap_or_default();
 
-        let (_virtual_spine, virtual_fs, assets, _bundle_source) =
-            self.compile_spine(html_plugin.as_ref(), plugin_section, &content_dir)?;
+        let CompiledSpine {
+            files: virtual_fs,
+            assets,
+            ..
+        } = self.compile_spine(html_plugin.as_ref(), plugin_section, &content_dir)?;
 
         // Build a page-path -> HTML string map from the non-asset (compiled
         // document) entries of this same virtual_fs, for `<rheo-content>`
@@ -533,8 +569,13 @@ impl Build {
             let resolved_assets =
                 resolver.resolve(plugin.as_ref(), plugin_section, &manifest_blocks)?;
 
-            let (virtual_spine, virtual_fs, assets, bundle_source) =
-                self.compile_spine(plugin.as_ref(), plugin_section, &content_dir)?;
+            let CompiledSpine {
+                spine: virtual_spine,
+                files: virtual_fs,
+                assets,
+                bundle_source,
+                meta,
+            } = self.compile_spine(plugin.as_ref(), plugin_section, &content_dir)?;
 
             // Read-only debug artifact — never read back as an input. Written
             // under the plugin's build-dir output, which the watcher already
@@ -549,8 +590,13 @@ impl Build {
                 })?;
             }
 
-            let (outputs, mut asset_files) =
-                flatten_bundle_outputs(virtual_fs, &assets, &virtual_spine, plugin.typst_format());
+            let (outputs, mut asset_files) = flatten_bundle_outputs(
+                virtual_fs,
+                &assets,
+                &virtual_spine,
+                plugin.typst_format(),
+                &meta,
+            );
 
             // Resolve any `<rheo-content>` placeholders bundle-emitted assets
             // (e.g. a marrow-minted Atom feed) contain, embedding the compiled
@@ -663,16 +709,24 @@ impl Build {
 /// and raw assets.
 ///
 /// `VirtualPath::get_with_slash()` gives the path string (e.g. `"/intro.html"`);
-/// the leading `/` is stripped to produce a relative filename. Each document is
-/// matched back to its `Vertebra` so harvested `rheo-*` vars, title and date
-/// ride along. Paths in `assets` came from an `asset()` element rather than a
-/// `document()` one, so they are returned separately to be written verbatim —
-/// handing them to the format plugin would treat raw bytes as a page.
+/// the leading `/` is stripped to produce a relative filename. Each document's
+/// title/date/description/keywords/author are read from its Typst-resolved
+/// `DocumentMeta` in `meta` (Typst's own realization — see
+/// [`Build::compile_spine`]), falling back to the matching spine `Vertebra`'s
+/// AST-scanned title/date when no `DocumentMeta` exists for the output
+/// (shouldn't normally happen for a real document, but keeps nothing blank).
+/// The matching `Vertebra` is still used for harvested `rheo-*` `vars` — an
+/// unrelated, unchanged harvest — and to detect `contributed` outputs (no
+/// matching vertebra at all, e.g. a combined output or a marrow contribution).
+/// Paths in `assets` came from an `asset()` element rather than a `document()`
+/// one, so they are returned separately to be written verbatim — handing them
+/// to the format plugin would treat raw bytes as a page.
 fn flatten_bundle_outputs(
     virtual_fs: typst_bundle::VirtualFs,
     assets: &HashSet<String>,
     spine: &VirtualSpine,
     format: TypstFormat,
+    meta: &HashMap<String, DocumentMeta>,
 ) -> (Vec<CastVertebra>, Vec<(String, typst::foundations::Bytes)>) {
     let mut documents = Vec::new();
     let mut asset_files = Vec::new();
@@ -683,19 +737,42 @@ fn flatten_bundle_outputs(
             asset_files.push((output_path, bytes));
             continue;
         }
-        // Find the corresponding Vertebra to get its title, date, and vars.
-        // No match (e.g. a combined output, or a marrow contribution) defaults
-        // to empty title / no date and marks the output `contributed`.
         let vertebra = spine
             .vertebrae
             .iter()
             .find(|v| v.output_path == output_path);
+        let doc_meta = meta.get(&output_path);
         documents.push(CastVertebra {
+            title: doc_meta
+                .and_then(DocumentMeta::title)
+                .map(str::to_string)
+                .or_else(|| vertebra.map(|v| v.title.clone()))
+                .unwrap_or_default(),
+            date: doc_meta
+                .and_then(DocumentMeta::date)
+                .or_else(|| vertebra.and_then(|v| v.date.map(|d| d.0))),
+            description: doc_meta
+                .and_then(DocumentMeta::description)
+                .map(str::to_string),
+            keywords: doc_meta
+                .map(|m| {
+                    m.keywords()
+                        .iter()
+                        .map(|k| k.to_string())
+                        .collect::<Vec<String>>()
+                })
+                .unwrap_or_default(),
+            author: doc_meta
+                .map(|m| {
+                    m.author()
+                        .iter()
+                        .map(|a| a.to_string())
+                        .collect::<Vec<String>>()
+                })
+                .unwrap_or_default(),
             output_path,
             bytes,
             format,
-            title: vertebra.map(|v| v.title.clone()).unwrap_or_default(),
-            date: vertebra.and_then(|v| v.date.map(|d| d.0)),
             vars: vertebra.map(|v| v.vars.clone()).unwrap_or_default(),
             contributed: vertebra.is_none(),
         });
@@ -829,7 +906,9 @@ mod tests {
 
     /// A bundle flattens documents and assets into one path→bytes map, so an
     /// `asset()` output would otherwise reach the format plugin as if it were a
-    /// page. `flatten_bundle_outputs` keeps the two apart.
+    /// page. `flatten_bundle_outputs` keeps the two apart. No `DocumentMeta` is
+    /// supplied for this test's output, so its title falls back to the matching
+    /// `Vertebra`'s AST-scanned title.
     #[test]
     fn test_flatten_bundle_outputs_separates_assets_from_documents() {
         use crate::reticulate::spine::{SpineLayout, Vertebra, VirtualSpine};
@@ -869,18 +948,158 @@ mod tests {
         );
 
         let assets = HashSet::from(["data/x.json".to_string()]);
+        let meta = HashMap::new();
         let (documents, asset_files) =
-            flatten_bundle_outputs(virtual_fs, &assets, &spine, TypstFormat::Html);
+            flatten_bundle_outputs(virtual_fs, &assets, &spine, TypstFormat::Html, &meta);
 
         assert_eq!(documents.len(), 1, "the asset must not become a page");
         assert_eq!(documents[0].output_path, "index.html");
         assert_eq!(
             documents[0].title, "Index",
-            "vertebra metadata still rides along"
+            "no DocumentMeta for this output falls back to vertebra metadata"
         );
         assert_eq!(asset_files.len(), 1);
         assert_eq!(asset_files[0].0, "data/x.json");
         assert_eq!(asset_files[0].1.as_slice(), b"{}");
+    }
+
+    /// When a `DocumentMeta` exists for an output, it wins over the matching
+    /// `Vertebra`'s AST-scanned title/date — the Typst-resolved value is the
+    /// real authored one, which can differ from what static AST scanning saw
+    /// (e.g. a title set via an imported `#show:` template). `vars` still
+    /// comes from the `Vertebra` (an unrelated harvest), and the new
+    /// description/keywords/author fields come from `DocumentMeta` alone.
+    #[test]
+    fn test_flatten_bundle_outputs_prefers_document_meta_over_vertebra() {
+        use crate::reticulate::spine::{SpineLayout, Vertebra, VirtualSpine};
+        use typst::foundations::Bytes;
+        use typst::model::DocumentInfo;
+        use typst_syntax::VirtualPath;
+
+        let spine = VirtualSpine {
+            vertebrae: vec![Vertebra {
+                rel_path: "content/index.typ".into(),
+                output_path: "index.html".into(),
+                handle: "index".into(),
+                extra_handles: vec![],
+                emit_handle: true,
+                title: "Fallback Title".into(),
+                date: None,
+                metadata: Default::default(),
+                vars: Default::default(),
+                source: String::new(),
+            }],
+            layout: SpineLayout::OnePerVertebra {
+                ext: "html".into(),
+                format: "html".into(),
+            },
+            tree: vec![],
+            title: None,
+            marrow: Vec::new(),
+        };
+
+        let mut virtual_fs = typst_bundle::VirtualFs::default();
+        virtual_fs.insert(
+            VirtualPath::new("index.html").expect("valid virtual path"),
+            Bytes::new(b"<html></html>".to_vec()),
+        );
+
+        let info = DocumentInfo {
+            title: Some("Real Title".into()),
+            author: vec!["Ada Lovelace".into()],
+            description: Some("A description".into()),
+            keywords: vec!["foo".into()],
+            ..Default::default()
+        };
+        let meta = HashMap::from([("index.html".to_string(), DocumentMeta::new(info))]);
+
+        let (documents, _asset_files) = flatten_bundle_outputs(
+            virtual_fs,
+            &HashSet::new(),
+            &spine,
+            TypstFormat::Html,
+            &meta,
+        );
+
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].title, "Real Title");
+        assert_eq!(documents[0].author, vec!["Ada Lovelace".to_string()]);
+        assert_eq!(documents[0].description.as_deref(), Some("A description"));
+        assert_eq!(documents[0].keywords, vec!["foo".to_string()]);
+    }
+
+    /// End-to-end: a vertebra whose title is set only via an imported
+    /// `#show: book` template (the shape `docs/limitations.md` and
+    /// `../rheo-tests/cases/metadata_template_title` describe) gets its real
+    /// authored title through the full `Build::run` pipeline — not the
+    /// filename-derived fallback the pre-compile AST scan is stuck with.
+    #[test]
+    fn test_run_resolves_title_from_imported_template_via_document_info() {
+        use crate::config::project::ProjectConfig;
+        use std::sync::{Arc, Mutex};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+
+        std::fs::write(
+            root.join("template.typ"),
+            "#let book(doc) = {\n  set document(title: [Templated Title From Book])\n  doc\n}\n",
+        )
+        .expect("write template.typ");
+        std::fs::create_dir_all(root.join("content")).expect("create content dir");
+        std::fs::write(
+            root.join("content/templated.typ"),
+            "#import \"/template.typ\": book\n#show: book\n\n= Templated Chapter\n",
+        )
+        .expect("write content/templated.typ");
+
+        let project = ProjectConfig {
+            name: "test".to_string(),
+            root: root.to_path_buf(),
+            config: crate::RheoConfig {
+                content_dir: Some("content".to_string()),
+                formats: vec!["html".to_string()],
+                ..Default::default()
+            },
+            typ_files: vec![root.join("content/templated.typ")],
+            mode: ProjectMode::Directory,
+            config_path: None,
+        };
+
+        #[derive(Default)]
+        struct Captured(Mutex<Vec<(String, String)>>);
+
+        struct CapturingPlugin(Arc<Captured>);
+        impl FormatPlugin for CapturingPlugin {
+            fn name(&self) -> &'static str {
+                "html"
+            }
+            fn compile(&self, _ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
+                let mut guard = self.0.0.lock().unwrap();
+                for o in outputs {
+                    guard.push((o.output_path.clone(), o.title.clone()));
+                }
+                Ok(())
+            }
+        }
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+
+        let mut build =
+            Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
+        build.run().expect("run build");
+
+        let outputs = captured.0.lock().unwrap();
+        let (_, title) = outputs
+            .iter()
+            .find(|(path, _)| path == "templated.html")
+            .expect("templated.html output present");
+        assert_eq!(
+            title, "Templated Title From Book",
+            "CastVertebra.title should be Typst's resolved DocumentInfo.title, \
+             not the AST scan's filename-derived fallback"
+        );
     }
 
     #[test]

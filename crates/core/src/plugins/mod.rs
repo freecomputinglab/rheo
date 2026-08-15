@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 use typst::foundations::Bytes;
 
+pub mod document_meta;
 pub mod typst_manifest;
+pub use document_meta::DocumentMeta;
 pub use typst_manifest::{
     detect_manifest_package_assets, detect_manifest_package_assets_in_dirs, detect_package_marrow,
     detect_package_marrow_in_dirs, find_package_in_dirs, manifest_package_assets,
@@ -97,13 +99,23 @@ pub struct CastVertebra {
     pub bytes: Bytes,
     /// Typst compile target this output was produced with.
     pub format: TypstFormat,
-    /// Document title parsed from the vertebra's source (`#document title:`).
+    /// Resolved document title — Typst's own `DocumentInfo::title` for this
+    /// output, read off the compiled bundle (see
+    /// [`Build::compile_spine`](crate::build::Build)), falling back to the
+    /// matching spine [`Vertebra`](crate::reticulate::spine::Vertebra)'s
+    /// AST-scanned title when no `DocumentMeta` exists for this output.
     ///
-    /// Empty when the output has no matching per-vertebra source (e.g. a
-    /// combined output).
+    /// Empty when the output has no matching per-vertebra source at all (e.g.
+    /// a combined output).
     pub title: String,
-    /// Parsed `#set document(date:)` timestamp, if present.
+    /// Resolved `#set document(date:)` timestamp, if present.
     pub date: Option<chrono::DateTime<chrono::Utc>>,
+    /// Resolved document description (`#set document(description: ..)`), if present.
+    pub description: Option<String>,
+    /// Resolved document keywords (`#set document(keywords: ..)`); empty when none were set.
+    pub keywords: Vec<String>,
+    /// Resolved document author(s) (`#set document(author: ..)`); empty when none were set.
+    pub author: Vec<String>,
     /// Harvested `rheo-*` variables from the vertebra's source file.
     pub vars: std::collections::HashMap<String, crate::parser::RheoValue>,
     /// True when this output has no matching spine [`Vertebra`](crate::reticulate::spine::Vertebra) —

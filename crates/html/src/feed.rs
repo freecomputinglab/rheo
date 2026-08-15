@@ -314,6 +314,9 @@ mod tests {
                 format: TypstFormat::Html,
                 title: path.to_string(),
                 date: Some(ts()),
+                description: None,
+                keywords: vec![],
+                author: vec![],
                 vars,
                 contributed: false,
             }
