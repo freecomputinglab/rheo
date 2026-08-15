@@ -1080,6 +1080,7 @@ impl VirtualSpine {
                 .chain(v.extra_handles.iter())
                 .map(|label| BundleAnchor {
                     label: label.clone(),
+                    handle: v.handle.clone(),
                     title: v.title.clone(),
                 })
                 .collect(),

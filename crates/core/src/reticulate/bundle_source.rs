@@ -5,6 +5,13 @@ use std::fmt;
 /// resolve across vertebrae during bundle compilation.
 pub struct BundleAnchor {
     pub label: String,
+    /// The owning vertebra's canonical handle — used to query that vertebra's
+    /// `rheo-meta:<handle>` beacon at render time. Shared by every anchor
+    /// belonging to the same vertebra (the canonical-handle anchor and any
+    /// `<handle.typ>` escape-alias anchors alike), regardless of `label`.
+    pub handle: String,
+    /// The path-derived fallback title, used only when no beacon is found for
+    /// `handle` (combined PDF layouts, which emit no beacons at all).
     pub title: String,
 }
 
@@ -71,7 +78,8 @@ impl BundleDocument {
             for anchor in &segment.anchors {
                 body.push(TypstStmt::HandleAnchor {
                     label: anchor.label.clone(),
-                    title: anchor.title.clone(),
+                    handle: anchor.handle.clone(),
+                    fallback_title: anchor.title.clone(),
                 });
             }
             body.push(TypstStmt::Include {

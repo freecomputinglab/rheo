@@ -70,8 +70,20 @@ pub enum TypstStmt {
     /// footnotes from 1.
     PageInit { handle: String },
     /// A cross-vertebra handle anchor: a labeled, hidden `rheo-handle` `#figure`
-    /// so `@label` / `#link(<label>)` resolve across the bundle.
-    HandleAnchor { label: String, title: String },
+    /// so `@label` / `#link(<label>)` resolve across the bundle. The figure's
+    /// body is a live `#context` query of the owning vertebra's
+    /// [`TypstStmt::MetadataBeacon`] (`rheo-meta:<handle>`), so `@handle`
+    /// display text tracks that vertebra's *current* `document.title` rather
+    /// than a title baked in at bundle-synthesis time. `handle` is the
+    /// vertebra's canonical handle (the beacon query target, shared by every
+    /// anchor belonging to that vertebra); `fallback_title` is the
+    /// path-derived title used only when no beacon is found (combined PDF
+    /// layouts, which emit no beacons).
+    HandleAnchor {
+        label: String,
+        handle: String,
+        fallback_title: String,
+    },
     /// `#include "<path>"`.
     Include { path: String },
     /// A `#document("<output_path>", format: "<format>", title: [<title>])[ … ]`
@@ -126,11 +138,18 @@ impl fmt::Display for TypstStmt {
                 "#rheo-page-init({})",
                 TypstLiteral::str(handle.as_str()).serialize()
             ),
-            TypstStmt::HandleAnchor { label, title } => write!(
+            TypstStmt::HandleAnchor {
+                label,
+                handle,
+                fallback_title,
+            } => write!(
                 f,
-                "#figure([{}], kind: \"rheo-handle\", supplement: none) <{}>",
-                escape_typst_content(title),
-                label
+                "#figure([#context {{\n\
+                 \x20 let m = query(label(\"rheo-meta:\" + {handle_lit}))\n\
+                 \x20 if m.len() > 0 and m.first().value.title != none {{ m.first().value.title }} else [{fallback}]\n\
+                 }}], kind: \"rheo-handle\", supplement: none) <{label}>",
+                handle_lit = TypstLiteral::str(handle.as_str()).serialize(),
+                fallback = escape_typst_content(fallback_title),
             ),
             TypstStmt::Include { path } => write!(f, "#include \"{}\"", path),
             TypstStmt::Document {
@@ -230,14 +249,36 @@ mod tests {
     }
 
     #[test]
-    fn handle_anchor_escapes_title() {
+    fn handle_anchor_renders_live_beacon_query_with_escaped_fallback() {
         let stmt = TypstStmt::HandleAnchor {
             label: "intro".into(),
-            title: "Intro".into(),
+            handle: "intro".into(),
+            fallback_title: "Intro".into(),
         };
         assert_eq!(
             stmt.to_string(),
-            "#figure([Intro], kind: \"rheo-handle\", supplement: none) <intro>"
+            "#figure([#context {\n\
+             \x20 let m = query(label(\"rheo-meta:\" + \"intro\"))\n\
+             \x20 if m.len() > 0 and m.first().value.title != none { m.first().value.title } else [Intro]\n\
+             }], kind: \"rheo-handle\", supplement: none) <intro>"
+        );
+    }
+
+    #[test]
+    fn handle_anchor_uses_vertebra_handle_for_query_even_for_escape_alias_label() {
+        // An escape-alias anchor (`<handle.typ>`) has a different `label` than
+        // the vertebra's canonical `handle`, but must query the SAME beacon.
+        let stmt = TypstStmt::HandleAnchor {
+            label: "intro.typ".into(),
+            handle: "intro".into(),
+            fallback_title: "Intro".into(),
+        };
+        assert_eq!(
+            stmt.to_string(),
+            "#figure([#context {\n\
+             \x20 let m = query(label(\"rheo-meta:\" + \"intro\"))\n\
+             \x20 if m.len() > 0 and m.first().value.title != none { m.first().value.title } else [Intro]\n\
+             }], kind: \"rheo-handle\", supplement: none) <intro.typ>"
         );
     }
 
