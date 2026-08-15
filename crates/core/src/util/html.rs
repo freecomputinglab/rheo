@@ -182,25 +182,56 @@ impl HtmlDom {
         inner_html(&body)
     }
 
-    /// Serialize the inner HTML of the feed content region for one page.
+    /// Serialize the inner HTML of a selected region.
     ///
-    /// Resolution order, first match wins:
+    /// `select: None` uses the default cascade, first match wins:
     /// 1. the first `<main>` element's inner HTML;
     /// 2. the first element carrying the `rheo-feed-content` class;
     /// 3. the whole `<body>` inner HTML.
     ///
-    /// This lets authors scope feed entries to the article, excluding page
-    /// chrome (header/footer/nav), by wrapping the article in `<main>` (or an
-    /// element with class `rheo-feed-content`) and keeping the chrome outside
-    /// it. With no marker present it falls back to the full body.
-    pub fn feed_content_inner_html(&self) -> Result<String> {
-        if let Some(main) = find_element_by_tag(&self.dom.document, "main") {
-            return inner_html(&main);
+    /// This lets authors scope a region to an article, excluding page chrome
+    /// (header/footer/nav), by wrapping it in `<main>` (or an element with
+    /// class `rheo-feed-content`) and keeping the chrome outside it. With no
+    /// marker present it falls back to the full body.
+    ///
+    /// `select: Some(tag)` selects the first element with that bare tag name
+    /// instead (e.g. `"article"`). `select: Some(".class")` (a leading dot)
+    /// selects the first element carrying `class` as a whitespace-separated
+    /// token instead (e.g. `".rheo-feed-content"`).
+    ///
+    /// Returns an error if an explicit `select` matches no element, or (in the
+    /// default cascade's body fallback) if the document has no `<body>`.
+    pub fn select_inner_html(&self, select: Option<&str>) -> Result<String> {
+        match select {
+            None => {
+                if let Some(main) = find_element_by_tag(&self.dom.document, "main") {
+                    return inner_html(&main);
+                }
+                if let Some(el) = find_element_by_class(&self.dom.document, "rheo-feed-content") {
+                    return inner_html(&el);
+                }
+                self.body_inner_html()
+            }
+            Some(sel) => {
+                if let Some(class) = sel.strip_prefix('.') {
+                    let el = find_element_by_class(&self.dom.document, class).ok_or_else(|| {
+                        RheoError::HtmlGeneration {
+                            count: 1,
+                            errors: format!("no element with class '{}' found", class),
+                        }
+                    })?;
+                    inner_html(&el)
+                } else {
+                    let el = find_element_by_tag(&self.dom.document, sel).ok_or_else(|| {
+                        RheoError::HtmlGeneration {
+                            count: 1,
+                            errors: format!("no <{}> element found", sel),
+                        }
+                    })?;
+                    inner_html(&el)
+                }
+            }
         }
-        if let Some(el) = find_element_by_class(&self.dom.document, "rheo-feed-content") {
-            return inner_html(&el);
-        }
-        self.body_inner_html()
     }
 
     /// Returns a reference to the underlying DOM document root node.
@@ -715,13 +746,13 @@ mod tests {
         assert_eq!(inner, "");
     }
 
-    // feed_content_inner_html tests (via HtmlDom)
+    // select_inner_html tests (via HtmlDom)
 
     #[test]
     fn test_feed_content_main_wins() {
         let html = "<html><head></head><body><main><p>article</p></main><footer>chrome</footer></body></html>";
         let dom = HtmlDom::parse(html).unwrap();
-        let inner = dom.feed_content_inner_html().unwrap();
+        let inner = dom.select_inner_html(None).unwrap();
         assert_eq!(inner, "<p>article</p>");
     }
 
@@ -729,7 +760,7 @@ mod tests {
     fn test_feed_content_class_fallback() {
         let html = "<html><head></head><body><div class=\"rheo-feed-content\"><p>a</p></div><nav>x</nav></body></html>";
         let dom = HtmlDom::parse(html).unwrap();
-        let inner = dom.feed_content_inner_html().unwrap();
+        let inner = dom.select_inner_html(None).unwrap();
         assert_eq!(inner, "<p>a</p>");
     }
 
@@ -738,7 +769,7 @@ mod tests {
         // Whitespace-token membership, not substring: a multi-class attribute matches.
         let html = "<html><head></head><body><div class=\"post rheo-feed-content wide\"><p>a</p></div></body></html>";
         let dom = HtmlDom::parse(html).unwrap();
-        let inner = dom.feed_content_inner_html().unwrap();
+        let inner = dom.select_inner_html(None).unwrap();
         assert_eq!(inner, "<p>a</p>");
     }
 
@@ -746,7 +777,7 @@ mod tests {
     fn test_feed_content_body_fallback() {
         let html = "<html><head></head><body><h1>T</h1><p>Body</p></body></html>";
         let dom = HtmlDom::parse(html).unwrap();
-        let inner = dom.feed_content_inner_html().unwrap();
+        let inner = dom.select_inner_html(None).unwrap();
         assert_eq!(inner, dom.body_inner_html().unwrap());
         assert_eq!(inner, "<h1>T</h1><p>Body</p>");
     }
@@ -755,7 +786,39 @@ mod tests {
     fn test_feed_content_main_precedence_over_class() {
         let html = "<html><head></head><body><main><p>main</p></main><div class=\"rheo-feed-content\"><p>class</p></div></body></html>";
         let dom = HtmlDom::parse(html).unwrap();
-        let inner = dom.feed_content_inner_html().unwrap();
+        let inner = dom.select_inner_html(None).unwrap();
         assert_eq!(inner, "<p>main</p>");
+    }
+
+    #[test]
+    fn test_select_inner_html_by_bare_tag() {
+        let html = "<html><head></head><body><article><p>a</p></article><main><p>main</p></main></body></html>";
+        let dom = HtmlDom::parse(html).unwrap();
+        let inner = dom.select_inner_html(Some("article")).unwrap();
+        assert_eq!(inner, "<p>a</p>");
+    }
+
+    #[test]
+    fn test_select_inner_html_by_class() {
+        let html = "<html><head></head><body><main><p>main</p></main><div class=\"custom\"><p>c</p></div></body></html>";
+        let dom = HtmlDom::parse(html).unwrap();
+        let inner = dom.select_inner_html(Some(".custom")).unwrap();
+        assert_eq!(inner, "<p>c</p>");
+    }
+
+    #[test]
+    fn test_select_inner_html_missing_tag_errors() {
+        let html = "<html><head></head><body><p>x</p></body></html>";
+        let dom = HtmlDom::parse(html).unwrap();
+        let result = dom.select_inner_html(Some("article"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_select_inner_html_missing_class_errors() {
+        let html = "<html><head></head><body><p>x</p></body></html>";
+        let dom = HtmlDom::parse(html).unwrap();
+        let result = dom.select_inner_html(Some(".missing"));
+        assert!(result.is_err());
     }
 }

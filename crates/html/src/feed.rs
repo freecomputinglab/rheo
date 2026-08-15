@@ -187,7 +187,7 @@ pub fn generate_feed(
             RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e))
         })?;
         let dom = html_utils::HtmlDom::parse(&html_string)?;
-        let content_html = dom.feed_content_inner_html()?;
+        let content_html = dom.select_inner_html(None)?;
 
         // Build entry URL: base_url + "/" + output_path (e.g. "https://example.com/chapter1.html").
         let alternate_href = format!("{}/{}", base_url.trim_end_matches('/'), output.output_path);

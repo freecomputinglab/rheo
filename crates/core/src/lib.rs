@@ -8,6 +8,7 @@ pub mod parser;
 pub mod plugins;
 pub mod reticulate;
 pub mod templates;
+pub mod transclude;
 pub mod util;
 pub mod world;
 
