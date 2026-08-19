@@ -13,10 +13,10 @@ vertebra's own source text before compilation. Instead:
   root — via `rheo-metadata(handle)` / `rheo-metadata-all()`
   (`rheo-context()` exposes the same thing as its `metadata-of` field). These
   read `document.title` etc. live, off the real style chain Typst resolves
-  during realization, so every authoring form works: a title set via an
-  imported `#show:` template, inside a code block, from a non-literal
-  expression, or by multiple `#set document(...)` rules all resolve
-  correctly now.
+  during realization, so most authoring forms work: a title set via an
+  imported `#show:` template, from a non-literal expression, or by multiple
+  `#set document(...)` rules all resolve correctly now. A title set inside a
+  bounded `#{ }`/`#[ ]` code block does NOT — see below.
 - **Rust-side reads.** EPUB (and other Rust-side consumers) read the
   compiled bundle's own resolved `DocumentInfo` directly
   (`crates/core/src/plugins/document_meta.rs`'s `DocumentMeta`, wrapping
@@ -42,6 +42,28 @@ the previous vertebra set). Beacons are therefore only emitted for per-page
 `rheo-metadata(handle)` returns `(:)` and `rheo-metadata-all()` returns one
 empty-metadata entry per vertebra — there is no per-vertebra metadata read
 available there, by design, not a bug to work around.
+
+### A title set inside a bounded code block is invisible to the beacon
+
+`#set document(...)` wrapped in a bounded `#{ }` or `#[ ]` block sets the
+vertebra's own compiled `<title>`/DocumentInfo correctly — Typst's
+document-info collection is unscoped, so the final `<title>`/PDF `/Title` is
+unaffected. But the metadata beacon reads `document.title` via `#context`,
+appended once per vertebra after its own body — and a `#context` read
+respects ordinary Typst block scoping: it cannot see a `set` whose bounded
+block already closed earlier in the same file. So `rheo-metadata(handle)`,
+`metadata-of`, and any `@handle` anchor referencing that vertebra silently
+get rheo's path-derived fallback title instead of the real one.
+
+`#show:` templates are unaffected by this — they have no closing brace of
+their own; a `#show: template` applies to everything through the end of the
+enclosing block, which is where the beacon lives too. Only a genuinely
+*bounded* block (one that closes before the vertebra's own end) triggers this.
+Give a title at the vertebra's top level, or via a `#show:` template, if it
+needs to be visible to another vertebra's metadata read or to a handle
+anchor. Tracked for a future fix: a gated second compile pass that resolves
+this from Rust's already-correct `DocumentInfo` instead of a live `#context`
+read (`feat-metadata-two-pass`).
 
 ### Typst-side metadata reads require `#context`
 
