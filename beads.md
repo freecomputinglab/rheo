@@ -13,8 +13,18 @@ refactor, discussed but never filed).
 Recreate a bead with:
 
 ```sh
-br create "<title>" -t <bug|task|feature> -p <0-4> -l feat-transclusion -d '<description>'
+br create "<title>" -t <bug|task|feature> -p <0-4> -l feat-rssfeed -d '<description>'
 ```
+
+**Status, 2026-08-19.** Every entry below was reviewed against the local db and
+against current source, and five were filed. The local label for this branch's
+work is `feat-rssfeed`, not `feat-transclusion` — that is what the already-closed
+parents (`rheo-transclude-3yw`, `rheo-head-hoist-qz6`, `rheo-head-control-cbr`)
+carry, so the filed beads use it. Each entry now opens with a **Filed as** or
+**Decision** line. Note that this file is a snapshot of the transclusion queue
+only: the local db additionally holds work this document never knew about
+(the `feat-rheo-version-floor` pair, `rheo-spine-include-df5`, `rheo-ap3`,
+`rheo-onp`, and the `feat-rssfeed` removal chain).
 
 All entries relate to the `feat/transclusion` branch (13 commits off `main`,
 version 0.6.0): Typst-native document metadata via per-vertebra metadata
@@ -30,7 +40,13 @@ from the local db in favour of this document.
 
 ### 1. Hoist `<rheo-head>` on the dev-server preview path
 
-**Type:** bug — **Priority:** 1 — **Label:** `feat-transclusion`
+**Type:** bug — **Priority:** 1 — **Label:** `feat-rssfeed`
+
+**Filed as `rheo-head-hoist-watch-mhp`.** Every line reference below re-verified
+2026-08-19 and still accurate. The filed bead adds one thing this draft missed:
+it interacts with `rheo-onp` (the head-injection DOM round-trip empties a
+`<template>`), because it makes the watch path take that round-trip on more
+pages than it does today. A note to that effect is on `rheo-onp` as well.
 
 The HTML plugin's disk-writing path hoists `<rheo-head>` wrappers into each
 page's `<head>` (`crates/html/src/lib.rs:177`, `dom.hoist_rheo_head()?`), but
@@ -96,7 +112,16 @@ VERIFY:
 
 ### 2. Document that EPUB `dc:creator` no longer reads `rheo-author` or `<meta name=author>`
 
-**Type:** task — **Priority:** 2 — **Label:** `feat-transclusion`
+**Type:** task — **Priority:** 2 — **Label:** `feat-typst-native-metadata`
+
+**Filed as `rheo-epub-author-docs-5i3`, narrowed to `docs/limitations.md` only.**
+Step 2 below (a sentence in `CLAUDE.md`'s "rheo-\* variables and the Atom feed"
+section) was DROPPED: `rheo-claude-md-zb3` deletes that entire section, so the
+sentence would be written and then deleted. Telling upgrading users about
+`#let rheo-author` is already step 4 of `rheo-migrate-feed-dhe`. The label also
+changed — this belongs to `feat-typst-native-metadata`, the epic that made
+`dc:creator` Typst-resolved, and it is unblocked NOW (that change has landed on
+this branch) whereas the whole `feat-rssfeed` chain sits behind a cross-repo gate.
 
 On this branch the EPUB plugin's `extract_author` helper was deleted (it used
 to live at the end of `crates/epub/src/lib.rs`, before `pub struct EpubItem`).
@@ -148,7 +173,13 @@ VERIFY:
 
 ### 3. Error rather than silently skip a malformed `<rheo-content>` placeholder
 
-**Type:** task — **Priority:** 3 — **Label:** `feat-transclusion`
+**Type:** task — **Priority:** 3 — **Label:** `feat-rssfeed`
+
+**Filed as `rheo-transclude-strict-ofv`.** Re-verified 2026-08-19: patterns at
+`transclude.rs:45` and `:49`, `scan` at `:78`, the silent `let page = page?;` at
+`:97`. One correction folded into the filed bead — the existing test
+`test_scan_ignores_placeholder_missing_required_page` asserts the OLD silent
+behaviour, so it must be rewritten, not merely added next to.
 
 File: `crates/core/src/transclude.rs`, `ContentTransclusion::scan` (lines
 44-50 define the regexes, lines 78-107 do the scan).
@@ -244,15 +275,36 @@ Findings that shape the proposals, so they need not be re-derived:
   and `<rheo-content>` transclusion (`crates/core/src/transclude.rs`, 518
   lines) is post-compile by definition.
 
-Suggested order: 1 → 2 → 3, with 4 gated on a decision.
+Suggested order was 4 → 5 → 6, with 7 gated on a decision. As resolved
+2026-08-19: 7 was already decided and filed (as an outright removal, gated
+cross-repo), 4 and 5 are filed with 4 blocked on the version-floor work, and 6 is
+declined for now. See each entry's status line.
 
 ### 4. Freeze and document the rheo ↔ package metadata contract
 
-**Type:** task — **Priority:** 1 — suggested label `chore-metadata-contract`
+**Type:** task — **Priority:** 2 — label `chore-package-contract`
 
-Prerequisite for everything else below. Write a versioned contract document
-(suggested: `docs/contract.md`, or a section in `docs/limitations.md`)
-specifying exactly what a Typst package may rely on:
+**Filed as `rheo-package-contract-pki`, narrowed and blocked on
+`rheo-rheo-version-key-n5k`.** Two things changed since this was drafted.
+
+First, most of it is already written. The commit "Rewrites limitations.md and the
+rheo-context contract for Typst-native metadata" landed a `docs/limitations.md`
+that already covers items 2, 3 and 4 below plus the payload value types and the
+reserved `rheo-meta:` prefix. What is genuinely missing is a *reference* — a flat
+key inventory a package author can check a field name against — rather than prose
+about caveats. The filed bead is scoped to that, and to cross-linking rather than
+restating what `limitations.md` says.
+
+Second, it must wait. `rheo-rheo-version-key-n5k` adds `rheo-version` to
+`sys.inputs.rheo-context` and `rheo-pkg-min-version-1fn` adds `[tool.rheo]
+min_version` — version negotiation is the whole point of a package-facing
+contract, so writing the inventory first guarantees it ships stale. Priority
+dropped 1 → 2 for the same reason. (The inventory also has to include
+`reset-footnotes`, which this draft did not know about.) `rheo-ap3` would add a
+marrow-ordering clause if built; the filed bead records that as a known gap
+instead of waiting on it.
+
+The original list of four items, for reference:
 
 1. The beacon label format `<rheo-meta:HANDLE>` and its payload keys
    (`handle`, `title`, `author`, `description`, `keywords`, `date`), including
@@ -279,7 +331,13 @@ gate and the `global_context` construction).
 
 ### 5. Move injected Typst out of Rust format strings into real `.typ` files
 
-**Type:** task — **Priority:** 2 — suggested label `chore-typ-extraction`
+**Type:** task — **Priority:** 2 — label `chore-typ-extraction`
+
+**Filed as `rheo-typ-extraction-wna`, unchanged in substance.** Re-verified
+2026-08-19: still 336 lines, all four items still built in `format!`, `\x20`
+escapes still at lines 129-137 and 167-168. No open bead overlapped it. One note
+added — land `rheo-rheo-version-key-n5k` first to avoid a needless conflict
+around `typst_source.rs:71`; there is no logical dependency between them.
 
 `crates/core/src/util/typst_source.rs` (336 lines) builds Typst source inside
 Rust `format!` strings for `MetadataHelper`, `MetadataAllHelper`,
@@ -313,6 +371,17 @@ multi-line Typst function body in a format string.
 
 **Type:** task — **Priority:** 3 — filed in `rheo-packages`, not here
 
+**Decision 2026-08-19: NOT filed, deliberately declined for now.** Two reasons
+beyond the ergonomic cost this entry already names. `rheo-marrow-meta-d5v` ("Make
+`rheo-metadata` reachable from the bundle root") closed only days ago — this
+proposes removing the thing that bead just landed, which is churn, not
+simplification. And its stated prerequisite, the contract, is now blocked behind
+the version-floor pair, so the earliest sensible moment for it is after
+`rheo-package-contract-pki`. The right sequencing is: contract → `.typ`
+extraction (`rheo-typ-extraction-wna`, which creates the import seam this would
+use) → revisit. Left recorded here rather than filed so it does not sit in the
+ready queue looking like agreed work.
+
 `TypstStmt::MetadataAllHelper` is a one-line
 `sys.inputs.rheo-context.spine-flat.map(...)` that core injects only into the
 bundle main (marrow scope). Packages already contribute marrow to that same
@@ -330,6 +399,30 @@ import. This is the one genuinely optional item in this list.
 ### 7. DECISION NEEDED — retire the built-in Rust Atom feed in favour of a Typst package feed
 
 **Type:** feature — **Priority:** 2 — keep open until decided
+
+**Decision 2026-08-19: ALREADY DECIDED — the feed goes. This entry is stale and
+nothing new was filed for it.** The local db has held the decision since
+2026-08-15 as a four-bead chain, all labelled `feat-rssfeed`:
+
+- `rheo-drop-feed-bdo` (P1) — delete `crates/html/src/feed.rs`, the `HtmlConfig`
+  feed keys, `inject_feed_link`, and the `atom_syndication` dependency. Explicitly
+  an outright removal in 0.6.0, **not** the deprecation path this entry asks for.
+- `rheo-drop-vars-1ay` (P2) — delete the `rheo-*` variable convention outright.
+- `rheo-migrate-feed-dhe` (P2) — `rheo migrate` reports the removed keys and
+  variables and points at `@rheo/rssfeed`. This is what carries the user-facing
+  warning instead of a release-cycle deprecation.
+- `rheo-claude-md-zb3` (P2) — rewrite `CLAUDE.md` around the layering rule that a
+  `FormatPlugin` does format transport only.
+
+The replacement is the Typst package `@rheo/rssfeed` in `../rheo-packages`. Note
+the cross-repo sequencing gate recorded on `rheo-drop-feed-bdo`: beads cannot
+express cross-repo dependencies, so although it is dep-ready inside `rheo/`, it
+must NOT start until `rheo-tests`' `rheo-tests-marrow-feed-g0y` is green,
+preferably also `rheo-packages`' `rheo-packages-parity-qrd`. Landing it on
+dep-readiness alone ships a release with no feed capability anywhere.
+
+The analysis below stands as the rationale; only its "DECISION NEEDED" framing and
+its deprecation-plan recommendation are superseded.
 
 This is the change that would actually make rheo smaller. `crates/html/src/feed.rs`
 is 392 lines of Rust generating Atom XML. With `<rheo-content>` transclusion
