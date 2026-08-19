@@ -7,9 +7,11 @@ use tracing::debug;
 pub mod manifest_version;
 pub mod output;
 pub mod project;
+pub mod retired;
 pub mod validation;
 
 pub use manifest_version::ManifestVersion;
+pub use retired::{RETIRED_KEYS, RetiredKey};
 use validation::ValidateConfig;
 
 /// Spine configuration from `rheo.toml`: directory-scan knobs and title.

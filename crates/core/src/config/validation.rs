@@ -1,5 +1,6 @@
 use crate::config::Spine;
 use crate::config::manifest_version::ManifestVersion;
+use crate::config::retired::warn_on_retired_keys;
 use crate::{Result, RheoConfig, RheoError};
 use tracing::warn;
 
@@ -14,13 +15,18 @@ impl ValidateConfig for RheoConfig {
         let current = ManifestVersion::current();
         if self.version != current {
             warn!(
-                "rheo.toml version {} does not match rheo version {}. \
-                 Consider updating your rheo.toml version field.",
+                "rheo.toml version {} does not match rheo version {}. Run `rheo migrate` to \
+                 update it (add --apply to write the changes).",
                 self.version, current
             );
         }
 
-        // Validate every plugin section's spine
+        // Validate the global spine, then every plugin section's own.
+        if let Some(spine) = &self.spine {
+            spine
+                .validate()
+                .map_err(|e| RheoError::project_config(format!("[spine]: {}", e)))?;
+        }
         for (name, section) in &self.plugin_sections {
             if let Some(spine) = &section.spine {
                 spine
@@ -33,32 +39,9 @@ impl ValidateConfig for RheoConfig {
     }
 }
 
-/// Warn when a `rheo.toml` still sets the retired `vertebrae` glob list.
-///
-/// Since the structured-spine directory scan landed, `vertebrae` has no effect
-/// on spine membership or order — that now comes from the directory scan plus
-/// `[spine] exclude` / `[[spine.section]]`. Unlike a hard error, this stays a
-/// warning: an inert key doesn't corrupt the build, but silently ignoring it
-/// entirely risks a project's spine membership changing without the author
-/// noticing (see https://rheo.ohrg.org/spines for the current model).
-///
-/// This is a one-off, named after the single retired field we currently have.
-/// If a second retired-key warning is ever needed, generalize both of these
-/// into a `RetiredKey` trait (key name + replacement message) rather than
-/// adding another standalone function like this one.
-fn warn_on_vertebrae(extra: &toml::Table) {
-    if extra.contains_key("vertebrae") {
-        warn!(
-            "`vertebrae` no longer has any effect as of rheo 0.5.0 — spine membership and \
-             order now come from a directory scan plus `[spine] exclude` / `[[spine.section]]`. \
-             See https://rheo.ohrg.org/spines for the current model."
-        );
-    }
-}
-
 impl ValidateConfig for Spine {
     fn validate(&self) -> Result<()> {
-        warn_on_vertebrae(&self.extra);
+        warn_on_retired_keys("[spine]", &self.extra);
 
         Ok(())
     }
@@ -93,6 +76,49 @@ mod tests {
             ..Default::default()
         };
         assert!(spine.validate().is_ok());
+    }
+
+    #[test]
+    fn test_universal_spine_validate_ignores_retired_merge() {
+        let mut extra = toml::Table::new();
+        extra.insert("merge".to_string(), toml::Value::Boolean(true));
+        let spine = Spine {
+            title: Some("Test".to_string()),
+            extra,
+            ..Default::default()
+        };
+        assert!(spine.validate().is_ok());
+    }
+
+    #[test]
+    fn test_universal_spine_validate_ignores_unrecognized_key() {
+        // A key not in RETIRED_KEYS (third-party or forward-compatible) must
+        // never warn — `extra` is also how those survive.
+        let mut extra = toml::Table::new();
+        extra.insert(
+            "some_future_key".to_string(),
+            toml::Value::String("x".to_string()),
+        );
+        let spine = Spine {
+            title: Some("Test".to_string()),
+            extra,
+            ..Default::default()
+        };
+        assert!(spine.validate().is_ok());
+    }
+
+    #[test]
+    fn test_rheo_config_validates_global_spine() {
+        // The global `[spine]` table (not nested under any `[<plugin>.spine]`)
+        // must also be validated — a retired key set only there was
+        // previously never checked at all.
+        let toml = format!(
+            "version = \"{}\"\n[spine]\nvertebrae = [\"*.typ\"]",
+            env!("CARGO_PKG_VERSION")
+        );
+        let raw: crate::config::RheoConfigRaw = toml::from_str(&toml).unwrap();
+        let config = RheoConfig::try_from(raw).unwrap();
+        assert!(config.validate().is_ok());
     }
 
     #[test]
