@@ -189,6 +189,22 @@ Feed variables (all optional):
   thing as a type and hang behaviour off it as methods (e.g. `TypstLiteral` with
   a `serialize` method, `LabelSites::from_source`), rather than free functions
   that pass data around. Reach for a struct/enum + `impl` before a bare `fn`.
+- **Terse and DRY.** Write the smallest code that does the job. Two call sites
+  needing the same logic means extracting it, not copying it with a comment
+  saying it mirrors the other — if an issue's steps describe logic that already
+  exists somewhere ("does X exactly as `foo` does"), factor out the shared part
+  instead.
+- **Comments earn their place.** A comment states what the code cannot: a
+  non-obvious invariant, a required ordering, a deliberate omission that would
+  otherwise read as an oversight. It does not restate the line below it,
+  narrate the steps, mark sections, cite the line numbers of similar code, or
+  explain why the change was made — that belongs in the commit message, the
+  bead, or `docs/`. Doc comments on public items stay to a line or two unless
+  the abstraction genuinely needs more. Prose pasted from an issue body into
+  the source is not documentation.
+- Deleting a feature means deleting it. No commented-out code, no tombstone
+  comment explaining what used to be there; git history and `rheo migrate`
+  carry that.
 
 ## Release
 
