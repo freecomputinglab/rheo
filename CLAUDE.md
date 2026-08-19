@@ -4,6 +4,8 @@
 
 **rheo** compiles Typst documents to PDF, HTML, and EPUB. Written in Rust using the Typst compiler as a library.
 
+A `FormatPlugin` does format transport — compile, write, serve — and nothing else. Derived artifacts (feeds, sitemaps, search indexes, generated index pages) belong in Typst, minted from a `.marrow.typ`; rheo's job is only to provide the primitives that make them expressible (see "Marrow-authored derived artifacts" below).
+
 **Source structure:**
 - `crates/cli/` — CLI entry point, `resolve_assets`, compilation orchestration
 - `crates/core/` — Config, plugin trait (`FormatPlugin`), `PluginContext`, `AssetConfig`, world, spine, compilation
@@ -44,11 +46,6 @@ formats = ["html", "pdf", "epub"]  # default formats
 font_dirs = ["fonts"]    # optional; replaces autoscan of fonts/ directory
 copy = ["*.txt"]         # optional; glob patterns copied to every plugin output dir
 
-[html]
-feed_base_url = "https://example.com"  # optional; when set, emits build/html/feed.xml (Atom)
-feed_author = "Jane Doe"               # optional; atom:author of the feed (default "Rheo")
-feed_title = "My Feed"                 # optional; feed <title> and autodiscovery link title (default: spine title → project name)
-
 [html.assets]
 copy = ["images/**"]     # optional; glob patterns copied to html output dir only
 css_stylesheet = "custom.css"   # optional; path override for AssetConfig name
@@ -85,6 +82,8 @@ title = "My Book"
 Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title and spine are inferred from filename/directory.
 
 **Font directory resolution:** Without `font_dirs` in config, `fonts/` at project root is auto-discovered. Setting `font_dirs` replaces autoscan (include `"fonts"` explicitly if desired). `--font-dir` CLI flag always appends.
+
+**Publication facts live in Typst, not rheo.toml.** A feed's title, author, and site base URL are deliberately not config keys — a package minting a derived artifact from marrow (e.g. `@rheo/rssfeed`) takes them as literal Typst values or its own package-level config.
 
 ## Cross-file references
 
@@ -161,18 +160,17 @@ The retired `vertebrae` glob-list key (pre-0.5.0) is no longer read; `rheo migra
 
 PDF combines its spine into a single document by default; HTML and EPUB always produce per-page outputs. A `merge` key left in an old `rheo.toml` is silently ignored.
 
-## rheo-* variables and the Atom feed
+## Marrow-authored derived artifacts
 
-**Generic variable convention:** any top-level `#let rheo-<key> = <value>` in a vertebra is harvested during compilation. The value must be a string or boolean literal (e.g. `"title"` or `true`) — any other RHS is a compile error. Plugins read these per-file with the `rheo-` prefix stripped (e.g. `rheo-feed-title` is available as `feed-title`).
+A `.marrow.typ` at the bundle root (a project's own, or one shipped by a package) mints extra output files from Typst, outside every vertebra's own `#document(...)` block. Three primitives make it possible to build a feed, sitemap, search index, or generated index page there instead of in a plugin crate:
 
-**Atom feed:** set `feed_base_url` under `[html]` to enable it. When set, the HTML build emits `build/html/feed.xml` (Atom 1.0) with one `<entry>` per vertebra (every vertebra appears by default), and injects a `<link rel="alternate" type="application/atom+xml">` autodiscovery tag into every page's `<head>`. Without `feed_base_url`, no feed is emitted. The feed's `atom:author` defaults to `Rheo`; set `[html] feed_author = "..."` to override it. The feed's `<title>` (and autodiscovery link title) defaults to the HTML spine title, then the project/directory name; set `[html] feed_title = "..."` to override both.
+**Transclusion.** A bundle-emitted asset may contain `<rheo-content page="..." select="..." as="escaped|raw"/>`, replaced after compilation with the inner HTML of the selected region of that compiled page. `select` defaults to a cascade: the first `<main>` element, else the first element carrying the `rheo-content` class, else the whole `<body>`; `select` can also name a bare tag or a leading-dot class explicitly. `as` is `escaped` (default, for `<content type="html">`) or `raw` (verbatim, for `<content type="xhtml">`). This exists because marrow runs *inside* the Typst compile, before any page HTML exists, and Typst's `html` module exposes only element/frame construction — no content-to-HTML-string function.
 
-Feed variables (all optional):
-- `rheo-feed-title` — override for the entry title; defaults to the `#set document(title: [...])` value.
-- `rheo-feed-updated` — override for the entry timestamp (RFC 3339); defaults to the `#set document(date: datetime(...))` value, then the source file's mtime.
-- `rheo-feed-exclude` — set to the boolean `true` (`#let rheo-feed-exclude = true`) to omit a vertebra from the feed. Any other value (or absent) includes the page. Useful for cover/index pages.
+**Head contributions.** A `<rheo-head>` wrapper anywhere in a page's body has its children hoisted into that page's own `<head>`. A `.rheo/head.html` control asset minted from marrow instead appends to *every* page's `<head>`, after each page's own hoisted content. Both exist because Typst builds `<head>` solely from the compiled `DocumentInfo` — there is no other author hook into it.
 
-**Feed content region:** each entry's `<content>` is taken from the first `<main>` element, else the first element with class `rheo-feed-content`, else the whole `<body>`. To exclude page chrome (header/footer/nav) from feed entries, wrap the article in `<main>` (e.g. `html.elem("main", doc)`) and keep the chrome outside it. With no marker, the full body is used.
+**Control assets.** The `.rheo/` bundle-output prefix is reserved: an asset minted under it (e.g. `.rheo/head.html`) is a message from the bundle to rheo, consumed during compilation and never written to the actual build output.
+
+`@rheo/rssfeed` (in `../rheo-packages`) is where Atom feed generation now lives, built on these three primitives plus `rheo-metadata-all()` (see `rheo-context` above) — no Rust code, no plugin, no `rheo.toml` keys.
 
 ## Code Style
 
