@@ -21,13 +21,15 @@ impl ValidateConfig for RheoConfig {
             );
         }
 
-        // Validate the global spine, then every plugin section's own.
+        // Validate the global spine, then every plugin section's own (its
+        // extra keys, plus any nested `[<plugin>.spine]`).
         if let Some(spine) = &self.spine {
             spine
                 .validate()
                 .map_err(|e| RheoError::project_config(format!("[spine]: {}", e)))?;
         }
         for (name, section) in &self.plugin_sections {
+            warn_on_retired_keys(&format!("[{}]", name), &section.extra);
             if let Some(spine) = &section.spine {
                 spine
                     .validate()

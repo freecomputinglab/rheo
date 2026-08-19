@@ -16,7 +16,7 @@
 //!
 //! - `page` (required) — a compiled page's plugin-output-relative path.
 //! - `select` (optional) — a bare tag name (`main`) or a leading-dot class
-//!   (`.rheo-feed-content`); absent uses the default cascade (see
+//!   (`.rheo-content`); absent uses the default cascade (see
 //!   [`crate::util::html::HtmlDom::select_inner_html`]).
 //! - `as` (optional) — `escaped` (default; `&`/`<`/`>` entity-escaped, for
 //!   Atom `<content type="html">`) or `raw` (verbatim, for
@@ -348,10 +348,9 @@ mod tests {
     fn test_select_by_class_overrides_main_default() {
         let outputs = vec![vertebra(
             "page.html",
-            "<html><body><main><p>main</p></main><div class=\"rheo-feed-content\"><p>class</p></div></body></html>",
+            "<html><body><main><p>main</p></main><div class=\"rheo-content\"><p>class</p></div></body></html>",
         )];
-        let transclusion =
-            scan_one(r#"<rheo-content page="page.html" select=".rheo-feed-content"/>"#);
+        let transclusion = scan_one(r#"<rheo-content page="page.html" select=".rheo-content"/>"#);
         let resolved = transclusion.resolve(&outputs).unwrap();
         assert_eq!(resolved, "&lt;p&gt;class&lt;/p&gt;");
     }

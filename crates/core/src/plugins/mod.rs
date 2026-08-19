@@ -184,7 +184,7 @@ pub struct PluginContext<'a> {
     pub output_dir: &'a PathBuf,
     /// The resolved spine — same tree and flat vertebra list as the Typst-side
     /// `rheo-context` (`spine`/`spine-flat`), available on the Rust side too,
-    /// plus the resolved combined-document/feed title (`spine.title`, distinct
+    /// plus the resolved combined-document title (`spine.title`, distinct
     /// from any individual vertebra's own title). `compile()`'s
     /// `outputs: &[CastVertebra]` parameter is a separate, already-cast view of
     /// each output's title/date/vars; use `spine` for the tree structure,

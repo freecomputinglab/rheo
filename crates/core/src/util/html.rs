@@ -103,23 +103,6 @@ impl HtmlDom {
         find_element_by_tag(&self.dom.document, tag_name).map(|handle| Element { handle })
     }
 
-    /// Inject an Atom autodiscovery `<link>` into the HTML `<head>`.
-    ///
-    /// Inserts `<link rel="alternate" type="application/atom+xml" title="..." href="..."/>`
-    /// after the last `<meta>` tag (or at position 0 if none).
-    pub fn inject_feed_link(&mut self, href: &str, title: &str) -> Result<()> {
-        let head = self
-            .find_element("head")
-            .ok_or_else(|| RheoError::HtmlGeneration {
-                count: 1,
-                errors: "HTML document does not contain a <head> element".to_string(),
-            })?;
-
-        let insert_pos = head.last_meta_index().map(|i| i + 1).unwrap_or(0);
-        head.insert_child_at(insert_pos, Element::create_feed_link(href, title));
-        Ok(())
-    }
-
     /// Hoists every `<rheo-head>` wrapper element's children into `<head>`,
     /// removing the (now-empty) wrapper from wherever in the body it appears.
     ///
@@ -134,9 +117,9 @@ impl HtmlDom {
     ///
     /// Hoisted children are appended to `<head>` after everything already
     /// there (native Typst metadata, `inject_head_links`'s stylesheets/
-    /// scripts, `inject_feed_link`'s autodiscovery tag), in the order the
-    /// wrappers were collected — author-supplied content lands last rather
-    /// than splicing ahead of rheo's own head management.
+    /// scripts), in the order the wrappers were collected — author-supplied
+    /// content lands last rather than splicing ahead of rheo's own head
+    /// management.
     ///
     /// If no `<rheo-head>` element exists anywhere in the document, this is a
     /// complete no-op: the document serializes byte-identical to before the
@@ -277,18 +260,19 @@ impl HtmlDom {
     ///
     /// `select: None` uses the default cascade, first match wins:
     /// 1. the first `<main>` element's inner HTML;
-    /// 2. the first element carrying the `rheo-feed-content` class;
+    /// 2. the first element carrying the `rheo-content` class;
     /// 3. the whole `<body>` inner HTML.
     ///
-    /// This lets authors scope a region to an article, excluding page chrome
-    /// (header/footer/nav), by wrapping it in `<main>` (or an element with
-    /// class `rheo-feed-content`) and keeping the chrome outside it. With no
-    /// marker present it falls back to the full body.
+    /// This lets authors scope a region — e.g. a transcluded article, an
+    /// aggregator's excerpt — excluding page chrome (header/footer/nav), by
+    /// wrapping it in `<main>` (or an element with class `rheo-content`) and
+    /// keeping the chrome outside it. With no marker present it falls back to
+    /// the full body.
     ///
     /// `select: Some(tag)` selects the first element with that bare tag name
     /// instead (e.g. `"article"`). `select: Some(".class")` (a leading dot)
     /// selects the first element carrying `class` as a whitespace-separated
-    /// token instead (e.g. `".rheo-feed-content"`).
+    /// token instead (e.g. `".rheo-content"`).
     ///
     /// Returns an error if an explicit `select` matches no element, or (in the
     /// default cascade's body fallback) if the document has no `<body>`.
@@ -298,7 +282,7 @@ impl HtmlDom {
                 if let Some(main) = find_element_by_tag(&self.dom.document, "main") {
                     return inner_html(&main);
                 }
-                if let Some(el) = find_element_by_class(&self.dom.document, "rheo-feed-content") {
+                if let Some(el) = find_element_by_class(&self.dom.document, "rheo-content") {
                     return inner_html(&el);
                 }
                 self.body_inner_html()
@@ -355,20 +339,6 @@ impl Element {
         });
 
         Self { handle }
-    }
-
-    /// Create an Atom autodiscovery `<link>` element:
-    /// `<link rel="alternate" type="application/atom+xml" title="..." href="...">`.
-    pub fn create_feed_link(href: &str, title: &str) -> Self {
-        Self::create_element(
-            "link",
-            &[
-                ("rel", "alternate"),
-                ("type", "application/atom+xml"),
-                ("title", title),
-                ("href", href),
-            ],
-        )
     }
 
     /// Create a `<link rel="..." href="...">` element.
@@ -813,51 +783,6 @@ mod tests {
         assert!(!result.contains("<script"));
     }
 
-    // inject_feed_link tests (via HtmlDom)
-
-    #[test]
-    fn test_inject_feed_link_basic() {
-        let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
-        let mut dom = HtmlDom::parse(html).unwrap();
-        dom.inject_feed_link("https://example.com/feed.xml", "My Feed")
-            .unwrap();
-        let result = dom.serialize().unwrap();
-
-        assert!(result.contains(r#"<head>"#));
-        assert!(result.contains(r#"type="application/atom+xml""#));
-        assert!(result.contains(r#"rel="alternate""#));
-        assert!(result.contains(r#"title="My Feed""#));
-        assert!(result.contains(r#"href="https://example.com/feed.xml""#));
-    }
-
-    #[test]
-    fn test_inject_feed_link_after_meta_tags() {
-        let html = r#"<!DOCTYPE html><html><head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width">
-<title>Test</title>
-</head><body></body></html>"#;
-        let mut dom = HtmlDom::parse(html).unwrap();
-        dom.inject_feed_link("/feed.xml", "Blog").unwrap();
-        let result = dom.serialize().unwrap();
-
-        let last_meta_pos = result.find(r#"<meta name="viewport""#).unwrap();
-        let feed_link_pos = result.find("application/atom+xml").unwrap();
-        assert!(
-            feed_link_pos > last_meta_pos,
-            "feed link should appear after meta tags"
-        );
-    }
-
-    #[test]
-    fn test_inject_feed_link_no_head() {
-        let html = "<!DOCTYPE html><html><body></body></html>";
-        let mut dom = HtmlDom::parse(html).unwrap();
-        let result = dom.inject_feed_link("/feed.xml", "Blog");
-        // html5ever creates a <head> automatically per HTML5 spec
-        assert!(result.is_ok());
-    }
-
     // hoist_rheo_head tests (via HtmlDom)
 
     #[test]
@@ -928,21 +853,18 @@ mod tests {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
         let mut dom = HtmlDom::parse(html).unwrap();
         dom.append_head_fragment(
-            r#"<link rel="alternate" type="application/atom+xml" href="/feed.xml"><meta name="site-wide" content="yes">"#,
+            r#"<link rel="canonical" href="/page"><meta name="site-wide" content="yes">"#,
         )
         .unwrap();
         let result = dom.serialize().unwrap();
 
         assert!(result.contains("<title>Test</title>"));
-        assert!(
-            result
-                .contains(r#"<link rel="alternate" type="application/atom+xml" href="/feed.xml">"#)
-        );
+        assert!(result.contains(r#"<link rel="canonical" href="/page">"#));
         assert!(result.contains(r#"<meta name="site-wide" content="yes">"#));
 
         let head_pos = result.find("<head>").unwrap();
         let head_end = result.find("</head>").unwrap();
-        let link_pos = result.find("application/atom+xml").unwrap();
+        let link_pos = result.find(r#"rel="canonical""#).unwrap();
         let meta_pos = result.find(r#"name="site-wide""#).unwrap();
         assert!(link_pos > head_pos && link_pos < head_end);
         assert!(meta_pos > head_pos && meta_pos < head_end);
@@ -1016,7 +938,7 @@ mod tests {
     // select_inner_html tests (via HtmlDom)
 
     #[test]
-    fn test_feed_content_main_wins() {
+    fn test_select_inner_html_default_main_wins() {
         let html = "<html><head></head><body><main><p>article</p></main><footer>chrome</footer></body></html>";
         let dom = HtmlDom::parse(html).unwrap();
         let inner = dom.select_inner_html(None).unwrap();
@@ -1024,24 +946,24 @@ mod tests {
     }
 
     #[test]
-    fn test_feed_content_class_fallback() {
-        let html = "<html><head></head><body><div class=\"rheo-feed-content\"><p>a</p></div><nav>x</nav></body></html>";
+    fn test_select_inner_html_default_class_fallback() {
+        let html = "<html><head></head><body><div class=\"rheo-content\"><p>a</p></div><nav>x</nav></body></html>";
         let dom = HtmlDom::parse(html).unwrap();
         let inner = dom.select_inner_html(None).unwrap();
         assert_eq!(inner, "<p>a</p>");
     }
 
     #[test]
-    fn test_feed_content_class_among_many() {
+    fn test_select_inner_html_default_class_among_many() {
         // Whitespace-token membership, not substring: a multi-class attribute matches.
-        let html = "<html><head></head><body><div class=\"post rheo-feed-content wide\"><p>a</p></div></body></html>";
+        let html = "<html><head></head><body><div class=\"post rheo-content wide\"><p>a</p></div></body></html>";
         let dom = HtmlDom::parse(html).unwrap();
         let inner = dom.select_inner_html(None).unwrap();
         assert_eq!(inner, "<p>a</p>");
     }
 
     #[test]
-    fn test_feed_content_body_fallback() {
+    fn test_select_inner_html_default_body_fallback() {
         let html = "<html><head></head><body><h1>T</h1><p>Body</p></body></html>";
         let dom = HtmlDom::parse(html).unwrap();
         let inner = dom.select_inner_html(None).unwrap();
@@ -1050,8 +972,8 @@ mod tests {
     }
 
     #[test]
-    fn test_feed_content_main_precedence_over_class() {
-        let html = "<html><head></head><body><main><p>main</p></main><div class=\"rheo-feed-content\"><p>class</p></div></body></html>";
+    fn test_select_inner_html_default_main_precedence_over_class() {
+        let html = "<html><head></head><body><main><p>main</p></main><div class=\"rheo-content\"><p>class</p></div></body></html>";
         let dom = HtmlDom::parse(html).unwrap();
         let inner = dom.select_inner_html(None).unwrap();
         assert_eq!(inner, "<p>main</p>");

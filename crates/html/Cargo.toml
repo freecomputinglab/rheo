@@ -10,9 +10,6 @@ repository.workspace = true
 [dependencies]
 # Core
 rheo-core = { workspace = true }
-toml = { workspace = true }
-chrono = { workspace = true }
-serde = { workspace = true }
 globset = { workspace = true }
 
 # Error handling
@@ -33,7 +30,6 @@ tower-http = { workspace = true }
 webbrowser = { workspace = true }
 tokio-stream = { workspace = true }
 mime_guess = { workspace = true }
-atom_syndication = "0.12.8"
 
 [dev-dependencies]
 tempfile = { workspace = true }

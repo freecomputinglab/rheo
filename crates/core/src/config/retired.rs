@@ -17,8 +17,7 @@ pub struct RetiredKey {
     pub replacement: &'static str,
 }
 
-/// Every key retired so far. `rheo-drop-feed-bdo` appends the `[html]` feed
-/// keys here once it deletes their fields from `HtmlConfig`.
+/// Every key retired so far.
 pub const RETIRED_KEYS: &[RetiredKey] = &[
     RetiredKey {
         table: "[spine]",
@@ -31,6 +30,28 @@ pub const RETIRED_KEYS: &[RetiredKey] = &[
         key: "merge",
         replacement: "PDF combines its spine into one document by default and HTML/EPUB \
             always produce per-page output — there is no equivalent key",
+    },
+    RetiredKey {
+        table: "[html]",
+        key: "feed_base_url",
+        replacement: "Atom feed generation moved to the Typst package @rheo/rssfeed — \
+            see https://rheo.ohrg.org/feeds",
+    },
+    RetiredKey {
+        table: "[html]",
+        key: "feed_author",
+        replacement: "set via @rheo/rssfeed instead — see https://rheo.ohrg.org/feeds",
+    },
+    RetiredKey {
+        table: "[html]",
+        key: "feed_title",
+        replacement: "set via @rheo/rssfeed instead — see https://rheo.ohrg.org/feeds",
+    },
+    RetiredKey {
+        table: "[html]",
+        key: "feed_include",
+        replacement: "a marrow that builds its own entry list knows what it put in — this \
+            concept does not survive the move to @rheo/rssfeed",
     },
 ];
 
