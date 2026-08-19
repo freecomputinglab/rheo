@@ -32,9 +32,24 @@
 //! dict-era version have a one-line compatibility shim prepended to each file
 //! that reads the binding (`migrate_context_references`), so existing
 //! `rheo-context.field` / `ctx: rheo-context` code keeps working untouched.
+//!
+//! # Atom feed removal: `[html] feed_*` keys and `rheo-*` variables
+//!
+//! Atom feed generation moved to the Typst package `@rheo/rssfeed`: the Rust
+//! generator, its `[html] feed_*` rheo.toml keys, and the generic `rheo-*`
+//! `.typ` variable convention that fed it (`rheo-feed-title`,
+//! `rheo-feed-updated`, `rheo-feed-exclude`) are all gone. `rheo-author` is
+//! reported alongside them (same removed harvesting mechanism) even though
+//! it isn't a feed key — EPUB now reads `#set document(author: ...)`
+//! directly. Nothing here is rewritten: a feed's title/author/base-url/
+//! inclusion rules don't map one-to-one onto the package's Typst
+//! configuration, so `report_removed_feed_surface` only reports every
+//! affected key and binding, with its location, pointing at `@rheo/rssfeed`
+//! or (for `rheo-author`) the `#set document(...)` replacement.
 
 use regex::{Captures, Regex};
 use rheo_core::build::resolve_effective_content_dir;
+use rheo_core::config::RETIRED_KEYS;
 use rheo_core::config::manifest_version::ManifestVersion;
 use rheo_core::config::project::ProjectConfig;
 use rheo_core::reticulate::{SpineLayout, SpineScan, VirtualSpine};
@@ -64,6 +79,33 @@ const VERTEBRAE_RETIRED_VERSION: &str = "0.5.0";
 /// dict to a zero-arg function `rheo-context()`. Projects older than this have a
 /// compatibility shim prepended to each file that reads the binding.
 const CONTEXT_FN_VERSION: &str = "0.5.1";
+
+/// Version at which the Rust Atom feed generator, its `[html] feed_*`
+/// rheo.toml keys, and the `rheo-*` `.typ` variable convention were removed.
+/// Projects older than this have every affected key/binding REPORTED (see
+/// `report_removed_feed_surface`) — not rewritten.
+const FEED_REMOVED_VERSION: &str = "0.6.0";
+
+/// `#let rheo-<key>` bindings retired alongside the Rust feed generator, and
+/// what replaces each.
+const REMOVED_VAR_BINDINGS: &[(&str, &str)] = &[
+    (
+        "rheo-feed-title",
+        "moved to @rheo/rssfeed's Typst configuration",
+    ),
+    (
+        "rheo-feed-updated",
+        "moved to @rheo/rssfeed's Typst configuration",
+    ),
+    (
+        "rheo-feed-exclude",
+        "moved to @rheo/rssfeed's Typst configuration",
+    ),
+    (
+        "rheo-author",
+        "use `#set document(author: \"...\")` instead",
+    ),
+];
 
 /// Run migration for the project at `path`.
 ///
@@ -99,6 +141,7 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     let needs_target_rewrite = from < threshold(TARGET_REMOVED_VERSION);
     let needs_vertebrae_migration = from < threshold(VERTEBRAE_RETIRED_VERSION);
     let needs_context_rewrite = from < threshold(CONTEXT_FN_VERSION);
+    let needs_feed_report = from < threshold(FEED_REMOVED_VERSION);
 
     println!("\nMigrations:");
     if needs_link_rewrite {
@@ -114,6 +157,9 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     }
     if needs_context_rewrite {
         println!("  - shim `rheo-context` binding for its new `rheo-context()` function form");
+    }
+    if needs_feed_report {
+        println!("  - report removed Atom feed config keys and rheo-* variables (no rewrite)");
     }
     println!("  - bump rheo.toml version to {to}");
 
@@ -135,6 +181,11 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     if needs_context_rewrite {
         println!("\nContext references:");
         migrate_context_references(&project, apply)?;
+    }
+
+    if needs_feed_report {
+        println!("\nRemoved feed surface:");
+        report_removed_feed_surface(&project);
     }
 
     if apply {
@@ -375,6 +426,51 @@ fn migrate_context_references(project: &ProjectConfig, apply: bool) -> Result<()
     }
 
     Ok(())
+}
+
+/// Reports (never rewrites) every removed `[html] feed_*` rheo.toml key and
+/// `#let rheo-*` binding still present, each with its location and a pointer
+/// to its replacement. A feed's title/author/base-url/inclusion rules do not
+/// map one-to-one onto `@rheo/rssfeed`'s Typst configuration, so a mechanical
+/// rewrite would produce something subtly wrong — this stays report-only.
+fn report_removed_feed_surface(project: &ProjectConfig) {
+    if let Some(html) = project.config.plugin_sections.get("html") {
+        for retired in RETIRED_KEYS.iter().filter(|r| r.table == "[html]") {
+            if html.extra.contains_key(retired.key) {
+                report_removed("rheo.toml [html]", retired.key, retired.replacement);
+            }
+        }
+    }
+
+    let content_dir = resolve_effective_content_dir(project);
+    let typ_files = collect_typ_files(&content_dir);
+    let re = Regex::new(
+        r"(?m)^\s*#let\s+(rheo-feed-title|rheo-feed-updated|rheo-feed-exclude|rheo-author)\b",
+    )
+    .expect("hardcoded regex must compile");
+
+    for file in &typ_files {
+        let Ok(content) = fs::read_to_string(file) else {
+            continue;
+        };
+        for caps in re.captures_iter(&content) {
+            let name = &caps[1];
+            let line = line_number(&content, caps.get(0).unwrap().start());
+            let replacement = REMOVED_VAR_BINDINGS
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, r)| *r)
+                .unwrap_or("");
+            report_removed(&format!("{}:{}", file.display(), line), name, replacement);
+        }
+    }
+}
+
+/// One location's finding: `<location>: \`<name>\` — <replacement>`. The one
+/// print format both the rheo.toml key scan and the `.typ` binding scan
+/// above share.
+fn report_removed(location: &str, name: &str, replacement: &str) {
+    println!("{location}: `{name}` — {replacement}");
 }
 
 /// One `[spine]`/`[<plugin>.spine]` table that still sets the retired
