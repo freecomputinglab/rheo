@@ -103,7 +103,7 @@ pub struct CastVertebra {
     /// output, read off the compiled bundle (see
     /// [`Build::compile_spine`](crate::build::Build)), falling back to the
     /// matching spine [`Vertebra`](crate::reticulate::spine::Vertebra)'s
-    /// AST-scanned title when no `DocumentMeta` exists for this output.
+    /// path-derived title when no `DocumentMeta` exists for this output.
     ///
     /// Empty when the output has no matching per-vertebra source at all (e.g.
     /// a combined output).
@@ -125,6 +125,12 @@ pub struct CastVertebra {
 }
 
 impl CastVertebra {
+    /// Decode this output's bytes as a UTF-8 string.
+    pub fn html_string(&self) -> crate::Result<String> {
+        String::from_utf8(self.bytes.to_vec())
+            .map_err(|e| crate::RheoError::invalid_data(format!("output is not valid UTF-8: {e}")))
+    }
+
     /// Parse this output as an HTML DOM.
     ///
     /// Returns an error if `format` is not `TypstFormat::Html`.

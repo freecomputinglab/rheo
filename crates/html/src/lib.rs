@@ -139,9 +139,7 @@ impl FormatPlugin for HtmlPlugin {
             // CSS/JS nor a head fragment is configured, so we need the raw
             // string up front to peek for one before deciding whether a DOM
             // parse is required at all.
-            let html_string = String::from_utf8(output.bytes.to_vec()).map_err(|e| {
-                RheoError::invalid_data(format!("HTML output is not valid UTF-8: {}", e))
-            })?;
+            let html_string = output.html_string()?;
             let has_rheo_head = html_string.contains("<rheo-head");
 
             let html_string = if needs_head_links || has_rheo_head || head_fragment.is_some() {

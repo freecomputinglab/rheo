@@ -5,8 +5,7 @@
 //! [`Build::compile_spine`](crate::build::Build)) — so Rust-side plugins
 //! (EPUB) can read a vertebra's title/author/description/keywords/date from
 //! the same fully-resolved values the Typst-side `metadata-of` beacon
-//! publishes, instead of re-deriving them from a pre-compile AST scan (the
-//! retired `document_metadata`/`document_date` extractors).
+//! publishes.
 
 use ecow::EcoString;
 use typst::foundations::{Datetime, Smart};
@@ -49,16 +48,12 @@ impl DocumentMeta {
     /// The resolved document date as a UTC `chrono` datetime.
     ///
     /// `Smart::Auto` (no `#set document(date:)` rule at all) and
-    /// `Smart::Custom(None)` (an explicit `date: none`) both map to `None`,
-    /// deliberately preserving what the retired pre-compile AST date scan
-    /// used to do for those two forms.
+    /// `Smart::Custom(None)` (an explicit `date: none`) both map to `None`.
     ///
-    /// **Behavior change to accept**: `#set document(date: datetime.today())`
-    /// was rejected by the retired AST scan (it couldn't tell a literal
-    /// `datetime(...)` call from `datetime.today()` once resolved — text
-    /// alone doesn't say). This reads the already-*resolved* value instead, so it can't
-    /// distinguish either, and will now populate a real, build-varying date
-    /// for that form. Not special-cased — just noted here.
+    /// `#set document(date: datetime.today())` resolves to a real,
+    /// build-varying date, indistinguishable here from a literal
+    /// `datetime(...)` — anything syndicating this date downstream sees it
+    /// change on every build.
     pub fn date(&self) -> Option<chrono::DateTime<chrono::Utc>> {
         let Smart::Custom(Some(dt)) = self.0.date else {
             return None;
@@ -69,9 +64,9 @@ impl DocumentMeta {
     /// Convert a typst `Datetime` into a UTC `chrono` datetime.
     ///
     /// Absent time components (a `Datetime::Date` has no time of day) default
-    /// to midnight, matching the retired AST scan's `hour`/`minute`/`second`
-    /// defaulting. Returns `None` when `year`/`month`/`day` aren't all present
-    /// (e.g. a bare `Datetime::Time`) or don't form a valid calendar date.
+    /// to midnight. Returns `None` when `year`/`month`/`day` aren't all
+    /// present (e.g. a bare `Datetime::Time`) or don't form a valid calendar
+    /// date.
     fn to_chrono(dt: Datetime) -> Option<chrono::DateTime<chrono::Utc>> {
         use chrono::TimeZone;
 

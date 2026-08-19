@@ -403,20 +403,10 @@ impl Element {
 }
 
 fn find_element_by_tag(handle: &Handle, tag_name: &str) -> Option<Handle> {
-    match &handle.data {
-        NodeData::Element { name, .. } if name.local.as_ref() == tag_name => {
-            return Some(handle.clone());
-        }
-        _ => {}
-    }
-
-    for child in handle.children.borrow().iter() {
-        if let Some(found) = find_element_by_tag(child, tag_name) {
-            return Some(found);
-        }
-    }
-
-    None
+    find_element_where(
+        handle,
+        |data| matches!(data, NodeData::Element { name, .. } if name.local.as_ref() == tag_name),
+    )
 }
 
 /// Rewrites `handle`'s own children in place: any child that is itself a
@@ -453,22 +443,30 @@ fn hoist_rheo_head_children(handle: &Handle, collected: &mut Vec<Handle>) {
 /// Find the first element (depth-first) whose `class` attribute contains
 /// `class` as a whitespace-separated token (not a substring match).
 fn find_element_by_class(handle: &Handle, class: &str) -> Option<Handle> {
-    if let NodeData::Element { attrs, .. } = &handle.data {
-        let matches = attrs.borrow().iter().any(|attr| {
+    find_element_where(handle, |data| {
+        let NodeData::Element { attrs, .. } = data else {
+            return false;
+        };
+        attrs.borrow().iter().any(|attr| {
             attr.name.local.as_ref() == "class" && attr.value.split_whitespace().any(|c| c == class)
-        });
-        if matches {
-            return Some(handle.clone());
-        }
+        })
+    })
+}
+
+/// Depth-first search for the first element node satisfying `matches`.
+fn find_element_where(
+    handle: &Handle,
+    matches: impl Fn(&NodeData) -> bool + Copy,
+) -> Option<Handle> {
+    if matches(&handle.data) {
+        return Some(handle.clone());
     }
 
-    for child in handle.children.borrow().iter() {
-        if let Some(found) = find_element_by_class(child, class) {
-            return Some(found);
-        }
-    }
-
-    None
+    handle
+        .children
+        .borrow()
+        .iter()
+        .find_map(|child| find_element_where(child, matches))
 }
 
 /// Serialize the inner HTML of an element: its children without the surrounding
@@ -489,35 +487,24 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
             }
         }
         NodeData::Doctype { name, .. } => {
-            write!(output, "<!DOCTYPE {}>", name).map_err(|e| RheoError::HtmlGeneration {
-                count: 1,
-                errors: format!("failed to serialize doctype: {}", e),
-            })?;
+            write_html(output, format_args!("<!DOCTYPE {}>", name))?;
         }
         NodeData::Text { contents } => {
             let text = contents.borrow();
             output.push_str(&escape_text(&text));
         }
         NodeData::Comment { contents } => {
-            write!(output, "<!--{}-->", contents).map_err(|e| RheoError::HtmlGeneration {
-                count: 1,
-                errors: format!("failed to serialize comment: {}", e),
-            })?;
+            write_html(output, format_args!("<!--{}-->", contents))?;
         }
         NodeData::Element { name, attrs, .. } => {
-            write!(output, "<{}", name.local).map_err(|e| RheoError::HtmlGeneration {
-                count: 1,
-                errors: format!("failed to serialize element: {}", e),
-            })?;
+            write_html(output, format_args!("<{}", name.local))?;
 
             for attr in attrs.borrow().iter() {
                 let escaped_value = escape_attr(&attr.value, mode);
-                write!(output, " {}=\"{}\"", attr.name.local, escaped_value).map_err(|e| {
-                    RheoError::HtmlGeneration {
-                        count: 1,
-                        errors: format!("failed to serialize attribute: {}", e),
-                    }
-                })?;
+                write_html(
+                    output,
+                    format_args!(" {}=\"{}\"", attr.name.local, escaped_value),
+                )?;
             }
 
             if is_void_element(&name.local) {
@@ -536,22 +523,27 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
                         serialize_node(child, output, mode)?;
                     }
                 }
-                write!(output, "</{}>", name.local).map_err(|e| RheoError::HtmlGeneration {
-                    count: 1,
-                    errors: format!("failed to serialize closing tag: {}", e),
-                })?;
+                write_html(output, format_args!("</{}>", name.local))?;
             }
         }
         NodeData::ProcessingInstruction { target, contents } => {
-            write!(output, "<?{} {}?>", target, contents).map_err(|e| {
-                RheoError::HtmlGeneration {
-                    count: 1,
-                    errors: format!("failed to serialize processing instruction: {}", e),
-                }
-            })?;
+            write_html(output, format_args!("<?{} {}?>", target, contents))?;
         }
     }
     Ok(())
+}
+
+/// Write formatted HTML into `output`. Writing to a `String` cannot actually
+/// fail (`fmt::Write for String` never returns `Err`) — this exists only to
+/// keep `serialize_node` consistent with the rest of the crate's `Result`
+/// return convention, not because failure is expected.
+fn write_html(output: &mut String, args: std::fmt::Arguments) -> Result<()> {
+    output
+        .write_fmt(args)
+        .map_err(|e| RheoError::HtmlGeneration {
+            count: 1,
+            errors: format!("failed to serialize HTML: {e}"),
+        })
 }
 
 /// The `../` prefix that makes a build-root asset ref resolve from a page at the

@@ -24,16 +24,8 @@ pub fn sanitize_label_name(name: &str) -> String {
 pub struct DocumentTitle;
 
 impl DocumentTitle {
-    /// Convert a filename to a readable title.
-    ///
-    /// Transforms a filename stem into a human-readable title by replacing
-    /// separators with spaces and capitalizing words.
-    ///
-    /// # Arguments
-    /// * `filename` - The filename to convert
-    ///
-    /// # Returns
-    /// A title-cased version of the filename
+    /// Convert a filename stem to a title-cased, human-readable name:
+    /// separators become spaces, each word is capitalized.
     pub fn to_readable_name(filename: &str) -> String {
         filename
             .replace(['-', '_'], " ")

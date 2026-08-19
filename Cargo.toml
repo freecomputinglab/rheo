@@ -86,7 +86,6 @@ tar = "0.4"
 # Other dependencies
 ecow = "0.2"
 regex = "1.10"
-lazy_static = "1.4"
 serde-xml-rs = "0.8.2"
 
 # To use Typst's git main branch instead of the pinned crates.io release (e.g. to

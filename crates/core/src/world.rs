@@ -72,6 +72,44 @@ struct FileSlot {
 }
 
 impl RheoWorld {
+    /// Assemble a world once `root`, `main`, and the `sys.inputs` context are
+    /// resolved — the part both constructors below share.
+    #[allow(clippy::too_many_arguments)]
+    fn assemble(
+        root: PathBuf,
+        main: FileId,
+        inputs_context: Option<&TypstLiteral>,
+        format_name: Option<&str>,
+        plugin_library: Option<String>,
+        virtual_main_source: Option<String>,
+        source_overlay: HashMap<String, String>,
+        rheo_context: HashMap<String, VertebraInjection>,
+        font_dirs: Vec<PathBuf>,
+    ) -> Self {
+        let library = Library::builder()
+            .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
+            .with_inputs(build_inputs(inputs_context))
+            .build();
+
+        let (font_store, package_storage, rheo_packages) = Self::init_resources(&font_dirs);
+
+        Self {
+            root,
+            main,
+            book: font_store.book().clone(),
+            library: LazyHash::new(library),
+            font_store,
+            package_storage,
+            rheo_packages,
+            slots: Mutex::new(HashMap::new()),
+            format_name: format_name.map(str::to_string),
+            plugin_library,
+            virtual_main_source,
+            source_overlay,
+            rheo_context,
+        }
+    }
+
     /// Create a new world for compiling a single file.
     pub fn new(
         root: &Path,
@@ -91,28 +129,17 @@ impl RheoWorld {
         })?;
         let main = RootedPath::new(VirtualRoot::Project, main_vpath).intern();
 
-        let library = Library::builder()
-            .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
-            .with_inputs(build_inputs(None))
-            .build();
-
-        let (font_store, package_storage, rheo_packages) = Self::init_resources(&font_dirs);
-
-        Ok(Self {
+        Ok(Self::assemble(
             root,
             main,
-            book: font_store.book().clone(),
-            library: LazyHash::new(library),
-            font_store,
-            package_storage,
-            rheo_packages,
-            slots: Mutex::new(HashMap::new()),
-            format_name: format_name.map(str::to_string),
+            None,
+            format_name,
             plugin_library,
-            virtual_main_source: None,
-            source_overlay: HashMap::new(),
-            rheo_context: HashMap::new(),
-        })
+            None,
+            HashMap::new(),
+            HashMap::new(),
+            font_dirs,
+        ))
     }
 
     /// Create a world for bundle spine compilation with a synthesized in-memory main.
@@ -141,28 +168,17 @@ impl RheoWorld {
             VirtualPath::new("rheo_spine.typ").expect("rheo_spine.typ is a valid virtual path");
         let main = RootedPath::new(VirtualRoot::Project, main_vpath).intern();
 
-        let library = Library::builder()
-            .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
-            .with_inputs(build_inputs(global_context.as_ref()))
-            .build();
-
-        let (font_store, package_storage, rheo_packages) = Self::init_resources(&font_dirs);
-
-        Ok(Self {
+        Ok(Self::assemble(
             root,
             main,
-            book: font_store.book().clone(),
-            library: LazyHash::new(library),
-            font_store,
-            package_storage,
-            rheo_packages,
-            slots: Mutex::new(HashMap::new()),
-            format_name: format_name.map(str::to_string),
-            plugin_library: None,
-            virtual_main_source: Some(virtual_main_source),
+            global_context.as_ref(),
+            format_name,
+            None,
+            Some(virtual_main_source),
             source_overlay,
             rheo_context,
-        })
+            font_dirs,
+        ))
     }
 
     fn init_resources(font_dirs: &[PathBuf]) -> (FontStore, SystemPackages, RheoPackages) {
@@ -396,27 +412,15 @@ impl World for RheoWorld {
         if id == self.main {
             let rheo_content = include_str!("typ/rheo.typ");
             let plugin_lib_content = self.plugin_library.as_deref().unwrap_or("");
-            // `rheo-metadata`/`rheo-metadata-all` at bundle-root (marrow) scope.
-            //
-            // The per-vertebra prelude (`VirtualSpine::vertebra_injections`)
-            // already defines `rheo-metadata` ahead of each vertebra's own
-            // body, via this exact same `TypstStmt::MetadataHelper` — reusing
-            // its `Display` here guarantees the two injection sites render
-            // byte-for-byte identical text, so they cannot drift apart.
-            // `MetadataAllHelper` (calling `rheo-metadata` internally) is
-            // deliberately injected ONLY here, not into the per-vertebra
-            // prelude — it's for marrow's "every vertebra's metadata at
-            // once" case (feeds, sitemaps, search indexes), not something an
-            // individual vertebra needs.
-            //
-            // No extra format gate is needed here: `TypstStmt::MetadataBeacon`
-            // is only ever emitted for `OnePerVertebra` layouts (HTML/EPUB;
-            // see `vertebra_injections`'s doc comment), and marrow text itself
-            // is only ever assembled into the bundle for those same per-page
-            // targets — `document()`/`asset()` both hard-error under the
-            // combined-PDF target, so `build.rs`'s `compile_spine` never adds
-            // marrow to a PDF main at all. The two gates already agree; do
-            // not add a third check here thinking one of them is missing one.
+            // `rheo-metadata`/`rheo-metadata-all` at bundle-root (marrow)
+            // scope. `rheo-metadata` reuses `MetadataHelper`'s `Display` —
+            // the same text the per-vertebra prelude injects — so the two
+            // sites can't drift apart. `MetadataAllHelper` is marrow-only: a
+            // single vertebra never needs "every vertebra's metadata at
+            // once". No extra format gate is needed: `MetadataBeacon` (and
+            // marrow itself) are only ever assembled for per-page (HTML/EPUB)
+            // targets, since combined PDF hard-errors on
+            // `document()`/`asset()` — the two already agree.
             let metadata_helper = TypstStmt::MetadataHelper;
             let metadata_all_helper = TypstStmt::MetadataAllHelper;
             let template_inject = format!(
@@ -681,13 +685,10 @@ mod tests {
         assert!(!empty.contains("rheo-target"));
     }
 
-    /// SPIKE (docs/spikes/typst-native-metadata.md, Q8): does `#set
-    /// document(date: auto)` stay `Smart::Auto` in the bundle's real
-    /// `DocumentInfo`, and does `datetime.today()` resolve to a concrete date?
-    /// Contrast with the retired pre-compile static AST date scan, which
-    /// deliberately yielded `None` for both `auto` and `datetime.today()` — a
-    /// real `datetime.today()` resolving here would newly populate feed
-    /// timestamps that change on every build.
+    /// `#set document(date: auto)` stays `Smart::Auto` in the bundle's real
+    /// `DocumentInfo`; `datetime.today()` resolves to a concrete, build-time
+    /// date. Anything that syndicates a vertebra's date (e.g. a feed
+    /// package) sees `datetime.today()` change on every build.
     #[test]
     fn document_date_auto_and_today_resolve_in_bundle_info() {
         use typst::foundations::Smart;
@@ -753,11 +754,8 @@ mod tests {
         );
     }
 
-    /// rheo-meta-beacons-2o5's follow-up: `rheo-metadata` is now also injected
-    /// into the MAIN file (marrow scope), not just each vertebra's own
-    /// prelude — so bundle-root Typst (a `.marrow.typ`) can call it. Before
-    /// this change, `rheo-metadata` was simply not in scope at bundle root
-    /// and this would fail to compile with "unknown variable: rheo-metadata".
+    /// `rheo-metadata` is in scope at bundle-root (marrow) scope, not just
+    /// each vertebra's own prelude, so a `.marrow.typ` can call it directly.
     #[test]
     fn rheo_metadata_is_callable_from_marrow_scope() {
         let tmp = TempDir::new().unwrap();
@@ -793,8 +791,7 @@ mod tests {
         );
 
         // Main: one vertebra document (so its beacon epilogue is emitted),
-        // followed by marrow-scope Typst calling `rheo-metadata` directly —
-        // exactly the seam this bead widens.
+        // followed by marrow-scope Typst calling `rheo-metadata` directly.
         let main = r#"
 #document("intro.html", format: "html")[
   #include "content/intro.typ"

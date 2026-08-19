@@ -52,17 +52,14 @@ pub enum TypstStmt {
     /// The `rheo-metadata-all` helper: the bundle-root ("marrow scope") only
     /// companion to [`TypstStmt::MetadataHelper`], for the common marrow case
     /// of "every vertebra's metadata at once" (an Atom feed, a sitemap, a
-    /// search index). Maps `sys.inputs.rheo-context.spine-flat` — which
-    /// carries only `handle`/`path`/`title` per entry, since the per-vertebra
-    /// `metadata` key was removed from the spine by the already-landed
-    /// `rheo-meta-beacons-2o5` — through [`TypstStmt::MetadataHelper`]'s
-    /// `rheo-metadata`, overlaying its resolved fields
-    /// (`title`/`author`/`description`/`keywords`/`date`, when present) onto
-    /// each `(handle, path)` pair. Deliberately injected only at the bundle
-    /// root (see `world.rs`'s `source()`), never into the per-vertebra
-    /// prelude — a vertebra itself has no need to enumerate every vertebra's
-    /// metadata, only marrow-authored code (feeds, sitemaps, search indexes)
-    /// does.
+    /// search index). Maps `sys.inputs.rheo-context.spine-flat` (each entry
+    /// carrying only `handle`/`path`/`title`) through
+    /// [`TypstStmt::MetadataHelper`]'s `rheo-metadata`, overlaying its
+    /// resolved fields (`title`/`author`/`description`/`keywords`/`date`,
+    /// when present) onto each `(handle, path)` pair. Deliberately injected
+    /// only at the bundle root (see `world.rs`'s `source()`), never into the
+    /// per-vertebra prelude — a vertebra itself has no need to enumerate
+    /// every vertebra's metadata, only marrow-authored code does.
     MetadataAllHelper,
     /// A per-vertebra metadata "beacon": a labelled, hidden `#metadata(...)`
     /// element publishing this vertebra's own resolved `#set document(...)`
@@ -111,6 +108,12 @@ pub enum TypstStmt {
     },
 }
 
+/// Quote `s` as a Typst string literal (escaped), for splicing a handle or
+/// key into a statement's rendered source.
+fn quote(s: &str) -> String {
+    TypstLiteral::str(s).serialize()
+}
+
 impl fmt::Display for TypstStmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -121,7 +124,7 @@ impl fmt::Display for TypstStmt {
             TypstStmt::ContextBinding { handle } => write!(
                 f,
                 "#let rheo-context() = (handle: {}, metadata-of: rheo-metadata, ..sys.inputs.rheo-context)",
-                TypstLiteral::str(handle.as_str()).serialize()
+                quote(handle)
             ),
             TypstStmt::MetadataHelper => write!(
                 f,
@@ -144,19 +147,12 @@ impl fmt::Display for TypstStmt {
             TypstStmt::MetadataBeacon { handle } => write!(
                 f,
                 "#context [#metadata((handle: {handle_lit}, title: document.title, author: document.author, description: document.description, keywords: document.keywords, date: document.date)) <rheo-meta:{handle}>]",
-                handle_lit = TypstLiteral::str(handle.as_str()).serialize(),
+                handle_lit = quote(handle),
             ),
-            TypstStmt::StateUpdate { key, value } => write!(
-                f,
-                "#state({}).update({})",
-                TypstLiteral::str(key.as_str()).serialize(),
-                value.serialize()
-            ),
-            TypstStmt::PageInit { handle } => write!(
-                f,
-                "#rheo-page-init({})",
-                TypstLiteral::str(handle.as_str()).serialize()
-            ),
+            TypstStmt::StateUpdate { key, value } => {
+                write!(f, "#state({}).update({})", quote(key), value.serialize())
+            }
+            TypstStmt::PageInit { handle } => write!(f, "#rheo-page-init({})", quote(handle)),
             TypstStmt::HandleAnchor {
                 label,
                 handle,
@@ -167,7 +163,7 @@ impl fmt::Display for TypstStmt {
                  \x20 let m = query(label(\"rheo-meta:\" + {handle_lit}))\n\
                  \x20 if m.len() > 0 and m.first().value.title != none {{ m.first().value.title }} else [{fallback}]\n\
                  }}], kind: \"rheo-handle\", supplement: none) <{label}>",
-                handle_lit = TypstLiteral::str(handle.as_str()).serialize(),
+                handle_lit = quote(handle),
                 fallback = escape_typst_content(fallback_title),
             ),
             TypstStmt::Include { path } => write!(f, "#include \"{}\"", path),

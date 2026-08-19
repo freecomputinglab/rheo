@@ -2675,7 +2675,6 @@ dependencies = [
  "glob",
  "globset",
  "html5ever",
- "lazy_static",
  "markup5ever_rcdom",
  "notify",
  "opener",

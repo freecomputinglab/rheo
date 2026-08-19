@@ -71,13 +71,11 @@ impl FormatPlugin for EpubPlugin {
         let date = epub_config.date_utc();
 
         // Extract language from the first output's HTML; default to "en".
-        let language = if let Some(first_output) = outputs.first() {
-            let html_string = String::from_utf8(first_output.bytes.to_vec()).map_err(|e| {
-                RheoError::invalid_data(format!("EPUB HTML output is not valid UTF-8: {}", e))
-            })?;
-            extract_language(&html_string).unwrap_or_else(|| "en".to_string())
-        } else {
-            "en".to_string()
+        let language = match outputs.first() {
+            Some(first_output) => {
+                extract_language(&first_output.html_string()?).unwrap_or_else(|| "en".to_string())
+            }
+            None => "en".to_string(),
         };
 
         // Author comes straight from the first output's Typst-resolved
@@ -95,10 +93,7 @@ impl FormatPlugin for EpubPlugin {
         let mut items = outputs
             .iter()
             .map(|o| {
-                let html_string = String::from_utf8(o.bytes.to_vec()).map_err(|e| {
-                    RheoError::invalid_data(format!("EPUB HTML output is not valid UTF-8: {}", e))
-                })?;
-                EpubItem::from_html_string(o.output_path.clone(), html_string, o.contributed)
+                EpubItem::from_html_string(o.output_path.clone(), o.html_string()?, o.contributed)
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -134,7 +129,9 @@ const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 	</rootfiles>
 </container>"#;
 
-const NAV_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+fn nav_header(lang: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{lang}" lang="{lang}" xmlns:epub="http://www.idpf.org/2007/ops">
 	<head>
@@ -143,7 +140,9 @@ const NAV_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 	</head>
 	<body>
         <nav epub:type="toc" id="toc">
-"#;
+"#
+    )
+}
 
 const NAV_FOOTER: &str = r#"        </nav>
     </body>
@@ -151,7 +150,7 @@ const NAV_FOOTER: &str = r#"        </nav>
 
 pub fn generate_nav_xhtml(items: &mut [EpubItem], language: &str) -> Result<String> {
     let mut buf = String::new();
-    buf.push_str(&NAV_HEADER.replace("{lang}", language));
+    buf.push_str(&nav_header(language));
 
     fn stringify_outline(buf: &mut String, outline: &[OutlineNode<EcoString>], indent: usize) {
         let indent_str = " ".repeat(indent);
@@ -210,9 +209,8 @@ fn date_format(dt: &DateTime<Utc>) -> EcoString {
 
 /// Generates the package.opf XML string from the generated EPUB items.
 ///
-/// `spine_title` takes the plain `Option<&str>` shape of `PluginContext::spine_title`
-/// (the title is the only part of the old `SpineOptions` any plugin ever read;
-/// the rest was a dead glob-pattern list removed with it) rather than a dedicated type.
+/// `spine_title` is a plain `Option<&str>` — the title is the only spine field
+/// this plugin reads.
 pub fn generate_package(
     items: &[EpubItem],
     bundle_assets: &[(String, Bytes)],
@@ -465,11 +463,11 @@ fn asset_item_id(path: &str) -> EcoString {
 
 fn text_to_id(s: &str) -> EcoString {
     s.chars()
-        .map(|char| {
-            if char.is_whitespace() {
+        .map(|c| {
+            if c.is_whitespace() {
                 '-'
             } else {
-                char.to_ascii_lowercase()
+                c.to_ascii_lowercase()
             }
         })
         .collect()
@@ -600,11 +598,13 @@ impl EpubItem {
 
     fn id(&self) -> EcoString {
         let mut segments = self.href.path().segments();
-        let file_name = Path::new(segments.next_back().unwrap().as_str())
+        let last = segments
+            .next_back()
+            .expect("href is built from a non-empty output path, so has at least one segment");
+        let file_name = Path::new(last.as_str())
             .file_stem()
-            .unwrap()
-            .to_str()
-            .unwrap();
+            .and_then(|s| s.to_str())
+            .expect("href always ends in .xhtml, so its file stem is valid UTF-8");
         segments
             .map(|seg| seg.as_str())
             .chain([file_name])

@@ -23,32 +23,31 @@
 //!   `<content type="xhtml">`).
 //!
 //! Each placeholder is replaced by the *inner* HTML of the selected region.
-//! Relative hrefs inside the transcluded HTML are not rewritten — a nested
-//! page's `../foo.html` links are wrong in an absolute-URL context, but that
-//! parity with the Rust feed generator being replaced is deliberate; an
+//! Relative hrefs inside the transcluded HTML are not rewritten, so a nested
+//! page's `../foo.html` links are wrong in an absolute-URL context; an
 //! absolutising `base` attribute is a separate, later concern.
 
 use crate::plugins::CastVertebra;
 use crate::util::html::{HtmlDom, escape_text};
 use crate::{CONTROL_ASSET_PREFIX, Result, RheoError};
-use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::LazyLock;
 use tracing::warn;
 use typst::foundations::Bytes;
 
-lazy_static! {
-    /// Matches a whole `<rheo-content .../>` self-closing tag, capturing its
-    /// attribute text.
-    static ref TAG_PATTERN: Regex =
-        Regex::new(r#"<rheo-content\b([^>]*)/>"#).expect("invalid rheo-content tag pattern");
+/// Matches a whole `<rheo-content .../>` self-closing tag, capturing its
+/// attribute text.
+static TAG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<rheo-content\b([^>]*)/>"#).expect("invalid rheo-content tag pattern")
+});
 
-    /// Matches a single `name="value"` attribute pair within a tag's attribute
-    /// text.
-    static ref ATTR_PATTERN: Regex = Regex::new(r#"([a-zA-Z][a-zA-Z0-9_-]*)\s*=\s*"([^"]*)""#)
-        .expect("invalid rheo-content attribute pattern");
-}
+/// Matches a single `name="value"` attribute pair within a tag's attribute text.
+static ATTR_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"([a-zA-Z][a-zA-Z0-9_-]*)\s*=\s*"([^"]*)""#)
+        .expect("invalid rheo-content attribute pattern")
+});
 
 /// How a transcluded region's HTML is inserted into the asset text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

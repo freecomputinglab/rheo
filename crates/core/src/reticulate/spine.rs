@@ -151,6 +151,40 @@ impl SpineScan {
         exclude.is_match(to_forward_slash(rel))
     }
 
+    /// Read a directory's entries sorted by filename, for deterministic scan order.
+    fn read_sorted_entries(dir: &Path) -> Result<Vec<fs::DirEntry>> {
+        let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)
+            .map_err(|e| {
+                RheoError::project_config(format!("failed to read dir '{}': {}", dir.display(), e))
+            })?
+            .filter_map(|e| e.ok())
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+        Ok(entries)
+    }
+
+    /// Returns `true` if `path` has the `.typ` extension.
+    fn is_typ_file(path: &Path) -> bool {
+        path.extension().and_then(|e| e.to_str()) == Some(&TYP_EXT[1..])
+    }
+
+    /// Register `path` as the next vertebra in `files` and build its leaf
+    /// [`SpineNode`] (segment derived from the file stem, no children).
+    fn push_typ_leaf(path: &Path, files: &mut Vec<PathBuf>) -> SpineNode {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let idx = files.len();
+        files.push(path.to_path_buf());
+        SpineNode {
+            segment: sanitize_handle_segment(stem),
+            title: None,
+            vertebra: Some(idx),
+            children: Vec::new(),
+        }
+    }
+
     /// Scan one directory, recursing into subdirectories. Returns the child
     /// node list for `dir`; pushes discovered files into `files` in pre-order.
     fn scan_dir(
@@ -159,17 +193,9 @@ impl SpineScan {
         exclude: &GlobSet,
         files: &mut Vec<PathBuf>,
     ) -> Result<Vec<SpineNode>> {
-        let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)
-            .map_err(|e| {
-                RheoError::project_config(format!("failed to read dir '{}': {}", dir.display(), e))
-            })?
-            .filter_map(|e| e.ok())
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
-
         let mut nodes = Vec::new();
 
-        for entry in entries {
+        for entry in Self::read_sorted_entries(dir)? {
             let path = entry.path();
 
             if Self::is_excluded(content_dir, &path, exclude) {
@@ -180,21 +206,10 @@ impl SpineScan {
                 if let Some(node) = Self::scan_subdir(content_dir, &path, exclude, files)? {
                     nodes.push(node);
                 }
-            } else if path.extension().and_then(|e| e.to_str()) == Some(&TYP_EXT[1..]) {
+            } else if Self::is_typ_file(&path) {
                 // Root-level index.typ is a normal leaf; only nested dirs treat
                 // it as a landing page (handled in scan_subdir).
-                let stem = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_default();
-                let idx = files.len();
-                files.push(path.clone());
-                nodes.push(SpineNode {
-                    segment: sanitize_handle_segment(stem),
-                    title: None,
-                    vertebra: Some(idx),
-                    children: Vec::new(),
-                });
+                nodes.push(Self::push_typ_leaf(&path, files));
             }
         }
 
@@ -216,13 +231,7 @@ impl SpineScan {
             .unwrap_or_default()
             .to_string();
 
-        let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)
-            .map_err(|e| {
-                RheoError::project_config(format!("failed to read dir '{}': {}", dir.display(), e))
-            })?
-            .filter_map(|e| e.ok())
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
+        let entries = Self::read_sorted_entries(dir)?;
 
         // Find the landing file: prefer index.typ, else <dirname>.typ.
         let index_name = format!("index{}", TYP_EXT);
@@ -265,19 +274,8 @@ impl SpineScan {
                 if let Some(node) = Self::scan_subdir(content_dir, &path, exclude, files)? {
                     children.push(node);
                 }
-            } else if path.extension().and_then(|e| e.to_str()) == Some(&TYP_EXT[1..]) {
-                let stem = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_default();
-                let idx = files.len();
-                files.push(path.clone());
-                children.push(SpineNode {
-                    segment: sanitize_handle_segment(stem),
-                    title: None,
-                    vertebra: Some(idx),
-                    children: Vec::new(),
-                });
+            } else if Self::is_typ_file(&path) {
+                children.push(Self::push_typ_leaf(&path, files));
             }
         }
 
@@ -952,9 +950,9 @@ impl VirtualSpine {
     }
 
     /// Serialize one [`SpineNode`] (and its descendants) to its `spine` dict
-    /// shape: `title`/`handle`/`path`/`children`. Per-vertebra metadata is no
-    /// longer carried here — read it live via `rheo-context().metadata-of`
-    /// (see [`TypstStmt::MetadataHelper`]) instead.
+    /// shape: `title`/`handle`/`path`/`children`. Per-vertebra document
+    /// metadata is not part of this shape — read it live via
+    /// `rheo-context().metadata-of` (see [`TypstStmt::MetadataHelper`]).
     fn node_literal(&self, node: &SpineNode) -> TypstLiteral {
         let (handle, path, title) = match node.vertebra.and_then(|i| self.vertebrae.get(i)) {
             Some(v) => (
@@ -1332,13 +1330,11 @@ mod tests {
 
     #[test]
     fn spine_no_longer_exposes_a_metadata_key_on_entries() {
-        // Superseded by the Typst-native metadata-beacon mechanism
-        // (`rheo-context().metadata-of`, docs/spikes/typst-native-metadata.md):
-        // the Rust-parsed `metadata` key is no longer serialized into either
-        // the spine tree or spine-flat entries, and `#set document(...)` is no
-        // longer statically scanned at all — `Vertebra.title` is purely
-        // path-derived, so this vertebra's spine-entry title is "Post" (from
-        // the filename), not the `#set document(title: ...)` value.
+        // Neither the spine tree nor spine-flat entries carry a `metadata`
+        // key — `Vertebra.title` is purely path-derived, so this vertebra's
+        // spine-entry title is "Post" (from the filename), not the
+        // `#set document(title: ...)` value. Read live document metadata via
+        // `rheo-context().metadata-of` instead.
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let content = root.join("content");

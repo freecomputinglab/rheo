@@ -159,11 +159,8 @@ impl Build {
                 .get(plugin.name())
                 .unwrap_or(&default_section);
 
-            let manifest_blocks = if plugin_section.auto_detect_packages_enabled() {
-                crate::plugins::detect_manifest_package_assets(&package_imports, plugin.name())
-            } else {
-                vec![]
-            };
+            let manifest_blocks =
+                manifest_blocks_for(&package_imports, plugin_section, plugin.name());
 
             let resolver = AssetResolver::new(&self.project.root, &plugin_output_dir);
             if let Ok(resolved) =
@@ -221,10 +218,10 @@ impl Build {
         content_dir: &Path,
     ) -> Result<CompiledSpine> {
         // Effective spine config: each field on a per-format [plugin.spine]
-        // falls back to the global [spine] independently when unset, rather
-        // than the per-format table's mere presence blanking every global
-        // spine key at once (a footgun since fixed — rheo-9vl.2: e.g. setting
-        // only `[pdf.spine] title` used to silently drop a global `exclude`).
+        // falls back to the global [spine] independently when unset — e.g.
+        // `[pdf.spine] title` alone still inherits the global `exclude`,
+        // rather than the per-format table's mere presence blanking every
+        // global spine key at once.
         let plugin_spine = plugin_section.spine.as_ref();
         let global_spine = self.project.config.spine.as_ref();
         let exclude = plugin_spine
@@ -371,12 +368,7 @@ impl Build {
         };
 
         let plugin_output_dir = self.output.dir_for_plugin(html_plugin.name());
-        std::fs::create_dir_all(&plugin_output_dir).map_err(|e| {
-            RheoError::io(
-                e,
-                format!("creating output directory for {}", html_plugin.name()),
-            )
-        })?;
+        ensure_output_dir(&plugin_output_dir, html_plugin.name())?;
 
         let default_section = PluginSection::default();
 
@@ -398,12 +390,11 @@ impl Build {
         // Without this the VirtualFs index lacks package CSS/JS and renders
         // unstyled.
         let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
-        let manifest_blocks = if plugin_section.auto_detect_packages_enabled() {
+        if plugin_section.auto_detect_packages_enabled() {
             crate::plugins::prewarm_packages(&package_imports);
-            crate::plugins::detect_manifest_package_assets(&package_imports, html_plugin.name())
-        } else {
-            vec![]
-        };
+        }
+        let manifest_blocks =
+            manifest_blocks_for(&package_imports, plugin_section, html_plugin.name());
 
         let resolver = AssetResolver::new(&self.project.root, &plugin_output_dir);
         let resolved_assets = resolver
@@ -469,58 +460,54 @@ impl Build {
         // served — mirroring the `run()` path's `ControlAssets::extract`.
         let needs_injection = !css_paths.is_empty() || !js_paths.is_empty();
         let needs_head_mutation = needs_injection || control_head_fragment.is_some();
-        let injected: Result<typst_bundle::VirtualFs> = virtual_fs
-            .into_iter()
-            .filter_map(|(vpath, bytes)| {
-                let path_str = vpath.get_with_slash().trim_start_matches('/').to_string();
+        let mut injected = typst_bundle::VirtualFs::default();
+        for (vpath, bytes) in virtual_fs {
+            let path_str = vpath.get_with_slash().trim_start_matches('/').to_string();
 
-                if ControlAssets::is_control_asset(&path_str) {
-                    return None;
-                }
+            if ControlAssets::is_control_asset(&path_str) {
+                continue;
+            }
 
-                if assets.contains(&path_str) {
-                    let Ok(text) = std::str::from_utf8(bytes.as_slice()) else {
-                        return Some(Ok((vpath, bytes)));
-                    };
-                    return Some(
-                        match ContentTransclusion::rewrite_from_map(&path_str, text, &pages) {
-                            Ok(Some(rewritten)) => Ok((
-                                vpath,
-                                typst::foundations::Bytes::new(rewritten.into_bytes()),
-                            )),
-                            Ok(None) => Ok((vpath, bytes)),
-                            Err(e) => Err(e),
-                        },
-                    );
-                }
-
-                if needs_head_mutation && path_str.ends_with(".html") {
-                    Some((|| {
-                        let html = String::from_utf8_lossy(&bytes);
-                        let mut dom = crate::util::html::HtmlDom::parse(&html)?;
-                        if needs_injection {
-                            // Depth-relative asset refs so nested pages resolve them.
-                            let prefix = crate::util::html::depth_prefix(&path_str);
-                            let css_refs: Vec<String> =
-                                css_paths.iter().map(|s| format!("{prefix}{s}")).collect();
-                            let js_refs: Vec<String> =
-                                js_paths.iter().map(|s| format!("{prefix}{s}")).collect();
-                            let css: Vec<&str> = css_refs.iter().map(|s| s.as_str()).collect();
-                            let js: Vec<&str> = js_refs.iter().map(|s| s.as_str()).collect();
-                            dom.inject_head_links(&[], &css, &js)?;
+            if assets.contains(&path_str) {
+                let bytes = match std::str::from_utf8(bytes.as_slice()) {
+                    Ok(text) => {
+                        match ContentTransclusion::rewrite_from_map(&path_str, text, &pages)? {
+                            Some(rewritten) => {
+                                typst::foundations::Bytes::new(rewritten.into_bytes())
+                            }
+                            None => bytes,
                         }
-                        if let Some(fragment) = &control_head_fragment {
-                            dom.append_head_fragment(fragment)?;
-                        }
-                        let modified = dom.serialize()?;
-                        Ok((vpath, typst::foundations::Bytes::new(modified.into_bytes())))
-                    })())
-                } else {
-                    Some(Ok((vpath, bytes)))
+                    }
+                    Err(_) => bytes,
+                };
+                injected.insert(vpath, bytes);
+                continue;
+            }
+
+            if needs_head_mutation && path_str.ends_with(".html") {
+                let html = String::from_utf8_lossy(&bytes);
+                let mut dom = crate::util::html::HtmlDom::parse(&html)?;
+                if needs_injection {
+                    // Depth-relative asset refs so nested pages resolve them.
+                    let prefix = crate::util::html::depth_prefix(&path_str);
+                    let css_refs: Vec<String> =
+                        css_paths.iter().map(|s| format!("{prefix}{s}")).collect();
+                    let js_refs: Vec<String> =
+                        js_paths.iter().map(|s| format!("{prefix}{s}")).collect();
+                    let css: Vec<&str> = css_refs.iter().map(|s| s.as_str()).collect();
+                    let js: Vec<&str> = js_refs.iter().map(|s| s.as_str()).collect();
+                    dom.inject_head_links(&[], &css, &js)?;
                 }
-            })
-            .collect();
-        Ok(Some(injected?))
+                if let Some(fragment) = &control_head_fragment {
+                    dom.append_head_fragment(fragment)?;
+                }
+                let modified = dom.serialize()?;
+                injected.insert(vpath, typst::foundations::Bytes::new(modified.into_bytes()));
+            } else {
+                injected.insert(vpath, bytes);
+            }
+        }
+        Ok(Some(injected))
     }
 
     /// Compile the project across all selected plugins.
@@ -543,12 +530,7 @@ impl Build {
 
         for plugin in &self.plugins {
             let plugin_output_dir = self.output.dir_for_plugin(plugin.name());
-            std::fs::create_dir_all(&plugin_output_dir).map_err(|e| {
-                RheoError::io(
-                    e,
-                    format!("creating output directory for {}", plugin.name()),
-                )
-            })?;
+            ensure_output_dir(&plugin_output_dir, plugin.name())?;
 
             let plugin_section: &PluginSection = self
                 .project
@@ -557,13 +539,11 @@ impl Build {
                 .get(plugin.name())
                 .unwrap_or(&default_section);
 
-            // Pre-warm and auto-detect manifest package assets.
-            let manifest_blocks = if plugin_section.auto_detect_packages_enabled() {
+            if plugin_section.auto_detect_packages_enabled() {
                 crate::plugins::prewarm_packages(&package_imports);
-                crate::plugins::detect_manifest_package_assets(&package_imports, plugin.name())
-            } else {
-                vec![]
-            };
+            }
+            let manifest_blocks =
+                manifest_blocks_for(&package_imports, plugin_section, plugin.name());
 
             let resolver = AssetResolver::new(&self.project.root, &plugin_output_dir);
             let resolved_assets =
@@ -803,6 +783,26 @@ fn plugins_for_formats(
     all.into_iter()
         .filter(|p| formats.iter().any(|f| f == p.name()))
         .collect()
+}
+
+/// Create `dir` if missing, naming `plugin_name` in any IO error.
+fn ensure_output_dir(dir: &Path, plugin_name: &str) -> Result<()> {
+    std::fs::create_dir_all(dir)
+        .map_err(|e| RheoError::io(e, format!("creating output directory for {plugin_name}")))
+}
+
+/// Auto-detected manifest asset blocks for `plugin_section`'s format, or
+/// none when the section disables package auto-detection.
+fn manifest_blocks_for(
+    package_imports: &[String],
+    plugin_section: &PluginSection,
+    format_name: &str,
+) -> Vec<crate::plugins::PackageAssets> {
+    if plugin_section.auto_detect_packages_enabled() {
+        crate::plugins::detect_manifest_package_assets(package_imports, format_name)
+    } else {
+        vec![]
+    }
 }
 
 /// Resolve a path relative to a base directory (absolute paths pass through).
