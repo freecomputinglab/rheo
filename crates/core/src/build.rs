@@ -716,8 +716,7 @@ impl Build {
 /// purely path-derived title when no `DocumentMeta` exists for the output
 /// (shouldn't normally happen for a real document, but keeps nothing blank);
 /// `date` has no such fallback, since `Vertebra` no longer carries one.
-/// The matching `Vertebra` is still used for harvested `rheo-*` `vars` — an
-/// unrelated, unchanged harvest — and to detect `contributed` outputs (no
+/// The matching `Vertebra` is still used to detect `contributed` outputs (no
 /// matching vertebra at all, e.g. a combined output or a marrow contribution).
 /// Paths in `assets` came from an `asset()` element rather than a `document()`
 /// one, so they are returned separately to be written verbatim — handing them
@@ -772,7 +771,6 @@ fn flatten_bundle_outputs(
             output_path,
             bytes,
             format,
-            vars: vertebra.map(|v| v.vars.clone()).unwrap_or_default(),
             contributed: vertebra.is_none(),
         });
     }
@@ -922,7 +920,6 @@ mod tests {
                 extra_handles: vec![],
                 emit_handle: true,
                 title: "Index".into(),
-                vars: Default::default(),
                 source: String::new(),
             }],
             layout: SpineLayout::OnePerVertebra {
@@ -964,9 +961,8 @@ mod tests {
     /// `Vertebra`'s path-derived title (and there is no `date` fallback at
     /// all) — the Typst-resolved value is the real authored one, which can
     /// differ from a filename-derived guess (e.g. a title set via an
-    /// imported `#show:` template). `vars` still comes from the `Vertebra`
-    /// (an unrelated harvest), and the new description/keywords/author
-    /// fields come from `DocumentMeta` alone.
+    /// imported `#show:` template). The description/keywords/author fields
+    /// come from `DocumentMeta` alone.
     #[test]
     fn test_flatten_bundle_outputs_prefers_document_meta_over_vertebra() {
         use crate::reticulate::spine::{SpineLayout, Vertebra, VirtualSpine};
@@ -982,7 +978,6 @@ mod tests {
                 extra_handles: vec![],
                 emit_handle: true,
                 title: "Fallback Title".into(),
-                vars: Default::default(),
                 source: String::new(),
             }],
             layout: SpineLayout::OnePerVertebra {

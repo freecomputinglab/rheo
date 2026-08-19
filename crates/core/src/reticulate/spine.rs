@@ -1,6 +1,5 @@
 use crate::config::SpineSection;
 use crate::parser;
-use crate::parser::RheoValue;
 use crate::reticulate::bundle_source::BundleSource;
 use crate::util::path::{sanitize_handle_segment, to_forward_slash};
 use crate::util::pdf::DocumentTitle;
@@ -564,8 +563,6 @@ pub struct Vertebra {
     pub emit_handle: bool,
     /// Document title for `#document title:` and `@handle` display text.
     pub title: String,
-    /// Harvested `rheo-*` variables from this vertebra's source file.
-    pub vars: std::collections::HashMap<String, RheoValue>,
     /// The vertebra's raw source text, retained for the Mould stage.
     pub source: String,
 }
@@ -721,7 +718,6 @@ impl VirtualSpine {
             output_path: String,
             rel_path: String,
             title: String,
-            vars: HashMap<String, RheoValue>,
             source: String,
         }
 
@@ -770,22 +766,6 @@ impl VirtualSpine {
                 // value is only a pre-compile placeholder (spine ordering,
                 // `@handle` display text before the bundle compiles, etc.).
                 let title = DocumentTitle::to_readable_name(&stem);
-                let mut vars = HashMap::new();
-                for v in extracted.rheo_vars {
-                    match v.value {
-                        Some(value) => {
-                            vars.insert(v.key, value);
-                        }
-                        None => {
-                            return Err(RheoError::invalid_data(format!(
-                                "{}:{}: rheo-{} must be a string or boolean",
-                                file.display(),
-                                v.line,
-                                v.key
-                            )));
-                        }
-                    }
-                }
 
                 // The `rheo-meta:` namespace is reserved for the synthesized
                 // per-vertebra metadata beacon (`TypstStmt::MetadataBeacon`).
@@ -816,7 +796,6 @@ impl VirtualSpine {
                     output_path,
                     rel_path,
                     title,
-                    vars,
                     source,
                 })
             })
@@ -853,7 +832,6 @@ impl VirtualSpine {
                     extra_handles: vec![fi.escape],
                     emit_handle,
                     title: fi.title,
-                    vars: fi.vars,
                     source: fi.source,
                 })
             })
@@ -1476,7 +1454,6 @@ mod tests {
             extra_handles: vec!["intro.typ".into()],
             emit_handle: true,
             title: "Introduction".into(),
-            vars: HashMap::new(),
             source: String::new(),
         };
         let spine = VirtualSpine {
@@ -1511,7 +1488,6 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "A".into(),
-                    vars: HashMap::new(),
                     source: String::new(),
                 },
                 Vertebra {
@@ -1521,7 +1497,6 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "B".into(),
-                    vars: HashMap::new(),
                     source: String::new(),
                 },
             ],
@@ -1558,7 +1533,6 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "A".into(),
-                    vars: Default::default(),
                     source: String::new(),
                 },
                 Vertebra {
@@ -1568,7 +1542,6 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "B".into(),
-                    vars: Default::default(),
                     source: String::new(),
                 },
             ],

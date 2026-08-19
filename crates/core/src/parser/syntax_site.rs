@@ -2,8 +2,8 @@
 //!
 //! This is the core the whole `parser` module is organized around: one
 //! traversal ([`walk_tree`]) drives every extractor. The individual extractors
-//! live in sibling files (`labels`, `rheo_var`, `imports`); each is a small
-//! `impl SyntaxSite` that only inspects a node.
+//! live in sibling files (`labels`, `imports`); each is a small `impl
+//! SyntaxSite` that only inspects a node.
 
 use typst::syntax::{Source, SyntaxKind, SyntaxNode};
 

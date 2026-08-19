@@ -218,7 +218,6 @@ mod tests {
             description: None,
             keywords: vec![],
             author: vec![],
-            vars: HashMap::new(),
             contributed: false,
         };
         let outputs = vec![make("a.html"), make("sub/b.html")];

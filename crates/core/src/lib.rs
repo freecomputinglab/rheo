@@ -33,7 +33,6 @@ pub use build::{Build, BuildOptions};
 pub use config::{AssetsField, PluginAssets, PluginSection, Spine};
 
 // Plugin trait and context
-pub use parser::RheoValue;
 pub use plugins::{
     AssetConfig, CastVertebra, EmbeddedDefault, FormatInitTemplate, FormatPlugin, OpenHandle,
     PackageAssets, PluginContext, ResolvedPackage, ServerHandle, SpineLayoutKind, TypstFormat,

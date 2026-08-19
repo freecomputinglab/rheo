@@ -116,8 +116,6 @@ pub struct CastVertebra {
     pub keywords: Vec<String>,
     /// Resolved document author(s) (`#set document(author: ..)`); empty when none were set.
     pub author: Vec<String>,
-    /// Harvested `rheo-*` variables from the vertebra's source file.
-    pub vars: std::collections::HashMap<String, crate::parser::RheoValue>,
     /// True when this output has no matching spine [`Vertebra`](crate::reticulate::spine::Vertebra) —
     /// a page minted at the bundle root by a `.marrow.typ` contribution, or (for
     /// `SingleCombined` layouts) the merged multi-vertebra output. Plugins that
@@ -187,7 +185,7 @@ pub struct PluginContext<'a> {
     /// plus the resolved combined-document title (`spine.title`, distinct
     /// from any individual vertebra's own title). `compile()`'s
     /// `outputs: &[CastVertebra]` parameter is a separate, already-cast view of
-    /// each output's title/date/vars; use `spine` for the tree structure,
+    /// each output's title/date; use `spine` for the tree structure,
     /// cross-vertebra queries, and the resolved title, `outputs` for
     /// per-output compiled bytes.
     pub spine: &'a VirtualSpine,
