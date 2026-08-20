@@ -2,6 +2,7 @@ use crate::config::PluginAssets;
 use crate::packages::RheoPackages;
 use crate::parser::ImportInfo;
 use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
+use crate::{Result, RheoError};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -69,60 +70,101 @@ pub fn find_package_in_dirs(spec: &str, search_dirs: &[PathBuf]) -> Option<Resol
     })
 }
 
+/// A resolved package's parsed `typst.toml`, the sole read of that file.
+pub struct PackageManifest {
+    pkg: ResolvedPackage,
+    toml: toml::Value,
+}
+
+impl PackageManifest {
+    /// Reads and parses `{pkg.source_root}/typst.toml`. Missing, unreadable, or
+    /// unparseable manifests are logged via warn! and return `None` — a
+    /// malformed manifest in someone else's package must never break a build.
+    pub fn load(pkg: &ResolvedPackage) -> Option<Self> {
+        let manifest_path = pkg.source_root.join("typst.toml");
+        if !manifest_path.is_file() {
+            return None;
+        }
+        let content = match std::fs::read_to_string(&manifest_path) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(path = %manifest_path.display(), error = %e, "could not read typst.toml for auto-detect");
+                return None;
+            }
+        };
+        let toml: toml::Value = match toml::from_str(&content) {
+            Ok(t) => t,
+            Err(e) => {
+                warn!(path = %manifest_path.display(), error = %e, "could not parse typst.toml for auto-detect");
+                return None;
+            }
+        };
+        Some(Self {
+            pkg: pkg.clone(),
+            toml,
+        })
+    }
+
+    /// The `[tool.rheo.{format_name}]` block, if present and non-empty.
+    pub fn package_assets(&self, format_name: &str) -> Option<PackageAssets> {
+        let section = self
+            .toml
+            .get("tool")?
+            .get("rheo")?
+            .get(format_name)?
+            .as_table()?;
+        if section.is_empty() {
+            return None;
+        }
+        let copy = section
+            .get("copy")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let extra = section.clone();
+        let namespace = self.pkg.namespace.as_deref().unwrap_or("");
+        let dest = if namespace.is_empty() {
+            self.pkg.name.clone()
+        } else {
+            format!("{}/{}", namespace, self.pkg.name)
+        };
+        Some(PackageAssets {
+            assets: PluginAssets {
+                copy,
+                dest: Some(dest),
+                extra,
+            },
+            source_root: self.pkg.source_root.clone(),
+        })
+    }
+
+    /// The package's declared `[tool.rheo] min_version` floor, if present and valid semver.
+    pub fn min_version(&self) -> Option<semver::Version> {
+        let raw = self
+            .toml
+            .get("tool")?
+            .get("rheo")?
+            .get("min_version")?
+            .as_str()?;
+        match semver::Version::parse(raw) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                warn!(version = raw, error = %e, "invalid min_version in typst.toml");
+                None
+            }
+        }
+    }
+}
+
 /// Reads `{pkg.source_root}/typst.toml` and returns a `PackageAssets` for
 /// `format_name` if `[tool.rheo.{format_name}]` exists and is non-empty.
 /// Returns `None` otherwise. IO and parse errors are logged via warn!.
 pub fn manifest_package_assets(pkg: &ResolvedPackage, format_name: &str) -> Option<PackageAssets> {
-    let manifest_path = pkg.source_root.join("typst.toml");
-    if !manifest_path.is_file() {
-        return None;
-    }
-    let content = match std::fs::read_to_string(&manifest_path) {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(path = %manifest_path.display(), error = %e, "could not read typst.toml for auto-detect");
-            return None;
-        }
-    };
-    let toml: toml::Value = match toml::from_str(&content) {
-        Ok(t) => t,
-        Err(e) => {
-            warn!(path = %manifest_path.display(), error = %e, "could not parse typst.toml for auto-detect");
-            return None;
-        }
-    };
-    let section = toml
-        .get("tool")?
-        .get("rheo")?
-        .get(format_name)?
-        .as_table()?;
-    if section.is_empty() {
-        return None;
-    }
-    let copy = section
-        .get("copy")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    let extra = section.clone();
-    let namespace = pkg.namespace.as_deref().unwrap_or("");
-    let dest = if namespace.is_empty() {
-        pkg.name.clone()
-    } else {
-        format!("{}/{}", namespace, pkg.name)
-    };
-    Some(PackageAssets {
-        assets: PluginAssets {
-            copy,
-            dest: Some(dest),
-            extra,
-        },
-        source_root: pkg.source_root.clone(),
-    })
+    PackageManifest::load(pkg)?.package_assets(format_name)
 }
 
 /// Scans `import_paths`, locates each package via `find_package_in_dirs`,
@@ -147,6 +189,39 @@ pub fn detect_manifest_package_assets(
 ) -> Vec<PackageAssets> {
     let dirs = typst_package_search_dirs(None);
     detect_manifest_package_assets_in_dirs(import_paths, format_name, &dirs)
+}
+
+/// Resolves `import_paths` and errors naming every package whose declared
+/// `[tool.rheo] min_version` exceeds this build's own version — one line per
+/// offender, so a project importing several stale packages learns all of them
+/// from a single build. Packages absent locally, without a manifest, or
+/// without `min_version` are not offenders.
+pub fn check_package_min_versions_in_dirs(
+    import_paths: &[String],
+    search_dirs: &[PathBuf],
+) -> Result<()> {
+    let current = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+        .expect("CARGO_PKG_VERSION must be valid semver");
+    let mut lines: Vec<String> = import_paths
+        .iter()
+        .filter_map(|spec| {
+            let pkg = find_package_in_dirs(spec, search_dirs)?;
+            let min = PackageManifest::load(&pkg)?.min_version()?;
+            (min > current)
+                .then(|| format!("{spec} needs rheo >= {min}, but this is rheo {current}"))
+        })
+        .collect();
+    if lines.is_empty() {
+        return Ok(());
+    }
+    lines.push("Upgrade rheo: https://rheo.ohrg.org".to_string());
+    Err(RheoError::invalid_data(lines.join("\n")))
+}
+
+/// Production wrapper using Typst's system data/cache dirs.
+pub fn check_package_min_versions(import_paths: &[String]) -> Result<()> {
+    let dirs = typst_package_search_dirs(None);
+    check_package_min_versions_in_dirs(import_paths, &dirs)
 }
 
 /// Reads a package's own marrow file, if it ships one.
@@ -463,6 +538,107 @@ css_stylesheet = "style.css"
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].assets.dest.as_deref(), Some("ns_a/slides"));
         assert_eq!(results[1].assets.dest.as_deref(), Some("ns_b/slides"));
+    }
+
+    #[test]
+    fn min_version_absent_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(pkg_dir.join("typst.toml"), "[tool.rheo.html]\n").unwrap();
+        let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
+        assert_eq!(PackageManifest::load(&pkg).unwrap().min_version(), None);
+    }
+
+    #[test]
+    fn min_version_invalid_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(
+            pkg_dir.join("typst.toml"),
+            "[tool.rheo]\nmin_version = \"not-semver\"\n",
+        )
+        .unwrap();
+        let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
+        assert_eq!(PackageManifest::load(&pkg).unwrap().min_version(), None);
+    }
+
+    #[test]
+    fn min_version_alongside_format_subtable() {
+        // The real trap: `[tool.rheo] min_version` coexisting with a sibling
+        // `[tool.rheo.<format>]` asset subtable must not shadow either field.
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(
+            pkg_dir.join("typst.toml"),
+            "[tool.rheo]\nmin_version = \"0.5.0\"\n\n[tool.rheo.html]\ncss_stylesheet = \"a.css\"\n",
+        )
+        .unwrap();
+        let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
+        let manifest = PackageManifest::load(&pkg).unwrap();
+        assert_eq!(
+            manifest.min_version(),
+            Some(semver::Version::parse("0.5.0").unwrap())
+        );
+        assert!(manifest.package_assets("html").is_some());
+    }
+
+    fn write_min_version(dir: &std::path::Path, version: &str) {
+        std::fs::write(
+            dir.join("typst.toml"),
+            format!("[tool.rheo]\nmin_version = \"{version}\"\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn check_min_versions_rejects_package_above_floor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        write_min_version(&pkg_dir, "99.0.0");
+        let search = vec![tmp.path().to_path_buf()];
+        let err =
+            check_package_min_versions_in_dirs(&["@ns/pkg:1.0".to_string()], &search).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("99.0.0"));
+        assert!(message.contains(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn check_min_versions_accepts_package_below_floor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        write_min_version(&pkg_dir, "0.1.0");
+        let search = vec![tmp.path().to_path_buf()];
+        assert!(check_package_min_versions_in_dirs(&["@ns/pkg:1.0".to_string()], &search).is_ok());
+    }
+
+    #[test]
+    fn check_min_versions_accepts_package_with_no_floor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(pkg_dir.join("typst.toml"), "[package]\nname = \"pkg\"\n").unwrap();
+        let search = vec![tmp.path().to_path_buf()];
+        assert!(check_package_min_versions_in_dirs(&["@ns/pkg:1.0".to_string()], &search).is_ok());
+    }
+
+    #[test]
+    fn check_min_versions_names_all_offenders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir_a = make_pkg_dir(tmp.path(), "ns", "a", "1.0");
+        let dir_b = make_pkg_dir(tmp.path(), "ns", "b", "1.0");
+        write_min_version(&dir_a, "99.0.0");
+        write_min_version(&dir_b, "98.0.0");
+        let search = vec![tmp.path().to_path_buf()];
+        let err = check_package_min_versions_in_dirs(
+            &["@ns/a:1.0".to_string(), "@ns/b:1.0".to_string()],
+            &search,
+        )
+        .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("@ns/a:1.0"));
+        assert!(message.contains("@ns/b:1.0"));
+        assert!(message.contains("99.0.0"));
+        assert!(message.contains("98.0.0"));
     }
 
     #[test]

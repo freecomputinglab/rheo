@@ -390,9 +390,7 @@ impl Build {
         // Without this the VirtualFs index lacks package CSS/JS and renders
         // unstyled.
         let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
-        if plugin_section.auto_detect_packages_enabled() {
-            crate::plugins::prewarm_packages(&package_imports);
-        }
+        prewarm_and_check_versions(&package_imports, plugin_section)?;
         let manifest_blocks =
             manifest_blocks_for(&package_imports, plugin_section, html_plugin.name());
 
@@ -539,9 +537,7 @@ impl Build {
                 .get(plugin.name())
                 .unwrap_or(&default_section);
 
-            if plugin_section.auto_detect_packages_enabled() {
-                crate::plugins::prewarm_packages(&package_imports);
-            }
+            prewarm_and_check_versions(&package_imports, plugin_section)?;
             let manifest_blocks =
                 manifest_blocks_for(&package_imports, plugin_section, plugin.name());
 
@@ -789,6 +785,18 @@ fn plugins_for_formats(
 fn ensure_output_dir(dir: &Path, plugin_name: &str) -> Result<()> {
     std::fs::create_dir_all(dir)
         .map_err(|e| RheoError::io(e, format!("creating output directory for {plugin_name}")))
+}
+
+/// Pre-warms `package_imports` (if enabled) and rejects any whose declared
+/// `[tool.rheo] min_version` exceeds this build, before assets are detected.
+fn prewarm_and_check_versions(
+    package_imports: &[String],
+    plugin_section: &PluginSection,
+) -> Result<()> {
+    if plugin_section.auto_detect_packages_enabled() {
+        crate::plugins::prewarm_packages(package_imports);
+    }
+    crate::plugins::check_package_min_versions(package_imports)
 }
 
 /// Auto-detected manifest asset blocks for `plugin_section`'s format, or
