@@ -59,6 +59,32 @@ pub fn escape_text(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// Escape `text` as the BODY of a JSON string — no surrounding quotes, which
+/// the asset author writes themselves.
+///
+/// Per RFC 8259 §7 that means `"` and `\`, plus every C0 control character;
+/// the five with short forms get them and the rest go to `\u00XX`. Notably it
+/// does NOT touch `<`, `>` or `&`: the consumer is a JSON string, not markup,
+/// so a JSON Feed's `content_html` member holds real HTML rather than
+/// entity-escaped HTML.
+pub fn escape_json_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Escape an attribute value for HTML/XHTML output.
 pub fn escape_attr(value: &str, mode: &SerializeMode) -> String {
     let escaped = value

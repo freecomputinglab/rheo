@@ -22,8 +22,17 @@
 //!   `.rheo-feed-content` is matched as a compatibility alias, and what leaked
 //!   into every feed entry while it was not).
 //! - `as` (optional) — `escaped` (default; `&`/`<`/`>` entity-escaped, for
-//!   Atom `<content type="html">`) or `raw` (verbatim, for
-//!   `<content type="xhtml">`).
+//!   Atom `<content type="html">`), `raw` (verbatim, for
+//!   `<content type="xhtml">`), or `json` (escaped as a JSON string body, for
+//!   a JSON Feed's `content_html`).
+//!
+//! A placeholder written INSIDE a JSON string has to backslash-escape its own
+//! attribute quotes to keep the surrounding document parseable, so the
+//! attribute text is unescaped before parsing — see [`ATTR_PATTERN`] and
+//! [`unescape_attr_quotes`]. Without that, `as="json"` would be unreachable
+//! from the only place it is useful: written with bare quotes the asset is not
+//! valid JSON to begin with, and written escaped the attributes did not parse
+//! and the placeholder was silently left in the output.
 //!
 //! Each placeholder is replaced by the *inner* HTML of the selected region.
 //! Relative hrefs inside the transcluded HTML are not rewritten, so a nested
@@ -31,7 +40,7 @@
 //! absolutising `base` attribute is a separate, later concern.
 
 use crate::plugins::CastVertebra;
-use crate::util::html::{HtmlDom, escape_text};
+use crate::util::html::{HtmlDom, escape_json_string, escape_text};
 use crate::{CONTROL_ASSET_PREFIX, Result, RheoError};
 use regex::Regex;
 use std::collections::HashMap;
@@ -52,6 +61,23 @@ static ATTR_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
         .expect("invalid rheo-content attribute pattern")
 });
 
+/// Strip the backslash from any `\"` in a tag's attribute text, so a
+/// placeholder written inside a JSON string parses like a plain one.
+///
+/// A JSON string cannot contain a bare `"`, so an author minting
+/// `{"content_html": "<rheo-content page=\"x.html\" as=\"json\"/>"}` must
+/// escape those quotes — and [`ATTR_PATTERN`] wants `="`, not `=\"`. Rather
+/// than teach the pattern two delimiter forms, the text is normalised first.
+///
+/// The tradeoff, stated because it is a real limit rather than an oversight: an
+/// attribute VALUE containing a literal `\"` is indistinguishable from a
+/// JSON-escaped delimiter here. No `page` path needs one, and a `select`
+/// holding a quoted attribute selector (`a[data-x="y"]`) already cannot be
+/// written in the plain `"`-delimited form either.
+fn unescape_attr_quotes(attrs: &str) -> String {
+    attrs.replace("\\\"", "\"")
+}
+
 /// How a transcluded region's HTML is inserted into the asset text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Encoding {
@@ -59,6 +85,10 @@ pub enum Encoding {
     Escaped,
     /// Inserted verbatim — for Atom `<content type="xhtml">`.
     Raw,
+    /// Escaped as the body of a JSON string (`"`, `\`, control characters) and
+    /// NOT entity-escaped — for a JSON Feed's `content_html` member, which
+    /// holds real HTML inside a JSON string.
+    Json,
 }
 
 /// A single `<rheo-content page="..." select="..." as="..."/>` placeholder
@@ -82,7 +112,9 @@ impl ContentTransclusion {
             .captures_iter(text)
             .filter_map(|caps| {
                 let whole = caps.get(0).expect("group 0 always matches");
-                let attrs_str = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+                let attrs_raw = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+                let attrs_str = unescape_attr_quotes(attrs_raw);
+                let attrs_str = attrs_str.as_str();
 
                 let mut page = None;
                 let mut select = None;
@@ -92,6 +124,7 @@ impl ContentTransclusion {
                         "page" => page = Some(attr[2].to_string()),
                         "select" => select = Some(attr[2].to_string()),
                         "as" if &attr[2] == "raw" => encoding = Encoding::Raw,
+                        "as" if &attr[2] == "json" => encoding = Encoding::Json,
                         _ => {}
                     }
                 }
@@ -148,6 +181,7 @@ impl ContentTransclusion {
         Ok(match self.encoding {
             Encoding::Escaped => escape_text(&inner),
             Encoding::Raw => inner,
+            Encoding::Json => escape_json_string(&inner),
         })
     }
 
@@ -332,6 +366,48 @@ mod tests {
         let mut matches = ContentTransclusion::scan(text);
         assert_eq!(matches.len(), 1, "expected exactly one placeholder");
         matches.remove(0).1
+    }
+
+    #[test]
+    fn test_as_json_parses_and_escapes_as_json_string_body() {
+        let outputs = vec![vertebra(
+            "notes/etal.html",
+            "<html><body><main><p>He said \"hi\" &amp; left</p></main></body></html>",
+        )];
+        let transclusion = scan_one(r#"<rheo-content page="notes/etal.html" as="json"/>"#);
+        assert_eq!(transclusion.encoding, Encoding::Json);
+        let out = transclusion.resolve(&outputs).unwrap();
+        // Quotes are escaped; `<`, `>` and `&` are NOT — the consumer is a JSON
+        // string holding real HTML, not markup to entity-escape.
+        assert!(out.contains(r#"\"hi\""#), "quotes must be escaped: {out}");
+        assert!(out.contains("<p>"), "markup must stay markup: {out}");
+        assert!(!out.contains("&lt;"), "must not entity-escape: {out}");
+    }
+
+    #[test]
+    fn test_backslash_escaped_attribute_quotes_still_parse() {
+        // How a placeholder MUST be written inside a JSON string, since a JSON
+        // string cannot hold a bare quote. Before the attribute text was
+        // normalised this parsed no attributes at all, so the placeholder was
+        // silently left in the output unresolved.
+        let transclusion =
+            scan_one(r#"<rheo-content page=\"notes/etal.html\" select=\"main\" as=\"json\"/>"#);
+        assert_eq!(transclusion.page, "notes/etal.html");
+        assert_eq!(transclusion.select.as_deref(), Some("main"));
+        assert_eq!(transclusion.encoding, Encoding::Json);
+    }
+
+    #[test]
+    fn test_escape_json_string_escapes_what_rfc8259_requires() {
+        use crate::util::html::escape_json_string;
+        assert_eq!(escape_json_string("a\"b"), r#"a\"b"#);
+        assert_eq!(escape_json_string("a\\b"), r"a\\b");
+        assert_eq!(escape_json_string("a\tb"), r"a\tb");
+        assert_eq!(escape_json_string("a\nb"), r"a\nb");
+        // A control character with no short form goes to \u00XX.
+        assert_eq!(escape_json_string("a\u{01}b"), "a\\u0001b");
+        // Left alone, deliberately — markup is not this escaper's business.
+        assert_eq!(escape_json_string("<p>&amp;</p>"), "<p>&amp;</p>");
     }
 
     #[test]
