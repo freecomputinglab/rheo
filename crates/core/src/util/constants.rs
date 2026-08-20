@@ -23,6 +23,11 @@ pub const CONTROL_ASSET_PREFIX: &str = ".rheo/";
 /// An author-authored label starting with this prefix is a hard build error —
 /// see [`crate::reticulate::spine::VirtualSpine::build`].
 pub const RESERVED_META_LABEL_PREFIX: &str = "rheo-meta:";
+
+/// Project-root-relative path `RheoWorld` serves `typ/metadata.typ` under, for
+/// the `#import "/<METADATA_MODULE_PATH>": ...` statements
+/// [`crate::util::typst_source::TypstStmt`]'s metadata-helper variants render.
+pub const METADATA_MODULE_PATH: &str = "typ/metadata.typ";
 pub const PDF_EXT: &str = ".pdf";
 pub const HTML_EXT: &str = ".html";
 pub const XHTML_EXT: &str = ".xhtml";

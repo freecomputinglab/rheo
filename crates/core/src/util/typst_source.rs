@@ -13,6 +13,7 @@
 //! modeled here; it rides as [`TypstStmt::Raw`] when it needs to sit in a
 //! statement list.
 
+use crate::util::constants::METADATA_MODULE_PATH;
 use crate::util::path::escape_typst_content;
 use crate::util::typst_literal::TypstLiteral;
 use std::fmt;
@@ -42,25 +43,36 @@ pub enum TypstStmt {
     /// necessary `(rheo-context().metadata-of)("some-handle")` form, not
     /// `rheo-context().metadata-of("some-handle")`.
     ContextBinding { handle: String },
-    /// The `rheo-metadata` helper function, defined once per vertebra ahead of
-    /// [`TypstStmt::ContextBinding`] (which references it as `metadata-of`).
-    /// Reads another vertebra's [`TypstStmt::MetadataBeacon`] via `query()`,
-    /// returning its published fields as a dict (or `(:)` if no beacon with
-    /// that handle was found — e.g. under a `SingleCombined` layout, where no
-    /// beacon is emitted at all).
+    /// Brings `rheo-metadata` into scope once per vertebra ahead of
+    /// [`TypstStmt::ContextBinding`] (which references it as `metadata-of`):
+    /// an `#import` of the real query function from the synthetic
+    /// `typ/metadata.typ` module `RheoWorld` serves (see
+    /// [`crate::util::constants::METADATA_MODULE_PATH`]), wrapped in a
+    /// same-named local `#let` so the imported binding's own name
+    /// (`rheo-metadata-impl`) never leaks to authors. Reads another
+    /// vertebra's [`TypstStmt::MetadataBeacon`] via `query()`, returning its
+    /// published fields as a dict (or `(:)` if no beacon with that handle was
+    /// found — e.g. under a `SingleCombined` layout, where no beacon is
+    /// emitted at all).
     MetadataHelper,
-    /// The `rheo-metadata-all` helper: the bundle-root ("marrow scope") only
-    /// companion to [`TypstStmt::MetadataHelper`], for the common marrow case
-    /// of "every vertebra's metadata at once" (an Atom feed, a sitemap, a
-    /// search index). Maps `sys.inputs.rheo-context.spine-flat` (each entry
-    /// carrying only `handle`/`path`/`title`) through
-    /// [`TypstStmt::MetadataHelper`]'s `rheo-metadata`, overlaying its
+    /// Brings `rheo-metadata-all` into scope: the bundle-root ("marrow
+    /// scope") only companion to [`TypstStmt::MetadataHelper`], for the
+    /// common marrow case of "every vertebra's metadata at once" (an Atom
+    /// feed, a sitemap, a search index). Maps
+    /// `sys.inputs.rheo-context.spine-flat` (each entry carrying only
+    /// `handle`/`path`/`title`) through `rheo-metadata`, overlaying its
     /// resolved fields (`title`/`author`/`description`/`keywords`/`date`,
     /// when present) onto each `(handle, path)` pair. Deliberately injected
     /// only at the bundle root (see `world.rs`'s `source()`), never into the
     /// per-vertebra prelude — a vertebra itself has no need to enumerate
     /// every vertebra's metadata, only marrow-authored code does.
     MetadataAllHelper,
+    /// Brings `rheo-handle-title` into scope at the bundle root, alongside
+    /// [`TypstStmt::MetadataAllHelper`], for every [`TypstStmt::HandleAnchor`]
+    /// in the same compile to call. Looks up the owning vertebra's live
+    /// `document.title` via its metadata beacon, falling back to the
+    /// path-derived title when no beacon was found.
+    HandleTitleHelper,
     /// A per-vertebra metadata "beacon": a labelled, hidden `#metadata(...)`
     /// element publishing this vertebra's own resolved `#set document(...)`
     /// values (`title`/`author`/`description`/`keywords`/`date`), queryable by
@@ -83,14 +95,15 @@ pub enum TypstStmt {
     PageInit { handle: String },
     /// A cross-vertebra handle anchor: a labeled, hidden `rheo-handle` `#figure`
     /// so `@label` / `#link(<label>)` resolve across the bundle. The figure's
-    /// body is a live `#context` query of the owning vertebra's
-    /// [`TypstStmt::MetadataBeacon`] (`rheo-meta:<handle>`), so `@handle`
-    /// display text tracks that vertebra's *current* `document.title` rather
-    /// than a title baked in at bundle-synthesis time. `handle` is the
-    /// vertebra's canonical handle (the beacon query target, shared by every
-    /// anchor belonging to that vertebra); `fallback_title` is the
-    /// path-derived title used only when no beacon is found (combined PDF
-    /// layouts, which emit no beacons).
+    /// body calls `rheo-handle-title` (brought into scope by
+    /// [`TypstStmt::HandleTitleHelper`]), a live `#context` query of the
+    /// owning vertebra's [`TypstStmt::MetadataBeacon`] (`rheo-meta:<handle>`),
+    /// so `@handle` display text tracks that vertebra's *current*
+    /// `document.title` rather than a title baked in at bundle-synthesis
+    /// time. `handle` is the vertebra's canonical handle (the beacon query
+    /// target, shared by every anchor belonging to that vertebra);
+    /// `fallback_title` is the path-derived title passed through when no
+    /// beacon is found (combined PDF layouts, which emit no beacons).
     HandleAnchor {
         label: String,
         handle: String,
@@ -128,22 +141,15 @@ impl fmt::Display for TypstStmt {
             ),
             TypstStmt::MetadataHelper => write!(
                 f,
-                "#let rheo-metadata(handle) = {{\n\
-                 \x20 let found = query(label(\"rheo-meta:\" + handle))\n\
-                 \x20 if found.len() == 0 {{ return (:) }}\n\
-                 \x20 let out = (:)\n\
-                 \x20 for (k, v) in found.first().value {{\n\
-                 \x20   if k == \"handle\" or v == none or v == auto {{ continue }}\n\
-                 \x20   if type(v) == array and v.len() == 0 {{ continue }}\n\
-                 \x20   out.insert(k, v)\n\
-                 \x20 }}\n\
-                 \x20 out\n\
-                 }}"
+                "#import \"/{METADATA_MODULE_PATH}\": rheo-metadata-impl\n\
+                 #let rheo-metadata(handle) = rheo-metadata-impl(handle)"
             ),
-            TypstStmt::MetadataAllHelper => write!(
-                f,
-                "#let rheo-metadata-all() = sys.inputs.rheo-context.spine-flat.map(e => (handle: e.handle, path: e.path, ..rheo-metadata(e.handle)))"
-            ),
+            TypstStmt::MetadataAllHelper => {
+                write!(f, "#import \"/{METADATA_MODULE_PATH}\": rheo-metadata-all")
+            }
+            TypstStmt::HandleTitleHelper => {
+                write!(f, "#import \"/{METADATA_MODULE_PATH}\": rheo-handle-title")
+            }
             TypstStmt::MetadataBeacon { handle } => write!(
                 f,
                 "#context [#metadata((handle: {handle_lit}, title: document.title, author: document.author, description: document.description, keywords: document.keywords, date: document.date)) <rheo-meta:{handle}>]",
@@ -159,10 +165,7 @@ impl fmt::Display for TypstStmt {
                 fallback_title,
             } => write!(
                 f,
-                "#figure([#context {{\n\
-                 \x20 let m = query(label(\"rheo-meta:\" + {handle_lit}))\n\
-                 \x20 if m.len() > 0 and m.first().value.title != none {{ m.first().value.title }} else [{fallback}]\n\
-                 }}], kind: \"rheo-handle\", supplement: none) <{label}>",
+                "#figure([#rheo-handle-title({handle_lit}, [{fallback}])], kind: \"rheo-handle\", supplement: none) <{label}>",
                 handle_lit = quote(handle),
                 fallback = escape_typst_content(fallback_title),
             ),
@@ -214,30 +217,30 @@ mod tests {
     }
 
     #[test]
-    fn metadata_helper_renders_fixed_query_function() {
+    fn metadata_helper_imports_and_rewraps_rheo_metadata() {
         let stmt = TypstStmt::MetadataHelper;
         assert_eq!(
             stmt.to_string(),
-            "#let rheo-metadata(handle) = {\n\
-             \x20 let found = query(label(\"rheo-meta:\" + handle))\n\
-             \x20 if found.len() == 0 { return (:) }\n\
-             \x20 let out = (:)\n\
-             \x20 for (k, v) in found.first().value {\n\
-             \x20   if k == \"handle\" or v == none or v == auto { continue }\n\
-             \x20   if type(v) == array and v.len() == 0 { continue }\n\
-             \x20   out.insert(k, v)\n\
-             \x20 }\n\
-             \x20 out\n\
-             }"
+            "#import \"/typ/metadata.typ\": rheo-metadata-impl\n\
+             #let rheo-metadata(handle) = rheo-metadata-impl(handle)"
         );
     }
 
     #[test]
-    fn metadata_all_helper_renders_spine_flat_map_over_rheo_metadata() {
+    fn metadata_all_helper_imports_rheo_metadata_all() {
         let stmt = TypstStmt::MetadataAllHelper;
         assert_eq!(
             stmt.to_string(),
-            "#let rheo-metadata-all() = sys.inputs.rheo-context.spine-flat.map(e => (handle: e.handle, path: e.path, ..rheo-metadata(e.handle)))"
+            "#import \"/typ/metadata.typ\": rheo-metadata-all"
+        );
+    }
+
+    #[test]
+    fn handle_title_helper_imports_rheo_handle_title() {
+        let stmt = TypstStmt::HandleTitleHelper;
+        assert_eq!(
+            stmt.to_string(),
+            "#import \"/typ/metadata.typ\": rheo-handle-title"
         );
     }
 
@@ -273,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn handle_anchor_renders_live_beacon_query_with_escaped_fallback() {
+    fn handle_anchor_calls_rheo_handle_title_with_quoted_handle_and_fallback() {
         let stmt = TypstStmt::HandleAnchor {
             label: "intro".into(),
             handle: "intro".into(),
@@ -281,10 +284,7 @@ mod tests {
         };
         assert_eq!(
             stmt.to_string(),
-            "#figure([#context {\n\
-             \x20 let m = query(label(\"rheo-meta:\" + \"intro\"))\n\
-             \x20 if m.len() > 0 and m.first().value.title != none { m.first().value.title } else [Intro]\n\
-             }], kind: \"rheo-handle\", supplement: none) <intro>"
+            "#figure([#rheo-handle-title(\"intro\", [Intro])], kind: \"rheo-handle\", supplement: none) <intro>"
         );
     }
 
@@ -299,10 +299,7 @@ mod tests {
         };
         assert_eq!(
             stmt.to_string(),
-            "#figure([#context {\n\
-             \x20 let m = query(label(\"rheo-meta:\" + \"intro\"))\n\
-             \x20 if m.len() > 0 and m.first().value.title != none { m.first().value.title } else [Intro]\n\
-             }], kind: \"rheo-handle\", supplement: none) <intro.typ>"
+            "#figure([#rheo-handle-title(\"intro\", [Intro])], kind: \"rheo-handle\", supplement: none) <intro.typ>"
         );
     }
 

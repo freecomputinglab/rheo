@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::packages::RheoPackages;
 use crate::reticulate::VertebraInjection;
+use crate::util::constants::METADATA_MODULE_PATH;
 use crate::util::typst_literal::TypstLiteral;
 use crate::util::typst_source::TypstStmt;
 use crate::{Result, RheoError};
@@ -230,6 +231,17 @@ impl RheoWorld {
         Ok(())
     }
 
+    /// Wrap `text` as a `Source` for `id` and cache it in `slots`, the shape
+    /// every in-memory-served file (main, overlay, the metadata module) needs.
+    fn cache_source(&self, id: FileId, text: String) -> Source {
+        let source = Source::new(id, text);
+        self.slots.lock().entry(id).or_insert_with(|| FileSlot {
+            source: Some(source.clone()),
+            file: None,
+        });
+        source
+    }
+
     fn path_for_id(&self, id: FileId) -> FileResult<PathBuf> {
         if id.vpath().get_with_slash().starts_with("<") {
             return Err(FileError::NotFound(
@@ -384,6 +396,14 @@ impl World for RheoWorld {
             return Ok(source.clone());
         }
 
+        // The synthetic metadata-helper module the `MetadataHelper`/
+        // `MetadataAllHelper`/`HandleTitleHelper` `#import` statements target
+        // (see `typst_source.rs`) — served from memory like `typ/rheo.typ`,
+        // never from the project's own filesystem.
+        if id.vpath().get_with_slash().trim_start_matches('/') == METADATA_MODULE_PATH {
+            return Ok(self.cache_source(id, include_str!("typ/metadata.typ").to_string()));
+        }
+
         // Serve the synthesized virtual main, then any moulded vertebra overlay,
         // from memory — falling back to disk for everything else.
         let mut text = if id == self.main
@@ -412,23 +432,28 @@ impl World for RheoWorld {
         if id == self.main {
             let rheo_content = include_str!("typ/rheo.typ");
             let plugin_lib_content = self.plugin_library.as_deref().unwrap_or("");
-            // `rheo-metadata`/`rheo-metadata-all` at bundle-root (marrow)
-            // scope. `rheo-metadata` reuses `MetadataHelper`'s `Display` —
-            // the same text the per-vertebra prelude injects — so the two
-            // sites can't drift apart. `MetadataAllHelper` is marrow-only: a
-            // single vertebra never needs "every vertebra's metadata at
-            // once". No extra format gate is needed: `MetadataBeacon` (and
-            // marrow itself) are only ever assembled for per-page (HTML/EPUB)
+            // `rheo-metadata`/`rheo-metadata-all`/`rheo-handle-title` at
+            // bundle-root (marrow) scope. `rheo-metadata` reuses
+            // `MetadataHelper`'s `Display` — the same import the per-vertebra
+            // prelude uses — so the two sites can't drift apart.
+            // `MetadataAllHelper`/`HandleTitleHelper` are marrow-only: a
+            // single vertebra never needs "every vertebra's metadata at once"
+            // or a handle anchor's title lookup (anchors only ever appear in
+            // bundle-root `#document(...)` bodies, per `bundle_source.rs`).
+            // No extra format gate is needed: `MetadataBeacon` (and marrow
+            // itself) are only ever assembled for per-page (HTML/EPUB)
             // targets, since combined PDF hard-errors on
             // `document()`/`asset()` — the two already agree.
             let metadata_helper = TypstStmt::MetadataHelper;
             let metadata_all_helper = TypstStmt::MetadataAllHelper;
+            let handle_title_helper = TypstStmt::HandleTitleHelper;
             let template_inject = format!(
-                "{}{}\n\n{}\n\n{}\n\n{}\n#show: rheo_template\n\n",
+                "{}{}\n\n{}\n\n{}\n\n{}\n\n{}\n#show: rheo_template\n\n",
                 target_polyfill,
                 rheo_content,
                 metadata_helper,
                 metadata_all_helper,
+                handle_title_helper,
                 plugin_lib_content
             );
             text = format!("{}{}", template_inject, text);
@@ -455,13 +480,7 @@ impl World for RheoWorld {
             }
         }
 
-        let source = Source::new(id, text);
-        self.slots.lock().entry(id).or_insert_with(|| FileSlot {
-            source: Some(source.clone()),
-            file: None,
-        });
-
-        Ok(source)
+        Ok(self.cache_source(id, text))
     }
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {
@@ -856,5 +875,84 @@ mod tests {
         world
             .compile_bundle()
             .expect("rheo-metadata-all() must return one entry per spine-flat vertebra");
+    }
+
+    /// The synthetic module `MetadataHelper`/`MetadataAllHelper`/
+    /// `HandleTitleHelper` `#import` from is served at `METADATA_MODULE_PATH`
+    /// without existing on disk, defining all three names those imports name.
+    #[test]
+    fn serves_synthetic_metadata_module_for_import() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let world = RheoWorld::new_for_bundle(
+            root,
+            "#document(\"a.html\", format: \"html\")[]".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+            None,
+            Some("html"),
+            vec![],
+        )
+        .unwrap();
+
+        let id = RootedPath::new(
+            VirtualRoot::Project,
+            VirtualPath::new(METADATA_MODULE_PATH).unwrap(),
+        )
+        .intern();
+        let text = World::source(&world, id).unwrap().text().to_string();
+        assert!(text.contains("rheo-metadata-impl"));
+        assert!(text.contains("rheo-metadata-all"));
+        assert!(text.contains("rheo-handle-title"));
+    }
+
+    /// End-to-end behavioural check standing in for the exact-rendered-text
+    /// unit tests `typst_source.rs` used to pin: a real `VirtualSpine`'s
+    /// production-generated vertebra injections let one vertebra resolve
+    /// another's live title via `(rheo-context().metadata-of)(handle)`.
+    #[test]
+    fn metadata_of_resolves_another_vertebras_beacon_end_to_end() {
+        use crate::reticulate::{SpineLayout, SpineScan, VirtualSpine};
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(
+            content.join("intro.typ"),
+            "#set document(title: [Intro Title])\n= Intro\n",
+        )
+        .unwrap();
+        fs::write(
+            content.join("second.typ"),
+            "#context { assert((rheo-context().metadata-of)(\"intro\").title != none) }\n= Second\n",
+        )
+        .unwrap();
+
+        let scan = SpineScan::run(&content, &[]).unwrap();
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(scan, root, layout).unwrap();
+        let moulded = spine.mould();
+        let rheo_context = spine.vertebra_injections();
+        let global_context = spine.global_context(Some("html"), Some("html"), true);
+
+        let world = RheoWorld::new_for_bundle(
+            root,
+            moulded.main,
+            moulded.sources,
+            rheo_context,
+            Some(global_context),
+            Some("html"),
+            vec![],
+        )
+        .unwrap();
+
+        world
+            .compile_bundle()
+            .expect("(rheo-context().metadata-of)(handle) must resolve another vertebra's beacon");
     }
 }
