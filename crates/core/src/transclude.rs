@@ -16,8 +16,11 @@
 //!
 //! - `page` (required) — a compiled page's plugin-output-relative path.
 //! - `select` (optional) — a bare tag name (`main`) or a leading-dot class
-//!   (`.rheo-content`); absent uses the default cascade (see
-//!   [`crate::util::html::HtmlDom::select_inner_html`]).
+//!   (`.rheo-content`); absent uses the default cascade `<main>` ->
+//!   `.rheo-content` -> `.rheo-feed-content` -> whole `<body>` (see
+//!   [`crate::util::html::HtmlDom::select_inner_html`], which records why
+//!   `.rheo-feed-content` is matched as a compatibility alias, and what leaked
+//!   into every feed entry while it was not).
 //! - `as` (optional) — `escaped` (default; `&`/`<`/`>` entity-escaped, for
 //!   Atom `<content type="html">`) or `raw` (verbatim, for
 //!   `<content type="xhtml">`).

@@ -261,13 +261,27 @@ impl HtmlDom {
     /// `select: None` uses the default cascade, first match wins:
     /// 1. the first `<main>` element's inner HTML;
     /// 2. the first element carrying the `rheo-content` class;
-    /// 3. the whole `<body>` inner HTML.
+    /// 3. the first element carrying the `rheo-feed-content` class;
+    /// 4. the whole `<body>` inner HTML.
     ///
     /// This lets authors scope a region — e.g. a transcluded article, an
     /// aggregator's excerpt — excluding page chrome (header/footer/nav), by
     /// wrapping it in `<main>` (or an element with class `rheo-content`) and
     /// keeping the chrome outside it. With no marker present it falls back to
     /// the full body.
+    ///
+    /// `rheo-feed-content` is step 3 for COMPATIBILITY, and `rheo-content` is
+    /// the name to prefer: transclusion is not feed-specific (sitemaps,
+    /// `llms.txt` and search indexes use it too), so the unprefixed name is the
+    /// primary and the feed-specific one an alias. The retired Rust feed
+    /// generator's cascade used `rheo-feed-content`
+    /// (`docs/spikes/typst-native-feed.md`); the port renamed it and nothing
+    /// carried the old name forward, so a site still wrapping its content
+    /// region the way that generator documented matched neither class and
+    /// silently fell through to the whole `<body>`. MEASURED on ohrg.org: all
+    /// 43 entries carried the entire page body — nav, the full search index,
+    /// dialog markup — for +57% on feed size, until `select` was passed
+    /// explicitly.
     ///
     /// `select: Some(tag)` selects the first element with that bare tag name
     /// instead (e.g. `"article"`). `select: Some(".class")` (a leading dot)
@@ -283,6 +297,11 @@ impl HtmlDom {
                     return inner_html(&main);
                 }
                 if let Some(el) = find_element_by_class(&self.dom.document, "rheo-content") {
+                    return inner_html(&el);
+                }
+                // Compatibility alias — see this function's doc comment for why
+                // it is third rather than second, and what broke without it.
+                if let Some(el) = find_element_by_class(&self.dom.document, "rheo-feed-content") {
                     return inner_html(&el);
                 }
                 self.body_inner_html()
@@ -943,6 +962,43 @@ mod tests {
         let dom = HtmlDom::parse(html).unwrap();
         let inner = dom.select_inner_html(None).unwrap();
         assert_eq!(inner, "<p>a</p>");
+    }
+
+    #[test]
+    fn test_select_inner_html_default_feed_content_class_fallback() {
+        // The retired Rust feed generator's class name, still used by sites
+        // that followed its documented convention. Without this step in the
+        // cascade the whole body leaked into every feed entry — see
+        // `select_inner_html`'s doc comment for the measured damage. The chrome
+        // here is deliberately the shape that leaked: a nav and a script.
+        let html = "<html><head></head><body><nav>chrome</nav>\
+<div class=\"rheo-feed-content\"><p>article</p></div>\
+<script>var x = 1;</script></body></html>";
+        let dom = HtmlDom::parse(html).unwrap();
+        let inner = dom.select_inner_html(None).unwrap();
+        assert_eq!(inner, "<p>article</p>");
+    }
+
+    #[test]
+    fn test_select_inner_html_default_prefers_rheo_content_over_feed_content() {
+        // Both present: the unprefixed name wins, because it is the primary and
+        // `rheo-feed-content` is only a compatibility alias.
+        let html = "<html><head></head><body>\
+<div class=\"rheo-feed-content\"><p>alias</p></div>\
+<div class=\"rheo-content\"><p>primary</p></div></body></html>";
+        let dom = HtmlDom::parse(html).unwrap();
+        let inner = dom.select_inner_html(None).unwrap();
+        assert_eq!(inner, "<p>primary</p>");
+    }
+
+    #[test]
+    fn test_select_inner_html_default_main_beats_feed_content_class() {
+        // `<main>` stays step 1 — adding the alias must not reorder the cascade.
+        let html = "<html><head></head><body><main><p>main</p></main>\
+<div class=\"rheo-feed-content\"><p>alias</p></div></body></html>";
+        let dom = HtmlDom::parse(html).unwrap();
+        let inner = dom.select_inner_html(None).unwrap();
+        assert_eq!(inner, "<p>main</p>");
     }
 
     #[test]
