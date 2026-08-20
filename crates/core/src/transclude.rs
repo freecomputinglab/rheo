@@ -31,8 +31,8 @@
 //! attribute text is unescaped before parsing — see [`ATTR_PATTERN`] and
 //! [`unescape_attr_quotes`]. Without that, `as="json"` would be unreachable
 //! from the only place it is useful: written with bare quotes the asset is not
-//! valid JSON to begin with, and written escaped the attributes did not parse
-//! and the placeholder was silently left in the output.
+//! valid JSON to begin with, and written escaped the attributes did not parse,
+//! making the placeholder a build error for a missing `page`.
 //!
 //! Each placeholder is replaced by the *inner* HTML of the selected region.
 //! Relative hrefs inside the transcluded HTML are not rewritten, so a nested
@@ -53,6 +53,13 @@ use typst::foundations::Bytes;
 /// attribute text.
 static TAG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"<rheo-content\b([^>]*)/>"#).expect("invalid rheo-content tag pattern")
+});
+
+/// Matches any `<rheo-content` opening, with no closing constraint — used only
+/// to count candidate placeholders `TAG_PATTERN` failed to match (e.g. a `>`
+/// inside an attribute value, which `TAG_PATTERN`'s `[^>]*` cannot cross).
+static LOOSE_TAG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<rheo-content\b"#).expect("invalid loose rheo-content tag pattern")
 });
 
 /// Matches a single `name="value"` attribute pair within a tag's attribute text.
@@ -105,8 +112,9 @@ impl ContentTransclusion {
     /// Scan `text` for `<rheo-content .../>` placeholders, returning each
     /// match's byte range (for substitution) alongside its parsed attributes.
     ///
-    /// A malformed placeholder missing the required `page` attribute is
-    /// skipped (left as literal text) rather than partially parsed.
+    /// A placeholder missing the required `page` attribute is dropped from
+    /// the result rather than partially parsed; callers must treat that as a
+    /// malformed placeholder (see [`Self::rewrite_text`]), not as "none found".
     pub fn scan(text: &str) -> Vec<(Range<usize>, Self)> {
         TAG_PATTERN
             .captures_iter(text)
@@ -189,12 +197,25 @@ impl ContentTransclusion {
     /// folded into any error for diagnostics), resolving each match with
     /// `resolve_one`. Returns `None` — a signal to leave the original bytes
     /// untouched — when `text` contains no placeholder.
+    ///
+    /// Errors, naming `asset_name`, if `text` contains a `<rheo-content` open
+    /// tag that `TAG_PATTERN`/`scan` did not turn into a placeholder — a
+    /// malformed placeholder must never survive into the output as literal
+    /// text.
     fn rewrite_text(
         asset_name: &str,
         text: &str,
         resolve_one: impl Fn(&Self) -> Result<String>,
     ) -> Result<Option<String>> {
         let placeholders = Self::scan(text);
+        let candidates = LOOSE_TAG_PATTERN.find_iter(text).count();
+        if candidates > placeholders.len() {
+            return Err(RheoError::invalid_data(format!(
+                "asset '{asset_name}': a <rheo-content> placeholder could not be parsed; \
+                 check for a missing required `page` attribute or a `>` character inside \
+                 an attribute value"
+            )));
+        }
         if placeholders.is_empty() {
             return Ok(None);
         }
@@ -522,9 +543,34 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_ignores_placeholder_missing_required_page() {
+    fn test_scan_drops_placeholder_missing_page_but_rewrite_errors() {
+        // scan() alone still drops it (an internal parsing fact used by the
+        // candidate-count check in rewrite_text); the build-facing contract is
+        // that rewrite_assets turns this into an error instead.
         let matches = ContentTransclusion::scan(r#"<rheo-content select="main"/>"#);
         assert!(matches.is_empty());
+
+        let outputs: Vec<CastVertebra> = vec![];
+        let text = r#"<rheo-content select="main"/>"#;
+        let mut asset_files = vec![("feed.xml".to_string(), Bytes::new(text.as_bytes().to_vec()))];
+        let err = ContentTransclusion::rewrite_assets(&outputs, &mut asset_files).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("feed.xml"), "message was: {msg}");
+        assert!(msg.contains("rheo-content"), "message was: {msg}");
+    }
+
+    #[test]
+    fn test_rewrite_assets_errors_on_attribute_value_containing_gt() {
+        // `select=".a > .b"` puts a `>` inside an attribute value, so
+        // TAG_PATTERN's `[^>]*` never reaches the closing `/>` and the
+        // placeholder does not match at all.
+        let outputs: Vec<CastVertebra> = vec![];
+        let text = r#"<rheo-content page="a.html" select=".a > .b"/>"#;
+        let mut asset_files = vec![("feed.xml".to_string(), Bytes::new(text.as_bytes().to_vec()))];
+        let err = ContentTransclusion::rewrite_assets(&outputs, &mut asset_files).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("feed.xml"), "message was: {msg}");
+        assert!(msg.contains("rheo-content"), "message was: {msg}");
     }
 
     // ControlAssets::extract tests
