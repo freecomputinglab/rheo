@@ -88,6 +88,16 @@ that changes on every build. If a vertebra's date is syndicated downstream
 will churn its published/updated timestamp on every rebuild. Use a literal
 `datetime(year:, month:, day:)` for anything that needs a stable timestamp.
 
+### EPUB `dc:creator` no longer reads a harvested `rheo-author` variable or HTML meta tag
+
+EPUB's `dc:creator` (`crates/epub/src/lib.rs`) is taken only from the first
+vertebra's Typst-resolved `DocumentInfo.author` — i.e. `#set document(author:
+...)`. The plugin no longer falls back to an authored `#let rheo-author =
+"..."` variable, nor scrapes the compiled HTML's `<meta name="author"
+content="...">` tag; both are gone. Since EPUB's `dc:creator` is a single
+optional string while `DocumentInfo.author` can hold zero, one, or several
+names, multiple authors are joined with `", "`.
+
 ### Titles read via the Typst-side beacon may be rich content, not plain text
 
 `rheo-metadata(handle).title` (and `.description`) come back as real Typst
