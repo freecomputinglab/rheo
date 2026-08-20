@@ -541,7 +541,12 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
         NodeData::Comment { contents } => {
             write_html(output, format_args!("<!--{}-->", contents))?;
         }
-        NodeData::Element { name, attrs, .. } => {
+        NodeData::Element {
+            name,
+            attrs,
+            template_contents,
+            ..
+        } => {
             write_html(output, format_args!("<{}", name.local))?;
 
             for attr in attrs.borrow().iter() {
@@ -561,7 +566,11 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
                 output.push('>');
                 let is_raw =
                     matches!(mode, SerializeMode::Html) && is_raw_text_element(name.local.as_ref());
-                for child in handle.children.borrow().iter() {
+                // A `<template>`'s children live in `template_contents`, a
+                // separate fragment per the HTML spec — not in `handle.children`.
+                let content_owner = template_contents.borrow().clone();
+                let children_of = content_owner.as_ref().unwrap_or(handle);
+                for child in children_of.children.borrow().iter() {
                     if is_raw && let NodeData::Text { contents } = &child.data {
                         output.push_str(&contents.borrow());
                     } else {
@@ -648,6 +657,15 @@ mod tests {
             }
             _ => panic!("expected Element node"),
         }
+    }
+
+    #[test]
+    fn test_template_survives_head_injection_round_trip() {
+        let html = "<!DOCTYPE html><html><head><title>T</title></head><body><template><div>hello</div></template></body></html>";
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_head_links(&[], &["style.css"], &[]).unwrap();
+        let result = dom.serialize().unwrap();
+        assert!(result.contains("<template><div>hello</div></template>"));
     }
 
     #[test]
