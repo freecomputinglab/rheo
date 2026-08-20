@@ -920,6 +920,10 @@ impl VirtualSpine {
     /// unlike `target`/`ext` it is always present (a resolved bool, not an
     /// `Option`), and `typ/rheo.typ` ANDs it with the per-page `ext` gate before
     /// resetting the footnote counter (so it only ever takes effect for HTML/EPUB).
+    ///
+    /// `rheo-version` is the compiling rheo binary's own semver string, always
+    /// present; a package reads it to enforce a minimum rheo, and treats its
+    /// absence as "rheo older than the release that added it".
     pub fn global_context(
         &self,
         target: Option<&str>,
@@ -929,6 +933,10 @@ impl VirtualSpine {
         let mut fields = vec![
             ("spine".to_string(), self.spine_tree()),
             ("spine-flat".to_string(), self.spine_flat()),
+            (
+                "rheo-version".to_string(),
+                TypstLiteral::str(env!("CARGO_PKG_VERSION")),
+            ),
         ];
         if let Some(t) = target {
             fields.push(("target".to_string(), TypstLiteral::str(t)));
@@ -1407,6 +1415,30 @@ mod tests {
         assert!(!global_without.contains("target:"));
         assert!(!global_without.contains("ext:"));
         assert!(global_without.contains("reset-footnotes: true"));
+    }
+
+    #[test]
+    fn global_context_carries_rheo_version() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
+
+        let expected = format!("rheo-version: \"{}\"", env!("CARGO_PKG_VERSION"));
+        assert!(
+            spine
+                .global_context(None, None, true)
+                .serialize()
+                .contains(&expected)
+        );
     }
 
     #[test]
