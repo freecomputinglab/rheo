@@ -84,7 +84,7 @@ The old static scan deliberately rejected `#set document(date: datetime.today())
 text alone. The new mechanism reads the *resolved* value instead, so it
 can't tell them apart either: `datetime.today()` now resolves to a real date
 that changes on every build. If a vertebra's date is syndicated downstream
-(e.g. by the `@rheo/rssfeed` Typst package), one using `datetime.today()`
+(e.g. by the `@rheo/feeds` Typst package), one using `datetime.today()`
 will churn its published/updated timestamp on every rebuild. Use a literal
 `datetime(year:, month:, day:)` for anything that needs a stable timestamp.
 

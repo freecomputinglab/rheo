@@ -34,24 +34,24 @@ pub const RETIRED_KEYS: &[RetiredKey] = &[
     RetiredKey {
         table: "[html]",
         key: "feed_base_url",
-        replacement: "Atom feed generation moved to the Typst package @rheo/rssfeed — \
+        replacement: "Atom feed generation moved to the Typst package @rheo/feeds — \
             see https://rheo.ohrg.org/feeds",
     },
     RetiredKey {
         table: "[html]",
         key: "feed_author",
-        replacement: "set via @rheo/rssfeed instead — see https://rheo.ohrg.org/feeds",
+        replacement: "set via @rheo/feeds instead — see https://rheo.ohrg.org/feeds",
     },
     RetiredKey {
         table: "[html]",
         key: "feed_title",
-        replacement: "set via @rheo/rssfeed instead — see https://rheo.ohrg.org/feeds",
+        replacement: "set via @rheo/feeds instead — see https://rheo.ohrg.org/feeds",
     },
     RetiredKey {
         table: "[html]",
         key: "feed_include",
         replacement: "a marrow that builds its own entry list knows what it put in — this \
-            concept does not survive the move to @rheo/rssfeed",
+            concept does not survive the move to @rheo/feeds",
     },
 ];
 

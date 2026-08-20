@@ -35,7 +35,7 @@
 //!
 //! # Atom feed removal: `[html] feed_*` keys and `rheo-*` variables
 //!
-//! Atom feed generation moved to the Typst package `@rheo/rssfeed`: the Rust
+//! Atom feed generation moved to the Typst package `@rheo/feeds`: the Rust
 //! generator, its `[html] feed_*` rheo.toml keys, and the generic `rheo-*`
 //! `.typ` variable convention that fed it (`rheo-feed-title`,
 //! `rheo-feed-updated`, `rheo-feed-exclude`) are all gone. `rheo-author` is
@@ -44,7 +44,7 @@
 //! directly. Nothing here is rewritten: a feed's title/author/base-url/
 //! inclusion rules don't map one-to-one onto the package's Typst
 //! configuration, so `report_removed_feed_surface` only reports every
-//! affected key and binding, with its location, pointing at `@rheo/rssfeed`
+//! affected key and binding, with its location, pointing at `@rheo/feeds`
 //! or (for `rheo-author`) the `#set document(...)` replacement.
 
 use regex::{Captures, Regex};
@@ -91,15 +91,15 @@ const FEED_REMOVED_VERSION: &str = "0.6.0";
 const REMOVED_VAR_BINDINGS: &[(&str, &str)] = &[
     (
         "rheo-feed-title",
-        "moved to @rheo/rssfeed's Typst configuration",
+        "moved to @rheo/feeds's Typst configuration",
     ),
     (
         "rheo-feed-updated",
-        "moved to @rheo/rssfeed's Typst configuration",
+        "moved to @rheo/feeds's Typst configuration",
     ),
     (
         "rheo-feed-exclude",
-        "moved to @rheo/rssfeed's Typst configuration",
+        "moved to @rheo/feeds's Typst configuration",
     ),
     (
         "rheo-author",
@@ -431,7 +431,7 @@ fn migrate_context_references(project: &ProjectConfig, apply: bool) -> Result<()
 /// Reports (never rewrites) every removed `[html] feed_*` rheo.toml key and
 /// `#let rheo-*` binding still present, each with its location and a pointer
 /// to its replacement. A feed's title/author/base-url/inclusion rules do not
-/// map one-to-one onto `@rheo/rssfeed`'s Typst configuration, so a mechanical
+/// map one-to-one onto `@rheo/feeds`'s Typst configuration, so a mechanical
 /// rewrite would produce something subtly wrong — this stays report-only.
 fn report_removed_feed_surface(project: &ProjectConfig) {
     if let Some(html) = project.config.plugin_sections.get("html") {

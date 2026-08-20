@@ -48,7 +48,7 @@ deprecated — there is no compatibility flag and no one-release warning shim
 | Any `#let rheo-<key>` | The whole harvested-variable convention is gone (`rheo-drop-vars-1ay`) |
 | `sys.inputs.rheo-target` | Removed **[landed]** — use `target()`, or `sys.inputs.rheo-context.target` |
 
-Feeds still exist, as the `@rheo/rssfeed` Typst package driven from a `.marrow.typ`. This is
+Feeds still exist, as the `@rheo/feeds` Typst package driven from a `.marrow.typ`. This is
 a workflow change rather than a config rename: publication-level facts — feed title, author,
 site base URL, which pages to include — stop being `rheo.toml` keys and become Typst. The
 removal is gated on that package existing and reaching parity; shipping the deletion before

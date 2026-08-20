@@ -409,12 +409,12 @@ nothing new was filed for it.** The local db has held the decision since
   an outright removal in 0.6.0, **not** the deprecation path this entry asks for.
 - `rheo-drop-vars-1ay` (P2) — delete the `rheo-*` variable convention outright.
 - `rheo-migrate-feed-dhe` (P2) — `rheo migrate` reports the removed keys and
-  variables and points at `@rheo/rssfeed`. This is what carries the user-facing
+  variables and points at `@rheo/feeds`. This is what carries the user-facing
   warning instead of a release-cycle deprecation.
 - `rheo-claude-md-zb3` (P2) — rewrite `CLAUDE.md` around the layering rule that a
   `FormatPlugin` does format transport only.
 
-The replacement is the Typst package `@rheo/rssfeed` in `../rheo-packages`. Note
+The replacement is the Typst package `@rheo/feeds` in `../rheo-packages`. Note
 the cross-repo sequencing gate recorded on `rheo-drop-feed-bdo`: beads cannot
 express cross-repo dependencies, so although it is dep-ready inside `rheo/`, it
 must NOT start until `rheo-tests`' `rheo-tests-marrow-feed-g0y` is green,

@@ -83,7 +83,7 @@ Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title 
 
 **Font directory resolution:** Without `font_dirs` in config, `fonts/` at project root is auto-discovered. Setting `font_dirs` replaces autoscan (include `"fonts"` explicitly if desired). `--font-dir` CLI flag always appends.
 
-**Publication facts live in Typst, not rheo.toml.** A feed's title, author, and site base URL are deliberately not config keys — a package minting a derived artifact from marrow (e.g. `@rheo/rssfeed`) takes them as literal Typst values or its own package-level config.
+**Publication facts live in Typst, not rheo.toml.** A feed's title, author, and site base URL are deliberately not config keys — a package minting a derived artifact from marrow (e.g. `@rheo/feeds`) takes them as literal Typst values or its own package-level config.
 
 ## Cross-file references
 
@@ -170,7 +170,7 @@ A `.marrow.typ` at the bundle root (a project's own, or one shipped by a package
 
 **Control assets.** The `.rheo/` bundle-output prefix is reserved: an asset minted under it (e.g. `.rheo/head.html`) is a message from the bundle to rheo, consumed during compilation and never written to the actual build output.
 
-`@rheo/rssfeed` (in `../rheo-packages`) is where Atom feed generation now lives, built on these three primitives plus `rheo-metadata-all()` (see `rheo-context` above) — no Rust code, no plugin, no `rheo.toml` keys.
+`@rheo/feeds` (in `../rheo-packages`) is where Atom feed generation now lives, built on these three primitives plus `rheo-metadata-all()` (see `rheo-context` above) — no Rust code, no plugin, no `rheo.toml` keys.
 
 ## Code Style
 
