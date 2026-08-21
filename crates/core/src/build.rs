@@ -461,8 +461,6 @@ impl Build {
         // disk. Assets stay in the returned VirtualFs so the dev server still
         // serves them. `.rheo/*` control assets are dropped entirely — never
         // served — mirroring the `run()` path's `ControlAssets::extract`.
-        let needs_injection = !css_paths.is_empty() || !js_paths.is_empty();
-        let needs_head_mutation = needs_injection || control_head_fragment.is_some();
         let mut injected = typst_bundle::VirtualFs::default();
         for (vpath, bytes) in virtual_fs {
             let path_str = vpath.get_with_slash().trim_start_matches('/').to_string();
@@ -487,25 +485,27 @@ impl Build {
                 continue;
             }
 
-            if needs_head_mutation && path_str.ends_with(".html") {
+            if path_str.ends_with(".html") {
                 let html = String::from_utf8_lossy(&bytes);
-                let mut dom = crate::util::html::HtmlDom::parse(&html)?;
-                if needs_injection {
-                    // Depth-relative asset refs so nested pages resolve them.
-                    let prefix = crate::util::html::depth_prefix(&path_str);
-                    let css_refs: Vec<String> =
-                        css_paths.iter().map(|s| format!("{prefix}{s}")).collect();
-                    let js_refs: Vec<String> =
-                        js_paths.iter().map(|s| format!("{prefix}{s}")).collect();
-                    let css: Vec<&str> = css_refs.iter().map(|s| s.as_str()).collect();
-                    let js: Vec<&str> = js_refs.iter().map(|s| s.as_str()).collect();
-                    dom.inject_head_links(&[], &css, &js)?;
-                }
-                if let Some(fragment) = &control_head_fragment {
-                    dom.append_head_fragment(fragment)?;
-                }
-                let modified = dom.serialize()?;
-                injected.insert(vpath, typst::foundations::Bytes::new(modified.into_bytes()));
+                // Depth-relative asset refs so nested pages resolve them.
+                let prefix = crate::util::html::depth_prefix(&path_str);
+                let css_refs: Vec<String> =
+                    css_paths.iter().map(|s| format!("{prefix}{s}")).collect();
+                let js_refs: Vec<String> =
+                    js_paths.iter().map(|s| format!("{prefix}{s}")).collect();
+                let css: Vec<&str> = css_refs.iter().map(|s| s.as_str()).collect();
+                let js: Vec<&str> = js_refs.iter().map(|s| s.as_str()).collect();
+                let modified = crate::util::html::HtmlDom::apply_head_mutations(
+                    &html,
+                    &css,
+                    &js,
+                    control_head_fragment.as_deref(),
+                )?;
+                match modified {
+                    Some(modified) => injected
+                        .insert(vpath, typst::foundations::Bytes::new(modified.into_bytes())),
+                    None => injected.insert(vpath, bytes),
+                };
             } else {
                 injected.insert(vpath, bytes);
             }
@@ -1104,6 +1104,137 @@ mod tests {
             "CastVertebra.title should be Typst's resolved DocumentInfo.title, \
              not the AST scan's filename-derived fallback"
         );
+    }
+
+    /// The dev-server in-memory path must hoist `<rheo-head>` exactly like the
+    /// on-disk path, even with no CSS/JS asset and no `.rheo/head.html`
+    /// fragment — the case the old per-format gate skipped entirely.
+    #[test]
+    fn test_compile_for_watch_hoists_rheo_head_without_assets() {
+        use crate::config::project::ProjectConfig;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("content")).expect("create content dir");
+        std::fs::write(
+            root.join("content/a.typ"),
+            "= Page A\n#html.elem(\"rheo-head\", html.elem(\"meta\", attrs: (name: \"x\", content: \"y\")))\n",
+        )
+        .expect("write content/a.typ");
+
+        let project = ProjectConfig {
+            name: "test".to_string(),
+            root: root.to_path_buf(),
+            config: crate::RheoConfig {
+                content_dir: Some("content".to_string()),
+                formats: vec!["html".to_string()],
+                ..Default::default()
+            },
+            typ_files: vec![root.join("content/a.typ")],
+            mode: ProjectMode::Directory,
+            config_path: None,
+        };
+
+        struct HtmlNoAssets;
+        impl FormatPlugin for HtmlNoAssets {
+            fn name(&self) -> &'static str {
+                "html"
+            }
+            fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[CastVertebra]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let plugin: Box<dyn FormatPlugin> = Box::new(HtmlNoAssets);
+        let mut build =
+            Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
+        let vfs = build
+            .compile_for_watch()
+            .expect("compile_for_watch")
+            .expect("html plugin selected");
+
+        let (_, bytes) = vfs
+            .iter()
+            .find(|(p, _)| p.get_with_slash().ends_with("a.html"))
+            .expect("a.html present");
+        let html = String::from_utf8_lossy(bytes.as_slice());
+        assert!(!html.contains("rheo-head"), "wrapper not removed:\n{html}");
+        let head_end = html.find("</head>").expect("has head");
+        let meta_pos = html.find("name=\"x\"").expect("meta present");
+        assert!(meta_pos < head_end, "meta not hoisted into head:\n{html}");
+    }
+
+    /// Same as above, but with a CSS asset present, so the shared step's
+    /// injection and hoist both run in the same pass.
+    #[test]
+    fn test_compile_for_watch_hoists_rheo_head_with_css() {
+        use crate::config::project::ProjectConfig;
+        use crate::plugins::{AssetConfig, EmbeddedDefault};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("content")).expect("create content dir");
+        std::fs::write(
+            root.join("content/a.typ"),
+            "= Page A\n#html.elem(\"rheo-head\", html.elem(\"meta\", attrs: (name: \"x\", content: \"y\")))\n",
+        )
+        .expect("write content/a.typ");
+
+        let project = ProjectConfig {
+            name: "test".to_string(),
+            root: root.to_path_buf(),
+            config: crate::RheoConfig {
+                content_dir: Some("content".to_string()),
+                formats: vec!["html".to_string()],
+                ..Default::default()
+            },
+            typ_files: vec![root.join("content/a.typ")],
+            mode: ProjectMode::Directory,
+            config_path: None,
+        };
+
+        struct HtmlWithCss;
+        impl FormatPlugin for HtmlWithCss {
+            fn name(&self) -> &'static str {
+                "html"
+            }
+            fn assets(&self) -> Vec<AssetConfig> {
+                vec![AssetConfig {
+                    name: "css_stylesheet",
+                    default_path: "style.css",
+                    required: false,
+                    default_content: Some(EmbeddedDefault {
+                        name: "test-default.css",
+                        content: "body{color:red}",
+                    }),
+                }]
+            }
+            fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[CastVertebra]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let plugin: Box<dyn FormatPlugin> = Box::new(HtmlWithCss);
+        let mut build =
+            Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
+        let vfs = build
+            .compile_for_watch()
+            .expect("compile_for_watch")
+            .expect("html plugin selected");
+
+        let (_, bytes) = vfs
+            .iter()
+            .find(|(p, _)| p.get_with_slash().ends_with("a.html"))
+            .expect("a.html present");
+        let html = String::from_utf8_lossy(bytes.as_slice());
+        assert!(!html.contains("rheo-head"), "wrapper not removed:\n{html}");
+        assert!(
+            html.contains("test-default.css"),
+            "css link missing:\n{html}"
+        );
+        let head_end = html.find("</head>").expect("has head");
+        let meta_pos = html.find("name=\"x\"").expect("meta present");
+        assert!(meta_pos < head_end, "meta not hoisted into head:\n{html}");
     }
 
     #[test]

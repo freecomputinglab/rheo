@@ -266,6 +266,36 @@ impl HtmlDom {
         Ok(())
     }
 
+    /// Runs the full per-page head pipeline — link injection, `<rheo-head>`
+    /// hoisting, then the site-wide fragment, in that load-bearing order (see
+    /// [`Self::append_head_fragment`]) — shared by the on-disk and in-memory
+    /// compile paths so they can't drift apart.
+    ///
+    /// A `<rheo-head` substring check lets pages with none of CSS/JS, a
+    /// `<rheo-head>` wrapper, or a head fragment skip the parse entirely;
+    /// such a page returns `None`. Otherwise returns the rewritten HTML.
+    pub fn apply_head_mutations(
+        html: &str,
+        stylesheets: &[&str],
+        scripts: &[&str],
+        head_fragment: Option<&str>,
+    ) -> Result<Option<String>> {
+        let needs_links = !stylesheets.is_empty() || !scripts.is_empty();
+        if !needs_links && !html.contains("<rheo-head") && head_fragment.is_none() {
+            return Ok(None);
+        }
+
+        let mut dom = Self::parse(html)?;
+        if needs_links {
+            dom.inject_head_links(&[], stylesheets, scripts)?;
+        }
+        dom.hoist_rheo_head()?;
+        if let Some(fragment) = head_fragment {
+            dom.append_head_fragment(fragment)?;
+        }
+        Ok(Some(dom.serialize()?))
+    }
+
     /// Serialize the inner HTML of the `<body>` element: its children without
     /// the surrounding `<body>` tag.
     ///

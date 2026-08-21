@@ -128,45 +128,27 @@ impl FormatPlugin for HtmlPlugin {
             .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
             .unwrap_or_default();
 
-        let needs_head_links = !css_paths.is_empty() || !js_paths.is_empty();
         // A bundle-root `.rheo/head.html` control asset (see
         // `ControlAssets`), if present, contributes to every page's `<head>`
         // rather than just one page's — read it once up front.
         let head_fragment = ctx.control.head_fragment.as_deref();
 
         for output in outputs {
-            // A `<rheo-head>` wrapper needs hoisting even when neither
-            // CSS/JS nor a head fragment is configured, so we need the raw
-            // string up front to peek for one before deciding whether a DOM
-            // parse is required at all.
             let html_string = output.html_string()?;
-            let has_rheo_head = html_string.contains("<rheo-head");
-
-            let html_string = if needs_head_links || has_rheo_head || head_fragment.is_some() {
-                let mut dom = output.html()?;
-                if needs_head_links {
-                    // Assets are written at the output root; make each ref
-                    // depth-relative so nested pages resolve them.
-                    let prefix = rheo_core::util::html::depth_prefix(&output.output_path);
-                    let css_refs: Vec<String> =
-                        css_paths.iter().map(|s| format!("{prefix}{s}")).collect();
-                    let js_refs: Vec<String> =
-                        js_paths.iter().map(|s| format!("{prefix}{s}")).collect();
-                    let css: Vec<&str> = css_refs.iter().map(|s| s.as_str()).collect();
-                    let js: Vec<&str> = js_refs.iter().map(|s| s.as_str()).collect();
-                    dom.inject_head_links(&[], &css, &js)?;
-                }
-                dom.hoist_rheo_head()?;
-                // Site-wide head content lands after this page's own
-                // `<rheo-head>` contributions — see `append_head_fragment`'s
-                // doc comment for the ordering rationale.
-                if let Some(fragment) = head_fragment {
-                    dom.append_head_fragment(fragment)?;
-                }
-                dom.serialize()?
-            } else {
-                html_string
-            };
+            // Assets are written at the output root; make each ref
+            // depth-relative so nested pages resolve them.
+            let prefix = rheo_core::util::html::depth_prefix(&output.output_path);
+            let css_refs: Vec<String> = css_paths.iter().map(|s| format!("{prefix}{s}")).collect();
+            let js_refs: Vec<String> = js_paths.iter().map(|s| format!("{prefix}{s}")).collect();
+            let css: Vec<&str> = css_refs.iter().map(|s| s.as_str()).collect();
+            let js: Vec<&str> = js_refs.iter().map(|s| s.as_str()).collect();
+            let html_string = rheo_core::util::html::HtmlDom::apply_head_mutations(
+                &html_string,
+                &css,
+                &js,
+                head_fragment,
+            )?
+            .unwrap_or(html_string);
 
             let out_path = ctx.output_dir.join(&output.output_path);
             debug!(size = html_string.len(), "writing HTML file");
