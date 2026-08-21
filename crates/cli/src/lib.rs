@@ -115,6 +115,12 @@ fn build_compile_command(plugins: &[Box<dyn FormatPlugin>]) -> Command {
                 .long("emit-bundle-source")
                 .action(ArgAction::SetTrue)
                 .help("Write each plugin's synthesized bundle source to <build_dir>/<plugin>/.rheo-bundle.typ (debug artifact, not an input)"),
+        )
+        .arg(
+            Arg::new("metadata-two-pass")
+                .long("metadata-two-pass")
+                .action(ArgAction::SetTrue)
+                .help("Recompile once more (only if needed) to resolve a #set document(title:) set inside a bounded code block for cross-vertebra metadata-of/@handle reads"),
         );
     add_format_flags(cmd, plugins)
 }
@@ -157,6 +163,12 @@ fn build_watch_command(plugins: &[Box<dyn FormatPlugin>]) -> Command {
                 .long("emit-bundle-source")
                 .action(ArgAction::SetTrue)
                 .help("Write each plugin's synthesized bundle source to <build_dir>/<plugin>/.rheo-bundle.typ (debug artifact, not an input)"),
+        )
+        .arg(
+            Arg::new("metadata-two-pass")
+                .long("metadata-two-pass")
+                .action(ArgAction::SetTrue)
+                .help("Recompile once more (only if needed) to resolve a #set document(title:) set inside a bounded code block for cross-vertebra metadata-of/@handle reads"),
         );
     add_format_flags(cmd, plugins)
 }
@@ -363,6 +375,7 @@ fn prepare_build(
     enabled_from_cli: Vec<String>,
     cli_font_dirs: Vec<PathBuf>,
     emit_bundle_source: bool,
+    metadata_two_pass: bool,
 ) -> Result<Build> {
     info!(path = %path.display(), "loading project");
     let project = ProjectConfig::from_path(path, config_path)?;
@@ -384,6 +397,7 @@ fn prepare_build(
         build_dir,
         font_dirs: cli_font_dirs,
         emit_bundle_source,
+        metadata_two_pass,
     };
     Build::prepare(project, all_plugins(), opts)
 }
@@ -420,6 +434,7 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         .unwrap_or_default();
     let open = sub.get_flag("open");
     let emit_bundle_source = sub.get_flag("emit-bundle-source");
+    let metadata_two_pass = sub.get_flag("metadata-two-pass");
 
     let all = all_plugins();
     let enabled = enabled_formats_from_matches(sub, &all);
@@ -431,6 +446,7 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         enabled.clone(),
         cli_font_dirs.clone(),
         emit_bundle_source,
+        metadata_two_pass,
     )?;
 
     // Initial compilation (best-effort; watch continues on failure)
@@ -515,6 +531,7 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
                         enabled.clone(),
                         cli_font_dirs.clone(),
                         emit_bundle_source,
+                        metadata_two_pass,
                     ) {
                         Ok(new_build) => {
                             build = new_build;
@@ -552,6 +569,7 @@ fn run_compile(sub: &ArgMatches) -> Result<()> {
         .map(|vals| vals.map(PathBuf::from).collect())
         .unwrap_or_default();
     let emit_bundle_source = sub.get_flag("emit-bundle-source");
+    let metadata_two_pass = sub.get_flag("metadata-two-pass");
 
     let all = all_plugins();
     let enabled = enabled_formats_from_matches(sub, &all);
@@ -563,6 +581,7 @@ fn run_compile(sub: &ArgMatches) -> Result<()> {
         enabled,
         cli_font_dirs,
         emit_bundle_source,
+        metadata_two_pass,
     )?;
     build.run().map(|_| ())
 }

@@ -21,6 +21,7 @@ use crate::{Result, RheoError};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info};
+use typst::introspection::Introspector as _;
 use typst::model::Document as _;
 
 /// Inputs for preparing a [`Build`], typically mapped from CLI flags and config.
@@ -45,6 +46,13 @@ pub struct BuildOptions {
     /// never read back — for diagnosing marrow/spine authoring errors. Off by
     /// default.
     pub emit_bundle_source: bool,
+    /// `--metadata-two-pass`: opt in to gated two-pass metadata resolution
+    /// (see [`Build::compile_bundle_once`]) — recovers a title set inside a
+    /// bounded code block for cross-vertebra reads (`metadata-of`, `@handle`)
+    /// at the cost of a second bundle compile, and only when the first pass
+    /// actually found such a gap. Off by default: the ordinary single-pass
+    /// build never pays this cost.
+    pub metadata_two_pass: bool,
 }
 
 /// A prepared, runnable build: a project, the selected plugins, the resolved
@@ -59,6 +67,7 @@ pub struct Build {
     output: OutputConfig,
     font_dirs: Vec<PathBuf>,
     emit_bundle_source: bool,
+    metadata_two_pass: bool,
 }
 
 /// The result of [`Build::compile_spine`]: the built spine, the compiled
@@ -77,6 +86,18 @@ struct CompiledSpine {
     /// Each compiled document's Typst-resolved `DocumentMeta`, keyed by the
     /// same output-path string form as `assets`.
     meta: HashMap<String, DocumentMeta>,
+}
+
+/// The result of one [`Build::compile_bundle_once`] call: a single Typst
+/// bundle compile, decomposed into assets/metadata/exported files, plus the
+/// `bundle` itself — kept around (rather than dropped once exported) so the
+/// gated second pass can query its introspector for each vertebra's own
+/// beacon-reported title.
+struct CompiledBundlePass {
+    assets: HashSet<String>,
+    meta: HashMap<String, DocumentMeta>,
+    files: typst_bundle::VirtualFs,
+    bundle: typst_bundle::Bundle,
 }
 
 impl Build {
@@ -113,6 +134,7 @@ impl Build {
             output,
             font_dirs,
             emit_bundle_source: opts.emit_bundle_source,
+            metadata_two_pass: opts.metadata_two_pass,
         })
     }
 
@@ -331,20 +353,81 @@ impl Build {
             .plugin_section(plugin.name())
             .reset_footnotes();
 
-        // Single Typst bundle compile for this plugin.
+        let mut pass = self.compile_bundle_once(
+            plugin,
+            moulded.main.clone(),
+            moulded.sources.clone(),
+            rheo_context.clone(),
+            virtual_spine.global_context(target, ext, reset_footnotes, &HashMap::new()),
+        )?;
+
+        // Gated second pass (`--metadata-two-pass`): only when opted in, and
+        // only for a vertebra whose beacon actually got it wrong. A `#set
+        // document(title:...)` inside a bounded code block leaves the
+        // beacon's own `#context` read seeing whatever title was ambient
+        // *before* the block (rheo's path-derived fallback, passed as the
+        // `#document(...)` wrapper's own `title:` argument — itself a kind of
+        // outer `set document(title:)` per Typst's docs on the matter) rather
+        // than none, so "beacon title missing" can't be the trigger; only a
+        // beacon-vs-`DocumentInfo` mismatch (both flattened to plain text,
+        // side-stepping the beacon's rich-content title type) reliably
+        // isolates the gap without also firing — and destructively flattening
+        // rich content — for every vertebra whose beacon already resolves
+        // correctly (see `docs/limitations.md`).
+        if self.metadata_two_pass {
+            let title_overrides: HashMap<String, String> = virtual_spine
+                .vertebrae
+                .iter()
+                .filter_map(|v| {
+                    let resolved = pass
+                        .meta
+                        .get(&v.output_path)
+                        .and_then(DocumentMeta::title)?;
+                    let beacon = Self::beacon_title_plain_text(&pass.bundle, &v.handle);
+                    (beacon.as_deref() != Some(resolved))
+                        .then(|| (v.handle.clone(), resolved.to_string()))
+                })
+                .collect();
+            if !title_overrides.is_empty() {
+                pass = self.compile_bundle_once(
+                    plugin,
+                    moulded.main,
+                    moulded.sources,
+                    rheo_context,
+                    virtual_spine.global_context(target, ext, reset_footnotes, &title_overrides),
+                )?;
+            }
+        }
+
+        Ok(CompiledSpine {
+            spine: virtual_spine,
+            files: pass.files,
+            assets: pass.assets,
+            bundle_source,
+            meta: pass.meta,
+        })
+    }
+
+    /// Compile the moulded bundle main once — the shared step behind both the
+    /// ordinary single pass and the gated second pass of `compile_spine`.
+    fn compile_bundle_once(
+        &self,
+        plugin: &dyn FormatPlugin,
+        main: String,
+        sources: HashMap<String, String>,
+        rheo_context: HashMap<String, crate::reticulate::VertebraInjection>,
+        global_context: crate::util::typst_literal::TypstLiteral,
+    ) -> Result<CompiledBundlePass> {
         let world = RheoWorld::new_for_bundle(
             &self.project.root,
-            moulded.main,
-            moulded.sources,
+            main,
+            sources,
             rheo_context,
-            Some(virtual_spine.global_context(target, ext, reset_footnotes)),
+            Some(global_context),
             plugin.rheo_target(),
             self.font_dirs.clone(),
         )?;
         let bundle = world.compile_bundle()?;
-        // Record which entries are assets, and snapshot each document's
-        // Typst-resolved metadata, before export collapses the document/asset
-        // distinction into plain bytes and `bundle` itself is dropped.
         let mut assets: HashSet<String> = HashSet::new();
         let mut meta: HashMap<String, DocumentMeta> = HashMap::new();
         for (path, file) in bundle.files.iter() {
@@ -358,15 +441,39 @@ impl Build {
                 }
             }
         }
-        let virtual_fs = export_bundle(&bundle)?;
-
-        Ok(CompiledSpine {
-            spine: virtual_spine,
-            files: virtual_fs,
+        let files = export_bundle(&bundle)?;
+        Ok(CompiledBundlePass {
             assets,
-            bundle_source,
             meta,
+            files,
+            bundle,
         })
+    }
+
+    /// The plain-text `title` a vertebra's own metadata beacon (`<rheo-meta:
+    /// handle>`) reports, read directly off the compiled bundle's
+    /// introspector rather than through a live Typst `#context` query.
+    /// `None` when there's no beacon, no `title` field, or it's `none`.
+    fn beacon_title_plain_text(
+        bundle: &typst_bundle::Bundle,
+        handle: &str,
+    ) -> Option<ecow::EcoString> {
+        let label = typst::foundations::Label::new(typst::utils::PicoStr::intern(&format!(
+            "rheo-meta:{handle}"
+        )))?;
+        let found = bundle
+            .introspector
+            .query(&typst::foundations::Selector::Label(label));
+        let elem = found
+            .first()?
+            .to_packed::<typst::introspection::MetadataElem>()?;
+        let typst::foundations::Value::Dict(dict) = &elem.value else {
+            return None;
+        };
+        match dict.get("title").ok()? {
+            typst::foundations::Value::Content(c) => Some(c.plain_text()),
+            _ => None,
+        }
     }
 
     /// Compile HTML to an in-memory VirtualFs for the dev server.

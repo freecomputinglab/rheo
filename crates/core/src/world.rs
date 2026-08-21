@@ -938,7 +938,8 @@ mod tests {
         let spine = VirtualSpine::build(scan, root, layout).unwrap();
         let moulded = spine.mould();
         let rheo_context = spine.vertebra_injections();
-        let global_context = spine.global_context(Some("html"), Some("html"), true);
+        let global_context =
+            spine.global_context(Some("html"), Some("html"), true, &HashMap::new());
 
         let world = RheoWorld::new_for_bundle(
             root,
@@ -954,5 +955,76 @@ mod tests {
         world
             .compile_bundle()
             .expect("(rheo-context().metadata-of)(handle) must resolve another vertebra's beacon");
+    }
+
+    /// Pins the documented gap (`docs/limitations.md`) and its gated fix in
+    /// one place: a title set inside a bounded `#{ }` block leaves the
+    /// beacon reporting rheo's path-derived fallback ("Bounded") on the
+    /// ordinary single pass (`title-overrides` empty) — NOT `none`, since
+    /// that fallback is itself the `#document(...)` wrapper's own ambient
+    /// `title:` argument, ordinary Typst set-rule scoping just can't see past
+    /// the block to the real one — but resolves once the caller supplies the
+    /// harvested `DocumentInfo` title as an override (what
+    /// `Build::compile_bundle_once`'s gated second pass does, once its own
+    /// detection — a beacon-vs-`DocumentInfo` plain-text mismatch, since
+    /// "missing" isn't the signal — flags this handle). Two independent
+    /// bundles (rather than recompiling one), since each asserts a different
+    /// expected value inline in `reader.typ`.
+    #[test]
+    fn metadata_two_pass_title_override_recovers_bounded_code_block_title() {
+        use crate::reticulate::{SpineLayout, SpineScan, VirtualSpine};
+
+        fn compile(
+            reader_assertion: &str,
+            title_overrides: &HashMap<String, String>,
+        ) -> crate::Result<()> {
+            let tmp = TempDir::new().unwrap();
+            let root = tmp.path();
+            let content = root.join("content");
+            fs::create_dir_all(&content).unwrap();
+            fs::write(
+                content.join("bounded.typ"),
+                "#{ set document(title: [Bounded Title]) }\n= Bounded\n",
+            )
+            .unwrap();
+            fs::write(content.join("reader.typ"), reader_assertion).unwrap();
+
+            let scan = SpineScan::run(&content, &[]).unwrap();
+            let layout = SpineLayout::OnePerVertebra {
+                ext: "html".into(),
+                format: "html".into(),
+            };
+            let spine = VirtualSpine::build(scan, root, layout).unwrap();
+            let moulded = spine.mould();
+            let world = RheoWorld::new_for_bundle(
+                root,
+                moulded.main,
+                moulded.sources,
+                spine.vertebra_injections(),
+                Some(spine.global_context(Some("html"), Some("html"), true, title_overrides)),
+                Some("html"),
+                vec![],
+            )
+            .unwrap();
+            world.compile_bundle().map(|_| ())
+        }
+
+        // Ordinary single pass (no overrides): the beacon's own `#context`
+        // read can't see the bounded block's real title, so `metadata-of`
+        // reports the ambient path-derived fallback ("Bounded") instead.
+        compile(
+            "#context assert((rheo-context().metadata-of)(\"bounded\").at(\"title\", default: none) == [Bounded])\n= Reader\n",
+            &HashMap::new(),
+        )
+        .expect("without title-overrides, metadata-of must still miss a bounded code block's title");
+
+        // Gated second pass: the harvested `DocumentInfo` title fed back in as
+        // an override lets the same query resolve it.
+        let overrides = HashMap::from([("bounded".to_string(), "Bounded Title".to_string())]);
+        compile(
+            "#context assert((rheo-context().metadata-of)(\"bounded\").at(\"title\") == \"Bounded Title\")\n= Reader\n",
+            &overrides,
+        )
+        .expect("title-overrides must let metadata-of resolve a bounded code block's title");
     }
 }

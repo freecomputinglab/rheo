@@ -7,6 +7,22 @@
 // handle, a fallback title — live here; only the logic that is the same for
 // every vertebra does.
 
+// A vertebra's title, harvested Rust-side from the compiled bundle's own
+// resolved DocumentInfo and fed back in as sys.inputs.rheo-context's
+// title-overrides array (VirtualSpine::global_context) -- present only on the
+// gated second compile pass (Build::compile_bundle_once), empty on the
+// ordinary single pass. An array of (handle, title) dicts rather than a dict
+// keyed by handle, since a handle like "chapters:intro" is not a valid Typst
+// identifier. `.at(_, default:)` throughout since callers that hand-build a
+// sys.inputs (a package mock, or a test predating this key) may omit
+// rheo-context, or rheo-context, entirely. Returns none when `handle` has no
+// override.
+#let rheo-title-override(handle) = {
+  let overrides = sys.inputs.at("rheo-context", default: (:)).at("title-overrides", default: ())
+  let found = overrides.filter(o => o.handle == handle)
+  if found.len() > 0 { found.first().title } else { none }
+}
+
 // Reads a vertebra's metadata beacon (a `#metadata(..) <rheo-meta:handle>`
 // element, see TypstStmt::MetadataBeacon), returning its published fields as
 // a dict — or `(:)` if no beacon with that handle was found (e.g. under a
@@ -14,15 +30,26 @@
 // the call site, since it calls query(). Wrapped per vertebra as
 // `#let rheo-metadata(handle) = rheo-metadata-impl(handle)` so authors keep
 // calling the short name; `rheo-metadata-all` below calls it directly.
+//
+// A title set inside a bounded code block is invisible to the beacon's own
+// `#context` read (see docs/limitations.md) -- the beacon still reports SOME
+// title in that case (rheo's path-derived fallback, ambient from the
+// `#document(...)` wrapper's own `title:` argument), just not the real one,
+// so Rust decides per-handle whether `rheo-title-override` applies (a
+// beacon-vs-DocumentInfo mismatch it alone can detect) rather than Typst
+// guessing from "title" being absent here.
 #let rheo-metadata-impl(handle) = {
   let found = query(label("rheo-meta:" + handle))
-  if found.len() == 0 { return (:) }
   let out = (:)
-  for (k, v) in found.first().value {
-    if k == "handle" or v == none or v == auto { continue }
-    if type(v) == array and v.len() == 0 { continue }
-    out.insert(k, v)
+  if found.len() > 0 {
+    for (k, v) in found.first().value {
+      if k == "handle" or v == none or v == auto { continue }
+      if type(v) == array and v.len() == 0 { continue }
+      out.insert(k, v)
+    }
   }
+  let title-override = rheo-title-override(handle)
+  if title-override != none { out.insert("title", title-override) }
   out
 }
 
@@ -33,9 +60,12 @@
 #let rheo-metadata-all() = sys.inputs.rheo-context.spine-flat.map(e => (handle: e.handle, path: e.path, ..rheo-metadata-impl(e.handle)))
 
 // Live title lookup for a cross-vertebra handle anchor: the owning vertebra's
-// current document.title via its metadata beacon, or `fallback` when no
-// beacon was found (combined PDF layouts, which emit no beacons at all).
+// title-override (see rheo-metadata-impl) if Rust flagged one, else its
+// current document.title via the metadata beacon, else `fallback` (no beacon
+// at all -- combined PDF layouts, which emit no beacons).
 #let rheo-handle-title(handle, fallback) = context {
+  let title-override = rheo-title-override(handle)
+  if title-override != none { return title-override }
   let m = query(label("rheo-meta:" + handle))
   if m.len() > 0 and m.first().value.title != none { m.first().value.title } else { fallback }
 }
