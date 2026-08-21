@@ -232,15 +232,19 @@ impl Build {
             .and_then(|s| s.section.clone())
             .or_else(|| global_spine.and_then(|s| s.section.clone()))
             .unwrap_or_default();
+        let include = plugin_spine
+            .and_then(|s| s.include.clone())
+            .or_else(|| global_spine.and_then(|s| s.include.clone()))
+            .unwrap_or_default();
         let title = plugin_spine
             .and_then(|s| s.title.clone())
             .or_else(|| global_spine.and_then(|s| s.title.clone()));
 
         let layout = spine_layout_for(plugin.spine_layout_kind(), plugin, &self.project.name);
 
-        // Base spine = directory scan under content_dir, customized by the two
-        // knobs (exclude, then section layering). A single-file project is a
-        // one-node flat spine.
+        // Base spine = directory scan under content_dir, customized by the
+        // three knobs (exclude, then section layering, then flat reorder). A
+        // single-file project is a one-node flat spine.
         let scan = match self.project.mode {
             ProjectMode::SingleFile => {
                 SpineScan::flat(&[self.project.typ_files[0].clone()], content_dir)
@@ -250,7 +254,8 @@ impl Build {
                 &exclude,
                 self.project.config.marrow_file(),
             )?
-            .apply_sections(content_dir, &sections)?,
+            .apply_sections(content_dir, &sections)?
+            .apply_include(content_dir, &include)?,
         };
 
         debug!(

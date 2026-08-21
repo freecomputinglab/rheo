@@ -40,6 +40,11 @@ pub struct Spine {
     #[serde(default)]
     pub section: Option<Vec<SpineSection>>,
 
+    /// Ordered glob list (knob 3) that replaces this spine's scan order,
+    /// dropping any leaf it does not match, without `section`'s group nesting.
+    #[serde(default)]
+    pub include: Option<Vec<String>>,
+
     /// Unrecognized keys, captured so [`validation`](super::validation) can warn
     /// when a field retired from `Spine` in a past version (e.g. the removed
     /// `vertebrae` glob list) is still set in an older `rheo.toml`, rather than

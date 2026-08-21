@@ -425,40 +425,13 @@ impl SpineScan {
         leaves: &[PathBuf],
         claimed: &mut HashSet<PathBuf>,
     ) -> Result<Vec<PathNode>> {
+        let matcher = OrderedGlobMatch::new(content_dir, leaves);
         let mut result = Vec::new();
         for s in sections {
-            let mut children = Vec::new();
-
-            // Match this section's includes, in listed order; within one glob,
-            // lexicographic. A file is claimed by the first section that matches.
-            let mut matched: Vec<PathBuf> = Vec::new();
-            for g in &s.include {
-                let matcher = GlobBuilder::new(g)
-                    .literal_separator(true)
-                    .build()
-                    .map_err(|e| {
-                        RheoError::project_config(format!(
-                            "invalid include glob '{}' in spine section '{}': {}",
-                            g, s.name, e
-                        ))
-                    })?
-                    .compile_matcher();
-                let mut ms: Vec<PathBuf> = leaves
-                    .iter()
-                    .filter(|p| !claimed.contains(*p))
-                    .filter(|p| {
-                        let rel = p.strip_prefix(content_dir).unwrap_or(p);
-                        matcher.is_match(to_forward_slash(rel))
-                    })
-                    .cloned()
-                    .collect();
-                ms.sort();
-                for m in ms {
-                    if claimed.insert(m.clone()) {
-                        matched.push(m);
-                    }
-                }
-            }
+            // A file is claimed by the first section that matches; the whole
+            // section errors only if every one of its patterns matched nothing.
+            let matched =
+                matcher.resolve(&s.include, claimed, &format!("spine section '{}'", s.name))?;
             if !s.include.is_empty() && matched.is_empty() {
                 return Err(RheoError::project_config(format!(
                     "spine section '{}' include matched no files",
@@ -466,19 +439,23 @@ impl SpineScan {
                 )));
             }
 
-            for p in matched {
-                let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
-                children.push(PathNode {
-                    segment: sanitize_handle_segment(stem),
+            let mut children: Vec<PathNode> = matched
+                .into_iter()
+                .map(|p| PathNode {
+                    segment: sanitize_handle_segment(
+                        p.file_stem().and_then(|s| s.to_str()).unwrap_or_default(),
+                    ),
                     title: None,
                     file: Some(p),
                     children: Vec::new(),
-                });
-            }
-
-            // Nested virtual directories.
-            let nested = Self::build_section_nodes(content_dir, &s.section, leaves, claimed)?;
-            children.extend(nested);
+                })
+                .collect();
+            children.extend(Self::build_section_nodes(
+                content_dir,
+                &s.section,
+                leaves,
+                claimed,
+            )?);
 
             result.push(PathNode {
                 segment: sanitize_handle_segment(&s.name),
@@ -488,6 +465,64 @@ impl SpineScan {
             });
         }
         Ok(result)
+    }
+
+    /// Apply flat `[spine] include` (knob 3): replace the scan order with an
+    /// explicit ordered glob list, dropping any leaf it does not match. Unlike
+    /// `apply_sections`, a matched leaf keeps its scanned `PathNode` untouched —
+    /// no group wrapper — so its handle and output path never change, only its
+    /// position. Returns `self` unchanged when `include` is empty.
+    pub fn apply_include(self, content_dir: &Path, include: &[String]) -> Result<SpineScan> {
+        if include.is_empty() {
+            return Ok(self);
+        }
+
+        let roots = Self::to_path_nodes(&self.tree, &self.files);
+        let mut leaf_nodes = Vec::new();
+        Self::collect_leaf_nodes(roots, &mut leaf_nodes);
+        let mut by_path: HashMap<PathBuf, PathNode> = leaf_nodes
+            .into_iter()
+            .map(|n| (n.file.clone().unwrap(), n))
+            .collect();
+        let leaves: Vec<PathBuf> = by_path.keys().cloned().collect();
+
+        let matcher = OrderedGlobMatch::new(content_dir, &leaves);
+        let mut claimed = HashSet::new();
+        let mut new_roots = Vec::new();
+        for g in include {
+            let pattern = std::slice::from_ref(g);
+            let matched = matcher.resolve(pattern, &mut claimed, "spine include")?;
+            if matched.is_empty() {
+                return Err(RheoError::project_config(format!(
+                    "spine include pattern '{}' matched no files",
+                    g
+                )));
+            }
+            new_roots.extend(matched.into_iter().filter_map(|p| by_path.remove(&p)));
+        }
+
+        let mut files = Vec::new();
+        let tree = Self::reindex(&new_roots, &mut files);
+        if files.is_empty() {
+            return Err(RheoError::project_config(
+                "spine is empty after applying include",
+            ));
+        }
+        Ok(SpineScan { files, tree })
+    }
+
+    /// Move every leaf [`PathNode`] (childless, file-bearing) out of `nodes`
+    /// into `out`, dropping non-movable group/landing-page structure around it —
+    /// the counterpart of [`Self::collect_leaf_files`] that yields owned nodes
+    /// (segment/title intact) rather than just their paths.
+    fn collect_leaf_nodes(nodes: Vec<PathNode>, out: &mut Vec<PathNode>) {
+        for n in nodes {
+            if n.children.is_empty() && n.file.is_some() {
+                out.push(n);
+            } else {
+                Self::collect_leaf_nodes(n.children, out);
+            }
+        }
     }
 
     /// Remove claimed leaf files from the working tree, dropping any group node
@@ -534,6 +569,65 @@ struct PathNode {
     title: Option<String>,
     file: Option<PathBuf>,
     children: Vec<PathNode>,
+}
+
+/// Ordered-glob resolution shared by `[[spine.section]] include` and flat
+/// `[spine] include`: matches patterns against unclaimed leaves in listed
+/// order (ties within one pattern broken lexicographically), claiming every
+/// match so neither a later pattern nor another caller can reuse it. Callers
+/// decide what an empty result means — a section only cares whether its whole
+/// include list matched nothing, flat include whether one pattern did.
+struct OrderedGlobMatch<'a> {
+    content_dir: &'a Path,
+    leaves: &'a [PathBuf],
+}
+
+impl<'a> OrderedGlobMatch<'a> {
+    fn new(content_dir: &'a Path, leaves: &'a [PathBuf]) -> Self {
+        Self {
+            content_dir,
+            leaves,
+        }
+    }
+
+    /// Resolve `patterns` in listed order, claiming matches as they're found.
+    /// `context` names the enclosing include list for the invalid-glob error.
+    fn resolve(
+        &self,
+        patterns: &[String],
+        claimed: &mut HashSet<PathBuf>,
+        context: &str,
+    ) -> Result<Vec<PathBuf>> {
+        let mut matched = Vec::new();
+        for g in patterns {
+            let matcher = GlobBuilder::new(g)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| {
+                    RheoError::project_config(format!(
+                        "invalid include glob '{}' in {}: {}",
+                        g, context, e
+                    ))
+                })?
+                .compile_matcher();
+            let mut ms: Vec<PathBuf> = self
+                .leaves
+                .iter()
+                .filter(|p| !claimed.contains(*p))
+                .filter(|p| {
+                    let rel = p.strip_prefix(self.content_dir).unwrap_or(p);
+                    matcher.is_match(to_forward_slash(rel))
+                })
+                .cloned()
+                .collect();
+            ms.sort();
+            for m in &ms {
+                claimed.insert(m.clone());
+            }
+            matched.extend(ms);
+        }
+        Ok(matched)
+    }
 }
 
 // ── Bundle spine: VirtualSpine, Vertebra, SpineLayout ────────────────────────
@@ -1956,6 +2050,60 @@ mod tests {
         let scan = SpineScan::run(temp.path(), &[]).unwrap();
         let before = scan.files.len();
         let out = scan.apply_sections(temp.path(), &[]).unwrap();
+        assert_eq!(out.files.len(), before);
+    }
+
+    // ── apply_include tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn apply_include_reorders_flat_and_drops_unmatched() {
+        let temp = create_test_dir_with_files(&["b.typ", "a.typ", "c.typ", "d.typ"]);
+        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let out = scan
+            .apply_include(
+                temp.path(),
+                &["b.typ".into(), "a.typ".into(), "c.typ".into()],
+            )
+            .unwrap();
+
+        let stems: Vec<&str> = out
+            .files
+            .iter()
+            .map(|f| f.file_stem().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(stems, vec!["b", "a", "c"]); // reordered, d dropped entirely
+
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(out, temp.path(), layout).unwrap();
+        let paths: Vec<&str> = spine
+            .vertebrae
+            .iter()
+            .map(|v| v.output_path.as_str())
+            .collect();
+        // Flat output paths — no group segment, unlike apply_sections
+        // (contrast nested_handle_maps_to_slash_output_path).
+        assert_eq!(paths, vec!["b.html", "a.html", "c.html"]);
+    }
+
+    #[test]
+    fn apply_include_pattern_no_match_errors() {
+        let temp = create_test_dir_with_files(&["a.typ"]);
+        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let err = scan
+            .apply_include(temp.path(), &["nope.typ".to_string()])
+            .unwrap_err();
+        assert!(err.to_string().contains("matched no files"));
+    }
+
+    #[test]
+    fn apply_include_empty_is_noop() {
+        let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
+        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let before = scan.files.len();
+        let out = scan.apply_include(temp.path(), &[]).unwrap();
         assert_eq!(out.files.len(), before);
     }
 }

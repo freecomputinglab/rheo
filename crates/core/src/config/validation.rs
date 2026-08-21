@@ -45,6 +45,12 @@ impl ValidateConfig for Spine {
     fn validate(&self) -> Result<()> {
         warn_on_retired_keys("[spine]", &self.extra);
 
+        if self.include.is_some() && self.section.is_some() {
+            return Err(RheoError::project_config(
+                "include is a flat reorder, section nests into virtual directories: set one, not both",
+            ));
+        }
+
         Ok(())
     }
 }
@@ -90,6 +96,17 @@ mod tests {
             ..Default::default()
         };
         assert!(spine.validate().is_ok());
+    }
+
+    #[test]
+    fn test_universal_spine_validate_rejects_include_with_section() {
+        let spine = Spine {
+            include: Some(vec!["a.typ".to_string()]),
+            section: Some(vec![]),
+            ..Default::default()
+        };
+        let err = spine.validate().unwrap_err();
+        assert!(err.to_string().contains("flat reorder"));
     }
 
     #[test]
