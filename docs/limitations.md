@@ -1,5 +1,9 @@
 # Spine inference
 
+For the flat key/function/file inventory a package may rely on — field names,
+types, presence rules — see `docs/contract.md`. This document is the prose:
+why each field behaves the way it does, and the caveats below.
+
 ## Document metadata is resolved by Typst, not scanned pre-compile
 
 Per-vertebra `#set document(...)` values (`title`, `author`, `description`,
