@@ -274,21 +274,36 @@ impl Build {
         // `asset()` both hard-error under the combined PDF target ("setting the
         // document format is only supported in the bundle target"), so the same
         // `ext` gate that marks a per-page format decides whether to emit it.
+        // Position (prologue, spliced before every document, vs. epilogue,
+        // spliced after) is per-contribution: a package picks its own by
+        // filename (`.marrow-prologue.typ` vs `.marrow.typ`); the project picks
+        // its own via `rheo.toml`'s `marrow_prologue` key, defaulting to
+        // epilogue so an unconfigured project compiles byte-identically.
+        // Within each position, packages contribute first in import order, then
+        // the project's own file, so it can build on what they registered.
         let mut marrow = Vec::new();
+        let mut marrow_prologue = Vec::new();
         if ext.is_some() {
-            // Imported packages contribute their own marrow first, in import
-            // order, so the project's own file is spliced last and can build on
-            // what they registered. Behind the same opt-out that governs every
-            // other package-driven behaviour.
+            // Behind the same opt-out that governs every other package-driven
+            // behaviour.
             if plugin_section.auto_detect_packages_enabled() {
                 let package_imports =
                     crate::plugins::scan_project_package_imports(&self.project.typ_files);
                 marrow.extend(crate::plugins::detect_package_marrow(&package_imports));
+                marrow_prologue.extend(crate::plugins::detect_package_marrow_prologue(
+                    &package_imports,
+                ));
             }
 
             let marrow_path = content_dir.join(self.project.config.marrow_file());
             match std::fs::read_to_string(&marrow_path) {
-                Ok(text) => marrow.push(text),
+                Ok(text) => {
+                    if self.project.config.marrow_prologue() {
+                        marrow_prologue.push(text);
+                    } else {
+                        marrow.push(text);
+                    }
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => {
                     return Err(RheoError::io(
@@ -301,7 +316,8 @@ impl Build {
 
         let virtual_spine = VirtualSpine::build(scan, &self.project.root, layout)?
             .with_title(title)
-            .with_marrow(marrow);
+            .with_marrow(marrow)
+            .with_marrow_prologue(marrow_prologue);
         virtual_spine.check_output_collisions()?;
 
         let moulded = virtual_spine.mould();
@@ -942,6 +958,7 @@ mod tests {
             tree: vec![],
             title: None,
             marrow: Vec::new(),
+            marrow_prologue: Vec::new(),
         };
 
         let mut virtual_fs = typst_bundle::VirtualFs::default();
@@ -1000,6 +1017,7 @@ mod tests {
             tree: vec![],
             title: None,
             marrow: Vec::new(),
+            marrow_prologue: Vec::new(),
         };
 
         let mut virtual_fs = typst_bundle::VirtualFs::default();
@@ -1235,6 +1253,132 @@ mod tests {
         let head_end = html.find("</head>").expect("has head");
         let meta_pos = html.find("name=\"x\"").expect("meta present");
         assert!(meta_pos < head_end, "meta not hoisted into head:\n{html}");
+    }
+
+    /// A one-vertebra project with a `*bold text*` paragraph and a marrow
+    /// `#show strong` rule, shared by the epilogue/prologue end-to-end tests
+    /// below. Only `marrow_prologue` differs between them.
+    fn build_show_rule_project(root: &Path, marrow_prologue: bool) -> ProjectConfig {
+        std::fs::create_dir_all(root.join("content")).expect("create content dir");
+        std::fs::write(
+            root.join("content/index.typ"),
+            "= Index\n\nThis has *bold text*.\n",
+        )
+        .expect("write content/index.typ");
+        std::fs::write(
+            root.join("content/.marrow.typ"),
+            "#show strong: it => [TOUCHED]\n",
+        )
+        .expect("write marrow");
+
+        ProjectConfig {
+            name: "test".to_string(),
+            root: root.to_path_buf(),
+            config: crate::RheoConfig {
+                content_dir: Some("content".to_string()),
+                formats: vec!["html".to_string()],
+                marrow_prologue: Some(marrow_prologue),
+                ..Default::default()
+            },
+            typ_files: vec![root.join("content/index.typ")],
+            mode: ProjectMode::Directory,
+            config_path: None,
+        }
+    }
+
+    /// End-to-end: with the default (epilogue) position, a `#show` rule in
+    /// marrow is scoped to marrow's own output only — it must not reach a
+    /// vertebra that already exists (marrow is spliced after every document).
+    /// This is the byte-identical-by-default guarantee: an unconfigured
+    /// project's `*bold text*` still renders as `<strong>`.
+    #[test]
+    fn test_run_default_marrow_epilogue_does_not_reach_pre_existing_vertebra() {
+        use std::sync::{Arc, Mutex};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let project = build_show_rule_project(dir.path(), false);
+
+        #[derive(Default)]
+        struct Captured(Mutex<Vec<(String, String)>>);
+        struct CapturingPlugin(Arc<Captured>);
+        impl FormatPlugin for CapturingPlugin {
+            fn name(&self) -> &'static str {
+                "html"
+            }
+            fn compile(&self, _ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
+                let mut guard = self.0.0.lock().unwrap();
+                for o in outputs {
+                    guard.push((
+                        o.output_path.clone(),
+                        String::from_utf8_lossy(o.bytes.as_slice()).into_owned(),
+                    ));
+                }
+                Ok(())
+            }
+        }
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        let mut build =
+            Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
+        build.run().expect("run build");
+
+        let outputs = captured.0.lock().unwrap();
+        let (_, html) = outputs
+            .iter()
+            .find(|(path, _)| path == "index.html")
+            .expect("index.html output present");
+        assert!(
+            html.contains("bold text"),
+            "epilogue marrow must not reach a pre-existing vertebra, got:\n{html}"
+        );
+    }
+
+    /// End-to-end: with `marrow_prologue = true`, the same `#show` rule is
+    /// spliced BEFORE every document, so it reaches the pre-existing
+    /// vertebra — the capability this bead adds.
+    #[test]
+    fn test_run_marrow_prologue_reaches_pre_existing_vertebra() {
+        use std::sync::{Arc, Mutex};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let project = build_show_rule_project(dir.path(), true);
+
+        #[derive(Default)]
+        struct Captured(Mutex<Vec<(String, String)>>);
+        struct CapturingPlugin(Arc<Captured>);
+        impl FormatPlugin for CapturingPlugin {
+            fn name(&self) -> &'static str {
+                "html"
+            }
+            fn compile(&self, _ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
+                let mut guard = self.0.0.lock().unwrap();
+                for o in outputs {
+                    guard.push((
+                        o.output_path.clone(),
+                        String::from_utf8_lossy(o.bytes.as_slice()).into_owned(),
+                    ));
+                }
+                Ok(())
+            }
+        }
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        let mut build =
+            Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
+        build.run().expect("run build");
+
+        let outputs = captured.0.lock().unwrap();
+        let (_, html) = outputs
+            .iter()
+            .find(|(path, _)| path == "index.html")
+            .expect("index.html output present");
+        assert!(
+            html.contains("TOUCHED"),
+            "marrow_prologue = true should let #show reach the pre-existing vertebra, got:\n{html}"
+        );
+        assert!(!html.contains("bold text"));
     }
 
     #[test]

@@ -224,19 +224,22 @@ pub fn check_package_min_versions(import_paths: &[String]) -> Result<()> {
     check_package_min_versions_in_dirs(import_paths, &dirs)
 }
 
-/// Reads a package's own marrow file, if it ships one.
+/// Reads a package's marrow file at `filename`, if it ships one under that name.
 ///
 /// A package contributes to the bundle root exactly the way a project does —
-/// by shipping a `.marrow.typ` whose text is inlined verbatim — so there is one
-/// concept to learn rather than a separate package-only mechanism.
+/// by shipping a marrow file whose text is inlined verbatim — so there is one
+/// concept to learn rather than a separate package-only mechanism. Position
+/// (before vs. after the documents) is chosen by which filename it ships:
+/// [`crate::MARROW_FILE`] (epilogue, default) or
+/// [`crate::MARROW_PROLOGUE_FILE`] (prologue). A package may ship either or both.
 ///
 /// The text is spliced into the synthesized main, so paths inside it resolve
 /// against the project root, not the package directory: a package's marrow must
 /// reach its own code through its package spec (`@ns/name:version`), never a
 /// relative import. Files the package imports that way may use relative paths
 /// among themselves as usual.
-pub fn package_marrow_source(pkg: &ResolvedPackage) -> Option<String> {
-    let marrow_path = pkg.source_root.join(crate::MARROW_FILE);
+fn package_marrow_file(pkg: &ResolvedPackage, filename: &str) -> Option<String> {
+    let marrow_path = pkg.source_root.join(filename);
     if !marrow_path.is_file() {
         return None;
     }
@@ -249,24 +252,58 @@ pub fn package_marrow_source(pkg: &ResolvedPackage) -> Option<String> {
     }
 }
 
+/// A package's epilogue marrow (`.marrow.typ`), if it ships one.
+pub fn package_marrow_source(pkg: &ResolvedPackage) -> Option<String> {
+    package_marrow_file(pkg, crate::MARROW_FILE)
+}
+
+/// A package's prologue marrow (`.marrow-prologue.typ`), if it ships one.
+pub fn package_marrow_prologue_source(pkg: &ResolvedPackage) -> Option<String> {
+    package_marrow_file(pkg, crate::MARROW_PROLOGUE_FILE)
+}
+
 /// Scans `import_paths`, locates each package via `find_package_in_dirs`, and
-/// returns the marrow source of every package that ships one, in import order.
-/// Silently skips packages not present locally or contributing no marrow.
-pub fn detect_package_marrow_in_dirs(
+/// returns the marrow source (read via `reader`) of every package that ships
+/// one, in import order. Silently skips packages not present locally or
+/// contributing no marrow.
+fn detect_package_marrow_in_dirs_by(
     import_paths: &[String],
     search_dirs: &[PathBuf],
+    reader: impl Fn(&ResolvedPackage) -> Option<String>,
 ) -> Vec<String> {
     import_paths
         .iter()
         .filter_map(|p| find_package_in_dirs(p, search_dirs))
-        .filter_map(|pkg| package_marrow_source(&pkg))
+        .filter_map(|pkg| reader(&pkg))
         .collect()
+}
+
+/// Every imported package's epilogue marrow, in import order.
+pub fn detect_package_marrow_in_dirs(
+    import_paths: &[String],
+    search_dirs: &[PathBuf],
+) -> Vec<String> {
+    detect_package_marrow_in_dirs_by(import_paths, search_dirs, package_marrow_source)
+}
+
+/// Every imported package's prologue marrow, in import order.
+pub fn detect_package_marrow_prologue_in_dirs(
+    import_paths: &[String],
+    search_dirs: &[PathBuf],
+) -> Vec<String> {
+    detect_package_marrow_in_dirs_by(import_paths, search_dirs, package_marrow_prologue_source)
 }
 
 /// Production wrapper using Typst's system data/cache dirs.
 pub fn detect_package_marrow(import_paths: &[String]) -> Vec<String> {
     let dirs = typst_package_search_dirs(None);
     detect_package_marrow_in_dirs(import_paths, &dirs)
+}
+
+/// Production wrapper using Typst's system data/cache dirs.
+pub fn detect_package_marrow_prologue(import_paths: &[String]) -> Vec<String> {
+    let dirs = typst_package_search_dirs(None);
+    detect_package_marrow_prologue_in_dirs(import_paths, &dirs)
 }
 
 /// Ensure each `@preview/name:version` import is present in the local
@@ -659,5 +696,56 @@ css_stylesheet = "style.css"
             "@local/foo:0.1.0".to_string(),
             "@myns/bar:2.0.0".to_string(),
         ]);
+    }
+
+    #[test]
+    fn package_marrow_prologue_source_reads_sibling_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "testns", "testpkg", "0.1.0");
+        std::fs::write(
+            pkg_dir.join(crate::MARROW_PROLOGUE_FILE),
+            "#show strong: it => it",
+        )
+        .unwrap();
+        let pkg = make_resolved(&pkg_dir, "testns", "testpkg", "0.1.0");
+
+        assert_eq!(
+            package_marrow_prologue_source(&pkg),
+            Some("#show strong: it => it".to_string())
+        );
+        assert_eq!(package_marrow_source(&pkg), None, "no .marrow.typ shipped");
+    }
+
+    #[test]
+    fn package_may_ship_both_marrow_positions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "testns", "testpkg", "0.1.0");
+        std::fs::write(pkg_dir.join(crate::MARROW_FILE), "epilogue").unwrap();
+        std::fs::write(pkg_dir.join(crate::MARROW_PROLOGUE_FILE), "prologue").unwrap();
+        let pkg = make_resolved(&pkg_dir, "testns", "testpkg", "0.1.0");
+
+        assert_eq!(package_marrow_source(&pkg), Some("epilogue".to_string()));
+        assert_eq!(
+            package_marrow_prologue_source(&pkg),
+            Some("prologue".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_package_marrow_prologue_in_dirs_collects_in_import_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = make_pkg_dir(dir.path(), "ns", "a", "1.0");
+        std::fs::write(a.join(crate::MARROW_PROLOGUE_FILE), "a-prologue").unwrap();
+        let b = make_pkg_dir(dir.path(), "ns", "b", "1.0");
+        std::fs::write(b.join(crate::MARROW_PROLOGUE_FILE), "b-prologue").unwrap();
+
+        let result = detect_package_marrow_prologue_in_dirs(
+            &["@ns/a:1.0".to_string(), "@ns/b:1.0".to_string()],
+            &[dir.path().to_path_buf()],
+        );
+        assert_eq!(
+            result,
+            vec!["a-prologue".to_string(), "b-prologue".to_string()]
+        );
     }
 }

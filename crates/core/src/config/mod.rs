@@ -193,6 +193,14 @@ pub struct RheoConfig {
     /// contributes its own `.marrow.typ`, so renaming this cannot suppress a
     /// package's contribution or vice versa — both are inlined.
     pub marrow: Option<String>,
+
+    /// When true, the project's own marrow is spliced BEFORE every document
+    /// instead of after, so a `#show`/`#set` rule in it reaches pre-existing
+    /// vertebrae. Defaults to `false` (today's behaviour) — prologue is
+    /// global-by-default and powerful, so it is opt-in only. A package
+    /// declares its own marrow's position by filename instead (`.marrow.typ`
+    /// vs `.marrow-prologue.typ`); this key affects only the project's marrow.
+    pub marrow_prologue: Option<bool>,
 }
 
 impl Default for RheoConfig {
@@ -207,6 +215,7 @@ impl Default for RheoConfig {
             plugin_sections: HashMap::new(),
             spine: None,
             marrow: None,
+            marrow_prologue: None,
         }
     }
 }
@@ -224,6 +233,7 @@ pub struct RheoConfigRaw {
     #[serde(default)]
     font_dirs: Vec<String>,
     marrow: Option<String>,
+    marrow_prologue: Option<bool>,
     #[serde(flatten)]
     extra: HashMap<String, toml::Value>,
 }
@@ -254,6 +264,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             plugin_sections,
             spine,
             marrow: raw.marrow,
+            marrow_prologue: raw.marrow_prologue,
         })
     }
 }
@@ -310,6 +321,12 @@ impl RheoConfig {
     /// The project's marrow filename, relative to `content_dir`.
     pub fn marrow_file(&self) -> &str {
         self.marrow.as_deref().unwrap_or(crate::MARROW_FILE)
+    }
+
+    /// Whether the project's own marrow is spliced before the documents.
+    /// Defaults to `false` (spliced after, today's behaviour).
+    pub fn marrow_prologue(&self) -> bool {
+        self.marrow_prologue.unwrap_or(false)
     }
 
     /// Resolve content_dir to an absolute path if configured.
@@ -466,6 +483,19 @@ mod tests {
         // Explicit true.
         let config = parse(&versioned_toml("[html]\nreset_footnotes = true\n"));
         assert!(config.plugin_section("html").reset_footnotes());
+    }
+
+    #[test]
+    fn test_marrow_prologue_defaults_false_and_honors_true() {
+        // No key at all -> defaults to epilogue (today's behaviour).
+        let config = parse(&versioned_toml(""));
+        assert!(!config.marrow_prologue());
+
+        let config = parse(&versioned_toml("marrow_prologue = true"));
+        assert!(config.marrow_prologue());
+
+        let config = parse(&versioned_toml("marrow_prologue = false"));
+        assert!(!config.marrow_prologue());
     }
 
     #[test]

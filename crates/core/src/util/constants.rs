@@ -9,6 +9,12 @@ pub const TYP_EXT: &str = ".typ";
 /// the bundle root, outside every document — rather than compiled as a vertebra.
 pub const MARROW_FILE: &str = ".marrow.typ";
 
+/// Sibling of [`MARROW_FILE`], read only from a package's source root: a
+/// package's prologue marrow, spliced before every document instead of after.
+/// A project has no equivalent filename — it opts its own marrow into the
+/// prologue position via `rheo.toml`'s `marrow_prologue` key instead.
+pub const MARROW_PROLOGUE_FILE: &str = ".marrow-prologue.typ";
+
 /// Prefix reserved for bundle assets consumed internally by rheo itself.
 ///
 /// An `asset()` whose path starts with this prefix (e.g. `.rheo/head.html`) is
