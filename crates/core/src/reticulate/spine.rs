@@ -849,7 +849,11 @@ impl VirtualSpine {
                     SpineLayout::SingleCombined { output_name, .. } => output_name.clone(),
                 };
 
-                let source = fs::read_to_string(file).unwrap_or_default();
+                // The scan already proved this path exists and ends in `.typ`,
+                // so a read failure here is a real fault, not an absence.
+                let source = fs::read_to_string(file).map_err(|e| {
+                    RheoError::io(e, format!("reading spine file '{}'", file.display()))
+                })?;
                 let stem = file
                     .file_stem()
                     .unwrap_or_default()
@@ -1144,12 +1148,12 @@ impl VirtualSpine {
         if !matches!(self.layout, SpineLayout::OnePerVertebra { .. }) {
             return Ok(());
         }
-        let mut seen: HashMap<&str, usize> = HashMap::new();
-        for (i, v) in self.vertebrae.iter().enumerate() {
-            if let Some(prev) = seen.insert(v.output_path.as_str(), i) {
+        let mut seen: HashMap<&str, &Vertebra> = HashMap::new();
+        for v in &self.vertebrae {
+            if let Some(prev) = seen.insert(v.output_path.as_str(), v) {
                 return Err(RheoError::project_config(format!(
-                    "spine output path collision: '{}' produced by vertebra {} and {}",
-                    v.output_path, prev, i
+                    "spine output path collision: '{}' produced by both '{}' and '{}'",
+                    v.output_path, prev.rel_path, v.rel_path
                 )));
             }
         }
@@ -1287,6 +1291,31 @@ mod tests {
         assert_eq!(spine.vertebrae[0].output_path, "intro.html");
         assert_eq!(spine.vertebrae[1].handle, "closing");
         assert_eq!(spine.vertebrae[1].output_path, "closing.html");
+    }
+
+    #[test]
+    fn unreadable_vertebra_errors_naming_the_path() {
+        // A vertebra that cannot be read must fail the build loudly rather than
+        // compile as a blank page.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        let missing = content.join("gone.typ");
+
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let scan = SpineScan::flat(std::slice::from_ref(&missing), &content);
+        let err = match VirtualSpine::build(scan, root, layout) {
+            Err(e) => e,
+            Ok(_) => panic!("an unreadable vertebra must not build"),
+        };
+        assert!(
+            err.to_string().contains("gone.typ"),
+            "error must name the unreadable file, got: {err}"
+        );
     }
 
     #[test]
