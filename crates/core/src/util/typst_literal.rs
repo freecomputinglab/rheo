@@ -21,15 +21,6 @@ pub enum TypstLiteral {
     Array(Vec<TypstLiteral>),
     /// A dictionary literal with identifier keys, e.g. `(k: v)`.
     Dict(Vec<(String, TypstLiteral)>),
-    /// A `datetime(...)` literal.
-    Datetime {
-        year: i32,
-        month: u8,
-        day: u8,
-        hour: u8,
-        minute: u8,
-        second: u8,
-    },
 }
 
 impl TypstLiteral {
@@ -66,16 +57,6 @@ impl TypstLiteral {
                     .collect();
                 format!("({})", inner.join(", "))
             }
-            TypstLiteral::Datetime {
-                year,
-                month,
-                day,
-                hour,
-                minute,
-                second,
-            } => format!(
-                "datetime(year: {year}, month: {month}, day: {day}, hour: {hour}, minute: {minute}, second: {second})"
-            ),
         }
     }
 
@@ -96,23 +77,6 @@ impl TypstLiteral {
                     dict.insert(k.as_str().into(), v.to_value());
                 }
                 Value::Dict(dict)
-            }
-            TypstLiteral::Datetime {
-                year,
-                month,
-                day,
-                hour,
-                minute,
-                second,
-            } => {
-                let dt = typst::foundations::Datetime::from_ymd_hms(
-                    *year, *month, *day, *hour, *minute, *second,
-                )
-                .unwrap_or_else(|| {
-                    typst::foundations::Datetime::from_ymd_hms(1970, 1, 1, 0, 0, 0)
-                        .expect("1970-01-01 00:00:00 is always a valid datetime")
-                });
-                Value::Datetime(dt)
             }
         }
     }
@@ -189,38 +153,6 @@ mod tests {
             data.serialize(),
             "(handle: \"chapters:intro\", spine: ((handle: \"intro\", path: \"content/intro.typ\", title: \"Introduction\"),))"
         );
-    }
-
-    #[test]
-    fn datetime_serializes_to_datetime_call() {
-        let dt = TypstLiteral::Datetime {
-            year: 2025,
-            month: 3,
-            day: 9,
-            hour: 14,
-            minute: 30,
-            second: 5,
-        };
-        assert_eq!(
-            dt.serialize(),
-            "datetime(year: 2025, month: 3, day: 9, hour: 14, minute: 30, second: 5)"
-        );
-    }
-
-    #[test]
-    fn datetime_to_value_builds_value_datetime() {
-        use typst::foundations::Value;
-        let dt = TypstLiteral::Datetime {
-            year: 2025,
-            month: 3,
-            day: 9,
-            hour: 14,
-            minute: 30,
-            second: 5,
-        };
-        let Value::Datetime(_) = dt.to_value() else {
-            panic!("expected Value::Datetime");
-        };
     }
 
     #[test]

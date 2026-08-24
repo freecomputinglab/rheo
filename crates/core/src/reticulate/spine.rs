@@ -1,12 +1,11 @@
 use crate::config::SpineSection;
 use crate::parser;
-use crate::parser::{DocumentDate, DocumentMetadata, RheoValue};
 use crate::reticulate::bundle_source::BundleSource;
 use crate::util::path::{sanitize_handle_segment, to_forward_slash};
 use crate::util::pdf::DocumentTitle;
 use crate::util::typst_literal::TypstLiteral;
 use crate::util::typst_source::TypstStmt;
-use crate::{MARROW_FILE, Result, RheoError, TYP_EXT};
+use crate::{MARROW_FILE, RESERVED_META_LABEL_PREFIX, Result, RheoError, TYP_EXT};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -81,10 +80,7 @@ impl SpineScan {
 
         debug_assert!(
             {
-                let mut indices = Vec::new();
-                for node in &tree {
-                    node.collect_indices(&mut indices);
-                }
+                let indices = tree_indices(&tree);
                 let unique: HashSet<usize> = indices.iter().copied().collect();
                 indices.len() == unique.len() && indices.iter().all(|&i| i < files.len())
             },
@@ -152,6 +148,40 @@ impl SpineScan {
         exclude.is_match(to_forward_slash(rel))
     }
 
+    /// Read a directory's entries sorted by filename, for deterministic scan order.
+    fn read_sorted_entries(dir: &Path) -> Result<Vec<fs::DirEntry>> {
+        let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)
+            .map_err(|e| {
+                RheoError::project_config(format!("failed to read dir '{}': {}", dir.display(), e))
+            })?
+            .filter_map(|e| e.ok())
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+        Ok(entries)
+    }
+
+    /// Returns `true` if `path` has the `.typ` extension.
+    fn is_typ_file(path: &Path) -> bool {
+        path.extension().and_then(|e| e.to_str()) == Some(&TYP_EXT[1..])
+    }
+
+    /// Register `path` as the next vertebra in `files` and build its leaf
+    /// [`SpineNode`] (segment derived from the file stem, no children).
+    fn push_typ_leaf(path: &Path, files: &mut Vec<PathBuf>) -> SpineNode {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let idx = files.len();
+        files.push(path.to_path_buf());
+        SpineNode {
+            segment: sanitize_handle_segment(stem),
+            title: None,
+            vertebra: Some(idx),
+            children: Vec::new(),
+        }
+    }
+
     /// Scan one directory, recursing into subdirectories. Returns the child
     /// node list for `dir`; pushes discovered files into `files` in pre-order.
     fn scan_dir(
@@ -160,17 +190,9 @@ impl SpineScan {
         exclude: &GlobSet,
         files: &mut Vec<PathBuf>,
     ) -> Result<Vec<SpineNode>> {
-        let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)
-            .map_err(|e| {
-                RheoError::project_config(format!("failed to read dir '{}': {}", dir.display(), e))
-            })?
-            .filter_map(|e| e.ok())
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
-
         let mut nodes = Vec::new();
 
-        for entry in entries {
+        for entry in Self::read_sorted_entries(dir)? {
             let path = entry.path();
 
             if Self::is_excluded(content_dir, &path, exclude) {
@@ -181,21 +203,10 @@ impl SpineScan {
                 if let Some(node) = Self::scan_subdir(content_dir, &path, exclude, files)? {
                     nodes.push(node);
                 }
-            } else if path.extension().and_then(|e| e.to_str()) == Some(&TYP_EXT[1..]) {
+            } else if Self::is_typ_file(&path) {
                 // Root-level index.typ is a normal leaf; only nested dirs treat
                 // it as a landing page (handled in scan_subdir).
-                let stem = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_default();
-                let idx = files.len();
-                files.push(path.clone());
-                nodes.push(SpineNode {
-                    segment: sanitize_handle_segment(stem),
-                    title: None,
-                    vertebra: Some(idx),
-                    children: Vec::new(),
-                });
+                nodes.push(Self::push_typ_leaf(&path, files));
             }
         }
 
@@ -217,30 +228,24 @@ impl SpineScan {
             .unwrap_or_default()
             .to_string();
 
-        let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)
-            .map_err(|e| {
-                RheoError::project_config(format!("failed to read dir '{}': {}", dir.display(), e))
-            })?
-            .filter_map(|e| e.ok())
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
+        let entries = Self::read_sorted_entries(dir)?;
 
         // Find the landing file: prefer index.typ, else <dirname>.typ.
         let index_name = format!("index{}", TYP_EXT);
         let named_name = format!("{}{}", dirname, TYP_EXT);
 
-        let landing_path = entries
+        let candidates: Vec<PathBuf> = entries
             .iter()
             .map(|e| e.path())
             .filter(|p| !Self::is_excluded(content_dir, p, exclude))
-            .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(index_name.as_str()))
-            .or_else(|| {
-                entries
-                    .iter()
-                    .map(|e| e.path())
-                    .filter(|p| !Self::is_excluded(content_dir, p, exclude))
-                    .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(named_name.as_str()))
-            });
+            .collect();
+        let named = |name: &str| {
+            candidates
+                .iter()
+                .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(name))
+                .cloned()
+        };
+        let landing_path = named(&index_name).or_else(|| named(&named_name));
 
         let (vertebra, title) = if let Some(landing) = &landing_path {
             let idx = files.len();
@@ -266,19 +271,8 @@ impl SpineScan {
                 if let Some(node) = Self::scan_subdir(content_dir, &path, exclude, files)? {
                     children.push(node);
                 }
-            } else if path.extension().and_then(|e| e.to_str()) == Some(&TYP_EXT[1..]) {
-                let stem = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_default();
-                let idx = files.len();
-                files.push(path.clone());
-                children.push(SpineNode {
-                    segment: sanitize_handle_segment(stem),
-                    title: None,
-                    vertebra: Some(idx),
-                    children: Vec::new(),
-                });
+            } else if Self::is_typ_file(&path) {
+                children.push(Self::push_typ_leaf(&path, files));
             }
         }
 
@@ -428,40 +422,13 @@ impl SpineScan {
         leaves: &[PathBuf],
         claimed: &mut HashSet<PathBuf>,
     ) -> Result<Vec<PathNode>> {
+        let matcher = OrderedGlobMatch::new(content_dir, leaves);
         let mut result = Vec::new();
         for s in sections {
-            let mut children = Vec::new();
-
-            // Match this section's includes, in listed order; within one glob,
-            // lexicographic. A file is claimed by the first section that matches.
-            let mut matched: Vec<PathBuf> = Vec::new();
-            for g in &s.include {
-                let matcher = GlobBuilder::new(g)
-                    .literal_separator(true)
-                    .build()
-                    .map_err(|e| {
-                        RheoError::project_config(format!(
-                            "invalid include glob '{}' in spine section '{}': {}",
-                            g, s.name, e
-                        ))
-                    })?
-                    .compile_matcher();
-                let mut ms: Vec<PathBuf> = leaves
-                    .iter()
-                    .filter(|p| !claimed.contains(*p))
-                    .filter(|p| {
-                        let rel = p.strip_prefix(content_dir).unwrap_or(p);
-                        matcher.is_match(to_forward_slash(rel))
-                    })
-                    .cloned()
-                    .collect();
-                ms.sort();
-                for m in ms {
-                    if claimed.insert(m.clone()) {
-                        matched.push(m);
-                    }
-                }
-            }
+            // A file is claimed by the first section that matches; the whole
+            // section errors only if every one of its patterns matched nothing.
+            let matched =
+                matcher.resolve(&s.include, claimed, &format!("spine section '{}'", s.name))?;
             if !s.include.is_empty() && matched.is_empty() {
                 return Err(RheoError::project_config(format!(
                     "spine section '{}' include matched no files",
@@ -469,19 +436,23 @@ impl SpineScan {
                 )));
             }
 
-            for p in matched {
-                let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
-                children.push(PathNode {
-                    segment: sanitize_handle_segment(stem),
+            let mut children: Vec<PathNode> = matched
+                .into_iter()
+                .map(|p| PathNode {
+                    segment: sanitize_handle_segment(
+                        p.file_stem().and_then(|s| s.to_str()).unwrap_or_default(),
+                    ),
                     title: None,
                     file: Some(p),
                     children: Vec::new(),
-                });
-            }
-
-            // Nested virtual directories.
-            let nested = Self::build_section_nodes(content_dir, &s.section, leaves, claimed)?;
-            children.extend(nested);
+                })
+                .collect();
+            children.extend(Self::build_section_nodes(
+                content_dir,
+                &s.section,
+                leaves,
+                claimed,
+            )?);
 
             result.push(PathNode {
                 segment: sanitize_handle_segment(&s.name),
@@ -491,6 +462,64 @@ impl SpineScan {
             });
         }
         Ok(result)
+    }
+
+    /// Apply flat `[spine] include` (knob 3): replace the scan order with an
+    /// explicit ordered glob list, dropping any leaf it does not match. Unlike
+    /// `apply_sections`, a matched leaf keeps its scanned `PathNode` untouched —
+    /// no group wrapper — so its handle and output path never change, only its
+    /// position. Returns `self` unchanged when `include` is empty.
+    pub fn apply_include(self, content_dir: &Path, include: &[String]) -> Result<SpineScan> {
+        if include.is_empty() {
+            return Ok(self);
+        }
+
+        let roots = Self::to_path_nodes(&self.tree, &self.files);
+        let mut leaf_nodes = Vec::new();
+        Self::collect_leaf_nodes(roots, &mut leaf_nodes);
+        let mut by_path: HashMap<PathBuf, PathNode> = leaf_nodes
+            .into_iter()
+            .filter_map(|n| n.file.clone().map(|f| (f, n)))
+            .collect();
+        let leaves: Vec<PathBuf> = by_path.keys().cloned().collect();
+
+        let matcher = OrderedGlobMatch::new(content_dir, &leaves);
+        let mut claimed = HashSet::new();
+        let mut new_roots = Vec::new();
+        for g in include {
+            let pattern = std::slice::from_ref(g);
+            let matched = matcher.resolve(pattern, &mut claimed, "spine include")?;
+            if matched.is_empty() {
+                return Err(RheoError::project_config(format!(
+                    "spine include pattern '{}' matched no files",
+                    g
+                )));
+            }
+            new_roots.extend(matched.into_iter().filter_map(|p| by_path.remove(&p)));
+        }
+
+        let mut files = Vec::new();
+        let tree = Self::reindex(&new_roots, &mut files);
+        if files.is_empty() {
+            return Err(RheoError::project_config(
+                "spine is empty after applying include",
+            ));
+        }
+        Ok(SpineScan { files, tree })
+    }
+
+    /// Move every leaf [`PathNode`] (childless, file-bearing) out of `nodes`
+    /// into `out`, dropping non-movable group/landing-page structure around it —
+    /// the counterpart of [`Self::collect_leaf_files`] that yields owned nodes
+    /// (segment/title intact) rather than just their paths.
+    fn collect_leaf_nodes(nodes: Vec<PathNode>, out: &mut Vec<PathNode>) {
+        for n in nodes {
+            if n.children.is_empty() && n.file.is_some() {
+                out.push(n);
+            } else {
+                Self::collect_leaf_nodes(n.children, out);
+            }
+        }
     }
 
     /// Remove claimed leaf files from the working tree, dropping any group node
@@ -539,6 +568,65 @@ struct PathNode {
     children: Vec<PathNode>,
 }
 
+/// Ordered-glob resolution shared by `[[spine.section]] include` and flat
+/// `[spine] include`: matches patterns against unclaimed leaves in listed
+/// order (ties within one pattern broken lexicographically), claiming every
+/// match so neither a later pattern nor another caller can reuse it. Callers
+/// decide what an empty result means — a section only cares whether its whole
+/// include list matched nothing, flat include whether one pattern did.
+struct OrderedGlobMatch<'a> {
+    content_dir: &'a Path,
+    leaves: &'a [PathBuf],
+}
+
+impl<'a> OrderedGlobMatch<'a> {
+    fn new(content_dir: &'a Path, leaves: &'a [PathBuf]) -> Self {
+        Self {
+            content_dir,
+            leaves,
+        }
+    }
+
+    /// Resolve `patterns` in listed order, claiming matches as they're found.
+    /// `context` names the enclosing include list for the invalid-glob error.
+    fn resolve(
+        &self,
+        patterns: &[String],
+        claimed: &mut HashSet<PathBuf>,
+        context: &str,
+    ) -> Result<Vec<PathBuf>> {
+        let mut matched = Vec::new();
+        for g in patterns {
+            let matcher = GlobBuilder::new(g)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| {
+                    RheoError::project_config(format!(
+                        "invalid include glob '{}' in {}: {}",
+                        g, context, e
+                    ))
+                })?
+                .compile_matcher();
+            let mut ms: Vec<PathBuf> = self
+                .leaves
+                .iter()
+                .filter(|p| !claimed.contains(*p))
+                .filter(|p| {
+                    let rel = p.strip_prefix(self.content_dir).unwrap_or(p);
+                    matcher.is_match(to_forward_slash(rel))
+                })
+                .cloned()
+                .collect();
+            ms.sort();
+            for m in &ms {
+                claimed.insert(m.clone());
+            }
+            matched.extend(ms);
+        }
+        Ok(matched)
+    }
+}
+
 // ── Bundle spine: VirtualSpine, Vertebra, SpineLayout ────────────────────────
 
 /// How a spine is compiled into output files under the bundle path.
@@ -564,13 +652,6 @@ pub struct Vertebra {
     pub emit_handle: bool,
     /// Document title for `#document title:` and `@handle` display text.
     pub title: String,
-    /// Parsed `#set document(date: datetime(...))` timestamp, if present.
-    pub date: Option<DocumentDate>,
-    /// All representable named arguments of this vertebra's `#set document(...)`
-    /// rule, exposed to Typst as the spine entry's `metadata` field.
-    pub metadata: DocumentMetadata,
-    /// Harvested `rheo-*` variables from this vertebra's source file.
-    pub vars: std::collections::HashMap<String, RheoValue>,
     /// The vertebra's raw source text, retained for the Mould stage.
     pub source: String,
 }
@@ -580,6 +661,19 @@ impl Vertebra {
     pub fn collides_with(&self, other: &Vertebra) -> bool {
         self.output_path == other.output_path
     }
+}
+
+/// The Typst source injected around one vertebra's own body: a `prelude`
+/// prepended before it, an `epilogue` appended after it. See
+/// [`VirtualSpine::vertebra_injections`].
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct VertebraInjection {
+    /// Text prepended before the vertebra's own source (the `rheo-metadata`
+    /// helper and the `rheo-context()` binding).
+    pub prelude: String,
+    /// Text appended after the vertebra's own source (the metadata beacon,
+    /// when emitted for this layout — empty otherwise).
+    pub epilogue: String,
 }
 
 /// One node in the structured spine. Mirrors directory / section nesting to
@@ -599,6 +693,15 @@ pub struct SpineNode {
     pub children: Vec<SpineNode>,
 }
 
+/// Every vertebra index the tree references, in pre-order.
+fn tree_indices(tree: &[SpineNode]) -> Vec<usize> {
+    let mut indices = Vec::new();
+    for node in tree {
+        node.collect_indices(&mut indices);
+    }
+    indices
+}
+
 impl SpineNode {
     /// Pre-order walk: push this node's vertebra index (if any) then recurse
     /// into children regardless of whether this node itself yielded one.
@@ -610,6 +713,26 @@ impl SpineNode {
             child.collect_indices(out);
         }
     }
+}
+
+/// The per-format values that ride on `sys.inputs.rheo-context` alongside the
+/// spine itself. See [`VirtualSpine::global_context`].
+pub struct FormatContext<'a> {
+    /// The rheo output-format name (`"html"`/`"epub"`). `None` for PDF, which
+    /// sets no rheo target and falls back to Typst's native `target()`.
+    pub target: Option<&'a str>,
+    /// The output file extension (`"html"`/`"xhtml"`) — what `typ/rheo.typ`
+    /// reads to build cross-vertebra link hrefs. Gated exactly like `target`.
+    pub ext: Option<&'a str>,
+    /// The resolved per-format `reset-footnotes` toggle. Unlike `target`/`ext`
+    /// this is always present; `typ/rheo.typ` ANDs it with the per-page `ext`
+    /// gate, so it only ever takes effect for HTML/EPUB.
+    pub reset_footnotes: bool,
+    /// Rust's own post-compile `DocumentInfo` title for a vertebra whose
+    /// beacon read it wrong — a title set inside a bounded code block, see
+    /// `docs/limitations.md`. Empty on the ordinary single pass; populated only
+    /// by the gated second pass of `Build::compile_bundle_once`.
+    pub title_overrides: &'a HashMap<String, String>,
 }
 
 /// A resolved spine ready for bundle compilation.
@@ -634,6 +757,11 @@ pub struct VirtualSpine {
     /// with [`Self::with_marrow`], for the same no-config-access reason as
     /// `title`.
     pub marrow: Vec<String>,
+    /// Marrow spliced BEFORE every document instead of after, so a `#show`/`#set`
+    /// rule in it reaches pre-existing vertebrae (introspection is bundle-wide,
+    /// not sequential). Global-by-default and powerful — opt-in only, applied
+    /// with [`Self::with_marrow_prologue`].
+    pub marrow_prologue: Vec<String>,
 }
 
 impl VirtualSpine {
@@ -643,9 +771,16 @@ impl VirtualSpine {
         self
     }
 
-    /// Attach marrow contributions, builder-style.
+    /// Attach marrow contributions spliced after every document (today's
+    /// default position), builder-style.
     pub fn with_marrow(mut self, marrow: Vec<String>) -> Self {
         self.marrow = marrow;
+        self
+    }
+
+    /// Attach marrow contributions spliced before every document, builder-style.
+    pub fn with_marrow_prologue(mut self, marrow: Vec<String>) -> Self {
+        self.marrow_prologue = marrow;
         self
     }
 
@@ -654,11 +789,7 @@ impl VirtualSpine {
     /// tree built by `build()`. Group nodes with `vertebra: None` still recurse
     /// into their children. A stale index is silently skipped, never panics.
     pub fn flat_vertebrae(&self) -> Vec<&Vertebra> {
-        let mut indices = Vec::new();
-        for node in &self.tree {
-            node.collect_indices(&mut indices);
-        }
-        indices
+        tree_indices(&self.tree)
             .into_iter()
             .filter_map(|i| self.vertebrae.get(i))
             .collect()
@@ -713,9 +844,6 @@ impl VirtualSpine {
             output_path: String,
             rel_path: String,
             title: String,
-            date: Option<DocumentDate>,
-            metadata: DocumentMetadata,
-            vars: HashMap<String, RheoValue>,
             source: String,
         }
 
@@ -743,7 +871,11 @@ impl VirtualSpine {
                     SpineLayout::SingleCombined { output_name, .. } => output_name.clone(),
                 };
 
-                let source = fs::read_to_string(file).unwrap_or_default();
+                // The scan already proved this path exists and ends in `.typ`,
+                // so a read failure here is a real fault, not an absence.
+                let source = fs::read_to_string(file).map_err(|e| {
+                    RheoError::io(e, format!("reading spine file '{}'", file.display()))
+                })?;
                 let stem = file
                     .file_stem()
                     .unwrap_or_default()
@@ -753,49 +885,36 @@ impl VirtualSpine {
 
                 let source_obj = Source::detached(&source);
                 let extracted = parser::extract_nodes(&source_obj);
-                let date = extracted.document_date;
-                let metadata = extracted.document_metadata;
                 let sites = extracted.labels;
 
-                // A styled or otherwise non-plain document title cannot survive
-                // the flattening to the plain string rheo uses in the spine; warn
-                // the author, showing both the original and the stripped form.
-                if let Some(lossy) = &metadata.lossy_title {
-                    tracing::warn!(
-                        file = %file.display(),
-                        original = %lossy.raw,
-                        stripped = %lossy.stripped,
-                        "Warning: Rheo uses document titles as unique identifiers, and does not retain styling or sophisticated forms of Typst content when constructing spines."
-                    );
-                }
+                // Title is purely path-derived (filename, title-cased). The
+                // real authored title (e.g. via `#set document(title: ...)`,
+                // including through an imported `#show:` template) is resolved
+                // by Typst itself and read post-compile from `DocumentInfo`
+                // (see `crate::plugins::document_meta::DocumentMeta` and
+                // `crate::build::flatten_bundle_outputs`); this path-derived
+                // value is only a pre-compile placeholder (spine ordering,
+                // `@handle` display text before the bundle compiles, etc.).
+                let title = DocumentTitle::to_readable_name(&stem);
 
-                // Title from the harvested `#set document(title: …)` value — a
-                // real AST read that understands both string and bracket-content
-                // forms — falling back to the filename, title-cased. (Sourcing
-                // this from metadata rather than a raw-text scan is what fixes
-                // the string-form / link-text mis-parse.)
-                let title = metadata
-                    .get("title")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| DocumentTitle::to_readable_name(&stem));
-                let mut vars = HashMap::new();
-                for v in extracted.rheo_vars {
-                    match v.value {
-                        Some(value) => {
-                            vars.insert(v.key, value);
-                        }
-                        None => {
-                            return Err(RheoError::invalid_data(format!(
-                                "{}:{}: rheo-{} must be a string or boolean",
-                                file.display(),
-                                v.line,
-                                v.key
-                            )));
-                        }
-                    }
+                // The `rheo-meta:` namespace is reserved for the synthesized
+                // per-vertebra metadata beacon (`TypstStmt::MetadataBeacon`).
+                // Unlike the escape-collision check below (which only fires on
+                // an actual collision), any authored label squatting on this
+                // prefix is always a hard error — there is no useful silent
+                // fallback, and it doesn't matter whether the label happens to
+                // match a real beacon handle in this project.
+                if let Some(offending) = sites
+                    .definitions
+                    .iter()
+                    .find(|d| d.name.starts_with(RESERVED_META_LABEL_PREFIX))
+                {
+                    return Err(RheoError::invalid_data(format!(
+                        "{}: label <{}> uses the reserved `{}` prefix, which rheo uses internally for per-vertebra document metadata",
+                        file.display(),
+                        offending.name,
+                        RESERVED_META_LABEL_PREFIX
+                    )));
                 }
 
                 user_labels.extend(sites.definitions.iter().map(|d| d.name.clone()));
@@ -807,9 +926,6 @@ impl VirtualSpine {
                     output_path,
                     rel_path,
                     title,
-                    date,
-                    metadata,
-                    vars,
                     source,
                 })
             })
@@ -846,9 +962,6 @@ impl VirtualSpine {
                     extra_handles: vec![fi.escape],
                     emit_handle,
                     title: fi.title,
-                    date: fi.date,
-                    metadata: fi.metadata,
-                    vars: fi.vars,
                     source: fi.source,
                 })
             })
@@ -858,10 +971,7 @@ impl VirtualSpine {
 
         debug_assert!(
             {
-                let mut indices = Vec::new();
-                for node in &tree {
-                    node.collect_indices(&mut indices);
-                }
+                let indices = tree_indices(&tree);
                 let unique: HashSet<usize> = indices.iter().copied().collect();
                 indices.len() == vertebrae.len() && unique.len() == indices.len()
             },
@@ -874,57 +984,84 @@ impl VirtualSpine {
             tree,
             title: None,
             marrow: Vec::new(),
+            marrow_prologue: Vec::new(),
         })
     }
 
-    /// Per-vertebra `rheo-context` Typst preludes, keyed by include path (`rel_path`).
+    /// Per-vertebra Typst injections, keyed by include path (`rel_path`): a
+    /// `prelude` (prepended before the vertebra's own body) and an `epilogue`
+    /// (appended after it).
     ///
-    /// Each vertebra is injected with a `rheo-context()` function that composes
-    /// this file's own `handle` with the format-global values (`spine`,
-    /// `spine-flat`, `target`, `ext`) spread from `sys.inputs.rheo-context`:
-    /// `#let rheo-context() = (handle: <its handle>, ..sys.inputs.rheo-context)`.
-    /// Only the per-file `handle` is baked here; the shared (potentially large)
-    /// spine lives once in [`Self::global_context`], not duplicated per vertebra.
+    /// Each vertebra's `prelude` defines `rheo-metadata` (see
+    /// [`TypstStmt::MetadataHelper`]) followed by the `rheo-context()`
+    /// function, which composes this file's own `handle` and `metadata-of:
+    /// rheo-metadata` with the format-global values (`spine`, `spine-flat`,
+    /// `target`, `ext`) spread from `sys.inputs.rheo-context`. Only the
+    /// per-file `handle` is baked here; the shared (potentially large) spine
+    /// lives once in [`Self::global_context`], not duplicated per vertebra.
     /// `sys.inputs` reads need no `#context`, so authors read `rheo-context()`
     /// fields directly.
-    pub fn rheo_context_preludes(&self) -> HashMap<String, String> {
+    ///
+    /// Each vertebra's `epilogue` is its metadata beacon (see
+    /// [`TypstStmt::MetadataBeacon`]) — but only for `OnePerVertebra` layouts.
+    /// A `SingleCombined` (PDF) layout wraps every vertebra in one shared
+    /// `#document(...)`, where a beacon would leak the preceding vertebra's
+    /// `set document(...)` state into the next one (confirmed empirically in
+    /// `docs/spikes/typst-native-metadata.md`, Q6), so `epilogue` is empty
+    /// there; `rheo-metadata` is still defined (it just finds no beacon and
+    /// returns `(:)`).
+    pub fn vertebra_injections(&self) -> HashMap<String, VertebraInjection> {
+        let emit_beacon = matches!(self.layout, SpineLayout::OnePerVertebra { .. });
         self.vertebrae
             .iter()
             .map(|v| {
+                let helper = TypstStmt::MetadataHelper;
                 let binding = TypstStmt::ContextBinding {
                     handle: v.handle.clone(),
                 };
-                (v.rel_path.clone(), format!("{binding}\n\n"))
+                let prelude = format!("{helper}\n\n{binding}\n\n");
+                let epilogue = if emit_beacon {
+                    let beacon = TypstStmt::MetadataBeacon {
+                        handle: v.handle.clone(),
+                    };
+                    format!("\n{beacon}\n")
+                } else {
+                    String::new()
+                };
+                (v.rel_path.clone(), VertebraInjection { prelude, epilogue })
             })
             .collect()
     }
 
     /// The file-independent `rheo-context` data exposed via `sys.inputs`.
     ///
-    /// `sys.inputs` is global to the whole bundle compile, so it carries only the
-    /// parts of `rheo-context` identical across vertebrae — `spine`/`spine-flat`.
-    /// Packages read `sys.inputs.rheo-context` to detect a rheo build (and reach
-    /// the shared spine) without referencing the per-file `#let rheo-context`,
-    /// which additionally carries this file's `handle`.
+    /// `sys.inputs` is global to the whole bundle compile, so it carries only
+    /// the parts identical across vertebrae: `spine`/`spine-flat`, the
+    /// compiling rheo's own `rheo-version` (a package reads it to enforce a
+    /// minimum rheo, treating its absence as "older than the release that
+    /// added it"), and the per-format values in `format` — see
+    /// [`FormatContext`] for each. Packages read `sys.inputs.rheo-context` to
+    /// detect a rheo build without referencing the per-file `rheo-context()`,
+    /// which additionally carries that file's `handle`.
     ///
-    /// `target` and `ext` follow the same rule as [`Self::rheo_context_preludes`]:
-    /// each field is added when `Some`, omitted for PDF (`None`). `ext` is the
-    /// output file extension (e.g. `"html"`/`"xhtml"`) — the value `typ/rheo.typ`
-    /// reads to build cross-vertebra link hrefs.
-    ///
-    /// `reset_footnotes` is the resolved per-format `reset-footnotes` toggle:
-    /// unlike `target`/`ext` it is always present (a resolved bool, not an
-    /// `Option`), and `typ/rheo.typ` ANDs it with the per-page `ext` gate before
-    /// resetting the footnote counter (so it only ever takes effect for HTML/EPUB).
-    pub fn global_context(
-        &self,
-        target: Option<&str>,
-        ext: Option<&str>,
-        reset_footnotes: bool,
-    ) -> TypstLiteral {
+    /// `title-overrides` is serialized as an array of `(handle, title)` dicts
+    /// rather than a dict keyed by handle, since a handle like
+    /// `"chapters:intro"` is not a valid Typst identifier — the same reason
+    /// `spine-flat` is an array of handle-bearing dicts.
+    pub fn global_context(&self, format: FormatContext<'_>) -> TypstLiteral {
+        let FormatContext {
+            target,
+            ext,
+            reset_footnotes,
+            title_overrides,
+        } = format;
         let mut fields = vec![
             ("spine".to_string(), self.spine_tree()),
             ("spine-flat".to_string(), self.spine_flat()),
+            (
+                "rheo-version".to_string(),
+                TypstLiteral::str(env!("CARGO_PKG_VERSION")),
+            ),
         ];
         if let Some(t) = target {
             fields.push(("target".to_string(), TypstLiteral::str(t)));
@@ -936,40 +1073,52 @@ impl VirtualSpine {
             "reset-footnotes".to_string(),
             TypstLiteral::bool(reset_footnotes),
         ));
+        fields.push((
+            "title-overrides".to_string(),
+            TypstLiteral::Array(
+                title_overrides
+                    .iter()
+                    .map(|(handle, title)| {
+                        TypstLiteral::Dict(vec![
+                            ("handle".to_string(), TypstLiteral::str(handle.as_str())),
+                            ("title".to_string(), TypstLiteral::str(title.as_str())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ));
         TypstLiteral::Dict(fields)
     }
 
     /// The structured spine tree as a [`TypstLiteral`] array of recursive node
-    /// dicts. See [`Self::rheo_context_preludes`] for the node key set.
+    /// dicts. See [`Self::node_literal`] for the node key set.
     fn spine_tree(&self) -> TypstLiteral {
         TypstLiteral::Array(self.tree.iter().map(|n| self.node_literal(n)).collect())
     }
 
-    /// Serialize one [`SpineNode`] (and its descendants) to its `spine` dict shape.
+    /// Serialize one [`SpineNode`] (and its descendants) to its `spine` dict
+    /// shape: `title`/`handle`/`path`/`children`. Per-vertebra document
+    /// metadata is not part of this shape — read it live via
+    /// `rheo-context().metadata-of` (see [`TypstStmt::MetadataHelper`]).
     fn node_literal(&self, node: &SpineNode) -> TypstLiteral {
-        let (handle, path, title, metadata) =
-            match node.vertebra.and_then(|i| self.vertebrae.get(i)) {
-                Some(v) => (
-                    TypstLiteral::str(v.handle.as_str()),
-                    TypstLiteral::str(v.rel_path.as_str()),
-                    TypstLiteral::str(v.title.as_str()),
-                    v.metadata.to_literal(),
-                ),
-                None => (
-                    TypstLiteral::None,
-                    TypstLiteral::None,
-                    TypstLiteral::str(node.title.as_deref().unwrap_or(node.segment.as_str())),
-                    // Group nodes have no source document, so no metadata.
-                    TypstLiteral::Dict(vec![]),
-                ),
-            };
+        let (handle, path, title) = match node.vertebra.and_then(|i| self.vertebrae.get(i)) {
+            Some(v) => (
+                TypstLiteral::str(v.handle.as_str()),
+                TypstLiteral::str(v.rel_path.as_str()),
+                TypstLiteral::str(v.title.as_str()),
+            ),
+            None => (
+                TypstLiteral::None,
+                TypstLiteral::None,
+                TypstLiteral::str(node.title.as_deref().unwrap_or(node.segment.as_str())),
+            ),
+        };
         let children =
             TypstLiteral::Array(node.children.iter().map(|c| self.node_literal(c)).collect());
         TypstLiteral::Dict(vec![
             ("title".to_string(), title),
             ("handle".to_string(), handle),
             ("path".to_string(), path),
-            ("metadata".to_string(), metadata),
             ("children".to_string(), children),
         ])
     }
@@ -986,7 +1135,6 @@ impl VirtualSpine {
                         ("handle".to_string(), TypstLiteral::str(v.handle.as_str())),
                         ("path".to_string(), TypstLiteral::str(v.rel_path.as_str())),
                         ("title".to_string(), TypstLiteral::str(v.title.as_str())),
-                        ("metadata".to_string(), v.metadata.to_literal()),
                     ])
                 })
                 .collect(),
@@ -1001,12 +1149,12 @@ impl VirtualSpine {
         if !matches!(self.layout, SpineLayout::OnePerVertebra { .. }) {
             return Ok(());
         }
-        let mut seen: HashMap<&str, usize> = HashMap::new();
-        for (i, v) in self.vertebrae.iter().enumerate() {
-            if let Some(prev) = seen.insert(v.output_path.as_str(), i) {
+        let mut seen: HashMap<&str, &Vertebra> = HashMap::new();
+        for v in &self.vertebrae {
+            if let Some(prev) = seen.insert(v.output_path.as_str(), v) {
                 return Err(RheoError::project_config(format!(
-                    "spine output path collision: '{}' produced by vertebra {} and {}",
-                    v.output_path, prev, i
+                    "spine output path collision: '{}' produced by both '{}' and '{}'",
+                    v.output_path, prev.rel_path, v.rel_path
                 )));
             }
         }
@@ -1047,6 +1195,7 @@ impl VirtualSpine {
                 .chain(v.extra_handles.iter())
                 .map(|label| BundleAnchor {
                     label: label.clone(),
+                    handle: v.handle.clone(),
                     title: v.title.clone(),
                 })
                 .collect(),
@@ -1087,13 +1236,17 @@ impl VirtualSpine {
             }
         };
 
-        BundleSource {
-            documents,
-            marrow: self
-                .marrow
+        let to_stmts = |texts: &[String]| {
+            texts
                 .iter()
                 .map(|text| TypstStmt::Raw(text.clone()))
-                .collect(),
+                .collect()
+        };
+
+        BundleSource {
+            documents,
+            marrow_prologue: to_stmts(&self.marrow_prologue),
+            marrow: to_stmts(&self.marrow),
         }
     }
 }
@@ -1103,6 +1256,26 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    /// A per-page (HTML) format context with footnote reset on.
+    fn html_context(title_overrides: &HashMap<String, String>) -> FormatContext<'_> {
+        FormatContext {
+            target: Some("html"),
+            ext: Some("html"),
+            reset_footnotes: true,
+            title_overrides,
+        }
+    }
+
+    /// A combined-PDF format context: no target, no ext.
+    fn pdf_context(title_overrides: &HashMap<String, String>) -> FormatContext<'_> {
+        FormatContext {
+            target: None,
+            ext: None,
+            reset_footnotes: true,
+            title_overrides,
+        }
+    }
 
     fn create_test_dir_with_files(files: &[&str]) -> TempDir {
         let temp = TempDir::new().unwrap();
@@ -1139,6 +1312,31 @@ mod tests {
         assert_eq!(spine.vertebrae[0].output_path, "intro.html");
         assert_eq!(spine.vertebrae[1].handle, "closing");
         assert_eq!(spine.vertebrae[1].output_path, "closing.html");
+    }
+
+    #[test]
+    fn unreadable_vertebra_errors_naming_the_path() {
+        // A vertebra that cannot be read must fail the build loudly rather than
+        // compile as a blank page.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        let missing = content.join("gone.typ");
+
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let scan = SpineScan::flat(std::slice::from_ref(&missing), &content);
+        let err = match VirtualSpine::build(scan, root, layout) {
+            Err(e) => e,
+            Ok(_) => panic!("an unreadable vertebra must not build"),
+        };
+        assert!(
+            err.to_string().contains("gone.typ"),
+            "error must name the unreadable file, got: {err}"
+        );
     }
 
     #[test]
@@ -1209,7 +1407,7 @@ mod tests {
     }
 
     #[test]
-    fn rheo_context_prelude_is_composed_function_with_own_handle() {
+    fn vertebra_injection_prelude_is_composed_function_with_own_handle() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let content = root.join("content");
@@ -1225,24 +1423,69 @@ mod tests {
         };
         let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
 
-        let preludes = spine.rheo_context_preludes();
-        // One prelude per vertebra, keyed by include path.
-        assert_eq!(preludes.len(), 2);
-        let root_prelude = &preludes["content/intro.typ"];
-        let nested_prelude = &preludes["content/chapters/intro.typ"];
+        let injections = spine.vertebra_injections();
+        // One injection per vertebra, keyed by include path.
+        assert_eq!(injections.len(), 2);
+        let root_injection = &injections["content/intro.typ"];
+        let nested_injection = &injections["content/chapters/intro.typ"];
 
         // Each bakes only its OWN handle...
-        assert!(root_prelude.contains("handle: \"intro\""));
-        assert!(nested_prelude.contains("handle: \"chapters:intro\""));
-        for p in [root_prelude, nested_prelude] {
+        assert!(root_injection.prelude.contains("handle: \"intro\""));
+        assert!(
+            nested_injection
+                .prelude
+                .contains("handle: \"chapters:intro\"")
+        );
+        for inj in [root_injection, nested_injection] {
+            let p = &inj.prelude;
+            // ...the rheo-metadata helper is defined ahead of rheo-context()...
+            assert!(p.contains("#let rheo-metadata(handle) = "));
+            assert!(
+                p.find("rheo-metadata(handle)").unwrap()
+                    < p.find("#let rheo-context() = ").unwrap()
+            );
             // ...as a function that spreads the format-global values from
-            // sys.inputs (composed, not baked)...
-            assert!(p.starts_with("#let rheo-context() = "));
+            // sys.inputs (composed, not baked), and carries metadata-of...
+            assert!(p.contains("#let rheo-context() = "));
+            assert!(p.contains("metadata-of: rheo-metadata"));
             assert!(p.contains("..sys.inputs.rheo-context"));
             // ...so the large spine is NOT duplicated into the per-file prelude.
             assert!(!p.contains("spine-flat"));
             assert!(!p.contains("path:"));
+            // OnePerVertebra layouts get a beacon epilogue naming this vertebra.
+            assert!(inj.epilogue.contains("#metadata("));
         }
+        assert!(root_injection.epilogue.contains("<rheo-meta:intro>"));
+        assert!(
+            nested_injection
+                .epilogue
+                .contains("<rheo-meta:chapters:intro>")
+        );
+    }
+
+    #[test]
+    fn vertebra_injection_epilogue_empty_for_single_combined_layout() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("a.typ"), "= A\n").unwrap();
+
+        let files = vec![content.join("a.typ")];
+        let layout = SpineLayout::SingleCombined {
+            output_name: "book.pdf".into(),
+            format: "pdf".into(),
+        };
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
+
+        let injections = spine.vertebra_injections();
+        let injection = &injections["content/a.typ"];
+        // No beacon under combined PDF (Q6: it would leak into later vertebrae).
+        assert_eq!(injection.epilogue, "");
+        // The helper (and rheo-context's metadata-of field) are still defined,
+        // so `(rheo-context().metadata-of)(...)` is always callable.
+        assert!(injection.prelude.contains("#let rheo-metadata(handle) = "));
+        assert!(injection.prelude.contains("metadata-of: rheo-metadata"));
     }
 
     #[test]
@@ -1282,7 +1525,12 @@ mod tests {
     }
 
     #[test]
-    fn spine_exposes_document_metadata_on_entries() {
+    fn spine_no_longer_exposes_a_metadata_key_on_entries() {
+        // Neither the spine tree nor spine-flat entries carry a `metadata`
+        // key — `Vertebra.title` is purely path-derived, so this vertebra's
+        // spine-entry title is "Post" (from the filename), not the
+        // `#set document(title: ...)` value. Read live document metadata via
+        // `rheo-context().metadata-of` instead.
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let content = root.join("content");
@@ -1293,7 +1541,7 @@ mod tests {
             "#set document(title: [My Post], keywords: (\"DiH\",), author: \"Jane\")\n= Body\n",
         )
         .unwrap();
-        // A page with no `#set document(...)`: metadata is an empty dict.
+        // A page with no `#set document(...)`.
         fs::write(content.join("bare.typ"), "= Bare\n").unwrap();
 
         let scan = SpineScan::run(&content, &[]).unwrap();
@@ -1303,19 +1551,17 @@ mod tests {
         };
         let spine = VirtualSpine::build(scan, root, layout).unwrap();
 
-        // The metadata dict is exposed on both spine (tree) and spine-flat entries.
         for serialized in [
             spine.spine_tree().serialize(),
             spine.spine_flat().serialize(),
         ] {
             assert!(
-                serialized.contains(
-                    "metadata: (title: \"My Post\", keywords: (\"DiH\",), author: \"Jane\")"
-                ),
-                "metadata dict missing/instructed wrong: {serialized}"
+                !serialized.contains("metadata:"),
+                "metadata key should no longer be serialized: {serialized}"
             );
-            // The bare page still carries a `metadata` key, as an empty dict.
-            assert!(serialized.contains("metadata: (:)"));
+            // The other spine entry fields remain.
+            assert!(serialized.contains("title: \"Post\""));
+            assert!(serialized.contains("handle: \"post\""));
         }
     }
 
@@ -1337,7 +1583,7 @@ mod tests {
         // target/ext live on the global context (sys.inputs); the per-file
         // prelude only spreads them in, so they are asserted on global_context.
         let global_html = spine
-            .global_context(Some("html"), Some("html"), true)
+            .global_context(html_context(&HashMap::new()))
             .serialize();
         assert!(global_html.contains("target: \"html\""));
         assert!(global_html.contains("ext: \"html\""));
@@ -1346,17 +1592,80 @@ mod tests {
 
         // Epub keeps `target` "epub" but `ext` "xhtml"; a false toggle is threaded through.
         let global_epub = spine
-            .global_context(Some("epub"), Some("xhtml"), false)
+            .global_context(FormatContext {
+                target: Some("epub"),
+                ext: Some("xhtml"),
+                reset_footnotes: false,
+                title_overrides: &HashMap::new(),
+            })
             .serialize();
         assert!(global_epub.contains("target: \"epub\""));
         assert!(global_epub.contains("ext: \"xhtml\""));
         assert!(global_epub.contains("reset-footnotes: false"));
 
         // None (PDF) -> no `target` or `ext` field, but reset-footnotes is still present.
-        let global_without = spine.global_context(None, None, true).serialize();
+        let global_without = spine
+            .global_context(pdf_context(&HashMap::new()))
+            .serialize();
         assert!(!global_without.contains("target:"));
         assert!(!global_without.contains("ext:"));
         assert!(global_without.contains("reset-footnotes: true"));
+    }
+
+    #[test]
+    fn global_context_carries_rheo_version() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
+
+        let expected = format!("rheo-version: \"{}\"", env!("CARGO_PKG_VERSION"));
+        assert!(
+            spine
+                .global_context(pdf_context(&HashMap::new()))
+                .serialize()
+                .contains(&expected)
+        );
+    }
+
+    #[test]
+    fn global_context_title_overrides_serializes_as_handle_title_array() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
+
+        // Empty by default (ordinary single pass): still a present, empty array.
+        let empty = spine
+            .global_context(pdf_context(&HashMap::new()))
+            .serialize();
+        assert!(empty.contains("title-overrides: ()"));
+
+        // A handle like "chapters:intro" is not a valid Typst identifier, so
+        // overrides must be an array of dicts, not a dict keyed by handle.
+        let overrides = HashMap::from([("chapters:intro".to_string(), "Real Title".to_string())]);
+        let with_override = spine.global_context(pdf_context(&overrides)).serialize();
+        assert!(
+            with_override.contains(
+                "title-overrides: ((handle: \"chapters:intro\", title: \"Real Title\"),)"
+            )
+        );
     }
 
     #[test]
@@ -1400,9 +1709,6 @@ mod tests {
             extra_handles: vec!["intro.typ".into()],
             emit_handle: true,
             title: "Introduction".into(),
-            date: None,
-            metadata: DocumentMetadata::default(),
-            vars: HashMap::new(),
             source: String::new(),
         };
         let spine = VirtualSpine {
@@ -1414,6 +1720,7 @@ mod tests {
             tree: Vec::new(),
             title: None,
             marrow: Vec::new(),
+            marrow_prologue: Vec::new(),
         };
         let src = spine.source();
         assert!(src.contains("#document(\"intro.html\", format: \"html\""));
@@ -1437,9 +1744,6 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "A".into(),
-                    date: None,
-                    metadata: DocumentMetadata::default(),
-                    vars: HashMap::new(),
                     source: String::new(),
                 },
                 Vertebra {
@@ -1449,9 +1753,6 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "B".into(),
-                    date: None,
-                    metadata: DocumentMetadata::default(),
-                    vars: HashMap::new(),
                     source: String::new(),
                 },
             ],
@@ -1462,6 +1763,7 @@ mod tests {
             tree: Vec::new(),
             title: None,
             marrow: Vec::new(),
+            marrow_prologue: Vec::new(),
         };
         let src = spine.source();
         assert!(src.contains("#document(\"doc.pdf\", format: \"pdf\""));
@@ -1488,9 +1790,6 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "A".into(),
-                    date: None,
-                    metadata: DocumentMetadata::default(),
-                    vars: Default::default(),
                     source: String::new(),
                 },
                 Vertebra {
@@ -1500,9 +1799,6 @@ mod tests {
                     extra_handles: vec![],
                     emit_handle: true,
                     title: "B".into(),
-                    date: None,
-                    metadata: DocumentMetadata::default(),
-                    vars: Default::default(),
                     source: String::new(),
                 },
             ],
@@ -1513,6 +1809,7 @@ mod tests {
             tree: Vec::new(),
             title: None,
             marrow: Vec::new(),
+            marrow_prologue: Vec::new(),
         };
         assert!(spine.check_output_collisions().is_ok());
     }
@@ -1567,6 +1864,50 @@ mod tests {
             }
             Ok(_) => panic!("expected escape collision error"),
         }
+    }
+
+    #[test]
+    fn reserved_meta_label_prefix_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        // intro.typ hand-authors a label squatting on the reserved beacon namespace.
+        fs::write(content.join("intro.typ"), "#let x = 1 <rheo-meta:intro>\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let result = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout);
+        match result {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("intro.typ") && msg.contains("rheo-meta:intro"),
+                    "error should name both file and label: {msg}"
+                );
+            }
+            Ok(_) => panic!("expected reserved meta-label prefix error"),
+        }
+    }
+
+    #[test]
+    fn no_reserved_meta_label_builds_unaffected() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro <intro-section>\n").unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout).unwrap();
+        assert_eq!(spine.vertebrae[0].handle, "intro");
     }
 
     // ── SpineScan tests ─────────────────────────────────────────────────────
@@ -1684,18 +2025,15 @@ mod tests {
         );
     }
 
-    /// Marrow statements are emitted after every `#document` block, at bundle
-    /// root, where `document()`/`asset()` are legal.
-    #[test]
-    fn bundle_source_emits_marrow_after_documents() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
+    /// Builds a one-vertebra spine (an `index.typ` under `root/content`),
+    /// shared by the prologue/epilogue ordering tests below.
+    fn build_single_vertebra_spine(root: &Path) -> VirtualSpine {
         let content = root.join("content");
         fs::create_dir_all(&content).unwrap();
         fs::write(content.join("index.typ"), "= Index").unwrap();
 
         let scan = SpineScan::run(&content, &[]).unwrap();
-        let spine = VirtualSpine::build(
+        VirtualSpine::build(
             scan,
             root,
             SpineLayout::OnePerVertebra {
@@ -1704,7 +2042,17 @@ mod tests {
             },
         )
         .unwrap()
-        .with_marrow(vec!["#asset(\"extra/hello.txt\", \"hi\")".to_string()]);
+    }
+
+    /// Marrow statements are emitted after every `#document` block by default,
+    /// at bundle root, where `document()`/`asset()` are legal — the position a
+    /// project gets with no `marrow_prologue` config and a package gets by
+    /// shipping `.marrow.typ`.
+    #[test]
+    fn bundle_source_emits_marrow_after_documents() {
+        let tmp = TempDir::new().unwrap();
+        let spine = build_single_vertebra_spine(tmp.path())
+            .with_marrow(vec!["#asset(\"extra/hello.txt\", \"hi\")".to_string()]);
 
         let source = spine.bundle_source().to_string();
         let marrow_at = source
@@ -1714,6 +2062,26 @@ mod tests {
         assert!(
             marrow_at > last_document_at,
             "marrow must follow every document, got:\n{source}"
+        );
+    }
+
+    /// Prologue marrow — opted into via `with_marrow_prologue` (the project's
+    /// `marrow_prologue = true`, or a package's `.marrow-prologue.typ`) — is
+    /// emitted before every `#document` block instead.
+    #[test]
+    fn bundle_source_emits_marrow_prologue_before_documents() {
+        let tmp = TempDir::new().unwrap();
+        let spine = build_single_vertebra_spine(tmp.path())
+            .with_marrow_prologue(vec!["#asset(\"extra/hello.txt\", \"hi\")".to_string()]);
+
+        let source = spine.bundle_source().to_string();
+        let marrow_at = source
+            .find("#asset(\"extra/hello.txt\", \"hi\")")
+            .expect("marrow statement emitted");
+        let first_document_at = source.find("#document(").expect("a document is emitted");
+        assert!(
+            marrow_at < first_document_at,
+            "prologue marrow must precede every document, got:\n{source}"
         );
     }
 
@@ -1845,6 +2213,60 @@ mod tests {
         let scan = SpineScan::run(temp.path(), &[]).unwrap();
         let before = scan.files.len();
         let out = scan.apply_sections(temp.path(), &[]).unwrap();
+        assert_eq!(out.files.len(), before);
+    }
+
+    // ── apply_include tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn apply_include_reorders_flat_and_drops_unmatched() {
+        let temp = create_test_dir_with_files(&["b.typ", "a.typ", "c.typ", "d.typ"]);
+        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let out = scan
+            .apply_include(
+                temp.path(),
+                &["b.typ".into(), "a.typ".into(), "c.typ".into()],
+            )
+            .unwrap();
+
+        let stems: Vec<&str> = out
+            .files
+            .iter()
+            .map(|f| f.file_stem().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(stems, vec!["b", "a", "c"]); // reordered, d dropped entirely
+
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(out, temp.path(), layout).unwrap();
+        let paths: Vec<&str> = spine
+            .vertebrae
+            .iter()
+            .map(|v| v.output_path.as_str())
+            .collect();
+        // Flat output paths — no group segment, unlike apply_sections
+        // (contrast nested_handle_maps_to_slash_output_path).
+        assert_eq!(paths, vec!["b.html", "a.html", "c.html"]);
+    }
+
+    #[test]
+    fn apply_include_pattern_no_match_errors() {
+        let temp = create_test_dir_with_files(&["a.typ"]);
+        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let err = scan
+            .apply_include(temp.path(), &["nope.typ".to_string()])
+            .unwrap_err();
+        assert!(err.to_string().contains("matched no files"));
+    }
+
+    #[test]
+    fn apply_include_empty_is_noop() {
+        let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
+        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let before = scan.files.len();
+        let out = scan.apply_include(temp.path(), &[]).unwrap();
         assert_eq!(out.files.len(), before);
     }
 }

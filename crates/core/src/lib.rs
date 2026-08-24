@@ -8,6 +8,7 @@ pub mod parser;
 pub mod plugins;
 pub mod reticulate;
 pub mod templates;
+pub mod transclude;
 pub mod util;
 pub mod world;
 
@@ -32,11 +33,11 @@ pub use build::{Build, BuildOptions};
 pub use config::{AssetsField, PluginAssets, PluginSection, Spine};
 
 // Plugin trait and context
-pub use parser::RheoValue;
 pub use plugins::{
     AssetConfig, CastVertebra, EmbeddedDefault, FormatInitTemplate, FormatPlugin, OpenHandle,
     PackageAssets, PluginContext, ResolvedPackage, ServerHandle, SpineLayoutKind, TypstFormat,
 };
+pub use transclude::ControlAssets;
 
 // HTML/PDF export utilities
 pub use compile::{compile_document_to_string, document_to_pdf_bytes};

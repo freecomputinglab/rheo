@@ -2,8 +2,8 @@
 //!
 //! This is the core the whole `parser` module is organized around: one
 //! traversal ([`walk_tree`]) drives every extractor. The individual extractors
-//! live in sibling files (`labels`, `document_date`, `rheo_var`, `imports`);
-//! each is a small `impl SyntaxSite` that only inspects a node.
+//! live in sibling files (`labels`, `imports`); each is a small `impl
+//! SyntaxSite` that only inspects a node.
 
 use typst::syntax::{Source, SyntaxKind, SyntaxNode};
 
@@ -61,7 +61,7 @@ fn descend_ctx(kind: SyntaxKind, ctx: WalkCtx) -> WalkCtx {
 /// [`collect`](SyntaxSite::collect) gathers before the walk halts. `None`
 /// collects every occurrence (e.g. every label); `Some(1)` models a
 /// "find the first" single-value extractor — use [`first`](SyntaxSite::first)
-/// to get that lone value as an `Option` (as `DocumentDate` does).
+/// to get that lone value as an `Option`.
 pub trait SyntaxSite: Sized {
     /// Stop [`collect`](SyntaxSite::collect) once this many sites are found.
     /// `None` = unbounded.

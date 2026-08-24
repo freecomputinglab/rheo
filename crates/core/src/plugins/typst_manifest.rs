@@ -2,6 +2,7 @@ use crate::config::PluginAssets;
 use crate::packages::RheoPackages;
 use crate::parser::ImportInfo;
 use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
+use crate::{Result, RheoError};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -69,99 +70,199 @@ pub fn find_package_in_dirs(spec: &str, search_dirs: &[PathBuf]) -> Option<Resol
     })
 }
 
+/// A resolved package's parsed `typst.toml`, the sole read of that file.
+pub struct PackageManifest {
+    pkg: ResolvedPackage,
+    toml: toml::Value,
+}
+
+impl PackageManifest {
+    /// Reads and parses `{pkg.source_root}/typst.toml`. Missing, unreadable, or
+    /// unparseable manifests are logged via warn! and return `None` — a
+    /// malformed manifest in someone else's package must never break a build.
+    pub fn load(pkg: &ResolvedPackage) -> Option<Self> {
+        let manifest_path = pkg.source_root.join("typst.toml");
+        if !manifest_path.is_file() {
+            return None;
+        }
+        let content = match std::fs::read_to_string(&manifest_path) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(path = %manifest_path.display(), error = %e, "could not read typst.toml for auto-detect");
+                return None;
+            }
+        };
+        let toml: toml::Value = match toml::from_str(&content) {
+            Ok(t) => t,
+            Err(e) => {
+                warn!(path = %manifest_path.display(), error = %e, "could not parse typst.toml for auto-detect");
+                return None;
+            }
+        };
+        Some(Self {
+            pkg: pkg.clone(),
+            toml,
+        })
+    }
+
+    /// The `[tool.rheo.{format_name}]` block, if present and non-empty.
+    pub fn package_assets(&self, format_name: &str) -> Option<PackageAssets> {
+        let section = self
+            .toml
+            .get("tool")?
+            .get("rheo")?
+            .get(format_name)?
+            .as_table()?;
+        if section.is_empty() {
+            return None;
+        }
+        let copy = section
+            .get("copy")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let extra = section.clone();
+        let namespace = self.pkg.namespace.as_deref().unwrap_or("");
+        let dest = if namespace.is_empty() {
+            self.pkg.name.clone()
+        } else {
+            format!("{}/{}", namespace, self.pkg.name)
+        };
+        Some(PackageAssets {
+            assets: PluginAssets {
+                copy,
+                dest: Some(dest),
+                extra,
+            },
+            source_root: self.pkg.source_root.clone(),
+        })
+    }
+
+    /// The package's declared `[tool.rheo] min_version` floor, if present and valid semver.
+    pub fn min_version(&self) -> Option<semver::Version> {
+        let raw = self
+            .toml
+            .get("tool")?
+            .get("rheo")?
+            .get("min_version")?
+            .as_str()?;
+        match semver::Version::parse(raw) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                warn!(version = raw, error = %e, "invalid min_version in typst.toml");
+                None
+            }
+        }
+    }
+}
+
 /// Reads `{pkg.source_root}/typst.toml` and returns a `PackageAssets` for
 /// `format_name` if `[tool.rheo.{format_name}]` exists and is non-empty.
 /// Returns `None` otherwise. IO and parse errors are logged via warn!.
 pub fn manifest_package_assets(pkg: &ResolvedPackage, format_name: &str) -> Option<PackageAssets> {
-    let manifest_path = pkg.source_root.join("typst.toml");
-    if !manifest_path.is_file() {
-        return None;
+    PackageManifest::load(pkg)?.package_assets(format_name)
+}
+
+/// The imported packages resolvable from a set of Typst package search
+/// directories, each probed and its `typst.toml` parsed exactly once.
+///
+/// Resolution is deliberately forgiving: a package that is not present locally,
+/// ships no manifest, or ships a malformed one is simply absent from the index
+/// rather than an error, since a broken manifest in someone else's package must
+/// never break a build.
+pub struct PackageIndex {
+    /// `(import spec, package, its parsed manifest)`. The spec is retained
+    /// because [`Self::check_min_versions`] names it in the error.
+    resolved: Vec<(String, ResolvedPackage, Option<PackageManifest>)>,
+}
+
+impl PackageIndex {
+    /// Resolve `import_paths` against `search_dirs`, in the given order.
+    pub fn new(import_paths: &[String], search_dirs: &[PathBuf]) -> Self {
+        let resolved = import_paths
+            .iter()
+            .filter_map(|spec| {
+                let pkg = find_package_in_dirs(spec, search_dirs)?;
+                let manifest = PackageManifest::load(&pkg);
+                Some((spec.clone(), pkg, manifest))
+            })
+            .collect();
+        Self { resolved }
     }
-    let content = match std::fs::read_to_string(&manifest_path) {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(path = %manifest_path.display(), error = %e, "could not read typst.toml for auto-detect");
-            return None;
-        }
-    };
-    let toml: toml::Value = match toml::from_str(&content) {
-        Ok(t) => t,
-        Err(e) => {
-            warn!(path = %manifest_path.display(), error = %e, "could not parse typst.toml for auto-detect");
-            return None;
-        }
-    };
-    let section = toml
-        .get("tool")?
-        .get("rheo")?
-        .get(format_name)?
-        .as_table()?;
-    if section.is_empty() {
-        return None;
+
+    /// Resolve `import_paths` against Typst's own data/cache directories.
+    pub fn system(import_paths: &[String]) -> Self {
+        Self::new(import_paths, &typst_package_search_dirs(None))
     }
-    let copy = section
-        .get("copy")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    let extra = section.clone();
-    let namespace = pkg.namespace.as_deref().unwrap_or("");
-    let dest = if namespace.is_empty() {
-        pkg.name.clone()
-    } else {
-        format!("{}/{}", namespace, pkg.name)
-    };
-    Some(PackageAssets {
-        assets: PluginAssets {
-            copy,
-            dest: Some(dest),
-            extra,
-        },
-        source_root: pkg.source_root.clone(),
-    })
+
+    /// Each package's `[tool.rheo.{format_name}]` asset block, in import order.
+    pub fn manifest_assets(&self, format_name: &str) -> Vec<PackageAssets> {
+        self.resolved
+            .iter()
+            .filter_map(|(_, _, manifest)| manifest.as_ref()?.package_assets(format_name))
+            .collect()
+    }
+
+    /// Errors naming every package whose declared `[tool.rheo] min_version`
+    /// exceeds this build — one line per offender, so a project importing
+    /// several stale packages learns all of them from a single build.
+    pub fn check_min_versions(&self) -> Result<()> {
+        let current = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+            .expect("CARGO_PKG_VERSION must be valid semver");
+        let mut lines: Vec<String> = self
+            .resolved
+            .iter()
+            .filter_map(|(spec, _, manifest)| {
+                let min = manifest.as_ref()?.min_version()?;
+                (min > current)
+                    .then(|| format!("{spec} needs rheo >= {min}, but this is rheo {current}"))
+            })
+            .collect();
+        if lines.is_empty() {
+            return Ok(());
+        }
+        lines.push("Upgrade rheo: https://rheo.ohrg.org".to_string());
+        Err(RheoError::invalid_data(lines.join("\n")))
+    }
+
+    /// Every package's epilogue marrow (`.marrow.typ`), in import order.
+    pub fn marrow(&self) -> Vec<String> {
+        self.read_marrow(crate::MARROW_FILE)
+    }
+
+    /// Every package's prologue marrow (`.marrow-prologue.typ`), in import order.
+    pub fn marrow_prologue(&self) -> Vec<String> {
+        self.read_marrow(crate::MARROW_PROLOGUE_FILE)
+    }
+
+    fn read_marrow(&self, filename: &str) -> Vec<String> {
+        self.resolved
+            .iter()
+            .filter_map(|(_, pkg, _)| package_marrow_file(pkg, filename))
+            .collect()
+    }
 }
 
-/// Scans `import_paths`, locates each package via `find_package_in_dirs`,
-/// reads its manifest, and returns `PackageAssets` blocks for `format_name`.
-/// Silently skips packages not present locally or with no matching section.
-pub fn detect_manifest_package_assets_in_dirs(
-    import_paths: &[String],
-    format_name: &str,
-    search_dirs: &[PathBuf],
-) -> Vec<PackageAssets> {
-    import_paths
-        .iter()
-        .filter_map(|p| find_package_in_dirs(p, search_dirs))
-        .filter_map(|pkg| manifest_package_assets(&pkg, format_name))
-        .collect()
-}
-
-/// Production wrapper using Typst's system data/cache dirs.
-pub fn detect_manifest_package_assets(
-    import_paths: &[String],
-    format_name: &str,
-) -> Vec<PackageAssets> {
-    let dirs = typst_package_search_dirs(None);
-    detect_manifest_package_assets_in_dirs(import_paths, format_name, &dirs)
-}
-
-/// Reads a package's own marrow file, if it ships one.
+/// Reads a package's marrow file at `filename`, if it ships one under that name.
 ///
 /// A package contributes to the bundle root exactly the way a project does —
-/// by shipping a `.marrow.typ` whose text is inlined verbatim — so there is one
-/// concept to learn rather than a separate package-only mechanism.
+/// by shipping a marrow file whose text is inlined verbatim — so there is one
+/// concept to learn rather than a separate package-only mechanism. Position
+/// (before vs. after the documents) is chosen by which filename it ships:
+/// [`crate::MARROW_FILE`] (epilogue, default) or
+/// [`crate::MARROW_PROLOGUE_FILE`] (prologue). A package may ship either or both.
 ///
 /// The text is spliced into the synthesized main, so paths inside it resolve
 /// against the project root, not the package directory: a package's marrow must
 /// reach its own code through its package spec (`@ns/name:version`), never a
 /// relative import. Files the package imports that way may use relative paths
 /// among themselves as usual.
-pub fn package_marrow_source(pkg: &ResolvedPackage) -> Option<String> {
-    let marrow_path = pkg.source_root.join(crate::MARROW_FILE);
+fn package_marrow_file(pkg: &ResolvedPackage, filename: &str) -> Option<String> {
+    let marrow_path = pkg.source_root.join(filename);
     if !marrow_path.is_file() {
         return None;
     }
@@ -172,26 +273,6 @@ pub fn package_marrow_source(pkg: &ResolvedPackage) -> Option<String> {
             None
         }
     }
-}
-
-/// Scans `import_paths`, locates each package via `find_package_in_dirs`, and
-/// returns the marrow source of every package that ships one, in import order.
-/// Silently skips packages not present locally or contributing no marrow.
-pub fn detect_package_marrow_in_dirs(
-    import_paths: &[String],
-    search_dirs: &[PathBuf],
-) -> Vec<String> {
-    import_paths
-        .iter()
-        .filter_map(|p| find_package_in_dirs(p, search_dirs))
-        .filter_map(|pkg| package_marrow_source(&pkg))
-        .collect()
-}
-
-/// Production wrapper using Typst's system data/cache dirs.
-pub fn detect_package_marrow(import_paths: &[String]) -> Vec<String> {
-    let dirs = typst_package_search_dirs(None);
-    detect_package_marrow_in_dirs(import_paths, &dirs)
 }
 
 /// Ensure each `@preview/name:version` import is present in the local
@@ -459,10 +540,118 @@ css_stylesheet = "style.css"
             "@ns_a/slides:1.0".to_string(),
             "@ns_b/slides:1.0".to_string(),
         ];
-        let results = detect_manifest_package_assets_in_dirs(&paths, "html", &search);
+        let results = PackageIndex::new(&paths, &search).manifest_assets("html");
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].assets.dest.as_deref(), Some("ns_a/slides"));
         assert_eq!(results[1].assets.dest.as_deref(), Some("ns_b/slides"));
+    }
+
+    #[test]
+    fn min_version_absent_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(pkg_dir.join("typst.toml"), "[tool.rheo.html]\n").unwrap();
+        let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
+        assert_eq!(PackageManifest::load(&pkg).unwrap().min_version(), None);
+    }
+
+    #[test]
+    fn min_version_invalid_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(
+            pkg_dir.join("typst.toml"),
+            "[tool.rheo]\nmin_version = \"not-semver\"\n",
+        )
+        .unwrap();
+        let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
+        assert_eq!(PackageManifest::load(&pkg).unwrap().min_version(), None);
+    }
+
+    #[test]
+    fn min_version_alongside_format_subtable() {
+        // The real trap: `[tool.rheo] min_version` coexisting with a sibling
+        // `[tool.rheo.<format>]` asset subtable must not shadow either field.
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(
+            pkg_dir.join("typst.toml"),
+            "[tool.rheo]\nmin_version = \"0.5.0\"\n\n[tool.rheo.html]\ncss_stylesheet = \"a.css\"\n",
+        )
+        .unwrap();
+        let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
+        let manifest = PackageManifest::load(&pkg).unwrap();
+        assert_eq!(
+            manifest.min_version(),
+            Some(semver::Version::parse("0.5.0").unwrap())
+        );
+        assert!(manifest.package_assets("html").is_some());
+    }
+
+    fn write_min_version(dir: &std::path::Path, version: &str) {
+        std::fs::write(
+            dir.join("typst.toml"),
+            format!("[tool.rheo]\nmin_version = \"{version}\"\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn check_min_versions_rejects_package_above_floor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        write_min_version(&pkg_dir, "99.0.0");
+        let search = vec![tmp.path().to_path_buf()];
+        let err = PackageIndex::new(&["@ns/pkg:1.0".to_string()], &search)
+            .check_min_versions()
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("99.0.0"));
+        assert!(message.contains(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn check_min_versions_accepts_package_below_floor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        write_min_version(&pkg_dir, "0.1.0");
+        let search = vec![tmp.path().to_path_buf()];
+        assert!(
+            PackageIndex::new(&["@ns/pkg:1.0".to_string()], &search)
+                .check_min_versions()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn check_min_versions_accepts_package_with_no_floor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(pkg_dir.join("typst.toml"), "[package]\nname = \"pkg\"\n").unwrap();
+        let search = vec![tmp.path().to_path_buf()];
+        assert!(
+            PackageIndex::new(&["@ns/pkg:1.0".to_string()], &search)
+                .check_min_versions()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn check_min_versions_names_all_offenders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir_a = make_pkg_dir(tmp.path(), "ns", "a", "1.0");
+        let dir_b = make_pkg_dir(tmp.path(), "ns", "b", "1.0");
+        write_min_version(&dir_a, "99.0.0");
+        write_min_version(&dir_b, "98.0.0");
+        let search = vec![tmp.path().to_path_buf()];
+        let err = PackageIndex::new(&["@ns/a:1.0".to_string(), "@ns/b:1.0".to_string()], &search)
+            .check_min_versions()
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("@ns/a:1.0"));
+        assert!(message.contains("@ns/b:1.0"));
+        assert!(message.contains("99.0.0"));
+        assert!(message.contains("98.0.0"));
     }
 
     #[test]
@@ -483,5 +672,62 @@ css_stylesheet = "style.css"
             "@local/foo:0.1.0".to_string(),
             "@myns/bar:2.0.0".to_string(),
         ]);
+    }
+
+    /// An index over one package living at `<base>/testns/testpkg/0.1.0`.
+    fn index_for(base: &std::path::Path) -> PackageIndex {
+        PackageIndex::new(
+            &["@testns/testpkg:0.1.0".to_string()],
+            &[base.to_path_buf()],
+        )
+    }
+
+    #[test]
+    fn package_prologue_marrow_is_read_from_its_own_filename() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "testns", "testpkg", "0.1.0");
+        std::fs::write(
+            pkg_dir.join(crate::MARROW_PROLOGUE_FILE),
+            "#show strong: it => it",
+        )
+        .unwrap();
+
+        let index = index_for(tmp.path());
+        assert_eq!(
+            index.marrow_prologue(),
+            vec!["#show strong: it => it".to_string()]
+        );
+        assert!(index.marrow().is_empty(), "no .marrow.typ shipped");
+    }
+
+    #[test]
+    fn package_may_ship_both_marrow_positions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "testns", "testpkg", "0.1.0");
+        std::fs::write(pkg_dir.join(crate::MARROW_FILE), "epilogue").unwrap();
+        std::fs::write(pkg_dir.join(crate::MARROW_PROLOGUE_FILE), "prologue").unwrap();
+
+        let index = index_for(tmp.path());
+        assert_eq!(index.marrow(), vec!["epilogue".to_string()]);
+        assert_eq!(index.marrow_prologue(), vec!["prologue".to_string()]);
+    }
+
+    #[test]
+    fn detect_package_marrow_prologue_in_dirs_collects_in_import_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = make_pkg_dir(dir.path(), "ns", "a", "1.0");
+        std::fs::write(a.join(crate::MARROW_PROLOGUE_FILE), "a-prologue").unwrap();
+        let b = make_pkg_dir(dir.path(), "ns", "b", "1.0");
+        std::fs::write(b.join(crate::MARROW_PROLOGUE_FILE), "b-prologue").unwrap();
+
+        let result = PackageIndex::new(
+            &["@ns/a:1.0".to_string(), "@ns/b:1.0".to_string()],
+            &[dir.path().to_path_buf()],
+        )
+        .marrow_prologue();
+        assert_eq!(
+            result,
+            vec!["a-prologue".to_string(), "b-prologue".to_string()]
+        );
     }
 }

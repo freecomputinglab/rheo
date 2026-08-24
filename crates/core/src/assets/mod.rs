@@ -67,7 +67,9 @@ impl<'a> AssetResolver<'a> {
                 });
             }
 
-            // Package-derived pairs resolve against their own source_root.
+            // Package-derived pairs resolve against their own source_root. These
+            // are additive to the project's own configuration: a package asset
+            // lives in a different scope and must never stand in for it.
             for pkg in package_blocks {
                 if let Some(val) = pkg.assets.extra.get(asset_config.name)
                     && let Some(s) = val.as_str()
@@ -81,16 +83,17 @@ impl<'a> AssetResolver<'a> {
                 }
             }
 
-            let effective: Vec<AssetEntry<'_>> = if all_pairs.is_empty() {
-                vec![AssetEntry {
+            // The project-root convention fires whenever the project itself has
+            // no override, independent of what packages contribute — package
+            // pairs must not satisfy the project's own emptiness test.
+            if user_pairs.is_empty() {
+                all_pairs.push(AssetEntry {
                     dest: None,
                     root: self.project_root,
                     path: asset_config.default_path,
                     is_pkg: false,
-                }]
-            } else {
-                all_pairs
-            };
+                });
+            }
 
             // Group sources by (dest, resolution_root), preserving insertion order.
             struct AssetGroup<'b> {
@@ -99,7 +102,7 @@ impl<'a> AssetResolver<'a> {
                 entries: Vec<(&'b str, bool)>,
             }
             let mut groups: Vec<AssetGroup<'_>> = Vec::new();
-            for entry in &effective {
+            for entry in &all_pairs {
                 if let Some(group) = groups
                     .iter_mut()
                     .find(|g| g.dest == entry.dest && g.root.as_os_str() == entry.root.as_os_str())
@@ -185,7 +188,7 @@ impl<'a> AssetResolver<'a> {
 
             if !any_source_found {
                 if asset_config.required {
-                    let paths: Vec<&str> = effective.iter().map(|e| e.path).collect();
+                    let paths: Vec<&str> = all_pairs.iter().map(|e| e.path).collect();
                     return Err(RheoError::project_config(format!(
                         "plugin '{}' requires input '{}' but no source was found (tried: {})",
                         plugin.name(),
@@ -358,7 +361,7 @@ mod tests {
     use super::*;
     use crate::config::{AssetsField, PluginAssets};
     use crate::plugins::PluginContext;
-    use crate::{AssetConfig, FormatPlugin, Result};
+    use crate::{AssetConfig, EmbeddedDefault, FormatPlugin, Result};
 
     struct MockPlugin {
         plugin_name: &'static str,
@@ -1136,6 +1139,132 @@ mod tests {
         assert!(
             paths.contains(&"pkg/index.css"),
             "expected package default css in output, got: {:?}",
+            paths
+        );
+    }
+
+    /// rheo-965: a package contributing `css_stylesheet` must not suppress the
+    /// project's own conventional `style.css` — the two are additive, resolved
+    /// against different roots, and the project declares no override block at all.
+    #[test]
+    fn test_resolve_assets_project_default_survives_package_presence() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+        std::fs::write(project_root.join("style.css"), "/* project */").unwrap();
+
+        let pkg_dir = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(pkg_dir.join("index.css"), "/* pkg */").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+                default_content: Some(EmbeddedDefault {
+                    name: "rheo-default.css",
+                    content: "/* fallback */",
+                }),
+            }],
+        };
+        let mut pkg_extra = toml::map::Map::new();
+        pkg_extra.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("index.css".into()),
+        );
+        let package_blocks = vec![PackageAssets {
+            assets: PluginAssets {
+                copy: vec![],
+                dest: Some("pkg".into()),
+                extra: pkg_extra,
+            },
+            source_root: pkg_dir,
+        }];
+
+        let resolver = AssetResolver::new(project_root, &output_dir);
+        let resolved = resolver
+            .resolve(&plugin, &PluginSection::default(), &package_blocks)
+            .unwrap();
+        let assets = resolved.get("css_stylesheet").unwrap();
+        let paths: Vec<&str> = assets
+            .iter()
+            .map(|a| a.built_relative_path.as_str())
+            .collect();
+        assert!(
+            paths.contains(&"style.css"),
+            "project's own style.css must survive an unrelated package block, got: {:?}",
+            paths
+        );
+        assert!(
+            paths.contains(&"pkg/index.css"),
+            "package css must still be included, got: {:?}",
+            paths
+        );
+        assert!(
+            !paths.contains(&"rheo-default.css"),
+            "embedded fallback must not fire when the project has its own style.css, got: {:?}",
+            paths
+        );
+    }
+
+    /// rheo-965: with no project-root style.css at all, a package's CSS is linked
+    /// but must suppress the embedded `rheo-default.css` fallback — the project
+    /// already has real styling via the package, so it does not also want rheo's
+    /// default chrome under it.
+    #[test]
+    fn test_resolve_assets_package_only_suppresses_embedded_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+        // No style.css at project root.
+
+        let pkg_dir = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(pkg_dir.join("index.css"), "/* pkg */").unwrap();
+
+        let plugin = MockPlugin {
+            plugin_name: "html",
+            declared_assets: vec![AssetConfig {
+                name: "css_stylesheet",
+                default_path: "style.css",
+                required: false,
+                default_content: Some(EmbeddedDefault {
+                    name: "rheo-default.css",
+                    content: "/* fallback */",
+                }),
+            }],
+        };
+        let mut pkg_extra = toml::map::Map::new();
+        pkg_extra.insert(
+            "css_stylesheet".into(),
+            toml::Value::String("index.css".into()),
+        );
+        let package_blocks = vec![PackageAssets {
+            assets: PluginAssets {
+                copy: vec![],
+                dest: Some("pkg".into()),
+                extra: pkg_extra,
+            },
+            source_root: pkg_dir,
+        }];
+
+        let resolver = AssetResolver::new(project_root, &output_dir);
+        let resolved = resolver
+            .resolve(&plugin, &PluginSection::default(), &package_blocks)
+            .unwrap();
+        let assets = resolved.get("css_stylesheet").unwrap();
+        let paths: Vec<&str> = assets
+            .iter()
+            .map(|a| a.built_relative_path.as_str())
+            .collect();
+        assert_eq!(
+            paths,
+            vec!["pkg/index.css"],
+            "only the package css should resolve, with no embedded fallback: {:?}",
             paths
         );
     }

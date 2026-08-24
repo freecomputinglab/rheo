@@ -7,10 +7,21 @@ use tracing::debug;
 pub mod manifest_version;
 pub mod output;
 pub mod project;
+pub mod retired;
 pub mod validation;
 
 pub use manifest_version::ManifestVersion;
+pub use retired::{RETIRED_KEYS, RetiredKey};
 use validation::ValidateConfig;
+
+/// One format's resolved spine knobs: every field already merged over the
+/// global `[spine]` table. See [`Spine::merged_over`].
+pub struct MergedSpine {
+    pub exclude: Vec<String>,
+    pub section: Vec<SpineSection>,
+    pub include: Vec<String>,
+    pub title: Option<String>,
+}
 
 /// Spine configuration from `rheo.toml`: directory-scan knobs and title.
 ///
@@ -37,6 +48,11 @@ pub struct Spine {
     /// `None` when unset, for the same per-field fallback reason as `exclude`.
     #[serde(default)]
     pub section: Option<Vec<SpineSection>>,
+
+    /// Ordered glob list (knob 3) that replaces this spine's scan order,
+    /// dropping any leaf it does not match, without `section`'s group nesting.
+    #[serde(default)]
+    pub include: Option<Vec<String>>,
 
     /// Unrecognized keys, captured so [`validation`](super::validation) can warn
     /// when a field retired from `Spine` in a past version (e.g. the removed
@@ -186,6 +202,39 @@ pub struct RheoConfig {
     /// contributes its own `.marrow.typ`, so renaming this cannot suppress a
     /// package's contribution or vice versa — both are inlined.
     pub marrow: Option<String>,
+
+    /// When true, the project's own marrow is spliced BEFORE every document
+    /// instead of after, so a `#show`/`#set` rule in it reaches pre-existing
+    /// vertebrae. Defaults to `false` (today's behaviour) — prologue is
+    /// global-by-default and powerful, so it is opt-in only. A package
+    /// declares its own marrow's position by filename instead (`.marrow.typ`
+    /// vs `.marrow-prologue.typ`); this key affects only the project's marrow.
+    pub marrow_prologue: Option<bool>,
+}
+
+impl Spine {
+    /// Merge a per-format spine table over the global one, each field falling
+    /// back INDEPENDENTLY when unset — so `[pdf.spine] title` alone still
+    /// inherits the global `exclude`, rather than the per-format table's mere
+    /// presence blanking every global spine key at once.
+    pub fn merged_over(this: Option<&Spine>, global: Option<&Spine>) -> MergedSpine {
+        fn pick<T: Clone>(
+            this: Option<&Spine>,
+            global: Option<&Spine>,
+            field: impl Fn(&Spine) -> Option<&T>,
+        ) -> Option<T> {
+            this.and_then(&field)
+                .or_else(|| global.and_then(&field))
+                .cloned()
+        }
+
+        MergedSpine {
+            exclude: pick(this, global, |s| s.exclude.as_ref()).unwrap_or_default(),
+            section: pick(this, global, |s| s.section.as_ref()).unwrap_or_default(),
+            include: pick(this, global, |s| s.include.as_ref()).unwrap_or_default(),
+            title: pick(this, global, |s| s.title.as_ref()),
+        }
+    }
 }
 
 impl Default for RheoConfig {
@@ -200,6 +249,7 @@ impl Default for RheoConfig {
             plugin_sections: HashMap::new(),
             spine: None,
             marrow: None,
+            marrow_prologue: None,
         }
     }
 }
@@ -217,6 +267,7 @@ pub struct RheoConfigRaw {
     #[serde(default)]
     font_dirs: Vec<String>,
     marrow: Option<String>,
+    marrow_prologue: Option<bool>,
     #[serde(flatten)]
     extra: HashMap<String, toml::Value>,
 }
@@ -247,6 +298,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             plugin_sections,
             spine,
             marrow: raw.marrow,
+            marrow_prologue: raw.marrow_prologue,
         })
     }
 }
@@ -303,6 +355,12 @@ impl RheoConfig {
     /// The project's marrow filename, relative to `content_dir`.
     pub fn marrow_file(&self) -> &str {
         self.marrow.as_deref().unwrap_or(crate::MARROW_FILE)
+    }
+
+    /// Whether the project's own marrow is spliced before the documents.
+    /// Defaults to `false` (spliced after, today's behaviour).
+    pub fn marrow_prologue(&self) -> bool {
+        self.marrow_prologue.unwrap_or(false)
     }
 
     /// Resolve content_dir to an absolute path if configured.
@@ -459,6 +517,54 @@ mod tests {
         // Explicit true.
         let config = parse(&versioned_toml("[html]\nreset_footnotes = true\n"));
         assert!(config.plugin_section("html").reset_footnotes());
+    }
+
+    #[test]
+    fn test_merged_spine_falls_back_field_by_field() {
+        let global = Spine {
+            exclude: Some(vec!["drafts/**".to_string()]),
+            title: Some("Global".to_string()),
+            ..Default::default()
+        };
+        // A per-format table that sets only `title` must still inherit the
+        // global `exclude` — its mere presence must not blank it.
+        let per_format = Spine {
+            title: Some("Book".to_string()),
+            ..Default::default()
+        };
+
+        let merged = Spine::merged_over(Some(&per_format), Some(&global));
+        assert_eq!(merged.title.as_deref(), Some("Book"));
+        assert_eq!(merged.exclude, vec!["drafts/**".to_string()]);
+
+        // A field the per-format table DOES set wins outright.
+        let overriding = Spine {
+            exclude: Some(vec!["other/**".to_string()]),
+            ..Default::default()
+        };
+        let merged = Spine::merged_over(Some(&overriding), Some(&global));
+        assert_eq!(merged.exclude, vec!["other/**".to_string()]);
+        assert_eq!(merged.title.as_deref(), Some("Global"));
+
+        // Neither table present: empty lists and no title.
+        let merged = Spine::merged_over(None, None);
+        assert!(merged.exclude.is_empty());
+        assert!(merged.section.is_empty());
+        assert!(merged.include.is_empty());
+        assert_eq!(merged.title, None);
+    }
+
+    #[test]
+    fn test_marrow_prologue_defaults_false_and_honors_true() {
+        // No key at all -> defaults to epilogue (today's behaviour).
+        let config = parse(&versioned_toml(""));
+        assert!(!config.marrow_prologue());
+
+        let config = parse(&versioned_toml("marrow_prologue = true"));
+        assert!(config.marrow_prologue());
+
+        let config = parse(&versioned_toml("marrow_prologue = false"));
+        assert!(!config.marrow_prologue());
     }
 
     #[test]

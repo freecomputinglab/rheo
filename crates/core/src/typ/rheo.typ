@@ -24,45 +24,60 @@
   }
 }
 
-// Rewrite #link(<handle>)[text] cross-vertebra links into per-format hrefs.
-// Only links whose target is a rheo-synthesized `rheo-handle` figure are
-// touched; authored labels pass through. The href is depth-relative to the
-// current page: the current page's handle is read from `state("rheo-handle")`
-// (published per-#document by the bundle source, since a show rule here in the
-// shared main-file template cannot see a vertebra's local `rheo-context`), and
-// the target handle's `:` separators become `/`, prefixed with one `../` per
-// level the current page is nested. The output extension comes from
-// `sys.inputs.rheo-context.ext`; when it is absent (PDF) the rule is a no-op and
-// native link handling applies. The redundant `#handle` fragment is dropped —
-// the anchor sits at the top of the target page.
-#show link: it => context {
-  let ext = sys.inputs.rheo-context.at("ext", default: none)
+// The vertebrae this bundle is building, by handle, for the link rule below.
+// Exactly the set the bundle source synthesizes a `rheo-handle` figure for, so
+// membership answers what a `query` for that figure used to — read off
+// `sys.inputs`, which needs no `#context`.
+#let _rheo-handles() = {
+  let c = sys.inputs.at("rheo-context", default: none)
+  if c == none { return () }
+  c.at("spine-flat", default: ()).map(v => v.at("handle", default: ""))
+}
+
+// Rewrites #link(<handle>) cross-vertebra links into per-format hrefs, as a
+// factory applied per #document rather than one global rule — so it needs no
+// #context: both handle membership and the current page's depth are answerable
+// from its argument plus sys.inputs. See docs/link-rule.md, which records why,
+// and what this does NOT fix (convergence warnings).
+
+// The URL scheme a marrow-minted page is addressed by, since Typst cannot
+// attach a computed label for such a page to link to. See docs/link-rule.md.
+#let _RHEO_PAGE_SCHEME = "rheo-page:"
+
+// The href for `target` as seen from the page whose handle is `from`: one `../`
+// per level `from` is nested, and `:` separators become `/`.
+#let _rheo-href(from, target, ext) = {
+  let depth = from.split(":").len() - 1
+  let prefix = if depth == 0 { "./" } else { range(depth).map(x => "../").join() }
+  prefix + target.replace(":", "/") + "." + ext
+}
+
+#let rheo-link-rule(handle) = it => {
+  let ext = sys.inputs.at("rheo-context", default: (:)).at("ext", default: none)
   if ext == none { return it }
-  if type(it.dest) == label {
-    let matches = query(it.dest)
-    if matches.len() > 0 {
-      let elem = matches.first()
-      if elem.func() == figure and elem.kind == "rheo-handle" {
-        let target-handle = repr(it.dest).slice(1, -1)
-        // The `<handle.typ>` escape alias resolves to the same vertebra output
-        // as the canonical `<handle>`, so drop a trailing `.typ` before building
-        // the href — otherwise it would point at a nonexistent `…/x.typ.html`.
-        if target-handle.ends-with(".typ") {
-          target-handle = target-handle.slice(0, -4)
-        }
-        let here-handle = state("rheo-handle").get()
-        let depth = here-handle.split(":").len() - 1
-        let prefix = if depth == 0 { "./" } else { range(depth).map(x => "../").join() }
-        return link(prefix + target-handle.replace(":", "/") + "." + ext, it.body)
-      }
-    }
+  // No membership test here, deliberately: the set of minted handles is not
+  // knowable statically, and querying for it would reinstate the #context this
+  // rule exists to avoid. A link to a page nothing mints yields a dead href.
+  if type(it.dest) == str and it.dest.starts-with(_RHEO_PAGE_SCHEME) {
+    let target = it.dest.slice(_RHEO_PAGE_SCHEME.len())
+    return link(_rheo-href(handle, target, ext), it.body)
   }
-  it
+  if type(it.dest) != label { return it }
+  let target-handle = repr(it.dest).slice(1, -1)
+  // The `<handle.typ>` escape alias resolves to the same vertebra output as the
+  // canonical `<handle>`, so drop a trailing `.typ` before building the href —
+  // otherwise it would point at a nonexistent `…/x.typ.html`.
+  if target-handle.ends-with(".typ") {
+    target-handle = target-handle.slice(0, -4)
+  }
+  if target-handle not in _rheo-handles() { return it }
+  link(_rheo-href(handle, target-handle, ext), it.body)
 }
 
 // Per-document init hook, called once at the top of each #document block by the
 // bundle source (crates/core/src/reticulate/bundle_source.rs). Publishes this
-// page's handle to state("rheo-handle") for the cross-vertebra link rule above,
+// page's handle to state("rheo-handle") for any PACKAGE that needs it (the link
+// rule above takes the handle as an argument instead, and reads no state),
 // and — for per-page output (html/epub, where rheo-context carries an `ext`) —
 // resets the footnote counter so each page numbers its footnotes from 1 —
 // unless the format's `reset_footnotes` toggle is set false. The combined PDF
@@ -76,21 +91,15 @@
   }
 }
 
-// A page minted at the bundle root (via a `.marrow.typ` contribution) is built
-// by calling Typst's own `document()` directly, so it skips `rheo-page-init`
-// and inherits whatever `state("rheo-handle")` and footnote count the last
-// spine document left behind. `rheo-document` wraps `document()` and
-// `rheo-page-init` together so a contributed page gets the same per-document
-// init a spine vertebra gets for free. Bare `document()` keeps working — this
-// is a convenience, not a requirement — but a marrow contribution SHOULD use
-// `rheo-document` and pass a handle unique across the project. `format`
-// defaults to "html": both per-page plugins (html and epub) compile
-// HTML-shaped documents (`FormatPlugin::typst_format` defaults to
-// `TypstFormat::Html` and neither plugin overrides it, crates/core/src/plugins/mod.rs:297).
-// A future per-page plugin that is not HTML-shaped would need this default revisited.
+// Wraps document() with the per-document init a spine vertebra gets for free,
+// and installs rheo-link-rule — which it must: the bundle source applies that
+// rule per #document and knows nothing about a page minted here. The #show sits
+// at the top of the same markup block as #body, which is what scopes it to the
+// rest of that block. See docs/link-rule.md.
 #let rheo-document(path, handle: "", title: [], format: "html", body) = {
   document(path, format: format, title: title)[
     #rheo-page-init(handle)
+    #show link: rheo-link-rule(handle)
     #body
   ]
 }

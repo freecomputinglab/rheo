@@ -1,17 +1,18 @@
 use crate::config::PluginSection;
 use crate::config::project::ProjectConfig;
 use crate::reticulate::spine::{SpineLayout, VirtualSpine};
+use crate::transclude::ControlAssets;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::info;
 use typst::foundations::Bytes;
 
+pub mod document_meta;
 pub mod typst_manifest;
+pub use document_meta::DocumentMeta;
 pub use typst_manifest::{
-    detect_manifest_package_assets, detect_manifest_package_assets_in_dirs, detect_package_marrow,
-    detect_package_marrow_in_dirs, find_package_in_dirs, manifest_package_assets,
-    package_marrow_source, prewarm_packages, scan_project_package_imports,
-    typst_package_search_dirs,
+    PackageIndex, find_package_in_dirs, manifest_package_assets, prewarm_packages,
+    scan_project_package_imports, typst_package_search_dirs,
 };
 
 /// Trait for managing a running preview server.
@@ -96,15 +97,23 @@ pub struct CastVertebra {
     pub bytes: Bytes,
     /// Typst compile target this output was produced with.
     pub format: TypstFormat,
-    /// Document title parsed from the vertebra's source (`#document title:`).
+    /// Resolved document title — Typst's own `DocumentInfo::title` for this
+    /// output, read off the compiled bundle (see
+    /// [`Build::compile_spine`](crate::build::Build)), falling back to the
+    /// matching spine [`Vertebra`](crate::reticulate::spine::Vertebra)'s
+    /// path-derived title when no `DocumentMeta` exists for this output.
     ///
-    /// Empty when the output has no matching per-vertebra source (e.g. a
-    /// combined output).
+    /// Empty when the output has no matching per-vertebra source at all (e.g.
+    /// a combined output).
     pub title: String,
-    /// Parsed `#set document(date:)` timestamp, if present.
+    /// Resolved `#set document(date:)` timestamp, if present.
     pub date: Option<chrono::DateTime<chrono::Utc>>,
-    /// Harvested `rheo-*` variables from the vertebra's source file.
-    pub vars: std::collections::HashMap<String, crate::parser::RheoValue>,
+    /// Resolved document description (`#set document(description: ..)`), if present.
+    pub description: Option<String>,
+    /// Resolved document keywords (`#set document(keywords: ..)`); empty when none were set.
+    pub keywords: Vec<String>,
+    /// Resolved document author(s) (`#set document(author: ..)`); empty when none were set.
+    pub author: Vec<String>,
     /// True when this output has no matching spine [`Vertebra`](crate::reticulate::spine::Vertebra) —
     /// a page minted at the bundle root by a `.marrow.typ` contribution, or (for
     /// `SingleCombined` layouts) the merged multi-vertebra output. Plugins that
@@ -114,6 +123,12 @@ pub struct CastVertebra {
 }
 
 impl CastVertebra {
+    /// Decode this output's bytes as a UTF-8 string.
+    pub fn html_string(&self) -> crate::Result<String> {
+        String::from_utf8(self.bytes.to_vec())
+            .map_err(|e| crate::RheoError::invalid_data(format!("output is not valid UTF-8: {e}")))
+    }
+
     /// Parse this output as an HTML DOM.
     ///
     /// Returns an error if `format` is not `TypstFormat::Html`.
@@ -171,10 +186,10 @@ pub struct PluginContext<'a> {
     pub output_dir: &'a PathBuf,
     /// The resolved spine — same tree and flat vertebra list as the Typst-side
     /// `rheo-context` (`spine`/`spine-flat`), available on the Rust side too,
-    /// plus the resolved combined-document/feed title (`spine.title`, distinct
+    /// plus the resolved combined-document title (`spine.title`, distinct
     /// from any individual vertebra's own title). `compile()`'s
     /// `outputs: &[CastVertebra]` parameter is a separate, already-cast view of
-    /// each output's title/date/vars; use `spine` for the tree structure,
+    /// each output's title/date; use `spine` for the tree structure,
     /// cross-vertebra queries, and the resolved title, `outputs` for
     /// per-output compiled bytes.
     pub spine: &'a VirtualSpine,
@@ -213,6 +228,12 @@ pub struct PluginContext<'a> {
     /// case the plugin takes over placing them (e.g. EPUB embeds them in the
     /// container and adds a manifest item).
     pub bundle_assets: &'a [(String, Bytes)],
+    /// Bundle-root control assets (currently just `.rheo/head.html`) already
+    /// extracted out of `bundle_assets` by core — never written, embedded, or
+    /// served. Plugins that render `<head>` (HTML) read
+    /// [`ControlAssets::head_fragment`] to append site-wide head content to
+    /// every page; other plugins can ignore this field entirely.
+    pub control: &'a ControlAssets,
 }
 
 /// Parse `@namespace/name:version` into its components. Returns None on malformed input.

@@ -70,25 +70,32 @@ impl FormatPlugin for EpubPlugin {
         let identifier = epub_config.identifier.clone();
         let date = epub_config.date_utc();
 
-        // Extract language and author from first output's HTML, default to "en" and no author.
-        let (language, author) = if let Some(first_output) = outputs.first() {
-            let html_string = String::from_utf8(first_output.bytes.to_vec()).map_err(|e| {
-                RheoError::invalid_data(format!("EPUB HTML output is not valid UTF-8: {}", e))
-            })?;
-            let lang = extract_language(&html_string).unwrap_or_else(|| "en".to_string());
-            let author = extract_author(&first_output.vars, &html_string);
-            (lang, author)
-        } else {
-            ("en".to_string(), None)
+        // EPUB reading order is spine order, contributed pages last. `outputs`
+        // arrives in whatever order the compiled bundle's file map yields, which
+        // happens to be spine order today but is an undocumented property of a
+        // dependency — and reading order is not something to leave to that.
+        let ordered = spine_order(ctx.spine, outputs);
+
+        // Language and author describe the publication, so they come from its
+        // FIRST spine vertebra rather than from whichever output came first.
+        let language = match ordered.first() {
+            Some(first) => extract_language(&first.html_string()?).unwrap_or_else(|| "en".into()),
+            None => "en".to_string(),
         };
 
-        let mut items = outputs
+        // `dc:creator` (see `Package::creator`) is a single optional string,
+        // while `DocumentInfo.author` carries zero, one, or many authors
+        // (`#set document(author: ("A", "B"))`) — so several are joined rather
+        // than all but the first being dropped.
+        let author = ordered
+            .first()
+            .filter(|o| !o.author.is_empty())
+            .map(|o| o.author.join(", "));
+
+        let mut items = ordered
             .iter()
             .map(|o| {
-                let html_string = String::from_utf8(o.bytes.to_vec()).map_err(|e| {
-                    RheoError::invalid_data(format!("EPUB HTML output is not valid UTF-8: {}", e))
-                })?;
-                EpubItem::from_html_string(o.output_path.clone(), html_string, o.contributed)
+                EpubItem::from_html_string(o.output_path.clone(), o.html_string()?, o.contributed)
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -117,6 +124,28 @@ impl FormatPlugin for EpubPlugin {
     }
 }
 
+/// `outputs` in spine order — each vertebra of `spine.flat_vertebrae()` in
+/// pre-order, then every output with no matching vertebra (a marrow-contributed
+/// page) in the order it arrived.
+fn spine_order<'a>(
+    spine: &rheo_core::reticulate::VirtualSpine,
+    outputs: &'a [CastVertebra],
+) -> Vec<&'a CastVertebra> {
+    let mut ordered: Vec<&CastVertebra> = spine
+        .flat_vertebrae()
+        .iter()
+        .filter_map(|v| outputs.iter().find(|o| o.output_path == v.output_path))
+        .collect();
+    let placed: std::collections::HashSet<&str> =
+        ordered.iter().map(|o| o.output_path.as_str()).collect();
+    ordered.extend(
+        outputs
+            .iter()
+            .filter(|o| !placed.contains(o.output_path.as_str())),
+    );
+    ordered
+}
+
 const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
 	<rootfiles>
@@ -124,7 +153,9 @@ const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 	</rootfiles>
 </container>"#;
 
-const NAV_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+fn nav_header(lang: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{lang}" lang="{lang}" xmlns:epub="http://www.idpf.org/2007/ops">
 	<head>
@@ -133,7 +164,9 @@ const NAV_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 	</head>
 	<body>
         <nav epub:type="toc" id="toc">
-"#;
+"#
+    )
+}
 
 const NAV_FOOTER: &str = r#"        </nav>
     </body>
@@ -141,7 +174,7 @@ const NAV_FOOTER: &str = r#"        </nav>
 
 pub fn generate_nav_xhtml(items: &mut [EpubItem], language: &str) -> Result<String> {
     let mut buf = String::new();
-    buf.push_str(&NAV_HEADER.replace("{lang}", language));
+    buf.push_str(&nav_header(language));
 
     fn stringify_outline(buf: &mut String, outline: &[OutlineNode<EcoString>], indent: usize) {
         let indent_str = " ".repeat(indent);
@@ -200,9 +233,8 @@ fn date_format(dt: &DateTime<Utc>) -> EcoString {
 
 /// Generates the package.opf XML string from the generated EPUB items.
 ///
-/// `spine_title` takes the plain `Option<&str>` shape of `PluginContext::spine_title`
-/// (the title is the only part of the old `SpineOptions` any plugin ever read;
-/// the rest was a dead glob-pattern list removed with it) rather than a dedicated type.
+/// `spine_title` is a plain `Option<&str>` — the title is the only spine field
+/// this plugin reads.
 pub fn generate_package(
     items: &[EpubItem],
     bundle_assets: &[(String, Bytes)],
@@ -435,80 +467,6 @@ fn extract_language(html_string: &str) -> Option<String> {
     find_html_lang(dom.document_root())
 }
 
-/// Extract author from rheo-author var or HTML <meta name="author">.
-///
-/// Checks rheo-author var first, then falls back to HTML meta tag.
-/// Returns `None` if no author found.
-fn extract_author(
-    vars: &std::collections::HashMap<String, rheo_core::parser::RheoValue>,
-    html_string: &str,
-) -> Option<String> {
-    use markup5ever_rcdom::NodeData;
-    use rheo_core::util::html::HtmlDom;
-
-    // Check rheo-author var first.
-    if let Some(author_value) = vars.get("author").and_then(|v| v.as_str()) {
-        return Some(author_value.to_string());
-    }
-
-    // Fall back to HTML <meta name="author" content="...">.
-    let dom = HtmlDom::parse(html_string).ok()?;
-    let _head = dom.find_element("head")?;
-
-    fn find_author_meta(handle: &markup5ever_rcdom::Handle) -> Option<String> {
-        if let NodeData::Element { name, attrs, .. } = &handle.data {
-            if name.local.as_ref() == "meta" {
-                let mut is_author = false;
-                let mut content = None;
-                for attr in attrs.borrow().iter() {
-                    match attr.name.local.as_ref() {
-                        "name" if attr.value.as_ref() == "author" => is_author = true,
-                        "content" => content = Some(attr.value.to_string()),
-                        _ => {}
-                    }
-                }
-                if is_author {
-                    return content;
-                }
-            }
-            for child in handle.children.borrow().iter() {
-                if let Some(author) = find_author_meta(child) {
-                    return Some(author);
-                }
-            }
-        }
-        None
-    }
-
-    // Get the Handle from head by accessing document_root and walking to head element.
-    fn find_head_handle(handle: &markup5ever_rcdom::Handle) -> Option<markup5ever_rcdom::Handle> {
-        match &handle.data {
-            NodeData::Element { name, .. } => {
-                if name.local.as_ref() == "head" {
-                    return Some(handle.clone());
-                }
-                for child in handle.children.borrow().iter() {
-                    if let Some(found) = find_head_handle(child) {
-                        return Some(found);
-                    }
-                }
-            }
-            NodeData::Document => {
-                for child in handle.children.borrow().iter() {
-                    if let Some(found) = find_head_handle(child) {
-                        return Some(found);
-                    }
-                }
-            }
-            _ => {}
-        }
-        None
-    }
-
-    let head_handle = find_head_handle(dom.document_root())?;
-    find_author_meta(&head_handle)
-}
-
 pub struct EpubItem {
     href: IriRefBuf,
     xhtml: String,
@@ -529,11 +487,11 @@ fn asset_item_id(path: &str) -> EcoString {
 
 fn text_to_id(s: &str) -> EcoString {
     s.chars()
-        .map(|char| {
-            if char.is_whitespace() {
+        .map(|c| {
+            if c.is_whitespace() {
                 '-'
             } else {
-                char.to_ascii_lowercase()
+                c.to_ascii_lowercase()
             }
         })
         .collect()
@@ -664,11 +622,13 @@ impl EpubItem {
 
     fn id(&self) -> EcoString {
         let mut segments = self.href.path().segments();
-        let file_name = Path::new(segments.next_back().unwrap().as_str())
+        let last = segments
+            .next_back()
+            .expect("href is built from a non-empty output path, so has at least one segment");
+        let file_name = Path::new(last.as_str())
             .file_stem()
-            .unwrap()
-            .to_str()
-            .unwrap();
+            .and_then(|s| s.to_str())
+            .expect("href always ends in .xhtml, so its file stem is valid UTF-8");
         segments
             .map(|seg| seg.as_str())
             .chain([file_name])

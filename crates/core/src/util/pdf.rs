@@ -17,22 +17,15 @@ pub fn sanitize_label_name(name: &str) -> String {
 
 /// Filename-to-title helper.
 ///
-/// Document titles are read from `#set document(title: …)` via the AST-based
-/// [`DocumentMetadata`](crate::parser::DocumentMetadata) extractor; this type
-/// only carries the filename fallback used when a vertebra sets no title.
+/// The real document title is read from `#set document(title: …)` by Typst
+/// itself, post-compile (see `crate::plugins::document_meta::DocumentMeta`);
+/// this type only carries the filename-derived fallback used pre-compile, and
+/// when a vertebra's output has no resolved title at all.
 pub struct DocumentTitle;
 
 impl DocumentTitle {
-    /// Convert a filename to a readable title.
-    ///
-    /// Transforms a filename stem into a human-readable title by replacing
-    /// separators with spaces and capitalizing words.
-    ///
-    /// # Arguments
-    /// * `filename` - The filename to convert
-    ///
-    /// # Returns
-    /// A title-cased version of the filename
+    /// Convert a filename stem to a title-cased, human-readable name:
+    /// separators become spaces, each word is capitalized.
     pub fn to_readable_name(filename: &str) -> String {
         filename
             .replace(['-', '_'], " ")
