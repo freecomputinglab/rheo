@@ -444,10 +444,15 @@ fn report_removed_feed_surface(project: &ProjectConfig) {
 
     let content_dir = resolve_effective_content_dir(project);
     let typ_files = collect_typ_files(&content_dir);
-    let re = Regex::new(
-        r"(?m)^\s*#let\s+(rheo-feed-title|rheo-feed-updated|rheo-feed-exclude|rheo-author)\b",
-    )
-    .expect("hardcoded regex must compile");
+    // Built from REMOVED_VAR_BINDINGS so the names live in one place: the table
+    // below is already consulted for each match's replacement text.
+    let names = REMOVED_VAR_BINDINGS
+        .iter()
+        .map(|(name, _)| regex::escape(name))
+        .collect::<Vec<_>>()
+        .join("|");
+    let re = Regex::new(&format!(r"(?m)^\s*#let\s+({names})\b"))
+        .expect("alternation over REMOVED_VAR_BINDINGS must compile");
 
     for file in &typ_files {
         let Ok(content) = fs::read_to_string(file) else {
@@ -460,7 +465,7 @@ fn report_removed_feed_surface(project: &ProjectConfig) {
                 .iter()
                 .find(|(n, _)| *n == name)
                 .map(|(_, r)| *r)
-                .unwrap_or("");
+                .expect("matched name comes from REMOVED_VAR_BINDINGS");
             report_removed(&format!("{}:{}", file.display(), line), name, replacement);
         }
     }
