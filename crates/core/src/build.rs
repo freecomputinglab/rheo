@@ -243,6 +243,19 @@ impl Build {
     /// Callers that go on to compile must `prewarm_and_check_versions` FIRST:
     /// pre-warming has to happen before the manifest scan below, or a package
     /// Typst would only download at compile time is invisible to it.
+    /// Whether any plugin in this build leaves package auto-detection on.
+    fn auto_detects_packages(&self) -> bool {
+        let default_section = PluginSection::default();
+        self.plugins.iter().any(|plugin| {
+            self.project
+                .config
+                .plugin_sections
+                .get(plugin.name())
+                .unwrap_or(&default_section)
+                .auto_detect_packages_enabled()
+        })
+    }
+
     fn plugin_asset_context<'a>(
         &'a self,
         plugin: &dyn FormatPlugin,
@@ -561,14 +574,16 @@ impl Build {
             .plugin_sections
             .get(html_plugin.name())
             .unwrap_or(&default_section);
-        prewarm_and_check_versions(&package_imports, plugin_section)?;
+        let packages = prewarm_and_resolve(
+            &package_imports,
+            plugin_section.auto_detect_packages_enabled(),
+        )?;
 
         // Resolving copies CSS/JS to disk too, so the dev server can serve them
         // as a fallback for requests the VirtualFs does not satisfy. A failure
         // here is propagated rather than swallowed: the CLI's watch loop turns
         // it into a warning, whereas an empty asset map would silently serve
         // every page unstyled.
-        let packages = PackageIndex::system(&package_imports);
         let ctx =
             self.plugin_asset_context(html_plugin.as_ref(), &packages, &default_section, true)?;
         let asset_paths = |name| {
@@ -693,7 +708,7 @@ impl Build {
         // package (a directory probe plus a `typst.toml` parse) once — both
         // shared across every plugin in this build.
         let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
-        let packages = PackageIndex::system(&package_imports);
+        let packages = prewarm_and_resolve(&package_imports, self.auto_detects_packages())?;
 
         let content_dir = resolve_effective_content_dir(&self.project);
 
@@ -704,7 +719,6 @@ impl Build {
                 .plugin_sections
                 .get(plugin.name())
                 .unwrap_or(&default_section);
-            prewarm_and_check_versions(&package_imports, plugin_section)?;
 
             let plugin_assets =
                 self.plugin_asset_context(plugin.as_ref(), &packages, &default_section, true)?;
@@ -953,20 +967,20 @@ fn ensure_output_dir(dir: &Path, plugin_name: &str) -> Result<()> {
         .map_err(|e| RheoError::io(e, format!("creating output directory for {plugin_name}")))
 }
 
-/// Pre-warms `package_imports` (if enabled) and rejects any whose declared
-/// `[tool.rheo] min_version` exceeds this build, before assets are detected.
+/// Pre-warms `package_imports` (when `auto_detect` is on), resolves them into a
+/// [`PackageIndex`], and rejects any package whose declared
+/// `[tool.rheo] min_version` exceeds this build.
 ///
-/// Pre-warming must precede any [`PackageIndex`] the caller then builds: a
-/// package Typst would only download at compile time is invisible to the index
-/// otherwise.
-fn prewarm_and_check_versions(
-    package_imports: &[String],
-    plugin_section: &PluginSection,
-) -> Result<()> {
-    if plugin_section.auto_detect_packages_enabled() {
+/// Pre-warming must precede the index: the index is a directory probe, so a
+/// package Typst would only download at compile time is invisible to it — the
+/// build then silently emits none of that package's declared assets.
+fn prewarm_and_resolve(package_imports: &[String], auto_detect: bool) -> Result<PackageIndex> {
+    if auto_detect {
         crate::plugins::prewarm_packages(package_imports);
     }
-    PackageIndex::system(package_imports).check_min_versions()
+    let packages = PackageIndex::system(package_imports);
+    packages.check_min_versions()?;
+    Ok(packages)
 }
 
 /// Auto-detected manifest asset blocks for `plugin_section`'s format, or
