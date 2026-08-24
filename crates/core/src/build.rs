@@ -12,7 +12,8 @@ use crate::config::output::OutputConfig;
 use crate::config::project::{ProjectConfig, ProjectMode};
 use crate::diagnostics::results::CompilationResults;
 use crate::plugins::{
-    CastVertebra, DocumentMeta, FormatPlugin, PluginContext, TypstFormat, spine_layout_for,
+    CastVertebra, DocumentMeta, FormatPlugin, PackageIndex, PluginContext, TypstFormat,
+    spine_layout_for,
 };
 use crate::reticulate::spine::{FormatContext, SpineScan, VirtualSpine};
 use crate::transclude::{ContentTransclusion, ControlAssetKind, ControlAssets};
@@ -180,7 +181,9 @@ impl Build {
     /// deps that declare nothing are never watched).
     pub fn watch_asset_spec(&self) -> crate::assets::watch::WatchAssetSpec {
         let default_section = PluginSection::default();
-        let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
+        let packages = PackageIndex::system(&crate::plugins::scan_project_package_imports(
+            &self.project.typ_files,
+        ));
 
         let mut asset_paths: Vec<PathBuf> = Vec::new();
         let mut copy_globs: Vec<(PathBuf, Vec<String>)> = Vec::new();
@@ -192,7 +195,7 @@ impl Build {
             // visible rather than an inexplicably dead rebuild.
             let ctx = match self.plugin_asset_context(
                 plugin.as_ref(),
-                &package_imports,
+                &packages,
                 &default_section,
                 false,
             ) {
@@ -243,7 +246,7 @@ impl Build {
     fn plugin_asset_context<'a>(
         &'a self,
         plugin: &dyn FormatPlugin,
-        package_imports: &[String],
+        packages: &PackageIndex,
         default_section: &'a PluginSection,
         ensure_dir: bool,
     ) -> Result<PluginAssetContext<'a>> {
@@ -257,7 +260,7 @@ impl Build {
             .plugin_sections
             .get(plugin.name())
             .unwrap_or(default_section);
-        let manifest_blocks = manifest_blocks_for(package_imports, section, plugin.name());
+        let manifest_blocks = manifest_blocks_for(packages, section, plugin.name());
         let resolved = AssetResolver::new(&self.project.root, &output_dir).resolve(
             plugin,
             section,
@@ -347,12 +350,11 @@ impl Build {
             // Behind the same opt-out that governs every other package-driven
             // behaviour.
             if plugin_section.auto_detect_packages_enabled() {
-                let package_imports =
-                    crate::plugins::scan_project_package_imports(&self.project.typ_files);
-                marrow.extend(crate::plugins::detect_package_marrow(&package_imports));
-                marrow_prologue.extend(crate::plugins::detect_package_marrow_prologue(
-                    &package_imports,
+                let packages = PackageIndex::system(&crate::plugins::scan_project_package_imports(
+                    &self.project.typ_files,
                 ));
+                marrow.extend(packages.marrow());
+                marrow_prologue.extend(packages.marrow_prologue());
             }
 
             let marrow_path = content_dir.join(self.project.config.marrow_file());
@@ -563,12 +565,9 @@ impl Build {
         // here is propagated rather than swallowed: the CLI's watch loop turns
         // it into a warning, whereas an empty asset map would silently serve
         // every page unstyled.
-        let ctx = self.plugin_asset_context(
-            html_plugin.as_ref(),
-            &package_imports,
-            &default_section,
-            true,
-        )?;
+        let packages = PackageIndex::system(&package_imports);
+        let ctx =
+            self.plugin_asset_context(html_plugin.as_ref(), &packages, &default_section, true)?;
         let asset_paths = |name| {
             ctx.resolved
                 .get(name)
@@ -687,8 +686,11 @@ impl Build {
         let mut results = CompilationResults::new();
         let default_section = PluginSection::default();
 
-        // Scan .typ files for package imports once — shared across all plugins.
+        // Scan .typ files for package imports once, and resolve each imported
+        // package (a directory probe plus a `typst.toml` parse) once — both
+        // shared across every plugin in this build.
         let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
+        let packages = PackageIndex::system(&package_imports);
 
         let content_dir = resolve_effective_content_dir(&self.project);
 
@@ -701,12 +703,8 @@ impl Build {
                 .unwrap_or(&default_section);
             prewarm_and_check_versions(&package_imports, plugin_section)?;
 
-            let plugin_assets = self.plugin_asset_context(
-                plugin.as_ref(),
-                &package_imports,
-                &default_section,
-                true,
-            )?;
+            let plugin_assets =
+                self.plugin_asset_context(plugin.as_ref(), &packages, &default_section, true)?;
             let plugin_output_dir = &plugin_assets.output_dir;
             let resolver = AssetResolver::new(&self.project.root, plugin_output_dir);
 
@@ -954,6 +952,10 @@ fn ensure_output_dir(dir: &Path, plugin_name: &str) -> Result<()> {
 
 /// Pre-warms `package_imports` (if enabled) and rejects any whose declared
 /// `[tool.rheo] min_version` exceeds this build, before assets are detected.
+///
+/// Pre-warming must precede any [`PackageIndex`] the caller then builds: a
+/// package Typst would only download at compile time is invisible to the index
+/// otherwise.
 fn prewarm_and_check_versions(
     package_imports: &[String],
     plugin_section: &PluginSection,
@@ -961,18 +963,18 @@ fn prewarm_and_check_versions(
     if plugin_section.auto_detect_packages_enabled() {
         crate::plugins::prewarm_packages(package_imports);
     }
-    crate::plugins::check_package_min_versions(package_imports)
+    PackageIndex::system(package_imports).check_min_versions()
 }
 
 /// Auto-detected manifest asset blocks for `plugin_section`'s format, or
 /// none when the section disables package auto-detection.
 fn manifest_blocks_for(
-    package_imports: &[String],
+    packages: &PackageIndex,
     plugin_section: &PluginSection,
     format_name: &str,
 ) -> Vec<crate::plugins::PackageAssets> {
     if plugin_section.auto_detect_packages_enabled() {
-        crate::plugins::detect_manifest_package_assets(package_imports, format_name)
+        packages.manifest_assets(format_name)
     } else {
         vec![]
     }
