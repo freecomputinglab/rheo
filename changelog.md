@@ -127,6 +127,34 @@ out of source text before compilation. Consequences for authors:
 See `docs/limitations.md` for the full account, including which values come back as Typst
 content rather than strings.
 
+## A vertebra handle now always wins a label collision [landed]
+
+The `#show link:` rule that rewrites `#link(<handle>)` into a depth-relative href used to be
+one bundle-global rule wrapped in `#context`, deciding whether a label named a vertebra by
+running `query(it.dest)` and inspecting the first match. It is now applied per `#document`,
+closed over that page's handle, and decides from `sys.inputs.rheo-context.spine-flat` — so it
+runs no `query` and needs no `#context` at all (`rheo-link-rule`,
+`crates/core/src/typ/rheo.typ`; `rheo-link-rule-static-mvl`).
+
+`state("rheo-handle")` is still published per page — packages read it and it stays part of
+the contract — the link rule simply no longer needs it.
+
+**This changes output for one case, and fixes it.** `query(label)` returns matches in bundle
+document order, so a project that attached a vertebra's handle to an element of its own
+shadowed the handle whenever its vertebra happened to come first — coin-flip precedence that
+silently produced broken links. In rheo's own `bundle_ref_cross_directory` fixture, a line of
+doc prose reading `(e.g. <intro>)` claimed the `intro` handle, and three cross-references
+landed on that line instead of the page — one of them resolving to the linking page itself.
+All three are correct now. A label naming a vertebra always resolves to that vertebra's page;
+if a project wants a label of its own with that name, rename the label.
+
+It is worth saying what this does **not** do, because the shape of the old rule invites the
+inference. It does not help a document that fails to converge. MEASURED across a rookery site
+and four reductions of it: identical `did not converge` counts and identical output before and
+after. Typst's five-iteration fixpoint cap is spent by whatever `query` a project or its
+packages feed, and on that site it is a package-level bundle-wide query over `link` elements
+whose result feeds the very pages it queries.
+
 ## No user-visible change
 
 Also in this cut, with no effect on how rheo behaves: moving injected Typst out of Rust

@@ -93,6 +93,20 @@ pub enum TypstStmt {
     /// (html/epub) output, resets the footnote counter so each page numbers its
     /// footnotes from 1.
     PageInit { handle: String },
+    /// `#show link: rheo-link-rule("<handle>")` — the cross-vertebra link rule
+    /// from `typ/rheo.typ`, applied per `#document` and closed over that page's
+    /// handle so its depth arithmetic needs no `state` read and therefore no
+    /// `#context`.
+    ///
+    /// Emitted immediately after [`TypstStmt::PageInit`], because a `#show` at
+    /// the top of a markup block scopes to the rest of that block: every anchor
+    /// and every `#include` after it is covered, and nothing outside this
+    /// `#document` is. It replaces a bundle-global `#show link: it => context {…}`
+    /// that decided handle membership with `query(it.dest)` — order-dependent, and
+    /// so a coin flip whenever a project attached a vertebra's handle to an element
+    /// of its own. See `typ/rheo.typ`'s `rheo-link-rule` for the measurement,
+    /// including what this change does NOT fix.
+    LinkRule { handle: String },
     /// A cross-vertebra handle anchor: a labeled, hidden `rheo-handle` `#figure`
     /// so `@label` / `#link(<label>)` resolve across the bundle. The figure's
     /// body calls `rheo-handle-title` (brought into scope by
@@ -159,6 +173,9 @@ impl fmt::Display for TypstStmt {
                 write!(f, "#state({}).update({})", quote(key), value.serialize())
             }
             TypstStmt::PageInit { handle } => write!(f, "#rheo-page-init({})", quote(handle)),
+            TypstStmt::LinkRule { handle } => {
+                write!(f, "#show link: rheo-link-rule({})", quote(handle))
+            }
             TypstStmt::HandleAnchor {
                 label,
                 handle,

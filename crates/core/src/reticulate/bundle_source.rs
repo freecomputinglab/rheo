@@ -77,12 +77,24 @@ impl fmt::Display for BundleSource {
 impl BundleDocument {
     /// Render this document as a [`TypstStmt::Document`]: a per-page init hook
     /// (`#rheo-page-init`, which publishes the handle to `state` and resets the
-    /// footnote counter for per-page output), then each segment's handle anchors
-    /// followed by its `#include`, in order.
+    /// footnote counter for per-page output), the cross-vertebra link rule closed
+    /// over this page's handle ([`TypstStmt::LinkRule`]), then each segment's
+    /// handle anchors followed by its `#include`, in order.
+    ///
+    /// The link rule is per-document rather than bundle-global precisely so it can
+    /// take the handle as an argument and stay free of `#context` — see
+    /// [`TypstStmt::LinkRule`] and `typ/rheo.typ`'s `rheo-link-rule`. It has to
+    /// come before every anchor and include, since a `#show` scopes to the rest of
+    /// its own block.
     fn to_stmt(&self) -> TypstStmt {
-        let mut body = vec![TypstStmt::PageInit {
-            handle: self.handle.clone(),
-        }];
+        let mut body = vec![
+            TypstStmt::PageInit {
+                handle: self.handle.clone(),
+            },
+            TypstStmt::LinkRule {
+                handle: self.handle.clone(),
+            },
+        ];
         for segment in &self.segments {
             for anchor in &segment.anchors {
                 body.push(TypstStmt::HandleAnchor {
