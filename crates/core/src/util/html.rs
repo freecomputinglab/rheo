@@ -86,15 +86,17 @@ pub fn escape_json_string(text: &str) -> String {
 }
 
 /// Escape an attribute value for HTML/XHTML output.
-pub fn escape_attr(value: &str, mode: &SerializeMode) -> String {
-    let escaped = value
+///
+/// `"` is escaped in both modes: the serializer always writes values inside
+/// double quotes, and html5ever DECODES entities while parsing, so a value that
+/// arrived as `&quot;` is a bare `"` in memory and would close the attribute
+/// early on the way back out.
+pub fn escape_attr(value: &str) -> String {
+    value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
-        .replace('>', "&gt;");
-    match mode {
-        SerializeMode::Html => escaped,
-        SerializeMode::Xhtml => escaped.replace('"', "&quot;"),
-    }
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 // ─── DOM types ───────────────────────────────────────────────────────────────
@@ -580,7 +582,7 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
             write_html(output, format_args!("<{}", name.local))?;
 
             for attr in attrs.borrow().iter() {
-                let escaped_value = escape_attr(&attr.value, mode);
+                let escaped_value = escape_attr(&attr.value);
                 write_html(
                     output,
                     format_args!(" {}=\"{}\"", attr.name.local, escaped_value),
@@ -718,6 +720,23 @@ mod tests {
 
         let serialized = dom.serialize().unwrap();
         assert!(serialized.contains("<link rel=\"stylesheet\" href=\"style.css\">"));
+    }
+
+    #[test]
+    fn test_attribute_quote_survives_a_parse_serialize_round_trip() {
+        // html5ever decodes `&quot;` on parse, so the value is a bare `"` in
+        // memory; re-serializing it unescaped would close the attribute early.
+        let html = "<!DOCTYPE html><html><head><title>T</title></head><body>\
+<div title=\"say &quot;hi&quot;\"></div></body></html>";
+        let result = HtmlDom::parse(html).unwrap().serialize().unwrap();
+        assert!(
+            result.contains(r#"title="say &quot;hi&quot;""#),
+            "quote must be re-escaped:\n{result}"
+        );
+        assert!(
+            !result.contains(r#"title="say ""#),
+            "attribute closed early:\n{result}"
+        );
     }
 
     #[test]

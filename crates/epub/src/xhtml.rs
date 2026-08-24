@@ -2,7 +2,7 @@
 
 use markup5ever_rcdom::{Handle, NodeData};
 use rheo_core::Result;
-use rheo_core::util::html::{HtmlDom, SerializeMode, escape_attr, escape_text, is_void_element};
+use rheo_core::util::html::{HtmlDom, escape_attr, escape_text, is_void_element};
 use rheo_core::util::typst_types::EcoString;
 use std::{fmt::Write, slice};
 
@@ -75,7 +75,7 @@ pub fn html_to_portable_xhtml(
                     }
 
                     for attr in attrs.borrow().iter() {
-                        let escaped_value = escape_attr(&attr.value, &SerializeMode::Xhtml);
+                        let escaped_value = escape_attr(&attr.value);
                         write!(self.buf, " {}=\"{}\"", attr.name.local, escaped_value).unwrap();
                     }
 
