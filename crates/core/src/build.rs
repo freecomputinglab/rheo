@@ -471,11 +471,14 @@ impl Build {
         let world = RheoWorld::new_for_bundle(
             &self.project.root,
             main,
-            sources,
-            rheo_context,
-            Some(global_context),
-            plugin.rheo_target(),
-            self.font_dirs.clone(),
+            crate::world::WorldSpec {
+                source_overlay: sources,
+                rheo_context,
+                global_context: Some(global_context),
+                format_name: plugin.rheo_target().map(str::to_string),
+                font_dirs: self.font_dirs.clone(),
+                ..Default::default()
+            },
         )?;
         let bundle = world.compile_bundle()?;
         let mut assets: HashSet<String> = HashSet::new();

@@ -37,6 +37,30 @@ fn build_inputs(rheo_context: Option<&TypstLiteral>) -> Dict {
     dict
 }
 
+/// Everything a [`RheoWorld`] needs beyond its root and its main file.
+///
+/// Every field defaults to "unset", so a caller sets only what it means and
+/// spreads the rest (`..WorldSpec::default()`) — which also keeps a later field
+/// addition from breaking it.
+#[derive(Default)]
+pub struct WorldSpec {
+    /// Output format name; `Some` also enables the `target()` polyfill.
+    pub format_name: Option<String>,
+    /// Plugin-contributed Typst library code, injected after the core prelude.
+    pub plugin_library: Option<String>,
+    /// In-memory source served for the main file instead of reading from disk.
+    pub virtual_main_source: Option<String>,
+    /// Per-vertebra rewritten sources from the Mould stage, keyed by
+    /// project-relative include path.
+    pub source_overlay: HashMap<String, String>,
+    /// Per-vertebra prelude/epilogue injections, keyed the same way.
+    pub rheo_context: HashMap<String, VertebraInjection>,
+    /// The file-independent context seeded onto `sys.inputs.rheo-context`.
+    pub global_context: Option<TypstLiteral>,
+    /// Extra font directories to scan.
+    pub font_dirs: Vec<PathBuf>,
+}
+
 /// A simple World implementation for rheo compilation.
 pub struct RheoWorld {
     root: PathBuf,
@@ -73,26 +97,15 @@ struct FileSlot {
 }
 
 impl RheoWorld {
-    /// Assemble a world once `root`, `main`, and the `sys.inputs` context are
-    /// resolved — the part both constructors below share.
-    #[allow(clippy::too_many_arguments)]
-    fn assemble(
-        root: PathBuf,
-        main: FileId,
-        inputs_context: Option<&TypstLiteral>,
-        format_name: Option<&str>,
-        plugin_library: Option<String>,
-        virtual_main_source: Option<String>,
-        source_overlay: HashMap<String, String>,
-        rheo_context: HashMap<String, VertebraInjection>,
-        font_dirs: Vec<PathBuf>,
-    ) -> Self {
+    /// Assemble a world once `root` and `main` are resolved — the part both
+    /// constructors below share.
+    fn assemble(root: PathBuf, main: FileId, spec: WorldSpec) -> Self {
         let library = Library::builder()
             .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
-            .with_inputs(build_inputs(inputs_context))
+            .with_inputs(build_inputs(spec.global_context.as_ref()))
             .build();
 
-        let (font_store, package_storage, rheo_packages) = Self::init_resources(&font_dirs);
+        let (font_store, package_storage, rheo_packages) = Self::init_resources(&spec.font_dirs);
 
         Self {
             root,
@@ -103,22 +116,16 @@ impl RheoWorld {
             package_storage,
             rheo_packages,
             slots: Mutex::new(HashMap::new()),
-            format_name: format_name.map(str::to_string),
-            plugin_library,
-            virtual_main_source,
-            source_overlay,
-            rheo_context,
+            format_name: spec.format_name,
+            plugin_library: spec.plugin_library,
+            virtual_main_source: spec.virtual_main_source,
+            source_overlay: spec.source_overlay,
+            rheo_context: spec.rheo_context,
         }
     }
 
     /// Create a new world for compiling a single file.
-    pub fn new(
-        root: &Path,
-        main_file: &Path,
-        format_name: Option<&str>,
-        plugin_library: Option<String>,
-        font_dirs: Vec<PathBuf>,
-    ) -> Result<Self> {
+    pub fn new(root: &Path, main_file: &Path, spec: WorldSpec) -> Result<Self> {
         let root = crate::util::path::canonicalize_path(root)?;
         let main_path = crate::util::path::canonicalize_path(main_file)?;
 
@@ -130,17 +137,7 @@ impl RheoWorld {
         })?;
         let main = RootedPath::new(VirtualRoot::Project, main_vpath).intern();
 
-        Ok(Self::assemble(
-            root,
-            main,
-            None,
-            format_name,
-            plugin_library,
-            None,
-            HashMap::new(),
-            HashMap::new(),
-            font_dirs,
-        ))
+        Ok(Self::assemble(root, main, spec))
     }
 
     /// Create a world for bundle spine compilation with a synthesized in-memory main.
@@ -153,15 +150,7 @@ impl RheoWorld {
     /// all bypassing disk. It also seeds `sys.inputs.rheo-context` with the
     /// global (spine) context, so packages can detect a rheo build and reach
     /// the shared spine without depending on the per-file `#let rheo-context`.
-    pub fn new_for_bundle(
-        root: &Path,
-        virtual_main_source: String,
-        source_overlay: HashMap<String, String>,
-        rheo_context: HashMap<String, VertebraInjection>,
-        global_context: Option<TypstLiteral>,
-        format_name: Option<&str>,
-        font_dirs: Vec<PathBuf>,
-    ) -> Result<Self> {
+    pub fn new_for_bundle(root: &Path, main_source: String, spec: WorldSpec) -> Result<Self> {
         let root = crate::util::path::canonicalize_path(root)?;
 
         // Synthetic path — does not exist on disk; world serves it from memory.
@@ -169,16 +158,15 @@ impl RheoWorld {
             VirtualPath::new("rheo_spine.typ").expect("rheo_spine.typ is a valid virtual path");
         let main = RootedPath::new(VirtualRoot::Project, main_vpath).intern();
 
+        // The moulded main is this constructor's whole reason to exist, so it
+        // stays a named parameter rather than riding on the spec.
         Ok(Self::assemble(
             root,
             main,
-            global_context.as_ref(),
-            format_name,
-            None,
-            Some(virtual_main_source),
-            source_overlay,
-            rheo_context,
-            font_dirs,
+            WorldSpec {
+                virtual_main_source: Some(main_source),
+                ..spec
+            },
         ))
     }
 
@@ -357,7 +345,16 @@ impl RheoWorld {
         plugin_library: Option<String>,
         font_dirs: Vec<PathBuf>,
     ) -> crate::Result<typst_html::HtmlDocument> {
-        let world = Self::new(root, input, Some(format_name), plugin_library, font_dirs)?;
+        let world = Self::new(
+            root,
+            input,
+            WorldSpec {
+                format_name: Some(format_name.to_string()),
+                plugin_library,
+                font_dirs,
+                ..Default::default()
+            },
+        )?;
         tracing::info!(input = %input.display(), "compiling to HTML");
         world.compile_html()
     }
@@ -370,7 +367,16 @@ impl RheoWorld {
         plugin_library: Option<String>,
         font_dirs: Vec<PathBuf>,
     ) -> crate::Result<typst_layout::PagedDocument> {
-        let world = Self::new(root, input, format_name, plugin_library, font_dirs)?;
+        let world = Self::new(
+            root,
+            input,
+            WorldSpec {
+                format_name: format_name.map(str::to_string),
+                plugin_library,
+                font_dirs,
+                ..Default::default()
+            },
+        )?;
         tracing::info!(input = %input.display(), "compiling to PDF");
         world.compile_pdf()
     }
@@ -591,11 +597,11 @@ mod tests {
         let world = RheoWorld::new_for_bundle(
             root,
             "#document(\"intro.html\", format: \"html\")[]".to_string(),
-            source_overlay,
-            HashMap::new(),
-            None,
-            Some("html"),
-            vec![],
+            WorldSpec {
+                source_overlay,
+                format_name: Some("html".to_string()),
+                ..Default::default()
+            },
         )
         .unwrap();
 
@@ -628,11 +634,12 @@ mod tests {
         let world = RheoWorld::new_for_bundle(
             root,
             "#document(\"intro.html\", format: \"html\")[]".to_string(),
-            source_overlay,
-            rheo_context,
-            None,
-            Some("html"),
-            vec![],
+            WorldSpec {
+                source_overlay,
+                rheo_context,
+                format_name: Some("html".to_string()),
+                ..Default::default()
+            },
         )
         .unwrap();
 
@@ -666,11 +673,12 @@ mod tests {
         let world = RheoWorld::new_for_bundle(
             root,
             "#document(\"intro.html\", format: \"html\")[]".to_string(),
-            source_overlay,
-            rheo_context,
-            None,
-            Some("html"),
-            vec![],
+            WorldSpec {
+                source_overlay,
+                rheo_context,
+                format_name: Some("html".to_string()),
+                ..Default::default()
+            },
         )
         .unwrap();
 
@@ -733,11 +741,10 @@ mod tests {
         let world = RheoWorld::new_for_bundle(
             root,
             main,
-            HashMap::new(),
-            HashMap::new(),
-            None,
-            Some("html"),
-            vec![],
+            WorldSpec {
+                format_name: Some("html".to_string()),
+                ..Default::default()
+            },
         )
         .unwrap();
 
@@ -823,11 +830,12 @@ mod tests {
         let world = RheoWorld::new_for_bundle(
             root,
             main,
-            source_overlay,
-            rheo_context,
-            None,
-            Some("html"),
-            vec![],
+            WorldSpec {
+                source_overlay,
+                rheo_context,
+                format_name: Some("html".to_string()),
+                ..Default::default()
+            },
         )
         .unwrap();
 
@@ -864,11 +872,11 @@ mod tests {
         let world = RheoWorld::new_for_bundle(
             root,
             main,
-            HashMap::new(),
-            HashMap::new(),
-            Some(global_context),
-            Some("html"),
-            vec![],
+            WorldSpec {
+                global_context: Some(global_context),
+                format_name: Some("html".to_string()),
+                ..Default::default()
+            },
         )
         .unwrap();
 
@@ -888,11 +896,10 @@ mod tests {
         let world = RheoWorld::new_for_bundle(
             root,
             "#document(\"a.html\", format: \"html\")[]".to_string(),
-            HashMap::new(),
-            HashMap::new(),
-            None,
-            Some("html"),
-            vec![],
+            WorldSpec {
+                format_name: Some("html".to_string()),
+                ..Default::default()
+            },
         )
         .unwrap();
 
@@ -948,11 +955,13 @@ mod tests {
         let world = RheoWorld::new_for_bundle(
             root,
             moulded.main,
-            moulded.sources,
-            rheo_context,
-            Some(global_context),
-            Some("html"),
-            vec![],
+            WorldSpec {
+                source_overlay: moulded.sources,
+                rheo_context,
+                global_context: Some(global_context),
+                format_name: Some("html".to_string()),
+                ..Default::default()
+            },
         )
         .unwrap();
 
@@ -1003,18 +1012,20 @@ mod tests {
             let world = RheoWorld::new_for_bundle(
                 root,
                 moulded.main,
-                moulded.sources,
-                spine.vertebra_injections(),
-                Some(
-                    spine.global_context(crate::reticulate::spine::FormatContext {
-                        target: Some("html"),
-                        ext: Some("html"),
-                        reset_footnotes: true,
-                        title_overrides,
-                    }),
-                ),
-                Some("html"),
-                vec![],
+                WorldSpec {
+                    source_overlay: moulded.sources,
+                    rheo_context: spine.vertebra_injections(),
+                    global_context: Some(spine.global_context(
+                        crate::reticulate::spine::FormatContext {
+                            target: Some("html"),
+                            ext: Some("html"),
+                            reset_footnotes: true,
+                            title_overrides,
+                        },
+                    )),
+                    format_name: Some("html".to_string()),
+                    ..Default::default()
+                },
             )
             .unwrap();
             world.compile_bundle().map(|_| ())
