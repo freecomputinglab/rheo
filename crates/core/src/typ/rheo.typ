@@ -44,6 +44,14 @@
 // attach a computed label for such a page to link to. See docs/link-rule.md.
 #let _RHEO_PAGE_SCHEME = "rheo-page:"
 
+// The href for `target` as seen from the page whose handle is `from`: one `../`
+// per level `from` is nested, and `:` separators become `/`.
+#let _rheo-href(from, target, ext) = {
+  let depth = from.split(":").len() - 1
+  let prefix = if depth == 0 { "./" } else { range(depth).map(x => "../").join() }
+  prefix + target.replace(":", "/") + "." + ext
+}
+
 #let rheo-link-rule(handle) = it => {
   let ext = sys.inputs.at("rheo-context", default: (:)).at("ext", default: none)
   if ext == none { return it }
@@ -52,9 +60,7 @@
   // rule exists to avoid. A link to a page nothing mints yields a dead href.
   if type(it.dest) == str and it.dest.starts-with(_RHEO_PAGE_SCHEME) {
     let target = it.dest.slice(_RHEO_PAGE_SCHEME.len())
-    let depth = handle.split(":").len() - 1
-    let prefix = if depth == 0 { "./" } else { range(depth).map(x => "../").join() }
-    return link(prefix + target.replace(":", "/") + "." + ext, it.body)
+    return link(_rheo-href(handle, target, ext), it.body)
   }
   if type(it.dest) != label { return it }
   let target-handle = repr(it.dest).slice(1, -1)
@@ -65,9 +71,7 @@
     target-handle = target-handle.slice(0, -4)
   }
   if target-handle not in _rheo-handles() { return it }
-  let depth = handle.split(":").len() - 1
-  let prefix = if depth == 0 { "./" } else { range(depth).map(x => "../").join() }
-  link(prefix + target-handle.replace(":", "/") + "." + ext, it.body)
+  link(_rheo-href(handle, target-handle, ext), it.body)
 }
 
 // Per-document init hook, called once at the top of each #document block by the
