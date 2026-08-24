@@ -95,8 +95,6 @@ impl<'a> AssetResolver<'a> {
                 });
             }
 
-            let effective = all_pairs;
-
             // Group sources by (dest, resolution_root), preserving insertion order.
             struct AssetGroup<'b> {
                 dest: Option<&'b str>,
@@ -104,7 +102,7 @@ impl<'a> AssetResolver<'a> {
                 entries: Vec<(&'b str, bool)>,
             }
             let mut groups: Vec<AssetGroup<'_>> = Vec::new();
-            for entry in &effective {
+            for entry in &all_pairs {
                 if let Some(group) = groups
                     .iter_mut()
                     .find(|g| g.dest == entry.dest && g.root.as_os_str() == entry.root.as_os_str())
@@ -190,7 +188,7 @@ impl<'a> AssetResolver<'a> {
 
             if !any_source_found {
                 if asset_config.required {
-                    let paths: Vec<&str> = effective.iter().map(|e| e.path).collect();
+                    let paths: Vec<&str> = all_pairs.iter().map(|e| e.path).collect();
                     return Err(RheoError::project_config(format!(
                         "plugin '{}' requires input '{}' but no source was found (tried: {})",
                         plugin.name(),

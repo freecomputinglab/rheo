@@ -80,10 +80,7 @@ impl SpineScan {
 
         debug_assert!(
             {
-                let mut indices = Vec::new();
-                for node in &tree {
-                    node.collect_indices(&mut indices);
-                }
+                let indices = tree_indices(&tree);
                 let unique: HashSet<usize> = indices.iter().copied().collect();
                 indices.len() == unique.len() && indices.iter().all(|&i| i < files.len())
             },
@@ -237,18 +234,18 @@ impl SpineScan {
         let index_name = format!("index{}", TYP_EXT);
         let named_name = format!("{}{}", dirname, TYP_EXT);
 
-        let landing_path = entries
+        let candidates: Vec<PathBuf> = entries
             .iter()
             .map(|e| e.path())
             .filter(|p| !Self::is_excluded(content_dir, p, exclude))
-            .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(index_name.as_str()))
-            .or_else(|| {
-                entries
-                    .iter()
-                    .map(|e| e.path())
-                    .filter(|p| !Self::is_excluded(content_dir, p, exclude))
-                    .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(named_name.as_str()))
-            });
+            .collect();
+        let named = |name: &str| {
+            candidates
+                .iter()
+                .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(name))
+                .cloned()
+        };
+        let landing_path = named(&index_name).or_else(|| named(&named_name));
 
         let (vertebra, title) = if let Some(landing) = &landing_path {
             let idx = files.len();
@@ -482,7 +479,7 @@ impl SpineScan {
         Self::collect_leaf_nodes(roots, &mut leaf_nodes);
         let mut by_path: HashMap<PathBuf, PathNode> = leaf_nodes
             .into_iter()
-            .map(|n| (n.file.clone().unwrap(), n))
+            .filter_map(|n| n.file.clone().map(|f| (f, n)))
             .collect();
         let leaves: Vec<PathBuf> = by_path.keys().cloned().collect();
 
@@ -696,6 +693,15 @@ pub struct SpineNode {
     pub children: Vec<SpineNode>,
 }
 
+/// Every vertebra index the tree references, in pre-order.
+fn tree_indices(tree: &[SpineNode]) -> Vec<usize> {
+    let mut indices = Vec::new();
+    for node in tree {
+        node.collect_indices(&mut indices);
+    }
+    indices
+}
+
 impl SpineNode {
     /// Pre-order walk: push this node's vertebra index (if any) then recurse
     /// into children regardless of whether this node itself yielded one.
@@ -783,11 +789,7 @@ impl VirtualSpine {
     /// tree built by `build()`. Group nodes with `vertebra: None` still recurse
     /// into their children. A stale index is silently skipped, never panics.
     pub fn flat_vertebrae(&self) -> Vec<&Vertebra> {
-        let mut indices = Vec::new();
-        for node in &self.tree {
-            node.collect_indices(&mut indices);
-        }
-        indices
+        tree_indices(&self.tree)
             .into_iter()
             .filter_map(|i| self.vertebrae.get(i))
             .collect()
@@ -969,10 +971,7 @@ impl VirtualSpine {
 
         debug_assert!(
             {
-                let mut indices = Vec::new();
-                for node in &tree {
-                    node.collect_indices(&mut indices);
-                }
+                let indices = tree_indices(&tree);
                 let unique: HashSet<usize> = indices.iter().copied().collect();
                 indices.len() == vertebrae.len() && unique.len() == indices.len()
             },
