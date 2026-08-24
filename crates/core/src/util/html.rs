@@ -330,18 +330,10 @@ impl HtmlDom {
     /// keeping the chrome outside it. With no marker present it falls back to
     /// the full body.
     ///
-    /// `rheo-feed-content` is step 3 for COMPATIBILITY, and `rheo-content` is
-    /// the name to prefer: transclusion is not feed-specific (sitemaps,
-    /// `llms.txt` and search indexes use it too), so the unprefixed name is the
-    /// primary and the feed-specific one an alias. The retired Rust feed
-    /// generator's cascade used `rheo-feed-content`
-    /// (`docs/spikes/typst-native-feed.md`); the port renamed it and nothing
-    /// carried the old name forward, so a site still wrapping its content
-    /// region the way that generator documented matched neither class and
-    /// silently fell through to the whole `<body>`. MEASURED on ohrg.org: all
-    /// 43 entries carried the entire page body — nav, the full search index,
-    /// dialog markup — for +57% on feed size, until `select` was passed
-    /// explicitly.
+    /// `rheo-feed-content` is step 3 for COMPATIBILITY only — transclusion is
+    /// not feed-specific, so the unprefixed `rheo-content` is the primary name.
+    /// See `docs/limitations.md` for what a site following the retired feed
+    /// generator's documented convention silently lost before the alias existed.
     ///
     /// `select: Some(tag)` selects the first element with that bare tag name
     /// instead (e.g. `"article"`). `select: Some(".class")` (a leading dot)

@@ -143,3 +143,23 @@ that prefix is a hard build error naming the file and label — there is no
 silent fallback, unlike the canonical `<handle>` collision rule (which
 silently skips injecting the canonical label when a user-authored label
 already claims it).
+
+## The `rheo-feed-content` class is a compatibility alias
+
+`HtmlDom::select_inner_html`'s default cascade for `<rheo-content>`
+transclusion is: the first `<main>`, else the first element carrying the
+`rheo-content` class, else the first carrying `rheo-feed-content`, else the
+whole `<body>`.
+
+The third step exists only for sites that followed the retired Rust feed
+generator's documented convention. That generator's cascade used
+`rheo-feed-content`; the port to marrow-authored feeds renamed it to the
+unprefixed `rheo-content` — transclusion is not feed-specific, since sitemaps,
+`llms.txt` and search indexes use it too — and nothing carried the old name
+forward. A site still wrapping its content region the old way matched neither
+class and fell through to the whole `<body>`.
+
+MEASURED on ohrg.org: all 43 entries carried the entire page body — nav, the
+full search index, dialog markup — for +57% on feed size, until `select` was
+passed explicitly. Prefer `rheo-content`; the alias is not going to grow a
+third spelling.
