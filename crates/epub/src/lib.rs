@@ -70,27 +70,29 @@ impl FormatPlugin for EpubPlugin {
         let identifier = epub_config.identifier.clone();
         let date = epub_config.date_utc();
 
-        // Extract language from the first output's HTML; default to "en".
-        let language = match outputs.first() {
-            Some(first_output) => {
-                extract_language(&first_output.html_string()?).unwrap_or_else(|| "en".to_string())
-            }
+        // EPUB reading order is spine order, contributed pages last. `outputs`
+        // arrives in whatever order the compiled bundle's file map yields, which
+        // happens to be spine order today but is an undocumented property of a
+        // dependency — and reading order is not something to leave to that.
+        let ordered = spine_order(ctx.spine, outputs);
+
+        // Language and author describe the publication, so they come from its
+        // FIRST spine vertebra rather than from whichever output came first.
+        let language = match ordered.first() {
+            Some(first) => extract_language(&first.html_string()?).unwrap_or_else(|| "en".into()),
             None => "en".to_string(),
         };
 
-        // Author comes straight from the first output's Typst-resolved
-        // metadata (`CastVertebra::author`, harvested from `DocumentInfo`
-        // during compilation) rather than an HTML `<meta name="author">` scrape.
-        // EPUB's `dc:creator` (see `Package::creator`) is a single optional
-        // string, while `DocumentInfo.author` can carry zero, one, or many
-        // authors (e.g. `#set document(author: ("A", "B"))`) — multiple
-        // authors are joined with `", "` rather than keeping only the first.
-        let author = outputs
+        // `dc:creator` (see `Package::creator`) is a single optional string,
+        // while `DocumentInfo.author` carries zero, one, or many authors
+        // (`#set document(author: ("A", "B"))`) — so several are joined rather
+        // than all but the first being dropped.
+        let author = ordered
             .first()
             .filter(|o| !o.author.is_empty())
             .map(|o| o.author.join(", "));
 
-        let mut items = outputs
+        let mut items = ordered
             .iter()
             .map(|o| {
                 EpubItem::from_html_string(o.output_path.clone(), o.html_string()?, o.contributed)
@@ -120,6 +122,28 @@ impl FormatPlugin for EpubPlugin {
         info!(output = %epub_path.display(), "successfully generated EPUB");
         Ok(())
     }
+}
+
+/// `outputs` in spine order — each vertebra of `spine.flat_vertebrae()` in
+/// pre-order, then every output with no matching vertebra (a marrow-contributed
+/// page) in the order it arrived.
+fn spine_order<'a>(
+    spine: &rheo_core::reticulate::VirtualSpine,
+    outputs: &'a [CastVertebra],
+) -> Vec<&'a CastVertebra> {
+    let mut ordered: Vec<&CastVertebra> = spine
+        .flat_vertebrae()
+        .iter()
+        .filter_map(|v| outputs.iter().find(|o| o.output_path == v.output_path))
+        .collect();
+    let placed: std::collections::HashSet<&str> =
+        ordered.iter().map(|o| o.output_path.as_str()).collect();
+    ordered.extend(
+        outputs
+            .iter()
+            .filter(|o| !placed.contains(o.output_path.as_str())),
+    );
+    ordered
 }
 
 const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
