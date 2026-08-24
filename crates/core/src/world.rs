@@ -11,7 +11,6 @@ use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
 use parking_lot::Mutex;
-use tracing::warn;
 use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Datetime, Dict};
 use typst::syntax::{FileId, Lines, RootedPath, Source, VirtualPath, VirtualRoot};
@@ -250,26 +249,6 @@ impl RheoWorld {
             .vpath()
             .realize(&self.root)
             .map_err(|_| FileError::NotFound(id.vpath().get_with_slash().to_string().into()))?;
-
-        if !path.exists() {
-            // Fallback 1: Look for just the filename at project root.
-            // This strips all directory components and can silently load the wrong
-            // file if the intended file doesn't exist. For example, if importing
-            // `chapters/intro.typ` fails but `intro.typ` exists at root, this will
-            // load the wrong file.
-            if let Some(filename) = Path::new(id.vpath().get_with_slash()).file_name() {
-                let filename_path = self.root.join(filename);
-                if filename_path.exists() {
-                    // Log a warning so this fallback is visible in verbose mode
-                    warn!(
-                        requested = %id.vpath().get_with_slash(),
-                        loaded = %filename_path.display(),
-                        "path resolution fallback: using filename from project root"
-                    );
-                    return Ok(filename_path);
-                }
-            }
-        }
 
         Ok(path)
     }
