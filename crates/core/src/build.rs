@@ -100,6 +100,20 @@ struct CompiledBundlePass {
     bundle: typst_bundle::Bundle,
 }
 
+/// One plugin's resolved asset context — its output directory, its config
+/// section, the auto-detected package asset blocks, and its resolved assets.
+///
+/// The prologue that produces this is the part [`Build::run`],
+/// [`Build::compile_for_watch`] and [`Build::watch_asset_spec`] share before
+/// they diverge; each used to open-code it, and each handled a resolve failure
+/// differently.
+struct PluginAssetContext<'a> {
+    output_dir: PathBuf,
+    section: &'a PluginSection,
+    manifest_blocks: Vec<crate::plugins::PackageAssets>,
+    resolved: HashMap<&'static str, Vec<crate::plugins::Asset>>,
+}
+
 impl Build {
     /// Select formats, apply each plugin's smart defaults, and resolve the
     /// output and font directories, producing a ready-to-run [`Build`].
@@ -173,25 +187,29 @@ impl Build {
         let mut package_roots: Vec<PathBuf> = Vec::new();
 
         for plugin in &self.plugins {
-            let plugin_output_dir = self.output.dir_for_plugin(plugin.name());
-            let plugin_section: &PluginSection = self
-                .project
-                .config
-                .plugin_sections
-                .get(plugin.name())
-                .unwrap_or(&default_section);
+            // A resolve failure must not silently shrink the watched set: warn
+            // and skip this plugin, so an unwatched stylesheet is at least
+            // visible rather than an inexplicably dead rebuild.
+            let ctx = match self.plugin_asset_context(
+                plugin.as_ref(),
+                &package_imports,
+                &default_section,
+                false,
+            ) {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    tracing::warn!(
+                        plugin = plugin.name(),
+                        error = %e,
+                        "could not resolve assets; this format's assets will not be watched"
+                    );
+                    continue;
+                }
+            };
 
-            let manifest_blocks =
-                manifest_blocks_for(&package_imports, plugin_section, plugin.name());
-
-            let resolver = AssetResolver::new(&self.project.root, &plugin_output_dir);
-            if let Ok(resolved) =
-                resolver.resolve(plugin.as_ref(), plugin_section, &manifest_blocks)
-            {
-                for assets in resolved.values() {
-                    for asset in assets {
-                        asset_paths.push(asset.source_path.clone());
-                    }
+            for assets in ctx.resolved.values() {
+                for asset in assets {
+                    asset_paths.push(asset.source_path.clone());
                 }
             }
 
@@ -199,13 +217,13 @@ impl Build {
             if !self.project.config.copy.is_empty() {
                 copy_globs.push((self.project.root.clone(), self.project.config.copy.clone()));
             }
-            for block in &manifest_blocks {
+            for block in &ctx.manifest_blocks {
                 if !block.assets.copy.is_empty() {
                     copy_globs.push((block.source_root.clone(), block.assets.copy.clone()));
                 }
                 package_roots.push(block.source_root.clone());
             }
-            for block in plugin_section.asset_blocks() {
+            for block in ctx.section.asset_blocks() {
                 if !block.copy.is_empty() {
                     copy_globs.push((self.project.root.clone(), block.copy.clone()));
                 }
@@ -213,6 +231,44 @@ impl Build {
         }
 
         crate::assets::watch::WatchAssetSpec::new(asset_paths, copy_globs, package_roots)
+    }
+
+    /// Resolve `plugin`'s output directory, config section, package asset
+    /// blocks and assets. `ensure_dir` creates the output directory — the
+    /// watcher-spec path only reads asset paths, so it passes `false`.
+    ///
+    /// Callers that go on to compile must `prewarm_and_check_versions` FIRST:
+    /// pre-warming has to happen before the manifest scan below, or a package
+    /// Typst would only download at compile time is invisible to it.
+    fn plugin_asset_context<'a>(
+        &'a self,
+        plugin: &dyn FormatPlugin,
+        package_imports: &[String],
+        default_section: &'a PluginSection,
+        ensure_dir: bool,
+    ) -> Result<PluginAssetContext<'a>> {
+        let output_dir = self.output.dir_for_plugin(plugin.name());
+        if ensure_dir {
+            ensure_output_dir(&output_dir, plugin.name())?;
+        }
+        let section: &'a PluginSection = self
+            .project
+            .config
+            .plugin_sections
+            .get(plugin.name())
+            .unwrap_or(default_section);
+        let manifest_blocks = manifest_blocks_for(package_imports, section, plugin.name());
+        let resolved = AssetResolver::new(&self.project.root, &output_dir).resolve(
+            plugin,
+            section,
+            &manifest_blocks,
+        )?;
+        Ok(PluginAssetContext {
+            output_dir,
+            section,
+            manifest_blocks,
+            resolved,
+        })
     }
 
     /// Build the virtual spine for `plugin` and compile it to an in-memory bundle.
@@ -495,52 +551,48 @@ impl Build {
             None => return Ok(None),
         };
 
-        let plugin_output_dir = self.output.dir_for_plugin(html_plugin.name());
-        ensure_output_dir(&plugin_output_dir, html_plugin.name())?;
-
         let default_section = PluginSection::default();
-
         let content_dir = resolve_effective_content_dir(&self.project);
 
+        // Scanned per rebuild rather than once per `Build`: a `.typ` file
+        // gaining an `@rheo/...` import mid-session must be picked up, and the
+        // `Build` is only rebuilt when `rheo.toml` itself changes.
+        let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
         let plugin_section: &PluginSection = self
             .project
             .config
             .plugin_sections
             .get(html_plugin.name())
             .unwrap_or(&default_section);
-
-        // Resolve assets — copies CSS/JS to disk so the dev server can serve them
-        // as fallback for requests not satisfied by the VirtualFs.
-        //
-        // Mirror `run()`: detect package-provided assets (e.g. a sidebar
-        // package's stylesheet and script declared in its `typst.toml`) so the
-        // in-memory entry page injects the same head links as the on-disk build.
-        // Without this the VirtualFs index lacks package CSS/JS and renders
-        // unstyled.
-        let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
         prewarm_and_check_versions(&package_imports, plugin_section)?;
-        let manifest_blocks =
-            manifest_blocks_for(&package_imports, plugin_section, html_plugin.name());
 
-        let resolver = AssetResolver::new(&self.project.root, &plugin_output_dir);
-        let resolved_assets = resolver
-            .resolve(html_plugin.as_ref(), plugin_section, &manifest_blocks)
-            .unwrap_or_default();
-
-        let css_paths: Vec<String> = resolved_assets
-            .get("css_stylesheet")
-            .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
-            .unwrap_or_default();
-        let js_paths: Vec<String> = resolved_assets
-            .get("js_scripts")
-            .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
-            .unwrap_or_default();
+        // Resolving copies CSS/JS to disk too, so the dev server can serve them
+        // as a fallback for requests the VirtualFs does not satisfy. A failure
+        // here is propagated rather than swallowed: the CLI's watch loop turns
+        // it into a warning, whereas an empty asset map would silently serve
+        // every page unstyled.
+        let ctx = self.plugin_asset_context(
+            html_plugin.as_ref(),
+            &package_imports,
+            &default_section,
+            true,
+        )?;
+        let asset_paths = |name| {
+            ctx.resolved
+                .get(name)
+                .map(|v: &Vec<crate::plugins::Asset>| {
+                    v.iter().map(|a| a.built_relative_path.clone()).collect()
+                })
+                .unwrap_or_default()
+        };
+        let css_paths: Vec<String> = asset_paths("css_stylesheet");
+        let js_paths: Vec<String> = asset_paths("js_scripts");
 
         let CompiledSpine {
             files: virtual_fs,
             assets,
             ..
-        } = self.compile_spine(html_plugin.as_ref(), plugin_section, &content_dir)?;
+        } = self.compile_spine(html_plugin.as_ref(), ctx.section, &content_dir)?;
 
         // Build a page-path -> HTML string map from the non-asset (compiled
         // document) entries of this same virtual_fs, for `<rheo-content>`
@@ -554,7 +606,7 @@ impl Build {
             .iter()
             .filter_map(|(vpath, bytes)| {
                 let path_str = vpath.get_with_slash().trim_start_matches('/').to_string();
-                if assets.contains(&path_str) || !path_str.ends_with(".html") {
+                if assets.contains(&path_str) {
                     return None;
                 }
                 Some((
@@ -649,23 +701,22 @@ impl Build {
         let content_dir = resolve_effective_content_dir(&self.project);
 
         for plugin in &self.plugins {
-            let plugin_output_dir = self.output.dir_for_plugin(plugin.name());
-            ensure_output_dir(&plugin_output_dir, plugin.name())?;
-
             let plugin_section: &PluginSection = self
                 .project
                 .config
                 .plugin_sections
                 .get(plugin.name())
                 .unwrap_or(&default_section);
-
             prewarm_and_check_versions(&package_imports, plugin_section)?;
-            let manifest_blocks =
-                manifest_blocks_for(&package_imports, plugin_section, plugin.name());
 
-            let resolver = AssetResolver::new(&self.project.root, &plugin_output_dir);
-            let resolved_assets =
-                resolver.resolve(plugin.as_ref(), plugin_section, &manifest_blocks)?;
+            let plugin_assets = self.plugin_asset_context(
+                plugin.as_ref(),
+                &package_imports,
+                &default_section,
+                true,
+            )?;
+            let plugin_output_dir = &plugin_assets.output_dir;
+            let resolver = AssetResolver::new(&self.project.root, plugin_output_dir);
 
             let CompiledSpine {
                 spine: virtual_spine,
@@ -720,10 +771,10 @@ impl Build {
 
             let ctx = PluginContext {
                 project: &self.project,
-                output_dir: &plugin_output_dir,
+                output_dir: plugin_output_dir,
                 spine: &virtual_spine,
                 config: plugin_section,
-                assets: &resolved_assets,
+                assets: &plugin_assets.resolved,
                 font_dirs: &self.font_dirs,
                 bundle_assets: &asset_files,
                 control: &control,
@@ -758,7 +809,7 @@ impl Build {
                         None,
                         true,
                     )?;
-                    for block in &manifest_blocks {
+                    for block in &plugin_assets.manifest_blocks {
                         resolver.copy_globs(
                             &block.assets.copy,
                             &block.source_root,
