@@ -1051,6 +1051,71 @@ fn resolve_font_dirs(project: &ProjectConfig, cli_font_dirs: &[PathBuf]) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    /// What `Build::run` handed the plugin for each output: its path, its
+    /// resolved title, and its compiled bytes as text. `CastVertebra` itself is
+    /// not `Clone`, and these three are all any test here asserts on.
+    #[derive(Default)]
+    struct Captured(Mutex<Vec<(String, String, String)>>);
+
+    impl Captured {
+        fn field(
+            &self,
+            output_path: &str,
+            pick: impl Fn(&(String, String, String)) -> String,
+        ) -> String {
+            let outputs = self.0.lock().unwrap();
+            outputs
+                .iter()
+                .find(|(path, _, _)| path == output_path)
+                .map(pick)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "no output for {output_path}; got {:?}",
+                        outputs.iter().map(|(p, _, _)| p).collect::<Vec<_>>()
+                    )
+                })
+        }
+
+        fn title(&self, output_path: &str) -> String {
+            self.field(output_path, |(_, title, _)| title.clone())
+        }
+
+        fn html(&self, output_path: &str) -> String {
+            self.field(output_path, |(_, _, html)| html.clone())
+        }
+    }
+
+    /// An `html` plugin that records every output it is handed.
+    struct CapturingPlugin(Arc<Captured>);
+
+    impl FormatPlugin for CapturingPlugin {
+        fn name(&self) -> &'static str {
+            "html"
+        }
+        fn compile(&self, _ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
+            self.0.0.lock().unwrap().extend(outputs.iter().map(|o| {
+                (
+                    o.output_path.clone(),
+                    o.title.clone(),
+                    String::from_utf8_lossy(o.bytes.as_slice()).into_owned(),
+                )
+            }));
+            Ok(())
+        }
+    }
+
+    /// Run `project` through a `CapturingPlugin` and return what it saw.
+    fn run_capturing(project: ProjectConfig) -> Arc<Captured> {
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        Build::prepare(project, vec![plugin], BuildOptions::default())
+            .expect("prepare build")
+            .run()
+            .expect("run build");
+        captured
+    }
 
     fn plugin_names(all: &[Box<dyn FormatPlugin>]) -> Vec<String> {
         all.iter().map(|p| p.name().to_string()).collect()
@@ -1202,7 +1267,6 @@ mod tests {
     #[test]
     fn test_run_resolves_title_from_imported_template_via_document_info() {
         use crate::config::project::ProjectConfig;
-        use std::sync::{Arc, Mutex};
 
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
@@ -1232,37 +1296,9 @@ mod tests {
             config_path: None,
         };
 
-        #[derive(Default)]
-        struct Captured(Mutex<Vec<(String, String)>>);
-
-        struct CapturingPlugin(Arc<Captured>);
-        impl FormatPlugin for CapturingPlugin {
-            fn name(&self) -> &'static str {
-                "html"
-            }
-            fn compile(&self, _ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
-                let mut guard = self.0.0.lock().unwrap();
-                for o in outputs {
-                    guard.push((o.output_path.clone(), o.title.clone()));
-                }
-                Ok(())
-            }
-        }
-
-        let captured = Arc::new(Captured::default());
-        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
-
-        let mut build =
-            Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
-        build.run().expect("run build");
-
-        let outputs = captured.0.lock().unwrap();
-        let (_, title) = outputs
-            .iter()
-            .find(|(path, _)| path == "templated.html")
-            .expect("templated.html output present");
         assert_eq!(
-            title, "Templated Title From Book",
+            run_capturing(project).title("templated.html"),
+            "Templated Title From Book",
             "CastVertebra.title should be Typst's resolved DocumentInfo.title, \
              not the AST scan's filename-derived fallback"
         );
@@ -1437,41 +1473,10 @@ mod tests {
     /// project's `*bold text*` still renders as `<strong>`.
     #[test]
     fn test_run_default_marrow_epilogue_does_not_reach_pre_existing_vertebra() {
-        use std::sync::{Arc, Mutex};
-
         let dir = tempfile::tempdir().expect("tempdir");
         let project = build_show_rule_project(dir.path(), false);
 
-        #[derive(Default)]
-        struct Captured(Mutex<Vec<(String, String)>>);
-        struct CapturingPlugin(Arc<Captured>);
-        impl FormatPlugin for CapturingPlugin {
-            fn name(&self) -> &'static str {
-                "html"
-            }
-            fn compile(&self, _ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
-                let mut guard = self.0.0.lock().unwrap();
-                for o in outputs {
-                    guard.push((
-                        o.output_path.clone(),
-                        String::from_utf8_lossy(o.bytes.as_slice()).into_owned(),
-                    ));
-                }
-                Ok(())
-            }
-        }
-
-        let captured = Arc::new(Captured::default());
-        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
-        let mut build =
-            Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
-        build.run().expect("run build");
-
-        let outputs = captured.0.lock().unwrap();
-        let (_, html) = outputs
-            .iter()
-            .find(|(path, _)| path == "index.html")
-            .expect("index.html output present");
+        let html = run_capturing(project).html("index.html");
         assert!(
             html.contains("bold text"),
             "epilogue marrow must not reach a pre-existing vertebra, got:\n{html}"
@@ -1483,41 +1488,10 @@ mod tests {
     /// vertebra — the capability this bead adds.
     #[test]
     fn test_run_marrow_prologue_reaches_pre_existing_vertebra() {
-        use std::sync::{Arc, Mutex};
-
         let dir = tempfile::tempdir().expect("tempdir");
         let project = build_show_rule_project(dir.path(), true);
 
-        #[derive(Default)]
-        struct Captured(Mutex<Vec<(String, String)>>);
-        struct CapturingPlugin(Arc<Captured>);
-        impl FormatPlugin for CapturingPlugin {
-            fn name(&self) -> &'static str {
-                "html"
-            }
-            fn compile(&self, _ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
-                let mut guard = self.0.0.lock().unwrap();
-                for o in outputs {
-                    guard.push((
-                        o.output_path.clone(),
-                        String::from_utf8_lossy(o.bytes.as_slice()).into_owned(),
-                    ));
-                }
-                Ok(())
-            }
-        }
-
-        let captured = Arc::new(Captured::default());
-        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
-        let mut build =
-            Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
-        build.run().expect("run build");
-
-        let outputs = captured.0.lock().unwrap();
-        let (_, html) = outputs
-            .iter()
-            .find(|(path, _)| path == "index.html")
-            .expect("index.html output present");
+        let html = run_capturing(project).html("index.html");
         assert!(
             html.contains("TOUCHED"),
             "marrow_prologue = true should let #show reach the pre-existing vertebra, got:\n{html}"
