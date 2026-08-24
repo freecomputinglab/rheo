@@ -25,14 +25,14 @@ impl ValidateConfig for RheoConfig {
         // extra keys, plus any nested `[<plugin>.spine]`).
         if let Some(spine) = &self.spine {
             spine
-                .validate()
+                .validate_as("[spine]")
                 .map_err(|e| RheoError::project_config(format!("[spine]: {}", e)))?;
         }
         for (name, section) in &self.plugin_sections {
             warn_on_retired_keys(&format!("[{}]", name), &section.extra);
             if let Some(spine) = &section.spine {
                 spine
-                    .validate()
+                    .validate_as(&format!("[{}.spine]", name))
                     .map_err(|e| RheoError::project_config(format!("[{}]: {}", name, e)))?;
             }
         }
@@ -43,7 +43,16 @@ impl ValidateConfig for RheoConfig {
 
 impl ValidateConfig for Spine {
     fn validate(&self) -> Result<()> {
-        warn_on_retired_keys("[spine]", &self.extra);
+        self.validate_as("[spine]")
+    }
+}
+
+impl Spine {
+    /// Validate this spine table, naming `table` (e.g. `"[spine]"`,
+    /// `"[pdf.spine]"`) in any retired-key warning — so a per-format table's
+    /// retired key does not send the reader to the global one.
+    pub fn validate_as(&self, table: &str) -> Result<()> {
+        warn_on_retired_keys(table, &self.extra);
 
         if self.include.is_some() && self.section.is_some() {
             return Err(RheoError::project_config(
@@ -168,6 +177,19 @@ mod tests {
     fn test_rheo_config_validates_plugin_sections() {
         let toml = format!(
             "version = \"{}\"\n[pdf.spine]\ntitle = \"Book\"\nvertebrae = [\"*.typ\"]\nmerge = true",
+            env!("CARGO_PKG_VERSION")
+        );
+        let raw: crate::config::RheoConfigRaw = toml::from_str(&toml).unwrap();
+        let config = RheoConfig::try_from(raw).unwrap();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_per_format_spine_reaches_the_retired_key_check() {
+        // The warning it emits names `[pdf.spine]`, not `[spine]`; only that it
+        // is reached without error is assertable here.
+        let toml = format!(
+            "version = \"{}\"\n[pdf.spine]\nmerge = true",
             env!("CARGO_PKG_VERSION")
         );
         let raw: crate::config::RheoConfigRaw = toml::from_str(&toml).unwrap();

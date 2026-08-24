@@ -55,17 +55,26 @@ pub const RETIRED_KEYS: &[RetiredKey] = &[
     },
 ];
 
-/// Warn once for each retired key (matching `table`) found in `extra`.
+/// Warn once for each retired key found in `extra`.
 ///
-/// Call once per authored table instance — once for the global `[spine]`,
-/// once for each `[<plugin>.spine]` — never once per build format, or a
-/// multi-format project would see the same key warned repeatedly.
-pub fn warn_on_retired_keys(table: &str, extra: &toml::Table) {
-    for retired in RETIRED_KEYS.iter().filter(|r| r.table == table) {
+/// `shown_table` is the table the key was actually authored in, and is what the
+/// warning prints; a per-format `[pdf.spine]` matches the `[spine]` entries in
+/// [`RETIRED_KEYS`], since one entry has to serve every spine table.
+///
+/// Call once per authored table instance — once for the global `[spine]`, once
+/// for each `[<plugin>.spine]` — never once per build format, or a multi-format
+/// project would see the same key warned repeatedly.
+pub fn warn_on_retired_keys(shown_table: &str, extra: &toml::Table) {
+    let declared_table = if shown_table.ends_with(".spine]") {
+        "[spine]"
+    } else {
+        shown_table
+    };
+    for retired in RETIRED_KEYS.iter().filter(|r| r.table == declared_table) {
         if extra.contains_key(retired.key) {
             warn!(
                 "`{}` in {} is retired and has no effect — {}",
-                retired.key, retired.table, retired.replacement
+                retired.key, shown_table, retired.replacement
             );
         }
     }
