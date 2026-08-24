@@ -295,28 +295,10 @@ impl Build {
         plugin_section: &PluginSection,
         content_dir: &Path,
     ) -> Result<CompiledSpine> {
-        // Effective spine config: each field on a per-format [plugin.spine]
-        // falls back to the global [spine] independently when unset — e.g.
-        // `[pdf.spine] title` alone still inherits the global `exclude`,
-        // rather than the per-format table's mere presence blanking every
-        // global spine key at once.
-        let plugin_spine = plugin_section.spine.as_ref();
-        let global_spine = self.project.config.spine.as_ref();
-        let exclude = plugin_spine
-            .and_then(|s| s.exclude.clone())
-            .or_else(|| global_spine.and_then(|s| s.exclude.clone()))
-            .unwrap_or_default();
-        let sections = plugin_spine
-            .and_then(|s| s.section.clone())
-            .or_else(|| global_spine.and_then(|s| s.section.clone()))
-            .unwrap_or_default();
-        let include = plugin_spine
-            .and_then(|s| s.include.clone())
-            .or_else(|| global_spine.and_then(|s| s.include.clone()))
-            .unwrap_or_default();
-        let title = plugin_spine
-            .and_then(|s| s.title.clone())
-            .or_else(|| global_spine.and_then(|s| s.title.clone()));
+        let spine = crate::config::Spine::merged_over(
+            plugin_section.spine.as_ref(),
+            self.project.config.spine.as_ref(),
+        );
 
         let layout = spine_layout_for(plugin.spine_layout_kind(), plugin, &self.project.name);
 
@@ -329,11 +311,11 @@ impl Build {
             }
             ProjectMode::Directory => SpineScan::run_with_marrow(
                 content_dir,
-                &exclude,
+                &spine.exclude,
                 self.project.config.marrow_file(),
             )?
-            .apply_sections(content_dir, &sections)?
-            .apply_include(content_dir, &include)?,
+            .apply_sections(content_dir, &spine.section)?
+            .apply_include(content_dir, &spine.include)?,
         };
 
         debug!(
@@ -393,7 +375,7 @@ impl Build {
         }
 
         let virtual_spine = VirtualSpine::build(scan, &self.project.root, layout)?
-            .with_title(title)
+            .with_title(spine.title)
             .with_marrow(marrow)
             .with_marrow_prologue(marrow_prologue);
         virtual_spine.check_output_collisions()?;

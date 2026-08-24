@@ -14,6 +14,15 @@ pub use manifest_version::ManifestVersion;
 pub use retired::{RETIRED_KEYS, RetiredKey};
 use validation::ValidateConfig;
 
+/// One format's resolved spine knobs: every field already merged over the
+/// global `[spine]` table. See [`Spine::merged_over`].
+pub struct MergedSpine {
+    pub exclude: Vec<String>,
+    pub section: Vec<SpineSection>,
+    pub include: Vec<String>,
+    pub title: Option<String>,
+}
+
 /// Spine configuration from `rheo.toml`: directory-scan knobs and title.
 ///
 /// All format plugins share this single config type.
@@ -201,6 +210,31 @@ pub struct RheoConfig {
     /// declares its own marrow's position by filename instead (`.marrow.typ`
     /// vs `.marrow-prologue.typ`); this key affects only the project's marrow.
     pub marrow_prologue: Option<bool>,
+}
+
+impl Spine {
+    /// Merge a per-format spine table over the global one, each field falling
+    /// back INDEPENDENTLY when unset — so `[pdf.spine] title` alone still
+    /// inherits the global `exclude`, rather than the per-format table's mere
+    /// presence blanking every global spine key at once.
+    pub fn merged_over(this: Option<&Spine>, global: Option<&Spine>) -> MergedSpine {
+        fn pick<T: Clone>(
+            this: Option<&Spine>,
+            global: Option<&Spine>,
+            field: impl Fn(&Spine) -> Option<&T>,
+        ) -> Option<T> {
+            this.and_then(&field)
+                .or_else(|| global.and_then(&field))
+                .cloned()
+        }
+
+        MergedSpine {
+            exclude: pick(this, global, |s| s.exclude.as_ref()).unwrap_or_default(),
+            section: pick(this, global, |s| s.section.as_ref()).unwrap_or_default(),
+            include: pick(this, global, |s| s.include.as_ref()).unwrap_or_default(),
+            title: pick(this, global, |s| s.title.as_ref()),
+        }
+    }
 }
 
 impl Default for RheoConfig {
@@ -483,6 +517,41 @@ mod tests {
         // Explicit true.
         let config = parse(&versioned_toml("[html]\nreset_footnotes = true\n"));
         assert!(config.plugin_section("html").reset_footnotes());
+    }
+
+    #[test]
+    fn test_merged_spine_falls_back_field_by_field() {
+        let global = Spine {
+            exclude: Some(vec!["drafts/**".to_string()]),
+            title: Some("Global".to_string()),
+            ..Default::default()
+        };
+        // A per-format table that sets only `title` must still inherit the
+        // global `exclude` — its mere presence must not blank it.
+        let per_format = Spine {
+            title: Some("Book".to_string()),
+            ..Default::default()
+        };
+
+        let merged = Spine::merged_over(Some(&per_format), Some(&global));
+        assert_eq!(merged.title.as_deref(), Some("Book"));
+        assert_eq!(merged.exclude, vec!["drafts/**".to_string()]);
+
+        // A field the per-format table DOES set wins outright.
+        let overriding = Spine {
+            exclude: Some(vec!["other/**".to_string()]),
+            ..Default::default()
+        };
+        let merged = Spine::merged_over(Some(&overriding), Some(&global));
+        assert_eq!(merged.exclude, vec!["other/**".to_string()]);
+        assert_eq!(merged.title.as_deref(), Some("Global"));
+
+        // Neither table present: empty lists and no title.
+        let merged = Spine::merged_over(None, None);
+        assert!(merged.exclude.is_empty());
+        assert!(merged.section.is_empty());
+        assert!(merged.include.is_empty());
+        assert_eq!(merged.title, None);
     }
 
     #[test]
