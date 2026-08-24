@@ -59,13 +59,10 @@
 // has no need to enumerate every vertebra's metadata.
 #let rheo-metadata-all() = sys.inputs.rheo-context.spine-flat.map(e => (handle: e.handle, path: e.path, ..rheo-metadata-impl(e.handle)))
 
-// Live title lookup for a cross-vertebra handle anchor: the owning vertebra's
-// title-override (see rheo-metadata-impl) if Rust flagged one, else its
-// current document.title via the metadata beacon, else `fallback` (no beacon
-// at all -- combined PDF layouts, which emit no beacons).
+// Live title lookup for a cross-vertebra handle anchor. rheo-metadata-impl
+// already drops a `none` title and already lets an override win, so the
+// fallback is just its absent-key default -- reached when there is no beacon at
+// all (combined PDF layouts emit none).
 #let rheo-handle-title(handle, fallback) = context {
-  let title-override = rheo-title-override(handle)
-  if title-override != none { return title-override }
-  let m = query(label("rheo-meta:" + handle))
-  if m.len() > 0 and m.first().value.title != none { m.first().value.title } else { fallback }
+  rheo-metadata-impl(handle).at("title", default: fallback)
 }
