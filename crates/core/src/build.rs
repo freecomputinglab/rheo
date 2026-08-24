@@ -140,7 +140,7 @@ impl Build {
 
         let resolved_build_dir = resolve_build_dir(&project, opts.build_dir)?;
         let output = OutputConfig::new(&project.root, resolved_build_dir);
-        let font_dirs = resolve_font_dirs(&project, &opts.font_dirs);
+        let font_dirs = resolve_font_dirs(&project, &opts.font_dirs)?;
 
         Ok(Self {
             project,
@@ -1035,7 +1035,7 @@ pub fn resolve_effective_content_dir(project: &ProjectConfig) -> PathBuf {
 }
 
 /// Resolve font directories with autoscan, config, and CLI precedence.
-fn resolve_font_dirs(project: &ProjectConfig, cli_font_dirs: &[PathBuf]) -> Vec<PathBuf> {
+fn resolve_font_dirs(project: &ProjectConfig, cli_font_dirs: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut dirs = Vec::new();
 
     if project.config.font_dirs.is_empty() {
@@ -1048,12 +1048,12 @@ fn resolve_font_dirs(project: &ProjectConfig, cli_font_dirs: &[PathBuf]) -> Vec<
         dirs.extend(project.config.resolve_font_dirs(&project.root));
     }
 
-    let cwd = std::env::current_dir().unwrap();
+    let cwd = std::env::current_dir().map_err(|e| RheoError::io(e, "getting current directory"))?;
     for dir in cli_font_dirs {
         dirs.push(resolve_path(&cwd, dir));
     }
 
-    dirs
+    Ok(dirs)
 }
 
 #[cfg(test)]
