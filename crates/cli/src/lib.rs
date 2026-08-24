@@ -83,94 +83,71 @@ fn add_format_flags(mut cmd: Command, plugins: &[Box<dyn FormatPlugin>]) -> Comm
     cmd
 }
 
+/// The positional path plus the config/build-dir flags both `compile` and
+/// `watch` declare first. Split from [`add_build_flags`] rather than merged with
+/// it so `watch`'s own `--open` keeps its place between the two groups, leaving
+/// `--help` order unchanged.
+fn add_common_flags(cmd: Command) -> Command {
+    cmd.arg(
+        Arg::new("path")
+            .required(true)
+            .index(1)
+            .help("Path to project directory or single .typ file"),
+    )
+    .arg(
+        Arg::new("config")
+            .long("config")
+            .value_name("PATH")
+            .help("Path to custom rheo.toml config file"),
+    )
+    .arg(
+        Arg::new("build-dir")
+            .long("build-dir")
+            .help("Build output directory (overrides rheo.toml if set)"),
+    )
+}
+
+/// The build flags both `compile` and `watch` declare last.
+fn add_build_flags(cmd: Command) -> Command {
+    cmd.arg(
+        Arg::new("font-dir")
+            .long("font-dir")
+            .value_name("DIR")
+            .action(ArgAction::Append)
+            .help("Additional font directory (can be repeated; appended to autoscan/config)"),
+    )
+    .arg(
+        Arg::new("emit-bundle-source")
+            .long("emit-bundle-source")
+            .action(ArgAction::SetTrue)
+            .help("Write each plugin's synthesized bundle source to <build_dir>/<plugin>/.rheo-bundle.typ (debug artifact, not an input)"),
+    )
+    .arg(
+        Arg::new("metadata-two-pass")
+            .long("metadata-two-pass")
+            .action(ArgAction::SetTrue)
+            .help("Recompile once more (only if needed) to resolve a #set document(title:) set inside a bounded code block for cross-vertebra metadata-of/@handle reads"),
+    )
+}
+
 fn build_compile_command(plugins: &[Box<dyn FormatPlugin>]) -> Command {
-    let cmd = Command::new("compile")
-        .about("Compile Typst documents to PDF, HTML, and/or EPUB")
-        .arg(
-            Arg::new("path")
-                .required(true)
-                .index(1)
-                .help("Path to project directory or single .typ file"),
-        )
-        .arg(
-            Arg::new("config")
-                .long("config")
-                .value_name("PATH")
-                .help("Path to custom rheo.toml config file"),
-        )
-        .arg(
-            Arg::new("build-dir")
-                .long("build-dir")
-                .help("Build output directory (overrides rheo.toml if set)"),
-        )
-        .arg(
-            Arg::new("font-dir")
-                .long("font-dir")
-                .value_name("DIR")
-                .action(ArgAction::Append)
-                .help("Additional font directory (can be repeated; appended to autoscan/config)"),
-        )
-        .arg(
-            Arg::new("emit-bundle-source")
-                .long("emit-bundle-source")
-                .action(ArgAction::SetTrue)
-                .help("Write each plugin's synthesized bundle source to <build_dir>/<plugin>/.rheo-bundle.typ (debug artifact, not an input)"),
-        )
-        .arg(
-            Arg::new("metadata-two-pass")
-                .long("metadata-two-pass")
-                .action(ArgAction::SetTrue)
-                .help("Recompile once more (only if needed) to resolve a #set document(title:) set inside a bounded code block for cross-vertebra metadata-of/@handle reads"),
-        );
+    let cmd = add_build_flags(add_common_flags(
+        Command::new("compile").about("Compile Typst documents to PDF, HTML, and/or EPUB"),
+    ));
     add_format_flags(cmd, plugins)
 }
 
 fn build_watch_command(plugins: &[Box<dyn FormatPlugin>]) -> Command {
-    let cmd = Command::new("watch")
-        .about("Watch Typst documents and recompile on changes")
-        .arg(
-            Arg::new("path")
-                .required(true)
-                .index(1)
-                .help("Path to project directory or single .typ file"),
-        )
-        .arg(
-            Arg::new("config")
-                .long("config")
-                .value_name("PATH")
-                .help("Path to custom rheo.toml config file"),
-        )
-        .arg(
-            Arg::new("build-dir")
-                .long("build-dir")
-                .help("Build output directory (overrides rheo.toml if set)"),
-        )
-        .arg(
-            Arg::new("open")
-                .long("open")
-                .action(ArgAction::SetTrue)
-                .help("Open output in appropriate viewer (HTML opens in browser with live reload)"),
-        )
-        .arg(
-            Arg::new("font-dir")
-                .long("font-dir")
-                .value_name("DIR")
-                .action(ArgAction::Append)
-                .help("Additional font directory (can be repeated; appended to autoscan/config)"),
-        )
-        .arg(
-            Arg::new("emit-bundle-source")
-                .long("emit-bundle-source")
-                .action(ArgAction::SetTrue)
-                .help("Write each plugin's synthesized bundle source to <build_dir>/<plugin>/.rheo-bundle.typ (debug artifact, not an input)"),
-        )
-        .arg(
-            Arg::new("metadata-two-pass")
-                .long("metadata-two-pass")
-                .action(ArgAction::SetTrue)
-                .help("Recompile once more (only if needed) to resolve a #set document(title:) set inside a bounded code block for cross-vertebra metadata-of/@handle reads"),
-        );
-    add_format_flags(cmd, plugins)
+    let cmd = add_common_flags(
+        Command::new("watch").about("Watch Typst documents and recompile on changes"),
+    )
+    .arg(
+        Arg::new("open")
+            .long("open")
+            .action(ArgAction::SetTrue)
+            .help("Open output in appropriate viewer (HTML opens in browser with live reload)"),
+    );
+    add_format_flags(add_build_flags(cmd), plugins)
 }
 
 fn build_clean_command() -> Command {
@@ -368,15 +345,7 @@ fn init_project(target_dir: &Path) -> Result<()> {
 ///
 /// The CLI owns project loading and arg mapping; all orchestration lives in
 /// [`rheo_core::Build`].
-fn prepare_build(
-    path: &Path,
-    config_path: Option<&Path>,
-    build_dir: Option<PathBuf>,
-    enabled_from_cli: Vec<String>,
-    cli_font_dirs: Vec<PathBuf>,
-    emit_bundle_source: bool,
-    metadata_two_pass: bool,
-) -> Result<Build> {
+fn prepare_build(path: &Path, config_path: Option<&Path>, opts: BuildOptions) -> Result<Build> {
     info!(path = %path.display(), "loading project");
     let project = ProjectConfig::from_path(path, config_path)?;
     let file_word = if project.typ_files.len() == 1 {
@@ -392,13 +361,6 @@ fn prepare_build(
         file_word
     );
 
-    let opts = BuildOptions {
-        formats: enabled_from_cli,
-        build_dir,
-        font_dirs: cli_font_dirs,
-        emit_bundle_source,
-        metadata_two_pass,
-    };
     Build::prepare(project, all_plugins(), opts)
 }
 
@@ -442,11 +404,13 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
     let mut build = prepare_build(
         &path,
         config_path.as_deref(),
-        build_dir.clone(),
-        enabled.clone(),
-        cli_font_dirs.clone(),
-        emit_bundle_source,
-        metadata_two_pass,
+        BuildOptions {
+            formats: enabled.clone(),
+            build_dir: build_dir.clone(),
+            font_dirs: cli_font_dirs.clone(),
+            emit_bundle_source,
+            metadata_two_pass,
+        },
     )?;
 
     // Initial compilation (best-effort; watch continues on failure)
@@ -527,11 +491,13 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
                     match prepare_build(
                         &path,
                         config_path.as_deref(),
-                        build_dir.clone(),
-                        enabled.clone(),
-                        cli_font_dirs.clone(),
-                        emit_bundle_source,
-                        metadata_two_pass,
+                        BuildOptions {
+                            formats: enabled.clone(),
+                            build_dir: build_dir.clone(),
+                            font_dirs: cli_font_dirs.clone(),
+                            emit_bundle_source,
+                            metadata_two_pass,
+                        },
                     ) {
                         Ok(new_build) => {
                             build = new_build;
@@ -577,11 +543,13 @@ fn run_compile(sub: &ArgMatches) -> Result<()> {
     let mut build = prepare_build(
         &path,
         config.as_deref(),
-        build_dir,
-        enabled,
-        cli_font_dirs,
-        emit_bundle_source,
-        metadata_two_pass,
+        BuildOptions {
+            formats: enabled,
+            build_dir,
+            font_dirs: cli_font_dirs,
+            emit_bundle_source,
+            metadata_two_pass,
+        },
     )?;
     build.run().map(|_| ())
 }
