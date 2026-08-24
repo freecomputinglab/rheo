@@ -85,9 +85,46 @@
 // `state("rheo-handle")` is still published by `rheo-page-init` below: packages
 // read it (`@rheo/rookery`'s `urls.typ`, `outline.typ`, `idea.typ`), so it is
 // part of the contract even though this rule no longer needs it.
+// The URL scheme a marrow-minted page is addressed by. See the rule below.
+#let _RHEO_PAGE_SCHEME = "rheo-page:"
+
 #let rheo-link-rule(handle) = it => {
   let ext = sys.inputs.at("rheo-context", default: (:)).at("ext", default: none)
   if ext == none { return it }
+  // A MARROW-MINTED page, addressed by handle through a reserved URL scheme
+  // rather than by label.
+  //
+  // Typst 0.15 cannot attach a COMPUTED label: `<name>` is syntax, and there is
+  // no anchor form taking `label(..)` as a value, so only rheo — which synthesizes
+  // bundle source text in Rust — can mint a labelled anchor. A package minting its
+  // own pages from a marrow therefore cannot make `#link(label(..))` to them work
+  // at all: the label does not exist, and Typst raises "label `<x>` does not exist
+  // in the document" before any show rule runs. A string dest is the only channel
+  // such a package has.
+  //
+  // Rewriting it HERE, in the per-#document rule, is what makes it correct on every
+  // page the link lands on — including pages it was never written on. A `#context`
+  // in the linking content cannot do this. MEASURED: a `context` reading
+  // `state("rheo-handle")` inside a note body that is later replayed resolves ONCE,
+  // and every copy carries that single answer — which is exactly `@rheo/rookery`'s
+  // 72-dead-link bug, where one author link came out `../ideas/x.html` on four
+  // pages at two different depths. A show rule installed by the enclosing
+  // #document applies afresh at each realization instead, so one stored body comes
+  // out right at depth 0, at depth 1, and on a minted page. Verified with a single
+  // note transcluded onto three pages.
+  //
+  // NO MEMBERSHIP TEST, deliberately. The set of minted handles is not knowable
+  // statically here — marrow runs after every #document is emitted, so a spine
+  // vertebra's rule cannot close over it — and querying for it would put back the
+  // `#context` this rule exists in order not to have. The scheme IS the assertion.
+  // The tradeoff: a link to a page nothing mints yields a dead href silently rather
+  // than the "label does not exist" error the label form would have given.
+  if type(it.dest) == str and it.dest.starts-with(_RHEO_PAGE_SCHEME) {
+    let target = it.dest.slice(_RHEO_PAGE_SCHEME.len())
+    let depth = handle.split(":").len() - 1
+    let prefix = if depth == 0 { "./" } else { range(depth).map(x => "../").join() }
+    return link(prefix + target.replace(":", "/") + "." + ext, it.body)
+  }
   if type(it.dest) != label { return it }
   let target-handle = repr(it.dest).slice(1, -1)
   // The `<handle.typ>` escape alias resolves to the same vertebra output as the

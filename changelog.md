@@ -127,6 +127,30 @@ out of source text before compilation. Consequences for authors:
 See `docs/limitations.md` for the full account, including which values come back as Typst
 content rather than strings.
 
+## A marrow-minted page can be linked to by handle [landed]
+
+A package that mints its own pages from a `.marrow.typ` could not be linked to by handle at
+all. Typst attaches labels syntactically, so a computed `<ideas:my-note>` does not exist and
+`#link(label("ideas:" + slug))` fails with *label `<ideas:my-note>` does not exist in the
+document* before any show rule runs — only rheo, which synthesizes bundle source in Rust, can
+mint a labelled anchor. Packages worked around it by computing a depth-relative href
+themselves, which cannot be right in content that is replayed onto more than one page.
+
+The per-`#document` link rule now also rewrites a link whose dest is the reserved string
+`rheo-page:<handle>`, applying the same depth arithmetic it applies to a handle label
+(`rheo-link-rule`, `crates/core/src/typ/rheo.typ`). Because the rule belongs to the enclosing
+`#document`, it resolves afresh wherever the content is realized — so one stored body linking
+to a minted page comes out correct on a root page, on a nested page, and on a minted page,
+which no `#context` inside that body can achieve. `@rheo/rookery` 0.4.1 uses this, and the 72
+dead author links it was shipping are gone.
+
+There is no membership check: marrow runs after every `#document` is emitted, so a vertebra's
+rule cannot close over the set of minted handles, and querying for it would reintroduce the
+`#context` the rule exists without. The scheme is the assertion, and a `rheo-page:` link to a
+page nothing mints goes dead silently rather than erroring. **A package using it must set
+`[tool.rheo] min_version = "0.6.0"`** — an older rheo passes the dest through and the page
+ships a literal `href="rheo-page:…"`.
+
 ## A vertebra handle now always wins a label collision [landed]
 
 The `#show link:` rule that rewrites `#link(<handle>)` into a depth-relative href used to be
