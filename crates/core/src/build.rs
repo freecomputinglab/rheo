@@ -610,14 +610,8 @@ impl Build {
 
             if path_str.ends_with(".html") {
                 let html = String::from_utf8_lossy(&bytes);
-                // Depth-relative asset refs so nested pages resolve them.
-                let prefix = crate::util::html::depth_prefix(&path_str);
-                let css_refs: Vec<String> =
-                    css_paths.iter().map(|s| format!("{prefix}{s}")).collect();
-                let js_refs: Vec<String> =
-                    js_paths.iter().map(|s| format!("{prefix}{s}")).collect();
-                let css: Vec<&str> = css_refs.iter().map(|s| s.as_str()).collect();
-                let js: Vec<&str> = js_refs.iter().map(|s| s.as_str()).collect();
+                let css = crate::util::html::depth_relative_refs(&css_paths, &path_str);
+                let js = crate::util::html::depth_relative_refs(&js_paths, &path_str);
                 let modified = crate::util::html::HtmlDom::apply_head_mutations(
                     &html,
                     &css,

@@ -278,8 +278,8 @@ impl HtmlDom {
     /// such a page returns `None`. Otherwise returns the rewritten HTML.
     pub fn apply_head_mutations(
         html: &str,
-        stylesheets: &[&str],
-        scripts: &[&str],
+        stylesheets: &[String],
+        scripts: &[String],
         head_fragment: Option<&str>,
     ) -> Result<Option<String>> {
         let needs_links = !stylesheets.is_empty() || !scripts.is_empty();
@@ -289,7 +289,9 @@ impl HtmlDom {
 
         let mut dom = Self::parse(html)?;
         if needs_links {
-            dom.inject_head_links(&[], stylesheets, scripts)?;
+            let css: Vec<&str> = stylesheets.iter().map(String::as_str).collect();
+            let js: Vec<&str> = scripts.iter().map(String::as_str).collect();
+            dom.inject_head_links(&[], &css, &js)?;
         }
         dom.hoist_rheo_head()?;
         if let Some(fragment) = head_fragment {
@@ -638,6 +640,13 @@ fn write_html(output: &mut String, args: std::fmt::Arguments) -> Result<()> {
 /// root, so a page one directory deep must climb one level to reach them.
 pub fn depth_prefix(output_rel_path: &str) -> String {
     "../".repeat(output_rel_path.matches('/').count())
+}
+
+/// Rewrite build-root-relative asset refs as depth-relative to a page at
+/// `output_rel_path`, so a nested page resolves them. See [`depth_prefix`].
+pub fn depth_relative_refs(paths: &[String], output_rel_path: &str) -> Vec<String> {
+    let prefix = depth_prefix(output_rel_path);
+    paths.iter().map(|p| format!("{prefix}{p}")).collect()
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

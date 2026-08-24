@@ -135,13 +135,8 @@ impl FormatPlugin for HtmlPlugin {
 
         for output in outputs {
             let html_string = output.html_string()?;
-            // Assets are written at the output root; make each ref
-            // depth-relative so nested pages resolve them.
-            let prefix = rheo_core::util::html::depth_prefix(&output.output_path);
-            let css_refs: Vec<String> = css_paths.iter().map(|s| format!("{prefix}{s}")).collect();
-            let js_refs: Vec<String> = js_paths.iter().map(|s| format!("{prefix}{s}")).collect();
-            let css: Vec<&str> = css_refs.iter().map(|s| s.as_str()).collect();
-            let js: Vec<&str> = js_refs.iter().map(|s| s.as_str()).collect();
+            let css = rheo_core::util::html::depth_relative_refs(&css_paths, &output.output_path);
+            let js = rheo_core::util::html::depth_relative_refs(&js_paths, &output.output_path);
             let html_string = rheo_core::util::html::HtmlDom::apply_head_mutations(
                 &html_string,
                 &css,
