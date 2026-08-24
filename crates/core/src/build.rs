@@ -14,7 +14,7 @@ use crate::diagnostics::results::CompilationResults;
 use crate::plugins::{
     CastVertebra, DocumentMeta, FormatPlugin, PluginContext, TypstFormat, spine_layout_for,
 };
-use crate::reticulate::spine::{SpineScan, VirtualSpine};
+use crate::reticulate::spine::{FormatContext, SpineScan, VirtualSpine};
 use crate::transclude::{ContentTransclusion, ControlAssetKind, ControlAssets};
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
@@ -396,7 +396,12 @@ impl Build {
             moulded.main.clone(),
             moulded.sources.clone(),
             rheo_context.clone(),
-            virtual_spine.global_context(target, ext, reset_footnotes, &HashMap::new()),
+            virtual_spine.global_context(FormatContext {
+                target,
+                ext,
+                reset_footnotes,
+                title_overrides: &HashMap::new(),
+            }),
         )?;
 
         // Gated second pass (`--metadata-two-pass`): only when opted in, and
@@ -432,7 +437,12 @@ impl Build {
                     moulded.main,
                     moulded.sources,
                     rheo_context,
-                    virtual_spine.global_context(target, ext, reset_footnotes, &title_overrides),
+                    virtual_spine.global_context(FormatContext {
+                        target,
+                        ext,
+                        reset_footnotes,
+                        title_overrides: &title_overrides,
+                    }),
                 )?;
             }
         }

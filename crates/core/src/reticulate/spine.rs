@@ -709,6 +709,26 @@ impl SpineNode {
     }
 }
 
+/// The per-format values that ride on `sys.inputs.rheo-context` alongside the
+/// spine itself. See [`VirtualSpine::global_context`].
+pub struct FormatContext<'a> {
+    /// The rheo output-format name (`"html"`/`"epub"`). `None` for PDF, which
+    /// sets no rheo target and falls back to Typst's native `target()`.
+    pub target: Option<&'a str>,
+    /// The output file extension (`"html"`/`"xhtml"`) — what `typ/rheo.typ`
+    /// reads to build cross-vertebra link hrefs. Gated exactly like `target`.
+    pub ext: Option<&'a str>,
+    /// The resolved per-format `reset-footnotes` toggle. Unlike `target`/`ext`
+    /// this is always present; `typ/rheo.typ` ANDs it with the per-page `ext`
+    /// gate, so it only ever takes effect for HTML/EPUB.
+    pub reset_footnotes: bool,
+    /// Rust's own post-compile `DocumentInfo` title for a vertebra whose
+    /// beacon read it wrong — a title set inside a bounded code block, see
+    /// `docs/limitations.md`. Empty on the ordinary single pass; populated only
+    /// by the gated second pass of `Build::compile_bundle_once`.
+    pub title_overrides: &'a HashMap<String, String>,
+}
+
 /// A resolved spine ready for bundle compilation.
 ///
 /// Constructed via `VirtualSpine::build`; call `source()` to get the synthesized
@@ -1016,44 +1036,26 @@ impl VirtualSpine {
 
     /// The file-independent `rheo-context` data exposed via `sys.inputs`.
     ///
-    /// `sys.inputs` is global to the whole bundle compile, so it carries only the
-    /// parts of `rheo-context` identical across vertebrae — `spine`/`spine-flat`.
-    /// Packages read `sys.inputs.rheo-context` to detect a rheo build (and reach
-    /// the shared spine) without referencing the per-file `#let rheo-context`,
-    /// which additionally carries this file's `handle`.
+    /// `sys.inputs` is global to the whole bundle compile, so it carries only
+    /// the parts identical across vertebrae: `spine`/`spine-flat`, the
+    /// compiling rheo's own `rheo-version` (a package reads it to enforce a
+    /// minimum rheo, treating its absence as "older than the release that
+    /// added it"), and the per-format values in `format` — see
+    /// [`FormatContext`] for each. Packages read `sys.inputs.rheo-context` to
+    /// detect a rheo build without referencing the per-file `rheo-context()`,
+    /// which additionally carries that file's `handle`.
     ///
-    /// `target` and `ext` follow the same rule as [`Self::vertebra_injections`]:
-    /// each field is added when `Some`, omitted for PDF (`None`). `ext` is the
-    /// output file extension (e.g. `"html"`/`"xhtml"`) — the value `typ/rheo.typ`
-    /// reads to build cross-vertebra link hrefs.
-    ///
-    /// `reset_footnotes` is the resolved per-format `reset-footnotes` toggle:
-    /// unlike `target`/`ext` it is always present (a resolved bool, not an
-    /// `Option`), and `typ/rheo.typ` ANDs it with the per-page `ext` gate before
-    /// resetting the footnote counter (so it only ever takes effect for HTML/EPUB).
-    ///
-    /// `rheo-version` is the compiling rheo binary's own semver string, always
-    /// present; a package reads it to enforce a minimum rheo, and treats its
-    /// absence as "rheo older than the release that added it".
-    ///
-    /// `title-overrides` is an array of `(handle, title)` dicts, always
-    /// present (empty unless the caller is re-compiling as the gated second
-    /// pass of two-pass metadata resolution, `Build::compile_bundle_once`):
-    /// Rust's own post-compile `DocumentInfo` title for a vertebra whose
-    /// beacon's `#context` read can't see a title set inside a bounded code
-    /// block (see `docs/limitations.md`). An array, not a dict keyed by
-    /// handle, since a handle (e.g. `"chapters:intro"`) is not a valid Typst
-    /// identifier (mirrors `spine-flat`'s own handle-bearing-dict-in-an-array
-    /// shape, for the same reason). `typ/metadata.typ`'s `rheo-metadata-impl`
-    /// and `rheo-handle-title` consult it only when the beacon's own title
-    /// came back `none`, so it never overrides an already-correct beacon title.
-    pub fn global_context(
-        &self,
-        target: Option<&str>,
-        ext: Option<&str>,
-        reset_footnotes: bool,
-        title_overrides: &HashMap<String, String>,
-    ) -> TypstLiteral {
+    /// `title-overrides` is serialized as an array of `(handle, title)` dicts
+    /// rather than a dict keyed by handle, since a handle like
+    /// `"chapters:intro"` is not a valid Typst identifier — the same reason
+    /// `spine-flat` is an array of handle-bearing dicts.
+    pub fn global_context(&self, format: FormatContext<'_>) -> TypstLiteral {
+        let FormatContext {
+            target,
+            ext,
+            reset_footnotes,
+            title_overrides,
+        } = format;
         let mut fields = vec![
             ("spine".to_string(), self.spine_tree()),
             ("spine-flat".to_string(), self.spine_flat()),
@@ -1255,6 +1257,26 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    /// A per-page (HTML) format context with footnote reset on.
+    fn html_context(title_overrides: &HashMap<String, String>) -> FormatContext<'_> {
+        FormatContext {
+            target: Some("html"),
+            ext: Some("html"),
+            reset_footnotes: true,
+            title_overrides,
+        }
+    }
+
+    /// A combined-PDF format context: no target, no ext.
+    fn pdf_context(title_overrides: &HashMap<String, String>) -> FormatContext<'_> {
+        FormatContext {
+            target: None,
+            ext: None,
+            reset_footnotes: true,
+            title_overrides,
+        }
+    }
 
     fn create_test_dir_with_files(files: &[&str]) -> TempDir {
         let temp = TempDir::new().unwrap();
@@ -1562,7 +1584,7 @@ mod tests {
         // target/ext live on the global context (sys.inputs); the per-file
         // prelude only spreads them in, so they are asserted on global_context.
         let global_html = spine
-            .global_context(Some("html"), Some("html"), true, &HashMap::new())
+            .global_context(html_context(&HashMap::new()))
             .serialize();
         assert!(global_html.contains("target: \"html\""));
         assert!(global_html.contains("ext: \"html\""));
@@ -1571,7 +1593,12 @@ mod tests {
 
         // Epub keeps `target` "epub" but `ext` "xhtml"; a false toggle is threaded through.
         let global_epub = spine
-            .global_context(Some("epub"), Some("xhtml"), false, &HashMap::new())
+            .global_context(FormatContext {
+                target: Some("epub"),
+                ext: Some("xhtml"),
+                reset_footnotes: false,
+                title_overrides: &HashMap::new(),
+            })
             .serialize();
         assert!(global_epub.contains("target: \"epub\""));
         assert!(global_epub.contains("ext: \"xhtml\""));
@@ -1579,7 +1606,7 @@ mod tests {
 
         // None (PDF) -> no `target` or `ext` field, but reset-footnotes is still present.
         let global_without = spine
-            .global_context(None, None, true, &HashMap::new())
+            .global_context(pdf_context(&HashMap::new()))
             .serialize();
         assert!(!global_without.contains("target:"));
         assert!(!global_without.contains("ext:"));
@@ -1604,7 +1631,7 @@ mod tests {
         let expected = format!("rheo-version: \"{}\"", env!("CARGO_PKG_VERSION"));
         assert!(
             spine
-                .global_context(None, None, true, &HashMap::new())
+                .global_context(pdf_context(&HashMap::new()))
                 .serialize()
                 .contains(&expected)
         );
@@ -1627,16 +1654,14 @@ mod tests {
 
         // Empty by default (ordinary single pass): still a present, empty array.
         let empty = spine
-            .global_context(None, None, true, &HashMap::new())
+            .global_context(pdf_context(&HashMap::new()))
             .serialize();
         assert!(empty.contains("title-overrides: ()"));
 
         // A handle like "chapters:intro" is not a valid Typst identifier, so
         // overrides must be an array of dicts, not a dict keyed by handle.
         let overrides = HashMap::from([("chapters:intro".to_string(), "Real Title".to_string())]);
-        let with_override = spine
-            .global_context(None, None, true, &overrides)
-            .serialize();
+        let with_override = spine.global_context(pdf_context(&overrides)).serialize();
         assert!(
             with_override.contains(
                 "title-overrides: ((handle: \"chapters:intro\", title: \"Real Title\"),)"

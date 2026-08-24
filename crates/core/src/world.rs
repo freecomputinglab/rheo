@@ -938,8 +938,12 @@ mod tests {
         let spine = VirtualSpine::build(scan, root, layout).unwrap();
         let moulded = spine.mould();
         let rheo_context = spine.vertebra_injections();
-        let global_context =
-            spine.global_context(Some("html"), Some("html"), true, &HashMap::new());
+        let global_context = spine.global_context(crate::reticulate::spine::FormatContext {
+            target: Some("html"),
+            ext: Some("html"),
+            reset_footnotes: true,
+            title_overrides: &HashMap::new(),
+        });
 
         let world = RheoWorld::new_for_bundle(
             root,
@@ -1001,7 +1005,14 @@ mod tests {
                 moulded.main,
                 moulded.sources,
                 spine.vertebra_injections(),
-                Some(spine.global_context(Some("html"), Some("html"), true, title_overrides)),
+                Some(
+                    spine.global_context(crate::reticulate::spine::FormatContext {
+                        target: Some("html"),
+                        ext: Some("html"),
+                        reset_footnotes: true,
+                        title_overrides,
+                    }),
+                ),
                 Some("html"),
                 vec![],
             )
