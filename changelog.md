@@ -1,8 +1,7 @@
 # 0.6.0 — user-visible changes
 
-What differs for someone using rheo, once the current queue lands. Items marked
-**[landed]** are already on this branch; items marked with a bead id are still open. Bead
-ids are machine-local (`.beads/` is never committed) and are also recorded in `beads.md`.
+What differs for someone using rheo. Items marked **[landed]** are already on
+this branch.
 
 GitHub release notes are auto-generated from merged PR titles (`docs/new-releases.md`).
 This file is the prose version: what an upgrading project actually experiences.

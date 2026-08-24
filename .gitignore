@@ -4,12 +4,7 @@
 result
 result-*
 
-# Beads runtime/ephemeral files — everything is per-machine state except
-# open.jsonl, the shared export of open/in-progress issues. Order matters: a
-# negation cannot re-enter a directory excluded as a directory.
-!/.beads/
-/.beads/*
-!/.beads/open.jsonl
+/.beads/
 .abacus/
 
 # Claude
