@@ -42,6 +42,12 @@ pub struct BuildOptions {
     /// Additional font directories from `--font-dir`, appended on top of the
     /// autoscan/config-derived directories.
     pub font_dirs: Vec<PathBuf>,
+    /// `--input KEY=VALUE` pairs, seeded onto `sys.inputs` for the Typst compile.
+    /// Typst has no environment access, so this is the only way a build script can
+    /// parameterise a compile. Values are strings, always. A key equal to
+    /// `world::RESERVED_INPUT_KEY` (`rheo-context`) is rejected by the CLI and
+    /// ignored here.
+    pub inputs: HashMap<String, String>,
     /// `--emit-bundle-source`: write each plugin's synthesized bundle main to
     /// `<build_dir>/<plugin>/.rheo-bundle.typ`. A read-only debug artifact —
     /// never read back — for diagnosing marrow/spine authoring errors. Off by
@@ -67,6 +73,7 @@ pub struct Build {
     plugins: Vec<Box<dyn FormatPlugin>>,
     output: OutputConfig,
     font_dirs: Vec<PathBuf>,
+    inputs: HashMap<String, String>,
     emit_bundle_source: bool,
     metadata_two_pass: bool,
 }
@@ -148,6 +155,7 @@ impl Build {
             plugins,
             output,
             font_dirs,
+            inputs: opts.inputs,
             emit_bundle_source: opts.emit_bundle_source,
             metadata_two_pass: opts.metadata_two_pass,
         })
@@ -490,6 +498,7 @@ impl Build {
                 global_context: Some(global_context),
                 format_name: plugin.rheo_target().map(str::to_string),
                 font_dirs: self.font_dirs.clone(),
+                user_inputs: self.inputs.clone(),
                 ..Default::default()
             },
         )?;

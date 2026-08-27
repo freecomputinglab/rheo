@@ -12,7 +12,7 @@ use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
 use parking_lot::Mutex;
 use typst::diag::{FileError, FileResult};
-use typst::foundations::{Bytes, Datetime, Dict};
+use typst::foundations::{Bytes, Datetime, Dict, Value};
 use typst::syntax::{FileId, Lines, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
@@ -23,15 +23,42 @@ use typst_kit::packages::SystemPackages;
 use typst_library::Feature;
 use typst_library::foundations::Duration;
 
+/// The one `sys.inputs` key rheo owns. A project may not set it from
+/// `--input`/`[inputs]`: a forged spine or target would be indistinguishable
+/// from the real one to every package reading it.
+pub const RESERVED_INPUT_KEY: &str = "rheo-context";
+
 /// Build sys.inputs Dict for Typst compilation.
 ///
-/// The output format is surfaced only via `rheo-context.target` (read by the
-/// injected `target()` polyfill and the `rheo.typ` helpers); there is no
-/// separate `rheo-target` key.
-fn build_inputs(rheo_context: Option<&TypstLiteral>) -> Dict {
+/// Two sources. `rheo-context` is rheo's own, carrying the spine and the output
+/// format (which is surfaced ONLY via `rheo-context.target`, read by the
+/// injected `target()` polyfill and the `rheo.typ` helpers — there is no
+/// separate `rheo-target` key). `user_inputs` is whatever the project asked for
+/// via `rheo.toml [inputs]` and `--input KEY=VALUE`, which is how a build script
+/// parameterises a compile — Typst has no environment access, so `sys.inputs` is
+/// the only channel there is. `@rheo/rookery`'s `exclude-tags` is the first
+/// consumer.
+///
+/// EVERY USER VALUE IS A STRING, with no coercion. `typst compile --input` hands
+/// Typst a string, so rheo must too, or a package written against one spelling
+/// misbehaves under the other.
+///
+/// `rheo-context` is inserted LAST, so it cannot be displaced by a user key even
+/// if a caller of this library bypasses the CLI's own rejection of
+/// [`RESERVED_INPUT_KEY`].
+fn build_inputs(
+    rheo_context: Option<&TypstLiteral>,
+    user_inputs: &HashMap<String, String>,
+) -> Dict {
     let mut dict = Dict::new();
+    for (key, value) in user_inputs {
+        if key == RESERVED_INPUT_KEY {
+            continue;
+        }
+        dict.insert(key.as_str().into(), Value::Str(value.as_str().into()));
+    }
     if let Some(ctx) = rheo_context {
-        dict.insert("rheo-context".into(), ctx.to_value());
+        dict.insert(RESERVED_INPUT_KEY.into(), ctx.to_value());
     }
     dict
 }
@@ -56,6 +83,10 @@ pub struct WorldSpec {
     pub rheo_context: HashMap<String, VertebraInjection>,
     /// The file-independent context seeded onto `sys.inputs.rheo-context`.
     pub global_context: Option<TypstLiteral>,
+    /// Project-supplied `sys.inputs` keys, from `rheo.toml [inputs]` and
+    /// `--input KEY=VALUE`. Values are always strings. A key equal to
+    /// [`RESERVED_INPUT_KEY`] is ignored rather than honoured.
+    pub user_inputs: HashMap<String, String>,
     /// Extra font directories to scan.
     pub font_dirs: Vec<PathBuf>,
 }
@@ -101,7 +132,10 @@ impl RheoWorld {
     fn assemble(root: PathBuf, main: FileId, spec: WorldSpec) -> Self {
         let library = Library::builder()
             .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
-            .with_inputs(build_inputs(spec.global_context.as_ref()))
+            .with_inputs(build_inputs(
+                spec.global_context.as_ref(),
+                &spec.user_inputs,
+            ))
             .build();
 
         let (font_store, package_storage, rheo_packages) = Self::init_resources(&spec.font_dirs);
@@ -681,14 +715,56 @@ mod tests {
             ("spine".to_string(), TypstLiteral::Array(vec![])),
             ("target".to_string(), TypstLiteral::str("html")),
         ]);
-        let dict = build_inputs(Some(&ctx));
+        let dict = build_inputs(Some(&ctx), &HashMap::new());
         assert!(dict.contains("rheo-context"));
         // The deprecated top-level key is gone; format lives in rheo-context.target.
         assert!(!dict.contains("rheo-target"));
 
-        let empty = build_inputs(None);
+        let empty = build_inputs(None, &HashMap::new());
         assert!(!empty.contains("rheo-context"));
         assert!(!empty.contains("rheo-target"));
+    }
+
+    /// Project-supplied inputs reach `sys.inputs` as STRINGS, and cannot displace
+    /// the one key rheo owns however hard a caller tries. The second half is the
+    /// point of the test: `RESERVED_INPUT_KEY` is rejected by the CLI, and this
+    /// asserts the library refuses it too, so a caller bypassing the CLI cannot
+    /// hand every package a forged spine.
+    #[test]
+    fn build_inputs_carries_user_inputs_and_protects_rheo_context() {
+        let ctx = TypstLiteral::Dict(vec![("spine".to_string(), TypstLiteral::Array(vec![]))]);
+        let mut user = HashMap::new();
+        user.insert(
+            "rookery-exclude".to_string(),
+            "private,protected".to_string(),
+        );
+        user.insert("empty-is-fine".to_string(), String::new());
+
+        let dict = build_inputs(Some(&ctx), &user);
+        assert_eq!(
+            dict.at("rookery-exclude".into(), None).unwrap(),
+            Value::Str("private,protected".into()),
+        );
+        assert_eq!(
+            dict.at("empty-is-fine".into(), None).unwrap(),
+            Value::Str("".into())
+        );
+        assert!(dict.contains(RESERVED_INPUT_KEY));
+
+        // A user key named `rheo-context` is IGNORED, not honoured: the value under
+        // that key must still be rheo's own dict, never the user's string.
+        let mut hostile = HashMap::new();
+        hostile.insert(RESERVED_INPUT_KEY.to_string(), "forged".to_string());
+        let dict = build_inputs(Some(&ctx), &hostile);
+        assert_ne!(
+            dict.at(RESERVED_INPUT_KEY.into(), None).unwrap(),
+            Value::Str("forged".into()),
+        );
+
+        // With no rheo context at all it is simply absent — a user key cannot
+        // conjure one into being either.
+        let dict = build_inputs(None, &hostile);
+        assert!(!dict.contains(RESERVED_INPUT_KEY));
     }
 
     /// `#set document(date: auto)` stays `Smart::Auto` in the bundle's real
