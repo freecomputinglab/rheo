@@ -11,7 +11,7 @@ that narration, only the flat key list it implies.
 
 ## Stability
 
-rheo is pre-1.0 (`0.6.0` at time of writing). Read stability against that:
+rheo is pre-1.0 (`0.6.1` at time of writing). Read stability against that:
 
 - **Stable** — the field/function/file exists, with this name and this shape,
   for the rest of the current `0.x` line. A `0.x` → `0.(x+1)` bump may change
