@@ -140,7 +140,7 @@ This is #rheo-context().handle of #rheo-context().spine-flat.len() pages.
 })
 ```
 
-A package needing only the shared spine can read `sys.inputs.rheo-context.spine` directly and never call the per-file `rheo-context()`. (`rheo migrate` rewrites the old bare `rheo-context` binding to the `rheo-context()` call form.)
+A package needing only the shared spine can read `sys.inputs.rheo-context.spine` directly and never call the per-file `rheo-context()`. `rheo-context` is no longer the only key on `sys.inputs`: a project seeds its own via a `rheo.toml` `[inputs]` table and `--input KEY=VALUE` (values always strings, `rheo-context` itself reserved), which is how a build script parameterises a compile — see `docs/contract.md`'s "Project-supplied `sys.inputs`". (`rheo migrate` rewrites the old bare `rheo-context` binding to the `rheo-context()` call form.)
 
 **Output format.** rheo injects a `target()` polyfill into every file so Typst's own `target()` returns the output format (`"epub"`/`"html"`, or native `"paged"` for PDF), reading it from `sys.inputs.rheo-context.target`. Authored files should detect the format with `target()` (e.g. `target() == "epub"`); it is the only per-file API. The underlying `sys.inputs.rheo-context.target` is the same value for every vertebra but is not in scope where the polyfill isn't (it is global, so reachable via `sys.inputs`). The older `sys.inputs.rheo-target` key has been **removed**.
 

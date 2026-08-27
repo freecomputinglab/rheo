@@ -30,7 +30,8 @@ The spread half — everything except `handle` and `metadata-of` — is exactly
 `sys.inputs.rheo-context`, built once per build by
 `VirtualSpine::global_context` (`crates/core/src/reticulate/spine.rs:1046-1086`)
 and detectable directly (no per-file call needed) via `"rheo-context" in
-sys.inputs`.
+sys.inputs`. It is the one key rheo itself owns; a project may seed others
+alongside it — see "Project-supplied `sys.inputs`" below — but not this one.
 
 | Key | On | Type | Always present? | Stability | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -47,6 +48,43 @@ sys.inputs`.
 Everything in this table not marked Internal is safe to read straight off
 `sys.inputs.rheo-context` with no `#context` — only `metadata-of`/`rheo-metadata`
 need it (they call `query(...)`).
+
+## Project-supplied `sys.inputs`
+
+Besides `rheo-context`, a project may seed arbitrary keys onto `sys.inputs`, and a
+package may read them. Typst has no environment access of any kind, so this is the
+only channel by which a build script can parameterise a compile.
+
+READABLE WITH NO `#context`. This is the property that makes the channel useful
+for more than configuration: because `sys.inputs` is available from any scope, a
+package can branch on a key *structurally* — deciding whether to emit an element
+at all, rather than emitting it and hiding it. `@rheo/rookery`'s `exclude-tags`
+is the first consumer and exists for exactly that reason; a state-based knob could
+not have worked.
+
+Two sources, lowest precedence first:
+
+| Source | Where | Notes |
+| --- | --- | --- |
+| `rheo.toml` `[inputs]` | `RheoConfig::inputs` (`crates/core/src/config/mod.rs`) | One flat table of string-valued keys. The project's declared baseline, so the ordinary build needs no flags. Combined with `--config rheo.public.toml` this gives per-variant input sets. |
+| `--input KEY=VALUE` | `parse_inputs` (`crates/cli/src/lib.rs`), on `compile` and `watch` | Repeatable. Overrides the table PER KEY — keys the table sets and the flag does not survive untouched. Split on the FIRST `=` only, so a value may contain one. |
+
+Merged once, in `Build::prepare` (`crates/core/src/build.rs`), and threaded to
+Typst through `WorldSpec::user_inputs` → `build_inputs`
+(`crates/core/src/world.rs`).
+
+| Property | Value | Stability |
+| --- | --- | --- |
+| Value type | `str`, always. No coercion in either source: a non-string in `[inputs]` is a config error, and `--input` has nothing but strings to give. | Stable |
+| Key namespace | Flat and bundle-global, shared by every package in the project. | Stable |
+| Reserved keys | `rheo-context` only. Rejected by both sources, and ignored a third time in `build_inputs` so a library caller constructing `WorldSpec` directly cannot get past it either. | Stable |
+| Absent key | Not present in the dict — read with `sys.inputs.at("key", default: ..)`. There is no empty-string stand-in. | Stable |
+
+PREFIX A PACKAGE-READ KEY WITH THE PACKAGE NAME — `rookery-exclude`, not
+`exclude`. The namespace is flat and shared, so an unprefixed key is a collision
+waiting for the second package that wants the same word. rheo does not enforce
+this and will not: a project may name its own keys anything it likes, and a
+package cannot police what a project passes.
 
 ## Metadata beacon — `<rheo-meta:HANDLE>`
 
