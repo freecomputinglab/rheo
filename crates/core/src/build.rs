@@ -149,13 +149,26 @@ impl Build {
         let resolved_build_dir = resolve_build_dir(&project, opts.build_dir)?;
         let output = OutputConfig::new(&project.root, resolved_build_dir);
         let font_dirs = resolve_font_dirs(&project, &opts.font_dirs)?;
+        // THE ONE MERGE SITE for the two `sys.inputs` sources, so they cannot
+        // disagree about precedence. `rheo.toml [inputs]` is the BASE — a project
+        // declares its defaults there and the ordinary build needs no flags — and
+        // each `--input KEY=VALUE` OVERRIDES that key, because a flag is the more
+        // specific statement of intent. Keys the config sets and the CLI does not
+        // survive untouched, so overriding one input does not clear the rest.
+        //
+        // Both sources reject `world::RESERVED_INPUT_KEY` before reaching here
+        // (the CLI in `parse_inputs`, the config in its `TryFrom`), and
+        // `build_inputs` refuses it a third time — a library caller can construct
+        // `WorldSpec` directly, so the last line of defence lives there.
+        let mut inputs = project.config.inputs.clone();
+        inputs.extend(opts.inputs);
 
         Ok(Self {
             project,
             plugins,
             output,
             font_dirs,
-            inputs: opts.inputs,
+            inputs,
             emit_bundle_source: opts.emit_bundle_source,
             metadata_two_pass: opts.metadata_two_pass,
         })

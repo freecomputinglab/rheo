@@ -210,6 +210,24 @@ pub struct RheoConfig {
     /// declares its own marrow's position by filename instead (`.marrow.typ`
     /// vs `.marrow-prologue.typ`); this key affects only the project's marrow.
     pub marrow_prologue: Option<bool>,
+
+    /// `[inputs]` — project-declared `sys.inputs` keys for the Typst compile.
+    ///
+    /// Typst has no environment access, so `sys.inputs` is the only channel by
+    /// which a project can parameterise a compile. Declaring them here is the
+    /// baseline; `--input KEY=VALUE` overrides an individual key at the command
+    /// line. Combined with `--config rheo.public.toml` this gives per-variant
+    /// input sets with no flags at all. `@rheo/rookery`'s `exclude-tags` is the
+    /// first consumer.
+    ///
+    /// VALUES ARE STRINGS, always, and a non-string is a config ERROR rather than
+    /// a coercion: `typst compile --input` hands Typst a string, so a package
+    /// written against one spelling must not behave differently under the other.
+    /// TOML makes quoting cheap, so `foo = "3"` is no hardship.
+    ///
+    /// `rheo-context` is REJECTED here, as it is on the CLI — rheo owns that key,
+    /// and a project able to overwrite it could hand every package a forged spine.
+    pub inputs: HashMap<String, String>,
 }
 
 impl Spine {
@@ -250,6 +268,7 @@ impl Default for RheoConfig {
             spine: None,
             marrow: None,
             marrow_prologue: None,
+            inputs: HashMap::new(),
         }
     }
 }
@@ -280,6 +299,30 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             Some(value) => value.try_into()?,
             None => None,
         };
+        // PULLED OUT OF `extra` BEFORE the plugin-section loop below, exactly as
+        // `spine` is, and this is load-bearing rather than stylistic. That loop
+        // turns EVERY unknown table into a `PluginSection` keyed by its name — so
+        // without this line an `[inputs]` table does not error, does not warn, and
+        // becomes a phantom plugin section named `inputs` that nothing ever reads.
+        // Silently doing nothing is the worst available outcome, which is why the
+        // test below asserts `plugin_sections` does not contain the key.
+        //
+        // `try_into()` to `HashMap<String, String>` gives the string-only policy
+        // for free, with toml's own error naming the key and the expected type
+        // ("invalid type: integer, expected a string"), so there is no hand-rolled
+        // type check to keep in step with serde's.
+        let inputs: HashMap<String, String> = match raw.extra.remove("inputs") {
+            Some(value) => value.try_into()?,
+            None => HashMap::new(),
+        };
+        if inputs.contains_key(crate::world::RESERVED_INPUT_KEY) {
+            return Err(serde::de::Error::custom(format!(
+                "[inputs] may not set `{key}`: rheo owns that key, which carries \
+                 the spine and the output format that every package reads. Choose \
+                 another name, e.g. a package-prefixed one like `rookery-exclude`.",
+                key = crate::world::RESERVED_INPUT_KEY,
+            )));
+        }
         let mut plugin_sections = HashMap::new();
         for (key, value) in raw.extra {
             if let toml::Value::Table(_) = &value {
@@ -299,6 +342,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             spine,
             marrow: raw.marrow,
             marrow_prologue: raw.marrow_prologue,
+            inputs,
         })
     }
 }
@@ -948,6 +992,82 @@ mod tests {
         assert!(spine.extra.contains_key("vertebrae"));
         assert!(spine.exclude.is_none());
         assert!(spine.section.is_none());
+    }
+
+    /// `[inputs]` reaches `RheoConfig::inputs` and — the part this test exists
+    /// for — does NOT become a phantom plugin section.
+    ///
+    /// THE REGRESSION GUARD. `RheoConfigRaw` carries `#[serde(flatten)] extra`,
+    /// and the `TryFrom` loop turns every unknown TABLE into a `PluginSection`
+    /// keyed by its name. Before `extra.remove("inputs")`, an `[inputs]` table
+    /// therefore parsed cleanly, warned about nothing, and was read by nobody. A
+    /// feature that silently does nothing is exactly what a test has to pin.
+    #[test]
+    fn test_inputs_table_is_read_and_not_a_plugin_section() {
+        let config = parse(&versioned_toml(
+            r#"
+        [inputs]
+        rookery-exclude = "private,protected"
+        empty-is-fine = ""
+    "#,
+        ));
+        assert_eq!(
+            config.inputs.get("rookery-exclude").map(String::as_str),
+            Some("private,protected"),
+        );
+        assert_eq!(
+            config.inputs.get("empty-is-fine").map(String::as_str),
+            Some("")
+        );
+        assert!(
+            !config.plugin_sections.contains_key("inputs"),
+            "[inputs] was swallowed as a phantom plugin section",
+        );
+    }
+
+    /// No `[inputs]` table at all still loads, with an empty map — the common case.
+    #[test]
+    fn test_inputs_table_absent_is_empty() {
+        let config = parse(&versioned_toml("content_dir = \"content\"\n"));
+        assert!(config.inputs.is_empty());
+    }
+
+    /// A non-string value is a config ERROR, not a coercion. `typst compile
+    /// --input` hands Typst a string, so rheo must too, or a package written
+    /// against one spelling misbehaves under the other.
+    #[test]
+    fn test_inputs_rejects_non_string_value() {
+        let raw: RheoConfigRaw = toml::from_str(&versioned_toml(
+            r#"
+        [inputs]
+        foo = 3
+    "#,
+        ))
+        .expect("raw parse should succeed — the value is only checked on convert");
+        let err = RheoConfig::try_from(raw).expect_err("a non-string input must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("string"),
+            "error should name the expected type, got: {msg}",
+        );
+    }
+
+    /// `rheo-context` is rheo's own key. A project able to set it could hand every
+    /// package a forged spine, so both entry points reject it.
+    #[test]
+    fn test_inputs_rejects_reserved_key() {
+        let raw: RheoConfigRaw = toml::from_str(&versioned_toml(
+            r#"
+        [inputs]
+        rheo-context = "forged"
+    "#,
+        ))
+        .expect("raw parse should succeed");
+        let err = RheoConfig::try_from(raw).expect_err("the reserved key must fail");
+        assert!(
+            err.to_string().contains("rheo-context"),
+            "error should name the reserved key, got: {err}",
+        );
     }
 
     #[test]
