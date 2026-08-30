@@ -1,5 +1,5 @@
 use crate::config::PluginAssets;
-use crate::packages::RheoPackages;
+use crate::packages::PackageResolver;
 use crate::parser::ImportInfo;
 use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
 use crate::{Result, RheoError};
@@ -9,8 +9,6 @@ use std::str::FromStr;
 use tracing::warn;
 use typst::syntax::Source;
 use typst::syntax::package::PackageSpec;
-use typst_kit::downloader::SystemDownloader;
-use typst_kit::packages::SystemPackages;
 
 /// Build the standard Typst package search directories:
 /// `XDG_DATA_HOME/typst/packages`, `XDG_CACHE_HOME/typst/packages`,
@@ -68,6 +66,32 @@ pub fn find_package_in_dirs(spec: &str, search_dirs: &[PathBuf]) -> Option<Resol
         namespace: Some(namespace.to_string()),
         version: Some(version.to_string()),
     })
+}
+
+/// Locate one package: through `resolver` when its namespace is configured,
+/// else by probing `search_dirs`.
+fn resolve_package(
+    spec: &str,
+    resolver: &PackageResolver,
+    search_dirs: &[PathBuf],
+) -> Option<ResolvedPackage> {
+    let (namespace, name, version) = parse_package_spec(spec)?;
+    if !resolver.is_configured(namespace) {
+        return find_package_in_dirs(spec, search_dirs);
+    }
+    let parsed = PackageSpec::from_str(spec).ok()?;
+    match resolver.obtain(&parsed) {
+        Ok(root) => Some(ResolvedPackage {
+            name: name.to_string(),
+            source_root: root.path().to_path_buf(),
+            namespace: Some(namespace.to_string()),
+            version: Some(version.to_string()),
+        }),
+        Err(e) => {
+            warn!(spec = %spec, error = ?e, "could not resolve a configured namespace");
+            None
+        }
+    }
 }
 
 /// A resolved package's parsed `typst.toml`, the sole read of that file.
@@ -199,6 +223,26 @@ impl PackageIndex {
         Self::new(import_paths, &typst_package_search_dirs(None))
     }
 
+    /// Resolve `import_paths`, routing a configured namespace through
+    /// `resolver` and probing Typst's own directories for everything else.
+    ///
+    /// A repository-backed package lives at a sha-keyed path bearing no relation
+    /// to the `{namespace}/{name}/{version}` layout a directory probe looks for,
+    /// so probing alone finds nothing, the package contributes no assets, and
+    /// the build still succeeds — with an unstyled site as the only symptom.
+    pub fn resolved(import_paths: &[String], resolver: &PackageResolver) -> Self {
+        let search_dirs = typst_package_search_dirs(None);
+        let resolved = import_paths
+            .iter()
+            .filter_map(|spec| {
+                let pkg = resolve_package(spec, resolver, &search_dirs)?;
+                let manifest = PackageManifest::load(&pkg);
+                Some((spec.clone(), pkg, manifest))
+            })
+            .collect();
+        Self { resolved }
+    }
+
     /// Each package's `[tool.rheo.{format_name}]` asset block, in import order.
     pub fn manifest_assets(&self, format_name: &str) -> Vec<PackageAssets> {
         self.resolved
@@ -275,33 +319,36 @@ fn package_marrow_file(pkg: &ResolvedPackage, filename: &str) -> Option<String> 
     }
 }
 
-/// Ensure each `@preview/name:version` import is present in the local
-/// Typst package cache, downloading if necessary. Non-`@preview` namespaces
-/// are skipped — they are either local packages (already on disk) or not
-/// downloadable via the Typst registry. No-op for already-cached packages.
-/// Errors are logged and swallowed — pre-warm failure is not fatal; the
-/// downstream scan or compile will surface real problems.
+/// Ensure each import rheo knows how to fetch is present on disk, downloading
+/// or checking out if necessary. A namespace rheo cannot resolve is skipped —
+/// it is either a local package (already on disk) or not fetchable at all.
+/// No-op for anything already cached. Errors are logged and swallowed — pre-warm
+/// failure is not fatal; the downstream scan or compile will surface real
+/// problems.
 ///
 /// Call this before `detect_manifest_package_assets` so that scan can see
-/// packages Typst would otherwise only download during compile.
-pub fn prewarm_packages(import_paths: &[String]) {
+/// packages that would otherwise only be fetched during compile. Skipping a
+/// namespace here does NOT fail the build: it produces a build that succeeds
+/// and a site with no stylesheet, because asset detection runs before the
+/// compile-time fetch. That is why `resolver` is threaded in rather than
+/// rebuilt here — this function has to route exactly as `path_for_id` does.
+pub fn prewarm_packages(import_paths: &[String], resolver: &PackageResolver) {
     if import_paths.is_empty() {
         return;
     }
-    let user_agent = concat!("rheo/", env!("CARGO_PKG_VERSION"));
-    let preview_storage = SystemPackages::new(SystemDownloader::new(user_agent));
-    let rheo_storage = RheoPackages::new(SystemDownloader::new(user_agent));
     for spec_str in import_paths {
         let spec = match PackageSpec::from_str(spec_str) {
             Ok(s) => s,
             Err(_) => continue,
         };
-        let result = match spec.namespace.as_str() {
-            "preview" => preview_storage.obtain(&spec).map(|_| ()),
-            "rheo" => rheo_storage.obtain(&spec).map(|_| ()),
-            _ => continue,
-        };
-        if let Err(e) = result {
+        // A configured namespace is checked FIRST, mirroring `path_for_id`, so
+        // `[packages.rheo]` overrides the built-in `@rheo` in both places. A
+        // divergence between them is a package that compiles from one source and
+        // prewarms from another.
+        if !resolver.is_prewarmable(&spec.namespace) {
+            continue;
+        }
+        if let Err(e) = resolver.obtain(&spec) {
             warn!(
                 spec = %spec_str,
                 error = ?e,
@@ -654,24 +701,77 @@ css_stylesheet = "style.css"
         assert!(message.contains("98.0.0"));
     }
 
+    fn empty_resolver() -> PackageResolver {
+        PackageResolver::new(&std::collections::HashMap::new())
+    }
+
     #[test]
     fn prewarm_empty_is_noop() {
-        prewarm_packages(&[]);
+        prewarm_packages(&[], &empty_resolver());
     }
 
     #[test]
     fn prewarm_malformed_spec_does_not_panic() {
-        prewarm_packages(&["not-a-valid-spec".to_string()]);
+        prewarm_packages(&["not-a-valid-spec".to_string()], &empty_resolver());
     }
 
     #[test]
     fn prewarm_skips_non_preview_namespace() {
-        // Non-preview namespaces are not downloadable via the Typst registry;
-        // the filter must skip them without attempting a network call.
-        prewarm_packages(&[
-            "@local/foo:0.1.0".to_string(),
-            "@myns/bar:2.0.0".to_string(),
-        ]);
+        // Namespaces rheo cannot fetch are skipped without a network call.
+        prewarm_packages(
+            &[
+                "@local/foo:0.1.0".to_string(),
+                "@myns/bar:2.0.0".to_string(),
+            ],
+            &empty_resolver(),
+        );
+    }
+
+    /// The trap this whole path exists to avoid: a CONFIGURED namespace must not
+    /// be skipped by pre-warm. Skipping it does not fail the build — it ships a
+    /// site with no stylesheet, because asset detection runs before the
+    /// compile-time fetch.
+    #[test]
+    fn prewarm_does_not_skip_a_configured_namespace() {
+        use crate::config::{GitRef, NamespaceSource, RepoSource};
+
+        let mut sources = std::collections::HashMap::new();
+        sources.insert(
+            "rookery".to_string(),
+            NamespaceSource::Repo(RepoSource {
+                url: "https://example.invalid/rookery".to_string(),
+                git_ref: GitRef::Branch("main".to_string()),
+                subdir: String::new(),
+            }),
+        );
+        let resolver = PackageResolver::new(&sources);
+
+        assert!(
+            resolver.is_prewarmable("rookery"),
+            "a configured namespace must be warmed"
+        );
+        assert!(resolver.is_prewarmable("preview"));
+        assert!(resolver.is_prewarmable("rheo"));
+        assert!(
+            !resolver.is_prewarmable("local"),
+            "an unconfigured namespace is still skipped"
+        );
+    }
+
+    /// `[packages.rheo]` overrides the built-in `@rheo` rather than losing to
+    /// it — the ordering `path_for_id` and pre-warm must agree on.
+    #[test]
+    fn a_configured_rheo_namespace_overrides_the_built_in() {
+        use crate::config::{NamespaceSource, ReleasesSource};
+
+        let mut sources = std::collections::HashMap::new();
+        sources.insert(
+            "rheo".to_string(),
+            NamespaceSource::Releases(ReleasesSource::Base("https://example.invalid".to_string())),
+        );
+        let resolver = PackageResolver::new(&sources);
+        assert!(resolver.is_configured("rheo"));
+        assert!(resolver.is_prewarmable("rheo"));
     }
 
     /// An index over one package living at `<base>/testns/testpkg/0.1.0`.

@@ -8,7 +8,11 @@ use typst_kit::packages::FsPackages;
 use typst_library::diag::{PackageError, PackageResult};
 use typst_syntax::package::PackageSpec;
 
-use crate::config::ReleasesSource;
+use std::collections::HashMap;
+
+use typst_kit::packages::SystemPackages;
+
+use crate::config::{NamespaceSource, ReleasesSource};
 
 mod git;
 
@@ -16,6 +20,82 @@ pub use git::GitPackages;
 
 /// The download base `@rheo` uses when no `[packages.rheo]` table overrides it.
 const REGISTRY_URL: &str = "https://github.com/freecomputinglab/rheo-packages/releases/download";
+
+/// The user agent every package download identifies itself with.
+const USER_AGENT: &str = concat!("rheo/", env!("CARGO_PKG_VERSION"));
+
+/// Where one configured namespace is served from.
+enum Backend {
+    Repo(GitPackages),
+    Releases(RheoPackages),
+}
+
+/// Resolves a package spec to a directory on disk, routing by namespace.
+///
+/// Built once per build and shared, because the repository backends memoise
+/// their resolved sha — a resolver per file read would run `ls-remote` per file
+/// read.
+pub struct PackageResolver {
+    /// Namespaces with a `[packages.<ns>]` table. Consulted FIRST, so
+    /// `[packages.rheo]` overrides the built-in `@rheo` rather than losing to
+    /// it — that override is how a project tests a branch of rheo-packages.
+    configured: HashMap<String, Backend>,
+    rheo: RheoPackages,
+    universe: SystemPackages,
+}
+
+impl PackageResolver {
+    pub fn new(sources: &HashMap<String, NamespaceSource>) -> Self {
+        let configured = sources
+            .iter()
+            .map(|(namespace, source)| {
+                let backend = match source {
+                    NamespaceSource::Repo(repo) => {
+                        Backend::Repo(GitPackages::new(namespace, repo.clone()))
+                    }
+                    NamespaceSource::Releases(releases) => {
+                        Backend::Releases(RheoPackages::with_source(downloader(), releases.clone()))
+                    }
+                };
+                (namespace.clone(), backend)
+            })
+            .collect();
+
+        Self {
+            configured,
+            rheo: RheoPackages::new(downloader()),
+            universe: SystemPackages::new(downloader()),
+        }
+    }
+
+    pub fn obtain(&self, spec: &PackageSpec) -> PackageResult<FsRoot> {
+        match self.configured.get(spec.namespace.as_str()) {
+            Some(Backend::Repo(repo)) => repo.obtain(spec),
+            Some(Backend::Releases(releases)) => releases.obtain(spec),
+            None if spec.namespace == "rheo" => self.rheo.obtain(spec),
+            None => self.universe.obtain(spec),
+        }
+    }
+
+    /// Whether this namespace has a `[packages.<ns>]` table.
+    pub fn is_configured(&self, namespace: &str) -> bool {
+        self.configured.contains_key(namespace)
+    }
+
+    /// Whether rheo knows how to fetch this namespace ahead of the asset scan.
+    ///
+    /// A namespace rheo cannot fetch must stay skipped rather than attempting a
+    /// download, but a CONFIGURED one must not be skipped: pre-warming runs
+    /// before asset detection, so a package missing from disk at that moment
+    /// contributes no stylesheet and the build still succeeds.
+    pub fn is_prewarmable(&self, namespace: &str) -> bool {
+        self.is_configured(namespace) || matches!(namespace, "preview" | "rheo")
+    }
+}
+
+fn downloader() -> SystemDownloader {
+    SystemDownloader::new(USER_AGENT)
+}
 
 /// Downloads and caches packages served as release tarballs.
 ///

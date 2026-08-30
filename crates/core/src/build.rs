@@ -21,6 +21,7 @@ use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tracing::{debug, error, info};
 use typst::introspection::Introspector as _;
 use typst::model::Document as _;
@@ -265,6 +266,16 @@ impl Build {
     /// pre-warming has to happen before the manifest scan below, or a package
     /// Typst would only download at compile time is invisible to it.
     /// Whether any plugin in this build leaves package auto-detection on.
+    /// The package resolver for one build, built from `[packages]`.
+    ///
+    /// Built per build rather than cached on `Build`, so a `watch` session that
+    /// keeps one `Build` alive still re-resolves a branch as it advances.
+    fn package_resolver(&self) -> Arc<crate::packages::PackageResolver> {
+        Arc::new(crate::packages::PackageResolver::new(
+            &self.project.config.packages,
+        ))
+    }
+
     fn auto_detects_packages(&self) -> bool {
         let default_section = PluginSection::default();
         self.plugins.iter().any(|plugin| {
@@ -331,6 +342,7 @@ impl Build {
         plugin: &dyn FormatPlugin,
         plugin_section: &PluginSection,
         content_dir: &Path,
+        resolver: &Arc<crate::packages::PackageResolver>,
     ) -> Result<CompiledSpine> {
         let spine = crate::config::Spine::merged_over(
             plugin_section.spine.as_ref(),
@@ -438,6 +450,7 @@ impl Build {
                 reset_footnotes,
                 title_overrides: &HashMap::new(),
             }),
+            resolver,
         )?;
 
         // Gated second pass (`--metadata-two-pass`): only when opted in, and
@@ -479,6 +492,7 @@ impl Build {
                         reset_footnotes,
                         title_overrides: &title_overrides,
                     }),
+                    resolver,
                 )?;
             }
         }
@@ -501,6 +515,7 @@ impl Build {
         sources: HashMap<String, String>,
         rheo_context: HashMap<String, crate::reticulate::VertebraInjection>,
         global_context: crate::util::typst_literal::TypstLiteral,
+        resolver: &Arc<crate::packages::PackageResolver>,
     ) -> Result<CompiledBundlePass> {
         let world = RheoWorld::new_for_bundle(
             &self.project.root,
@@ -512,6 +527,7 @@ impl Build {
                 format_name: plugin.rheo_target().map(str::to_string),
                 font_dirs: self.font_dirs.clone(),
                 user_inputs: self.inputs.clone(),
+                packages: Some(Arc::clone(resolver)),
                 ..Default::default()
             },
         )?;
@@ -596,9 +612,11 @@ impl Build {
             .plugin_sections
             .get(html_plugin.name())
             .unwrap_or(&default_section);
+        let package_resolver = self.package_resolver();
         let packages = prewarm_and_resolve(
             &package_imports,
             plugin_section.auto_detect_packages_enabled(),
+            &package_resolver,
         )?;
 
         // Resolving copies CSS/JS to disk too, so the dev server can serve them
@@ -623,7 +641,12 @@ impl Build {
             files: virtual_fs,
             assets,
             ..
-        } = self.compile_spine(html_plugin.as_ref(), ctx.section, &content_dir)?;
+        } = self.compile_spine(
+            html_plugin.as_ref(),
+            ctx.section,
+            &content_dir,
+            &package_resolver,
+        )?;
 
         // Build a page-path -> HTML string map from the non-asset (compiled
         // document) entries of this same virtual_fs, for `<rheo-content>`
@@ -730,7 +753,12 @@ impl Build {
         // package (a directory probe plus a `typst.toml` parse) once — both
         // shared across every plugin in this build.
         let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
-        let packages = prewarm_and_resolve(&package_imports, self.auto_detects_packages())?;
+        let package_resolver = self.package_resolver();
+        let packages = prewarm_and_resolve(
+            &package_imports,
+            self.auto_detects_packages(),
+            &package_resolver,
+        )?;
 
         let content_dir = resolve_effective_content_dir(&self.project);
 
@@ -753,7 +781,12 @@ impl Build {
                 assets,
                 bundle_source,
                 meta,
-            } = self.compile_spine(plugin.as_ref(), plugin_section, &content_dir)?;
+            } = self.compile_spine(
+                plugin.as_ref(),
+                plugin_section,
+                &content_dir,
+                &package_resolver,
+            )?;
 
             // Read-only debug artifact — never read back as an input. Written
             // under the plugin's build-dir output, which the watcher already
@@ -996,11 +1029,15 @@ fn ensure_output_dir(dir: &Path, plugin_name: &str) -> Result<()> {
 /// Pre-warming must precede the index: the index is a directory probe, so a
 /// package Typst would only download at compile time is invisible to it — the
 /// build then silently emits none of that package's declared assets.
-fn prewarm_and_resolve(package_imports: &[String], auto_detect: bool) -> Result<PackageIndex> {
+fn prewarm_and_resolve(
+    package_imports: &[String],
+    auto_detect: bool,
+    resolver: &crate::packages::PackageResolver,
+) -> Result<PackageIndex> {
     if auto_detect {
-        crate::plugins::prewarm_packages(package_imports);
+        crate::plugins::prewarm_packages(package_imports, resolver);
     }
-    let packages = PackageIndex::system(package_imports);
+    let packages = PackageIndex::resolved(package_imports, resolver);
     packages.check_min_versions()?;
     Ok(packages)
 }
@@ -1092,7 +1129,7 @@ fn resolve_font_dirs(project: &ProjectConfig, cli_font_dirs: &[PathBuf]) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Mutex;
 
     /// What `Build::run` handed the plugin for each output: its path, its
     /// resolved title, and its compiled bytes as text. `CastVertebra` itself is

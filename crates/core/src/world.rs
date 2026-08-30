@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use crate::packages::RheoPackages;
+use crate::packages::PackageResolver;
 use crate::reticulate::VertebraInjection;
 use crate::util::constants::METADATA_MODULE_PATH;
 use crate::util::typst_literal::TypstLiteral;
@@ -17,9 +18,7 @@ use typst::syntax::{FileId, Lines, RootedPath, Source, VirtualPath, VirtualRoot}
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
-use typst_kit::downloader::SystemDownloader;
 use typst_kit::fonts::FontStore;
-use typst_kit::packages::SystemPackages;
 use typst_library::Feature;
 use typst_library::foundations::Duration;
 
@@ -89,6 +88,9 @@ pub struct WorldSpec {
     pub user_inputs: HashMap<String, String>,
     /// Extra font directories to scan.
     pub font_dirs: Vec<PathBuf>,
+    /// The per-build package resolver. `None` builds a default one, which routes
+    /// exactly as rheo did before namespaces were configurable.
+    pub packages: Option<Arc<PackageResolver>>,
 }
 
 /// A simple World implementation for rheo compilation.
@@ -98,8 +100,7 @@ pub struct RheoWorld {
     library: LazyHash<Library>,
     book: LazyHash<FontBook>,
     font_store: FontStore,
-    package_storage: SystemPackages,
-    rheo_packages: RheoPackages,
+    packages: Arc<PackageResolver>,
     slots: Mutex<HashMap<FileId, FileSlot>>,
     /// Output format name for polyfill injection.
     /// None = no polyfill.
@@ -138,7 +139,7 @@ impl RheoWorld {
             ))
             .build();
 
-        let (font_store, package_storage, rheo_packages) = Self::init_resources(&spec.font_dirs);
+        let font_store = Self::init_resources(&spec.font_dirs);
 
         Self {
             root,
@@ -146,8 +147,11 @@ impl RheoWorld {
             book: font_store.book().clone(),
             library: LazyHash::new(library),
             font_store,
-            package_storage,
-            rheo_packages,
+            // A caller that built one per build passes it in; otherwise a
+            // default resolver reproduces today's routing exactly.
+            packages: spec
+                .packages
+                .unwrap_or_else(|| Arc::new(PackageResolver::new(&HashMap::new()))),
             slots: Mutex::new(HashMap::new()),
             format_name: spec.format_name,
             plugin_library: spec.plugin_library,
@@ -203,7 +207,7 @@ impl RheoWorld {
         ))
     }
 
-    fn init_resources(font_dirs: &[PathBuf]) -> (FontStore, SystemPackages, RheoPackages) {
+    fn init_resources(font_dirs: &[PathBuf]) -> FontStore {
         if !font_dirs.is_empty() {
             tracing::info!(dirs = ?font_dirs, "loading fonts from {} additional directories", font_dirs.len());
         }
@@ -216,10 +220,7 @@ impl RheoWorld {
         for dir in font_dirs {
             font_store.extend(typst_kit::fonts::scan(dir));
         }
-        let user_agent = concat!("rheo/", env!("CARGO_PKG_VERSION"));
-        let package_storage = SystemPackages::new(SystemDownloader::new(user_agent));
-        let rheo_packages = RheoPackages::new(SystemDownloader::new(user_agent));
-        (font_store, package_storage, rheo_packages)
+        font_store
     }
 
     /// Reset the file cache for incremental compilation.
@@ -271,11 +272,7 @@ impl RheoWorld {
         }
 
         if let VirtualRoot::Package(spec) = id.root() {
-            let fs_root = if spec.namespace == "rheo" {
-                self.rheo_packages.obtain(spec).map_err(FileError::from)?
-            } else {
-                self.package_storage.obtain(spec).map_err(FileError::from)?
-            };
+            let fs_root = self.packages.obtain(spec).map_err(FileError::from)?;
             return fs_root.resolve(id.vpath());
         }
 
