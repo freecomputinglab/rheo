@@ -79,6 +79,25 @@ pub enum ReleasesSource {
     Template(String),
 }
 
+impl ReleasesSource {
+    /// The tarball URL for one package.
+    ///
+    /// A `Base` gets GitHub's asset path appended: the tag and the asset share
+    /// the `<name>-<version>` name, which is what
+    /// `.github/workflows/publish-packages.yml` produces. A `Template` is
+    /// substituted verbatim, since another forge shapes its URLs differently.
+    pub fn url_for(&self, name: &str, version: &str) -> String {
+        match self {
+            ReleasesSource::Base(base) => {
+                format!("{base}/{name}-{version}/{name}-{version}.tar.gz")
+            }
+            ReleasesSource::Template(template) => template
+                .replace("{name}", name)
+                .replace("{version}", version),
+        }
+    }
+}
+
 /// Where one namespace resolves from. Exactly one variant per namespace: moving
 /// a project between a release and a branch is an explicit edit, not a
 /// precedence rule.
