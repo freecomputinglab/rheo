@@ -6,11 +6,13 @@ use tracing::debug;
 
 pub mod manifest_version;
 pub mod output;
+pub mod packages;
 pub mod project;
 pub mod retired;
 pub mod validation;
 
 pub use manifest_version::ManifestVersion;
+pub use packages::{GitRef, NamespaceSource, ReleasesSource, RepoSource};
 pub use retired::{RETIRED_KEYS, RetiredKey};
 use validation::ValidateConfig;
 
@@ -228,6 +230,15 @@ pub struct RheoConfig {
     /// `rheo-context` is REJECTED here, as it is on the CLI — rheo owns that key,
     /// and a project able to overwrite it could hand every package a forged spine.
     pub inputs: HashMap<String, String>,
+
+    /// `[packages.<namespace>]` — where each declared package namespace resolves
+    /// from, keyed by namespace.
+    ///
+    /// Empty is the ordinary case and means today's behaviour exactly: `@rheo`
+    /// from its built-in releases host, everything else from Typst universe. An
+    /// entry for `rheo` overrides the built-in, which is how a project tests a
+    /// branch of rheo-packages.
+    pub packages: HashMap<String, NamespaceSource>,
 }
 
 impl Spine {
@@ -269,6 +280,7 @@ impl Default for RheoConfig {
             marrow: None,
             marrow_prologue: None,
             inputs: HashMap::new(),
+            packages: HashMap::new(),
         }
     }
 }
@@ -323,6 +335,13 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
                 key = crate::world::RESERVED_INPUT_KEY,
             )));
         }
+        // Pulled out before the plugin-section loop for the same reason `inputs`
+        // is: left in `extra` it becomes a plugin section named `packages` that
+        // nothing reads, and no namespace ever resolves.
+        let packages = match raw.extra.remove("packages") {
+            Some(value) => NamespaceSource::parse_table(value)?,
+            None => HashMap::new(),
+        };
         let mut plugin_sections = HashMap::new();
         for (key, value) in raw.extra {
             if let toml::Value::Table(_) = &value {
@@ -343,6 +362,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             marrow: raw.marrow,
             marrow_prologue: raw.marrow_prologue,
             inputs,
+            packages,
         })
     }
 }
