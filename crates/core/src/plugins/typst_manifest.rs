@@ -155,15 +155,34 @@ impl PackageManifest {
     /// package declares no source block the ordinary one still applies — that is
     /// the correct answer for a package with nothing to build.
     pub fn assets_for(&self, format_name: &str, source_mode: bool) -> Option<PackageAssets> {
-        if source_mode && let Some(block) = self.assets_block(format_name, true) {
-            debug!(
-                package = %self.pkg.name,
-                format = format_name,
-                "using the package's source-mode asset block",
-            );
-            return Some(block);
+        let base = self.assets_block(format_name, false);
+        if !source_mode {
+            return base;
         }
-        self.assets_block(format_name, false)
+        let Some(source) = self.assets_block(format_name, true) else {
+            return base;
+        };
+        debug!(
+            package = %self.pkg.name,
+            format = format_name,
+            "using the package's source-mode asset block",
+        );
+        let Some(mut merged) = base else {
+            return Some(source);
+        };
+        // KEY BY KEY, not a wholesale replacement. The source block names only
+        // what a ref changes — the scripts — while a package declares its
+        // stylesheet once, in the ordinary block. Replacing the whole block
+        // drops that stylesheet, and the symptom is a page with its JavaScript
+        // intact and no styling at all, which nothing reports as an error.
+        for (key, value) in source.assets.extra.iter() {
+            merged.assets.extra.insert(key.clone(), value.clone());
+        }
+        if !source.assets.copy.is_empty() {
+            merged.assets.copy = source.assets.copy.clone();
+        }
+        merged.js_module = source.js_module;
+        Some(merged)
     }
 
     /// Declared `js_scripts` paths that are not present under the package root.
@@ -802,6 +821,19 @@ css_stylesheet = "style.css"
                 .and_then(|v| v.as_array())
                 .map(Vec::len),
             Some(2),
+        );
+        // And it OVERRIDES key by key rather than replacing the block. A package
+        // declares its stylesheet once, in the ordinary block; a wholesale
+        // replacement drops it and ships a page with working JavaScript and no
+        // styling, which nothing reports as an error.
+        assert_eq!(
+            source
+                .assets
+                .extra
+                .get("css_stylesheet")
+                .and_then(|v| v.as_str()),
+            Some("a.css"),
+            "the ordinary block's stylesheet must survive source mode",
         );
     }
 
