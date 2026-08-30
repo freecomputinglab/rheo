@@ -10,6 +10,10 @@ use typst_syntax::package::PackageSpec;
 
 use crate::config::ReleasesSource;
 
+mod git;
+
+pub use git::GitPackages;
+
 /// The download base `@rheo` uses when no `[packages.rheo]` table overrides it.
 const REGISTRY_URL: &str = "https://github.com/freecomputinglab/rheo-packages/releases/download";
 
