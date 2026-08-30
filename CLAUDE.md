@@ -26,6 +26,7 @@ cargo run -- compile <path> --pdf|--html|--epub
 cargo run -- compile <file.typ>              # single file
 cargo run -- watch <project-path> --open     # dev server at localhost:3000
 cargo run -- clean <project-path>
+cargo run -- clean <path> --packages            # also drop cached repo checkouts for [packages] namespaces
 RUST_LOG=rheo=trace cargo run -- compile ... # debug logging
 
 # Tests

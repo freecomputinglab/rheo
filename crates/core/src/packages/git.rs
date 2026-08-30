@@ -112,6 +112,37 @@ impl GitPackages {
         Ok(sha)
     }
 
+    /// Every cached checkout of this namespace's repository, keyed by sha.
+    fn slug_dir(&self) -> Option<PathBuf> {
+        self.cache_root
+            .as_ref()
+            .map(|root| root.join("rheo/git").join(slug(&self.source.url)))
+    }
+
+    /// Delete every cached checkout of this namespace's repository, returning
+    /// how many were removed.
+    ///
+    /// EXPLICIT ONLY — never called from the build path. A checkout is
+    /// content-addressed and re-creatable, so losing one costs a re-clone, but a
+    /// build reading a checkout while it is deleted fails. Pruning on the build
+    /// path would have to guess which shas another build is holding open, and
+    /// mtime cannot answer that: a directory's mtime is set when it is cloned
+    /// and never updated by the reads that follow.
+    pub fn prune(&self) -> std::io::Result<usize> {
+        let Some(dir) = self.slug_dir() else {
+            return Ok(0);
+        };
+        if !dir.exists() {
+            return Ok(0);
+        }
+        let removed = std::fs::read_dir(&dir)?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().is_dir())
+            .count();
+        std::fs::remove_dir_all(&dir)?;
+        Ok(removed)
+    }
+
     /// The checkout for `sha`, cloning it if this is the first build to want it.
     fn checkout(&self, sha: &str) -> PackageResult<PathBuf> {
         let Some(root) = &self.cache_root else {
@@ -231,11 +262,6 @@ fn slug(url: &str) -> String {
     format!("{:016x}", hasher.finish())
 }
 
-// Nothing prunes old sha directories: a project tracking a long-lived branch
-// accumulates one checkout per commit it has built against. Deliberately left
-// alone here — retention has to tolerate a concurrent build reading a checkout,
-// and getting that wrong is worse than the disk cost.
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,6 +377,86 @@ mod tests {
         assert!(
             root.path().join("extra.typ").exists(),
             "the new commit's content should be served without any cache clearing",
+        );
+    }
+
+    /// Several commits of one branch leave one checkout each; a prune removes
+    /// them all and leaves the slug directory gone rather than half-populated.
+    #[test]
+    fn prune_removes_every_cached_checkout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        let cache = tmp.path().join("cache");
+        fixture_repo(&repo);
+
+        // Two builds against two commits of the same branch.
+        let mut shas = Vec::new();
+        for i in 0..2 {
+            if i > 0 {
+                std::fs::write(repo.join("core/0.1.0/extra.typ"), "// added").unwrap();
+                git_in(&repo, &["add", "-A"]);
+                git_in(&repo, &["commit", "--quiet", "-m", "next"]);
+            }
+            let packages = GitPackages::with_cache_root(
+                "rookery",
+                source(&repo, GitRef::Branch("main".into())),
+                Some(cache.clone()),
+            );
+            packages.obtain(&spec("core", "0.1.0")).expect("obtain");
+            shas.push(packages.sha.lock().clone().unwrap());
+        }
+        assert_ne!(shas[0], shas[1], "the branch advanced, so the keys differ");
+
+        let slug_dir = cache.join("rheo/git").join(slug(&repo.to_string_lossy()));
+        assert_eq!(
+            std::fs::read_dir(&slug_dir).unwrap().count(),
+            2,
+            "one checkout per commit built against",
+        );
+
+        let packages = GitPackages::with_cache_root(
+            "rookery",
+            source(&repo, GitRef::Branch("main".into())),
+            Some(cache.clone()),
+        );
+        assert_eq!(packages.prune().expect("prune"), 2);
+        assert!(!slug_dir.exists());
+
+        // Pruning again is a no-op rather than an error, so a repeated `clean`
+        // does not fail.
+        assert_eq!(packages.prune().expect("prune"), 0);
+    }
+
+    /// Pruning one namespace's repository must not touch another's.
+    #[test]
+    fn prune_leaves_another_repository_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = tmp.path().join("cache");
+        let mine = tmp.path().join("mine");
+        let theirs = tmp.path().join("theirs");
+        fixture_repo(&mine);
+        fixture_repo(&theirs);
+
+        for repo in [&mine, &theirs] {
+            let packages = GitPackages::with_cache_root(
+                "ns",
+                source(repo, GitRef::Branch("main".into())),
+                Some(cache.clone()),
+            );
+            packages.obtain(&spec("core", "0.1.0")).expect("obtain");
+        }
+
+        let packages = GitPackages::with_cache_root(
+            "ns",
+            source(&mine, GitRef::Branch("main".into())),
+            Some(cache.clone()),
+        );
+        packages.prune().expect("prune");
+
+        let theirs_dir = cache.join("rheo/git").join(slug(&theirs.to_string_lossy()));
+        assert!(
+            theirs_dir.exists(),
+            "another repository's cache was removed"
         );
     }
 

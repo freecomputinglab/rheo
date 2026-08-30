@@ -77,6 +77,24 @@ impl PackageResolver {
         }
     }
 
+    /// Delete every cached repository checkout backing this project's
+    /// namespaces, returning `(namespace, checkouts removed)` per namespace.
+    ///
+    /// Only the namespaces this project declares — another project's cache is
+    /// none of its business.
+    pub fn prune_checkouts(&self) -> Vec<(String, std::io::Result<usize>)> {
+        let mut pruned: Vec<(String, std::io::Result<usize>)> = self
+            .configured
+            .iter()
+            .filter_map(|(namespace, backend)| match backend {
+                Backend::Repo(repo) => Some((namespace.clone(), repo.prune())),
+                Backend::Releases(_) => None,
+            })
+            .collect();
+        pruned.sort_by(|a, b| a.0.cmp(&b.0));
+        pruned
+    }
+
     /// Whether this namespace has a `[packages.<ns>]` table.
     pub fn is_configured(&self, namespace: &str) -> bool {
         self.configured.contains_key(namespace)

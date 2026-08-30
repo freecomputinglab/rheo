@@ -229,6 +229,15 @@ fn build_clean_command() -> Command {
                 .long("build-dir")
                 .help("Build output directory to clean (overrides rheo.toml if set)"),
         )
+        .arg(
+            Arg::new("packages")
+                .long("packages")
+                .action(ArgAction::SetTrue)
+                .help(
+                    "Also delete cached repository checkouts for this project's \
+                     [packages] namespaces (do not run during a build)",
+                ),
+        )
 }
 
 fn build_init_command() -> Command {
@@ -630,6 +639,19 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
     info!(project = %project.name, "cleaning build artifacts");
     output_config.clean()?;
     info!(project = %project.name, "build artifacts removed");
+
+    // Opt-in, and never on the build path: a checkout is cheap to re-clone, but
+    // deleting one out from under a running build is not recoverable.
+    if sub.get_flag("packages") {
+        let resolver = rheo_core::packages::PackageResolver::new(&project.config.packages);
+        for (namespace, result) in resolver.prune_checkouts() {
+            match result {
+                Ok(0) => info!(namespace, "no cached checkouts to remove"),
+                Ok(n) => info!(namespace, removed = n, "removed cached checkouts"),
+                Err(e) => warn!(namespace, error = %e, "could not remove cached checkouts"),
+            }
+        }
+    }
     Ok(())
 }
 
