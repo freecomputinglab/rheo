@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/core", "crates/html", "crates/pdf", "crates/epub", "crates/cli"]
 
 [workspace.package]
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 authors = ["Lachlan Kermode <lachie@ohrg.org>"]
 description = "A typesetting and static site engine based on Typst"
@@ -13,10 +13,10 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Internal crates (for convenience in workspace)
-rheo-core = { path = "crates/core", version = "0.6.1" }
-rheo-html = { path = "crates/html", version = "0.6.1" }
-rheo-pdf = { path = "crates/pdf", version = "0.6.1" }
-rheo-epub = { path = "crates/epub", version = "0.6.1" }
+rheo-core = { path = "crates/core", version = "0.6.2" }
+rheo-html = { path = "crates/html", version = "0.6.2" }
+rheo-pdf = { path = "crates/pdf", version = "0.6.2" }
+rheo-epub = { path = "crates/epub", version = "0.6.2" }
 
 # Typst dependencies
 typst = "0.15.0"

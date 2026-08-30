@@ -1,3 +1,26 @@
+# 0.6.2 — user-visible changes
+
+## A package served from a repository ref contributes its marrow again
+
+0.6.1 added `[packages.<ns>]`, letting a project resolve a namespace from a
+repository ref. A package fetched that way lives at a path keyed by the resolved
+commit, and two places still located packages by probing Typst's
+`{namespace}/{name}/{version}` directory layout instead of asking the resolver —
+so they found nothing.
+
+One of them gathers the `.marrow.typ` a package ships. A package that mints
+pages from its marrow therefore minted none of them, on a build that succeeded
+and reported nothing: `@rookery/core` lost every per-idea page, and the only
+symptom was a smaller site.
+
+It was easy to miss locally, because a developer machine usually has the package
+symlinked into the Typst cache for exactly that namespace — which makes the
+probe succeed and hides the bug until the site is built somewhere clean, like a
+deploy runner.
+
+Projects consuming packages from a RELEASE were never affected: a release is
+unpacked into the Typst cache, where the probe finds it.
+
 # 0.6.0 — user-visible changes
 
 What differs for someone using rheo. Items marked **[landed]** are already on
