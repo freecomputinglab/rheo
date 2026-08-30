@@ -231,8 +231,10 @@ fn slug(url: &str) -> String {
     format!("{:016x}", hasher.finish())
 }
 
-// FOLLOW-UP: nothing prunes old sha directories, so a long-lived branch
-// accumulates one checkout per commit built against (`rheo-3su`).
+// Nothing prunes old sha directories: a project tracking a long-lived branch
+// accumulates one checkout per commit it has built against. Deliberately left
+// alone here — retention has to tolerate a concurrent build reading a checkout,
+// and getting that wrong is worse than the disk cost.
 
 #[cfg(test)]
 mod tests {

@@ -1574,8 +1574,7 @@ mod tests {
     }
 
     /// End-to-end: with `marrow_prologue = true`, the same `#show` rule is
-    /// spliced BEFORE every document, so it reaches the pre-existing
-    /// vertebra — the capability this bead adds.
+    /// spliced BEFORE every document, so it reaches the pre-existing vertebra.
     #[test]
     fn test_run_marrow_prologue_reaches_pre_existing_vertebra() {
         let dir = tempfile::tempdir().expect("tempdir");
