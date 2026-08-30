@@ -26,6 +26,7 @@ cargo run -- compile <path> --pdf|--html|--epub
 cargo run -- compile <file.typ>              # single file
 cargo run -- watch <project-path> --open     # dev server at localhost:3000
 cargo run -- clean <project-path>
+cargo run -- clean <path> --packages            # also drop cached repo checkouts for [packages] namespaces
 RUST_LOG=rheo=trace cargo run -- compile ... # debug logging
 
 # Tests
@@ -77,7 +78,26 @@ date = 2025-01-15T00:00:00Z
 
 [epub.spine]
 title = "My Book"
+
+# Where a package namespace resolves from. Optional and rarely needed: with no
+# [packages] table, @rheo resolves from its built-in releases host and every
+# other namespace goes to Typst universe.
+[packages.rookery]
+releases = "freecomputinglab/rookery"  # <owner>/<repo>, or a URL template
+                                       # carrying {name} and {version}
+
+[packages.rheo]                        # overrides the built-in @rheo
+repo = "https://github.com/freecomputinglab/rheo-packages"  # any URL git accepts
+branch = "feat-x"                      # or tag = "...", or rev = "<sha>"
+subdir = ""                            # optional path prefix inside the repo
 ```
+
+**`[packages.<namespace>]`** declares where one namespace comes from. Set exactly one of `repo` or `releases` — switching a project between a release and a branch is an explicit edit, not a precedence rule.
+
+- `releases` takes an `<owner>/<repo>` shorthand (detected by having no scheme), expanded to GitHub's download base, or a full URL template containing both `{name}` and `{version}` for any other forge. Assets are `<name>-<version>.tar.gz` under the tag `<name>-<version>`.
+- `repo` takes any URL the `git` binary accepts — https, ssh, or a local path. `branch` (default `main`), `tag` and `rev` select the ref; when more than one is set the precedence is `rev`, then `tag`, then `branch`, and the losing keys are warned about rather than silently dropped. `subdir` (default empty) is a path prefix inside the repository, so `@<ns>/<name>:<version>` lives at `<subdir>/<name>/<version>/`.
+
+The namespace key must be a Typst identifier, since it appears in every import spec as `@<namespace>/name:1.0.0`.
 
 Precedence: CLI flags > rheo.toml > built-in defaults. Without rheo.toml, title and spine are inferred from filename/directory.
 
@@ -140,7 +160,7 @@ This is #rheo-context().handle of #rheo-context().spine-flat.len() pages.
 })
 ```
 
-A package needing only the shared spine can read `sys.inputs.rheo-context.spine` directly and never call the per-file `rheo-context()`. (`rheo migrate` rewrites the old bare `rheo-context` binding to the `rheo-context()` call form.)
+A package needing only the shared spine can read `sys.inputs.rheo-context.spine` directly and never call the per-file `rheo-context()`. `rheo-context` is no longer the only key on `sys.inputs`: a project seeds its own via a `rheo.toml` `[inputs]` table and `--input KEY=VALUE` (values always strings, `rheo-context` itself reserved), which is how a build script parameterises a compile — see `docs/contract.md`'s "Project-supplied `sys.inputs`". (`rheo migrate` rewrites the old bare `rheo-context` binding to the `rheo-context()` call form.)
 
 **Output format.** rheo injects a `target()` polyfill into every file so Typst's own `target()` returns the output format (`"epub"`/`"html"`, or native `"paged"` for PDF), reading it from `sys.inputs.rheo-context.target`. Authored files should detect the format with `target()` (e.g. `target() == "epub"`); it is the only per-file API. The underlying `sys.inputs.rheo-context.target` is the same value for every vertebra but is not in scope where the polyfill isn't (it is global, so reachable via `sys.inputs`). The older `sys.inputs.rheo-target` key has been **removed**.
 

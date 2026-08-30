@@ -6,6 +6,7 @@ use rheo_core::config::manifest_version;
 use rheo_core::config::output::OutputConfig;
 use rheo_core::config::project::ProjectConfig;
 use rheo_core::{FormatPlugin, Result, RheoError};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
@@ -128,6 +129,64 @@ fn add_build_flags(cmd: Command) -> Command {
             .action(ArgAction::SetTrue)
             .help("Recompile once more (only if needed) to resolve a #set document(title:) set inside a bounded code block for cross-vertebra metadata-of/@handle reads"),
     )
+    // Declared HERE rather than on either subcommand, so `compile` and `watch`
+    // get it from one definition and cannot drift. Repeatable, like `--font-dir`
+    // just above.
+    .arg(
+        Arg::new("input")
+            .long("input")
+            .value_name("KEY=VALUE")
+            .action(ArgAction::Append)
+            .help("Set a sys.inputs key for the Typst compile (repeatable; values are always strings)"),
+    )
+}
+
+/// Parse repeated `--input KEY=VALUE` into a map.
+///
+/// Typst has no environment access, so `sys.inputs` is the only channel by which
+/// a build script can parameterise a compile. `@rheo/rookery`'s `exclude-tags` is
+/// the first consumer: `--input rookery-exclude=private` builds a subsection of a
+/// rookery without touching the project source.
+///
+/// SPLIT ON THE FIRST `=` ONLY, so a value may itself contain one
+/// (`--input a=x=y` sets `a` to `x=y`).
+///
+/// An argument with no `=` is an ERROR naming it, never silently ignored: a
+/// typo'd input reaching a package as an absent key is exactly the failure that
+/// takes an afternoon to find.
+///
+/// `rheo-context` is REJECTED. It is rheo's own key, carrying the spine and the
+/// output format, and a project able to overwrite it could hand every package a
+/// forged spine.
+fn parse_inputs(sub: &ArgMatches) -> Result<HashMap<String, String>> {
+    let mut map = HashMap::new();
+    for raw in sub.get_many::<String>("input").into_iter().flatten() {
+        let Some((key, value)) = raw.split_once('=') else {
+            return Err(RheoError::ProjectConfig {
+                message: format!(
+                    "--input expects KEY=VALUE, got `{raw}` (no `=`). \
+                     Example: --input rookery-exclude=private"
+                ),
+            });
+        };
+        if key.is_empty() {
+            return Err(RheoError::ProjectConfig {
+                message: format!("--input expects a non-empty key, got `{raw}`"),
+            });
+        }
+        if key == rheo_core::world::RESERVED_INPUT_KEY {
+            return Err(RheoError::ProjectConfig {
+                message: format!(
+                    "--input {key}=... is reserved: rheo owns the `{key}` key, which \
+                     carries the spine and the output format that every package reads. \
+                     Choose another name, e.g. a package-prefixed one like \
+                     `rookery-exclude`."
+                ),
+            });
+        }
+        map.insert(key.to_string(), value.to_string());
+    }
+    Ok(map)
 }
 
 fn build_compile_command(plugins: &[Box<dyn FormatPlugin>]) -> Command {
@@ -169,6 +228,15 @@ fn build_clean_command() -> Command {
             Arg::new("build-dir")
                 .long("build-dir")
                 .help("Build output directory to clean (overrides rheo.toml if set)"),
+        )
+        .arg(
+            Arg::new("packages")
+                .long("packages")
+                .action(ArgAction::SetTrue)
+                .help(
+                    "Also delete cached repository checkouts for this project's \
+                     [packages] namespaces (do not run during a build)",
+                ),
         )
 }
 
@@ -394,6 +462,7 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         .get_many::<String>("font-dir")
         .map(|vals| vals.map(PathBuf::from).collect())
         .unwrap_or_default();
+    let cli_inputs = parse_inputs(sub)?;
     let open = sub.get_flag("open");
     let emit_bundle_source = sub.get_flag("emit-bundle-source");
     let metadata_two_pass = sub.get_flag("metadata-two-pass");
@@ -408,6 +477,7 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
             formats: enabled.clone(),
             build_dir: build_dir.clone(),
             font_dirs: cli_font_dirs.clone(),
+            inputs: cli_inputs.clone(),
             emit_bundle_source,
             metadata_two_pass,
         },
@@ -495,6 +565,7 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
                             formats: enabled.clone(),
                             build_dir: build_dir.clone(),
                             font_dirs: cli_font_dirs.clone(),
+                            inputs: cli_inputs.clone(),
                             emit_bundle_source,
                             metadata_two_pass,
                         },
@@ -534,6 +605,7 @@ fn run_compile(sub: &ArgMatches) -> Result<()> {
         .get_many::<String>("font-dir")
         .map(|vals| vals.map(PathBuf::from).collect())
         .unwrap_or_default();
+    let cli_inputs = parse_inputs(sub)?;
     let emit_bundle_source = sub.get_flag("emit-bundle-source");
     let metadata_two_pass = sub.get_flag("metadata-two-pass");
 
@@ -547,6 +619,7 @@ fn run_compile(sub: &ArgMatches) -> Result<()> {
             formats: enabled,
             build_dir,
             font_dirs: cli_font_dirs,
+            inputs: cli_inputs,
             emit_bundle_source,
             metadata_two_pass,
         },
@@ -566,6 +639,19 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
     info!(project = %project.name, "cleaning build artifacts");
     output_config.clean()?;
     info!(project = %project.name, "build artifacts removed");
+
+    // Opt-in, and never on the build path: a checkout is cheap to re-clone, but
+    // deleting one out from under a running build is not recoverable.
+    if sub.get_flag("packages") {
+        let resolver = rheo_core::packages::PackageResolver::new(&project.config.packages);
+        for (namespace, result) in resolver.prune_checkouts() {
+            match result {
+                Ok(0) => info!(namespace, "no cached checkouts to remove"),
+                Ok(n) => info!(namespace, removed = n, "removed cached checkouts"),
+                Err(e) => warn!(namespace, error = %e, "could not remove cached checkouts"),
+            }
+        }
+    }
     Ok(())
 }
 

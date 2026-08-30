@@ -1,2 +1,11 @@
 version = "{{VERSION}}"
 content_dir = "content"
+
+# Project-declared `sys.inputs` keys, readable from any Typst scope as
+# `sys.inputs.at("key", default: ..)`. Typst has no environment access, so this
+# is how a build script parameterises a compile. Values must be strings.
+# `--input KEY=VALUE` overrides an individual key at the command line, which is
+# what makes a dev build differ from a published one without editing this file.
+#
+# [inputs]
+# rookery-exclude = "private"

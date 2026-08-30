@@ -124,8 +124,15 @@ impl FormatPlugin for HtmlPlugin {
             })
             .unwrap_or_default();
 
-        let js_paths: Vec<String> = js_assets
-            .map(|v| v.iter().map(|a| a.built_relative_path.clone()).collect())
+        let js_scripts: Vec<rheo_core::util::html::ScriptRef> = js_assets
+            .map(|v| {
+                v.iter()
+                    .map(|a| rheo_core::util::html::ScriptRef {
+                        src: a.built_relative_path.clone(),
+                        module: a.module,
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
 
         // A bundle-root `.rheo/head.html` control asset (see
@@ -136,7 +143,8 @@ impl FormatPlugin for HtmlPlugin {
         for output in outputs {
             let html_string = output.html_string()?;
             let css = rheo_core::util::html::depth_relative_refs(&css_paths, &output.output_path);
-            let js = rheo_core::util::html::depth_relative_refs(&js_paths, &output.output_path);
+            let js =
+                rheo_core::util::html::depth_relative_scripts(&js_scripts, &output.output_path);
             let html_string = rheo_core::util::html::HtmlDom::apply_head_mutations(
                 &html_string,
                 &css,

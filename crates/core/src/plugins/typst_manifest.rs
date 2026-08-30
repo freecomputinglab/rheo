@@ -1,16 +1,14 @@
 use crate::config::PluginAssets;
-use crate::packages::RheoPackages;
+use crate::packages::PackageResolver;
 use crate::parser::ImportInfo;
 use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
 use crate::{Result, RheoError};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use tracing::warn;
+use tracing::{debug, warn};
 use typst::syntax::Source;
 use typst::syntax::package::PackageSpec;
-use typst_kit::downloader::SystemDownloader;
-use typst_kit::packages::SystemPackages;
 
 /// Build the standard Typst package search directories:
 /// `XDG_DATA_HOME/typst/packages`, `XDG_CACHE_HOME/typst/packages`,
@@ -70,6 +68,45 @@ pub fn find_package_in_dirs(spec: &str, search_dirs: &[PathBuf]) -> Option<Resol
     })
 }
 
+/// A TOML value read as a list of strings, accepting a bare string as a
+/// one-element list — `js_scripts` has always allowed either spelling.
+fn toml_strings(value: &toml::Value) -> Vec<String> {
+    match value {
+        toml::Value::String(s) => vec![s.clone()],
+        toml::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Locate one package: through `resolver` when its namespace is configured,
+/// else by probing `search_dirs`.
+fn resolve_package(
+    spec: &str,
+    resolver: &PackageResolver,
+    search_dirs: &[PathBuf],
+) -> Option<ResolvedPackage> {
+    let (namespace, name, version) = parse_package_spec(spec)?;
+    if !resolver.is_configured(namespace) {
+        return find_package_in_dirs(spec, search_dirs);
+    }
+    let parsed = PackageSpec::from_str(spec).ok()?;
+    match resolver.obtain(&parsed) {
+        Ok(root) => Some(ResolvedPackage {
+            name: name.to_string(),
+            source_root: root.path().to_path_buf(),
+            namespace: Some(namespace.to_string()),
+            version: Some(version.to_string()),
+        }),
+        Err(e) => {
+            warn!(spec = %spec, error = ?e, "could not resolve a configured namespace");
+            None
+        }
+    }
+}
+
 /// A resolved package's parsed `typst.toml`, the sole read of that file.
 pub struct PackageManifest {
     pkg: ResolvedPackage,
@@ -107,15 +144,104 @@ impl PackageManifest {
 
     /// The `[tool.rheo.{format_name}]` block, if present and non-empty.
     pub fn package_assets(&self, format_name: &str) -> Option<PackageAssets> {
-        let section = self
-            .toml
-            .get("tool")?
-            .get("rheo")?
-            .get(format_name)?
-            .as_table()?;
+        self.assets_block(format_name, false)
+    }
+
+    /// The asset block for this package, preferring the source-mode block when
+    /// the package came from a repository ref.
+    ///
+    /// A ref carries no `dist/`, so the ordinary block's bundle is absent there;
+    /// `[tool.rheo.source.{format}]` names the unbundled sources instead. When a
+    /// package declares no source block the ordinary one still applies — that is
+    /// the correct answer for a package with nothing to build.
+    pub fn assets_for(&self, format_name: &str, source_mode: bool) -> Option<PackageAssets> {
+        let base = self.assets_block(format_name, false);
+        if !source_mode {
+            return base;
+        }
+        let Some(source) = self.assets_block(format_name, true) else {
+            return base;
+        };
+        debug!(
+            package = %self.pkg.name,
+            format = format_name,
+            "using the package's source-mode asset block",
+        );
+        let Some(mut merged) = base else {
+            return Some(source);
+        };
+        // KEY BY KEY, not a wholesale replacement. The source block names only
+        // what a ref changes — the scripts — while a package declares its
+        // stylesheet once, in the ordinary block. Replacing the whole block
+        // drops that stylesheet, and the symptom is a page with its JavaScript
+        // intact and no styling at all, which nothing reports as an error.
+        for (key, value) in source.assets.extra.iter() {
+            merged.assets.extra.insert(key.clone(), value.clone());
+        }
+        if !source.assets.copy.is_empty() {
+            merged.assets.copy = source.assets.copy.clone();
+        }
+        merged.js_module = source.js_module;
+        Some(merged)
+    }
+
+    /// Declared `js_scripts` paths that are not present under the package root.
+    ///
+    /// Scans every `[tool.rheo.<format>]` subtable, since which formats a
+    /// package declares is up to the package.
+    fn missing_declared_scripts(&self) -> Vec<String> {
+        let Some(rheo) = self.toml.get("tool").and_then(|t| t.get("rheo")) else {
+            return Vec::new();
+        };
+        let Some(table) = rheo.as_table() else {
+            return Vec::new();
+        };
+        let mut missing = Vec::new();
+        for (key, value) in table {
+            if key == "source" {
+                continue;
+            }
+            let Some(section) = value.as_table() else {
+                continue;
+            };
+            let Some(scripts) = section.get("js_scripts") else {
+                continue;
+            };
+            for path in toml_strings(scripts) {
+                if !self.pkg.source_root.join(&path).exists() {
+                    missing.push(path);
+                }
+            }
+        }
+        missing.sort();
+        missing.dedup();
+        missing
+    }
+
+    /// Whether this package declares a `[tool.rheo.source.*]` block at all.
+    fn has_source_block(&self) -> bool {
+        self.toml
+            .get("tool")
+            .and_then(|t| t.get("rheo"))
+            .and_then(|r| r.get("source"))
+            .and_then(|s| s.as_table())
+            .is_some_and(|t| !t.is_empty())
+    }
+
+    fn assets_block(&self, format_name: &str, source: bool) -> Option<PackageAssets> {
+        let rheo = self.toml.get("tool")?.get("rheo")?;
+        let section = if source {
+            rheo.get("source")?.get(format_name)?.as_table()?
+        } else {
+            rheo.get(format_name)?.as_table()?
+        };
         if section.is_empty() {
             return None;
         }
+        let js_module = section
+            .get("js_module")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let copy = section
             .get("copy")
             .and_then(|v| v.as_array())
@@ -139,6 +265,7 @@ impl PackageManifest {
                 extra,
             },
             source_root: self.pkg.source_root.clone(),
+            js_module,
         })
     }
 
@@ -174,10 +301,19 @@ pub fn manifest_package_assets(pkg: &ResolvedPackage, format_name: &str) -> Opti
 /// ships no manifest, or ships a malformed one is simply absent from the index
 /// rather than an error, since a broken manifest in someone else's package must
 /// never break a build.
+/// One import spec, resolved.
+struct IndexEntry {
+    /// Retained because [`PackageIndex::check_min_versions`] names it in errors.
+    spec: String,
+    pkg: ResolvedPackage,
+    manifest: Option<PackageManifest>,
+    /// Resolved from a repository ref, so any `dist/` build output is absent and
+    /// the source-mode asset block applies.
+    source_mode: bool,
+}
+
 pub struct PackageIndex {
-    /// `(import spec, package, its parsed manifest)`. The spec is retained
-    /// because [`Self::check_min_versions`] names it in the error.
-    resolved: Vec<(String, ResolvedPackage, Option<PackageManifest>)>,
+    resolved: Vec<IndexEntry>,
 }
 
 impl PackageIndex {
@@ -188,7 +324,12 @@ impl PackageIndex {
             .filter_map(|spec| {
                 let pkg = find_package_in_dirs(spec, search_dirs)?;
                 let manifest = PackageManifest::load(&pkg);
-                Some((spec.clone(), pkg, manifest))
+                Some(IndexEntry {
+                    spec: spec.clone(),
+                    pkg,
+                    manifest,
+                    source_mode: false,
+                })
             })
             .collect();
         Self { resolved }
@@ -199,12 +340,77 @@ impl PackageIndex {
         Self::new(import_paths, &typst_package_search_dirs(None))
     }
 
-    /// Each package's `[tool.rheo.{format_name}]` asset block, in import order.
+    /// Resolve `import_paths`, routing a configured namespace through
+    /// `resolver` and probing Typst's own directories for everything else.
+    ///
+    /// A repository-backed package lives at a sha-keyed path bearing no relation
+    /// to the `{namespace}/{name}/{version}` layout a directory probe looks for,
+    /// so probing alone finds nothing, the package contributes no assets, and
+    /// the build still succeeds — with an unstyled site as the only symptom.
+    pub fn resolved(import_paths: &[String], resolver: &PackageResolver) -> Self {
+        let search_dirs = typst_package_search_dirs(None);
+        let resolved = import_paths
+            .iter()
+            .filter_map(|spec| {
+                let pkg = resolve_package(spec, resolver, &search_dirs)?;
+                let manifest = PackageManifest::load(&pkg);
+                let source_mode = pkg
+                    .namespace
+                    .as_deref()
+                    .is_some_and(|ns| resolver.is_repo_backed(ns));
+                Some(IndexEntry {
+                    spec: spec.clone(),
+                    pkg,
+                    manifest,
+                    source_mode,
+                })
+            })
+            .collect();
+        Self { resolved }
+    }
+
+    /// Each package's asset block for this format, in import order — the
+    /// source-mode block for a package that came from a repository ref.
     pub fn manifest_assets(&self, format_name: &str) -> Vec<PackageAssets> {
         self.resolved
             .iter()
-            .filter_map(|(_, _, manifest)| manifest.as_ref()?.package_assets(format_name))
+            .filter_map(|entry| {
+                entry
+                    .manifest
+                    .as_ref()?
+                    .assets_for(format_name, entry.source_mode)
+            })
             .collect()
+    }
+
+    /// Reject a package that came from a ref, declares no source-mode block, and
+    /// whose declared scripts are the `dist/` output that no ref carries.
+    ///
+    /// Without this the failure is silent: the file simply is not there, so the
+    /// page loads with no behaviour and nothing says why.
+    pub fn check_source_availability(&self) -> Result<()> {
+        let mut lines: Vec<String> = Vec::new();
+        for entry in &self.resolved {
+            let Some(manifest) = &entry.manifest else {
+                continue;
+            };
+            if !entry.source_mode || manifest.has_source_block() {
+                continue;
+            }
+            for missing in manifest.missing_declared_scripts() {
+                lines.push(format!(
+                    "{spec} declares `js_scripts = \"{missing}\"`, which this ref does not \
+                     carry: the package is built, and a repository ref has no build output. \
+                     Add a `[tool.rheo.source.<format>]` block naming its `src/` scripts, or \
+                     consume the package from a release instead",
+                    spec = entry.spec,
+                ));
+            }
+        }
+        if lines.is_empty() {
+            return Ok(());
+        }
+        Err(crate::RheoError::project_config(lines.join("\n")))
     }
 
     /// Errors naming every package whose declared `[tool.rheo] min_version`
@@ -216,7 +422,8 @@ impl PackageIndex {
         let mut lines: Vec<String> = self
             .resolved
             .iter()
-            .filter_map(|(spec, _, manifest)| {
+            .filter_map(|entry| {
+                let (spec, manifest) = (&entry.spec, &entry.manifest);
                 let min = manifest.as_ref()?.min_version()?;
                 (min > current)
                     .then(|| format!("{spec} needs rheo >= {min}, but this is rheo {current}"))
@@ -242,7 +449,7 @@ impl PackageIndex {
     fn read_marrow(&self, filename: &str) -> Vec<String> {
         self.resolved
             .iter()
-            .filter_map(|(_, pkg, _)| package_marrow_file(pkg, filename))
+            .filter_map(|entry| package_marrow_file(&entry.pkg, filename))
             .collect()
     }
 }
@@ -275,33 +482,36 @@ fn package_marrow_file(pkg: &ResolvedPackage, filename: &str) -> Option<String> 
     }
 }
 
-/// Ensure each `@preview/name:version` import is present in the local
-/// Typst package cache, downloading if necessary. Non-`@preview` namespaces
-/// are skipped — they are either local packages (already on disk) or not
-/// downloadable via the Typst registry. No-op for already-cached packages.
-/// Errors are logged and swallowed — pre-warm failure is not fatal; the
-/// downstream scan or compile will surface real problems.
+/// Ensure each import rheo knows how to fetch is present on disk, downloading
+/// or checking out if necessary. A namespace rheo cannot resolve is skipped —
+/// it is either a local package (already on disk) or not fetchable at all.
+/// No-op for anything already cached. Errors are logged and swallowed — pre-warm
+/// failure is not fatal; the downstream scan or compile will surface real
+/// problems.
 ///
 /// Call this before `detect_manifest_package_assets` so that scan can see
-/// packages Typst would otherwise only download during compile.
-pub fn prewarm_packages(import_paths: &[String]) {
+/// packages that would otherwise only be fetched during compile. Skipping a
+/// namespace here does NOT fail the build: it produces a build that succeeds
+/// and a site with no stylesheet, because asset detection runs before the
+/// compile-time fetch. That is why `resolver` is threaded in rather than
+/// rebuilt here — this function has to route exactly as `path_for_id` does.
+pub fn prewarm_packages(import_paths: &[String], resolver: &PackageResolver) {
     if import_paths.is_empty() {
         return;
     }
-    let user_agent = concat!("rheo/", env!("CARGO_PKG_VERSION"));
-    let preview_storage = SystemPackages::new(SystemDownloader::new(user_agent));
-    let rheo_storage = RheoPackages::new(SystemDownloader::new(user_agent));
     for spec_str in import_paths {
         let spec = match PackageSpec::from_str(spec_str) {
             Ok(s) => s,
             Err(_) => continue,
         };
-        let result = match spec.namespace.as_str() {
-            "preview" => preview_storage.obtain(&spec).map(|_| ()),
-            "rheo" => rheo_storage.obtain(&spec).map(|_| ()),
-            _ => continue,
-        };
-        if let Err(e) = result {
+        // A configured namespace is checked FIRST, mirroring `path_for_id`, so
+        // `[packages.rheo]` overrides the built-in `@rheo` in both places. A
+        // divergence between them is a package that compiles from one source and
+        // prewarms from another.
+        if !resolver.is_prewarmable(&spec.namespace) {
+            continue;
+        }
+        if let Err(e) = resolver.obtain(&spec) {
             warn!(
                 spec = %spec_str,
                 error = ?e,
@@ -572,11 +782,15 @@ css_stylesheet = "style.css"
     fn min_version_alongside_format_subtable() {
         // The real trap: `[tool.rheo] min_version` coexisting with a sibling
         // `[tool.rheo.<format>]` asset subtable must not shadow either field.
+        // `[tool.rheo.source.<format>]` joins the same namespace and must not
+        // disturb it either.
         let tmp = tempfile::tempdir().unwrap();
         let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
         std::fs::write(
             pkg_dir.join("typst.toml"),
-            "[tool.rheo]\nmin_version = \"0.5.0\"\n\n[tool.rheo.html]\ncss_stylesheet = \"a.css\"\n",
+            "[tool.rheo]\nmin_version = \"0.5.0\"\n\n[tool.rheo.html]\ncss_stylesheet = \"a.css\"\n\
+             js_scripts = \"dist/lib.js\"\n\n[tool.rheo.source.html]\n\
+             js_scripts = [\"src/a.js\", \"src/b.js\"]\njs_module = true\n",
         )
         .unwrap();
         let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
@@ -586,6 +800,75 @@ css_stylesheet = "style.css"
             Some(semver::Version::parse("0.5.0").unwrap())
         );
         assert!(manifest.package_assets("html").is_some());
+        assert!(manifest.has_source_block());
+
+        // Release mode keeps the bundle and its classic tag.
+        let release = manifest.assets_for("html", false).unwrap();
+        assert!(!release.js_module);
+        assert_eq!(
+            release.assets.extra.get("js_scripts").unwrap().as_str(),
+            Some("dist/lib.js"),
+        );
+
+        // Source mode takes the unbundled list and asks for modules.
+        let source = manifest.assets_for("html", true).unwrap();
+        assert!(source.js_module);
+        assert_eq!(
+            source
+                .assets
+                .extra
+                .get("js_scripts")
+                .and_then(|v| v.as_array())
+                .map(Vec::len),
+            Some(2),
+        );
+        // And it OVERRIDES key by key rather than replacing the block. A package
+        // declares its stylesheet once, in the ordinary block; a wholesale
+        // replacement drops it and ships a page with working JavaScript and no
+        // styling, which nothing reports as an error.
+        assert_eq!(
+            source
+                .assets
+                .extra
+                .get("css_stylesheet")
+                .and_then(|v| v.as_str()),
+            Some("a.css"),
+            "the ordinary block's stylesheet must survive source mode",
+        );
+    }
+
+    /// A package with nothing to build declares no source block, and must still
+    /// get its ordinary block when served from a ref.
+    #[test]
+    fn source_mode_falls_back_to_the_ordinary_block() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(
+            pkg_dir.join("typst.toml"),
+            "[tool.rheo.html]\ncss_stylesheet = \"src/a.css\"\n",
+        )
+        .unwrap();
+        let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
+        let manifest = PackageManifest::load(&pkg).unwrap();
+        assert!(!manifest.has_source_block());
+        assert!(manifest.assets_for("html", true).is_some());
+        assert!(manifest.missing_declared_scripts().is_empty());
+    }
+
+    /// The scripts a ref cannot carry are named, so the failure is not a silent
+    /// absence of behaviour on the page.
+    #[test]
+    fn missing_declared_scripts_names_the_absent_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(
+            pkg_dir.join("typst.toml"),
+            "[tool.rheo.html]\njs_scripts = \"dist/lib.js\"\n",
+        )
+        .unwrap();
+        let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
+        let manifest = PackageManifest::load(&pkg).unwrap();
+        assert_eq!(manifest.missing_declared_scripts(), vec!["dist/lib.js"]);
     }
 
     fn write_min_version(dir: &std::path::Path, version: &str) {
@@ -654,24 +937,77 @@ css_stylesheet = "style.css"
         assert!(message.contains("98.0.0"));
     }
 
+    fn empty_resolver() -> PackageResolver {
+        PackageResolver::new(&std::collections::HashMap::new())
+    }
+
     #[test]
     fn prewarm_empty_is_noop() {
-        prewarm_packages(&[]);
+        prewarm_packages(&[], &empty_resolver());
     }
 
     #[test]
     fn prewarm_malformed_spec_does_not_panic() {
-        prewarm_packages(&["not-a-valid-spec".to_string()]);
+        prewarm_packages(&["not-a-valid-spec".to_string()], &empty_resolver());
     }
 
     #[test]
     fn prewarm_skips_non_preview_namespace() {
-        // Non-preview namespaces are not downloadable via the Typst registry;
-        // the filter must skip them without attempting a network call.
-        prewarm_packages(&[
-            "@local/foo:0.1.0".to_string(),
-            "@myns/bar:2.0.0".to_string(),
-        ]);
+        // Namespaces rheo cannot fetch are skipped without a network call.
+        prewarm_packages(
+            &[
+                "@local/foo:0.1.0".to_string(),
+                "@myns/bar:2.0.0".to_string(),
+            ],
+            &empty_resolver(),
+        );
+    }
+
+    /// The trap this whole path exists to avoid: a CONFIGURED namespace must not
+    /// be skipped by pre-warm. Skipping it does not fail the build — it ships a
+    /// site with no stylesheet, because asset detection runs before the
+    /// compile-time fetch.
+    #[test]
+    fn prewarm_does_not_skip_a_configured_namespace() {
+        use crate::config::{GitRef, NamespaceSource, RepoSource};
+
+        let mut sources = std::collections::HashMap::new();
+        sources.insert(
+            "rookery".to_string(),
+            NamespaceSource::Repo(RepoSource {
+                url: "https://example.invalid/rookery".to_string(),
+                git_ref: GitRef::Branch("main".to_string()),
+                subdir: String::new(),
+            }),
+        );
+        let resolver = PackageResolver::new(&sources);
+
+        assert!(
+            resolver.is_prewarmable("rookery"),
+            "a configured namespace must be warmed"
+        );
+        assert!(resolver.is_prewarmable("preview"));
+        assert!(resolver.is_prewarmable("rheo"));
+        assert!(
+            !resolver.is_prewarmable("local"),
+            "an unconfigured namespace is still skipped"
+        );
+    }
+
+    /// `[packages.rheo]` overrides the built-in `@rheo` rather than losing to
+    /// it — the ordering `path_for_id` and pre-warm must agree on.
+    #[test]
+    fn a_configured_rheo_namespace_overrides_the_built_in() {
+        use crate::config::{NamespaceSource, ReleasesSource};
+
+        let mut sources = std::collections::HashMap::new();
+        sources.insert(
+            "rheo".to_string(),
+            NamespaceSource::Releases(ReleasesSource::Base("https://example.invalid".to_string())),
+        );
+        let resolver = PackageResolver::new(&sources);
+        assert!(resolver.is_configured("rheo"));
+        assert!(resolver.is_prewarmable("rheo"));
     }
 
     /// An index over one package living at `<base>/testns/testpkg/0.1.0`.

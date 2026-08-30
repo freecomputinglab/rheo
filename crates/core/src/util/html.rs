@@ -234,7 +234,7 @@ impl HtmlDom {
         &mut self,
         fonts: &[&str],
         stylesheets: &[&str],
-        scripts: &[&str],
+        scripts: &[ScriptRef],
     ) -> Result<()> {
         let head = self
             .find_element("head")
@@ -279,7 +279,7 @@ impl HtmlDom {
     pub fn apply_head_mutations(
         html: &str,
         stylesheets: &[String],
-        scripts: &[String],
+        scripts: &[ScriptRef],
         head_fragment: Option<&str>,
     ) -> Result<Option<String>> {
         let needs_links = !stylesheets.is_empty() || !scripts.is_empty();
@@ -290,8 +290,7 @@ impl HtmlDom {
         let mut dom = Self::parse(html)?;
         if needs_links {
             let css: Vec<&str> = stylesheets.iter().map(String::as_str).collect();
-            let js: Vec<&str> = scripts.iter().map(String::as_str).collect();
-            dom.inject_head_links(&[], &css, &js)?;
+            dom.inject_head_links(&[], &css, scripts)?;
         }
         dom.hoist_rheo_head()?;
         if let Some(fragment) = head_fragment {
@@ -418,8 +417,16 @@ impl Element {
     }
 
     /// Create a `<script src="..."></script>` element.
-    pub fn create_script(src: &str) -> Self {
-        Self::create_element("script", &[("src", src), ("defer", "")])
+    ///
+    /// A module gets `type="module"` and NO `defer`: modules are deferred by
+    /// default and `defer` is ignored on them, so emitting both would only
+    /// mislead a reader of the output.
+    pub fn create_script(script: &ScriptRef) -> Self {
+        if script.module {
+            Self::create_element("script", &[("src", &script.src), ("type", "module")])
+        } else {
+            Self::create_element("script", &[("src", &script.src), ("defer", "")])
+        }
     }
 
     /// Prepend a child element to this element.
@@ -641,6 +648,29 @@ pub fn depth_relative_refs(paths: &[String], output_rel_path: &str) -> Vec<Strin
     paths.iter().map(|p| format!("{prefix}{p}")).collect()
 }
 
+/// A script to link from `<head>`, and how to load it.
+///
+/// The two forms are not interchangeable: a release ships one bundled IIFE, which
+/// must stay a classic deferred script, while unbundled sources use `import` and
+/// only run as modules.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptRef {
+    pub src: String,
+    pub module: bool,
+}
+
+/// [`depth_relative_refs`] for scripts, carrying each one's module flag through.
+pub fn depth_relative_scripts(scripts: &[ScriptRef], output_rel_path: &str) -> Vec<ScriptRef> {
+    let prefix = depth_prefix(output_rel_path);
+    scripts
+        .iter()
+        .map(|s| ScriptRef {
+            src: format!("{prefix}{}", s.src),
+            module: s.module,
+        })
+        .collect()
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -858,18 +888,67 @@ mod tests {
     fn test_inject_head_links_with_scripts() {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
         let mut dom = HtmlDom::parse(html).unwrap();
-        dom.inject_head_links(&[], &[], &["index.js"]).unwrap();
+        dom.inject_head_links(&[], &[], &[classic("index.js")])
+            .unwrap();
         let result = dom.serialize().unwrap();
 
         assert!(result.contains(r#"src="index.js""#));
         assert!(result.contains("defer"));
     }
 
+    fn classic(src: &str) -> ScriptRef {
+        ScriptRef {
+            src: src.to_string(),
+            module: false,
+        }
+    }
+
+    /// A release ships one bundled IIFE and must keep its classic deferred tag;
+    /// only a source-mode block asks for a module.
+    #[test]
+    fn test_inject_head_links_module_script() {
+        let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_head_links(
+            &[],
+            &[],
+            &[ScriptRef {
+                src: "src/lib.js".to_string(),
+                module: true,
+            }],
+        )
+        .unwrap();
+        let result = dom.serialize().unwrap();
+
+        assert!(result.contains(r#"src="src/lib.js""#));
+        assert!(result.contains(r#"type="module""#));
+        assert!(
+            !result.contains("defer"),
+            "a module is deferred by default; emitting defer too would only mislead: {result}",
+        );
+    }
+
+    #[test]
+    fn test_depth_relative_scripts_keeps_the_module_flag() {
+        let scripts = vec![
+            ScriptRef {
+                src: "a.js".to_string(),
+                module: true,
+            },
+            classic("b.js"),
+        ];
+        let out = depth_relative_scripts(&scripts, "deep/page.html");
+        assert_eq!(out[0].src, "../a.js");
+        assert!(out[0].module);
+        assert_eq!(out[1].src, "../b.js");
+        assert!(!out[1].module);
+    }
+
     #[test]
     fn test_inject_head_links_scripts_with_stylesheets() {
         let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
         let mut dom = HtmlDom::parse(html).unwrap();
-        dom.inject_head_links(&[], &["style.css"], &["index.js"])
+        dom.inject_head_links(&[], &["style.css"], &[classic("index.js")])
             .unwrap();
         let result = dom.serialize().unwrap();
 

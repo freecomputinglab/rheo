@@ -21,6 +21,7 @@ use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tracing::{debug, error, info};
 use typst::introspection::Introspector as _;
 use typst::model::Document as _;
@@ -42,6 +43,12 @@ pub struct BuildOptions {
     /// Additional font directories from `--font-dir`, appended on top of the
     /// autoscan/config-derived directories.
     pub font_dirs: Vec<PathBuf>,
+    /// `--input KEY=VALUE` pairs, seeded onto `sys.inputs` for the Typst compile.
+    /// Typst has no environment access, so this is the only way a build script can
+    /// parameterise a compile. Values are strings, always. A key equal to
+    /// `world::RESERVED_INPUT_KEY` (`rheo-context`) is rejected by the CLI and
+    /// ignored here.
+    pub inputs: HashMap<String, String>,
     /// `--emit-bundle-source`: write each plugin's synthesized bundle main to
     /// `<build_dir>/<plugin>/.rheo-bundle.typ`. A read-only debug artifact —
     /// never read back — for diagnosing marrow/spine authoring errors. Off by
@@ -67,6 +74,7 @@ pub struct Build {
     plugins: Vec<Box<dyn FormatPlugin>>,
     output: OutputConfig,
     font_dirs: Vec<PathBuf>,
+    inputs: HashMap<String, String>,
     emit_bundle_source: bool,
     metadata_two_pass: bool,
 }
@@ -142,12 +150,26 @@ impl Build {
         let resolved_build_dir = resolve_build_dir(&project, opts.build_dir)?;
         let output = OutputConfig::new(&project.root, resolved_build_dir);
         let font_dirs = resolve_font_dirs(&project, &opts.font_dirs)?;
+        // THE ONE MERGE SITE for the two `sys.inputs` sources, so they cannot
+        // disagree about precedence. `rheo.toml [inputs]` is the BASE — a project
+        // declares its defaults there and the ordinary build needs no flags — and
+        // each `--input KEY=VALUE` OVERRIDES that key, because a flag is the more
+        // specific statement of intent. Keys the config sets and the CLI does not
+        // survive untouched, so overriding one input does not clear the rest.
+        //
+        // Both sources reject `world::RESERVED_INPUT_KEY` before reaching here
+        // (the CLI in `parse_inputs`, the config in its `TryFrom`), and
+        // `build_inputs` refuses it a third time — a library caller can construct
+        // `WorldSpec` directly, so the last line of defence lives there.
+        let mut inputs = project.config.inputs.clone();
+        inputs.extend(opts.inputs);
 
         Ok(Self {
             project,
             plugins,
             output,
             font_dirs,
+            inputs,
             emit_bundle_source: opts.emit_bundle_source,
             metadata_two_pass: opts.metadata_two_pass,
         })
@@ -244,6 +266,16 @@ impl Build {
     /// pre-warming has to happen before the manifest scan below, or a package
     /// Typst would only download at compile time is invisible to it.
     /// Whether any plugin in this build leaves package auto-detection on.
+    /// The package resolver for one build, built from `[packages]`.
+    ///
+    /// Built per build rather than cached on `Build`, so a `watch` session that
+    /// keeps one `Build` alive still re-resolves a branch as it advances.
+    fn package_resolver(&self) -> Arc<crate::packages::PackageResolver> {
+        Arc::new(crate::packages::PackageResolver::new(
+            &self.project.config.packages,
+        ))
+    }
+
     fn auto_detects_packages(&self) -> bool {
         let default_section = PluginSection::default();
         self.plugins.iter().any(|plugin| {
@@ -310,6 +342,7 @@ impl Build {
         plugin: &dyn FormatPlugin,
         plugin_section: &PluginSection,
         content_dir: &Path,
+        resolver: &Arc<crate::packages::PackageResolver>,
     ) -> Result<CompiledSpine> {
         let spine = crate::config::Spine::merged_over(
             plugin_section.spine.as_ref(),
@@ -417,6 +450,7 @@ impl Build {
                 reset_footnotes,
                 title_overrides: &HashMap::new(),
             }),
+            resolver,
         )?;
 
         // Gated second pass (`--metadata-two-pass`): only when opted in, and
@@ -458,6 +492,7 @@ impl Build {
                         reset_footnotes,
                         title_overrides: &title_overrides,
                     }),
+                    resolver,
                 )?;
             }
         }
@@ -480,6 +515,7 @@ impl Build {
         sources: HashMap<String, String>,
         rheo_context: HashMap<String, crate::reticulate::VertebraInjection>,
         global_context: crate::util::typst_literal::TypstLiteral,
+        resolver: &Arc<crate::packages::PackageResolver>,
     ) -> Result<CompiledBundlePass> {
         let world = RheoWorld::new_for_bundle(
             &self.project.root,
@@ -490,6 +526,8 @@ impl Build {
                 global_context: Some(global_context),
                 format_name: plugin.rheo_target().map(str::to_string),
                 font_dirs: self.font_dirs.clone(),
+                user_inputs: self.inputs.clone(),
+                packages: Some(Arc::clone(resolver)),
                 ..Default::default()
             },
         )?;
@@ -574,9 +612,11 @@ impl Build {
             .plugin_sections
             .get(html_plugin.name())
             .unwrap_or(&default_section);
+        let package_resolver = self.package_resolver();
         let packages = prewarm_and_resolve(
             &package_imports,
             plugin_section.auto_detect_packages_enabled(),
+            &package_resolver,
         )?;
 
         // Resolving copies CSS/JS to disk too, so the dev server can serve them
@@ -595,13 +635,29 @@ impl Build {
                 .unwrap_or_default()
         };
         let css_paths: Vec<String> = asset_paths("css_stylesheet");
-        let js_paths: Vec<String> = asset_paths("js_scripts");
+        let js_scripts: Vec<crate::util::html::ScriptRef> = ctx
+            .resolved
+            .get("js_scripts")
+            .map(|v: &Vec<crate::plugins::Asset>| {
+                v.iter()
+                    .map(|a| crate::util::html::ScriptRef {
+                        src: a.built_relative_path.clone(),
+                        module: a.module,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let CompiledSpine {
             files: virtual_fs,
             assets,
             ..
-        } = self.compile_spine(html_plugin.as_ref(), ctx.section, &content_dir)?;
+        } = self.compile_spine(
+            html_plugin.as_ref(),
+            ctx.section,
+            &content_dir,
+            &package_resolver,
+        )?;
 
         // Build a page-path -> HTML string map from the non-asset (compiled
         // document) entries of this same virtual_fs, for `<rheo-content>`
@@ -672,7 +728,7 @@ impl Build {
             if path_str.ends_with(".html") {
                 let html = String::from_utf8_lossy(&bytes);
                 let css = crate::util::html::depth_relative_refs(&css_paths, &path_str);
-                let js = crate::util::html::depth_relative_refs(&js_paths, &path_str);
+                let js = crate::util::html::depth_relative_scripts(&js_scripts, &path_str);
                 let modified = crate::util::html::HtmlDom::apply_head_mutations(
                     &html,
                     &css,
@@ -708,7 +764,12 @@ impl Build {
         // package (a directory probe plus a `typst.toml` parse) once — both
         // shared across every plugin in this build.
         let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
-        let packages = prewarm_and_resolve(&package_imports, self.auto_detects_packages())?;
+        let package_resolver = self.package_resolver();
+        let packages = prewarm_and_resolve(
+            &package_imports,
+            self.auto_detects_packages(),
+            &package_resolver,
+        )?;
 
         let content_dir = resolve_effective_content_dir(&self.project);
 
@@ -731,7 +792,12 @@ impl Build {
                 assets,
                 bundle_source,
                 meta,
-            } = self.compile_spine(plugin.as_ref(), plugin_section, &content_dir)?;
+            } = self.compile_spine(
+                plugin.as_ref(),
+                plugin_section,
+                &content_dir,
+                &package_resolver,
+            )?;
 
             // Read-only debug artifact — never read back as an input. Written
             // under the plugin's build-dir output, which the watcher already
@@ -974,12 +1040,17 @@ fn ensure_output_dir(dir: &Path, plugin_name: &str) -> Result<()> {
 /// Pre-warming must precede the index: the index is a directory probe, so a
 /// package Typst would only download at compile time is invisible to it — the
 /// build then silently emits none of that package's declared assets.
-fn prewarm_and_resolve(package_imports: &[String], auto_detect: bool) -> Result<PackageIndex> {
+fn prewarm_and_resolve(
+    package_imports: &[String],
+    auto_detect: bool,
+    resolver: &crate::packages::PackageResolver,
+) -> Result<PackageIndex> {
     if auto_detect {
-        crate::plugins::prewarm_packages(package_imports);
+        crate::plugins::prewarm_packages(package_imports, resolver);
     }
-    let packages = PackageIndex::system(package_imports);
+    let packages = PackageIndex::resolved(package_imports, resolver);
     packages.check_min_versions()?;
+    packages.check_source_availability()?;
     Ok(packages)
 }
 
@@ -1070,7 +1141,7 @@ fn resolve_font_dirs(project: &ProjectConfig, cli_font_dirs: &[PathBuf]) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Mutex;
 
     /// What `Build::run` handed the plugin for each output: its path, its
     /// resolved title, and its compiled bytes as text. `CastVertebra` itself is
@@ -1503,8 +1574,7 @@ mod tests {
     }
 
     /// End-to-end: with `marrow_prologue = true`, the same `#show` rule is
-    /// spliced BEFORE every document, so it reaches the pre-existing
-    /// vertebra — the capability this bead adds.
+    /// spliced BEFORE every document, so it reaches the pre-existing vertebra.
     #[test]
     fn test_run_marrow_prologue_reaches_pre_existing_vertebra() {
         let dir = tempfile::tempdir().expect("tempdir");

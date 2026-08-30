@@ -81,6 +81,30 @@ package declaring `[tool.rheo] min_version` in its `typst.toml` gets a clean bui
 listing every offending package at once, instead of silently minting nothing
 (`rheo-pkg-min-version-1fn`).
 
+**Project-supplied `sys.inputs`** **[landed]** (`rheo-cli-input-flag-q12`,
+`rheo-toml-inputs-table-rih`). A project can now seed arbitrary keys onto `sys.inputs`,
+so a build script can parameterise a compile — Typst has no environment access, so this
+was previously impossible under rheo, which forwarded only its own `rheo-context`. Two
+sources: a `[inputs]` table in `rheo.toml` as the declared baseline, and a repeatable
+`--input KEY=VALUE` on `compile`/`watch` that overrides it per key. Values are strings in
+both, with no coercion. `rheo-context` is reserved and rejected from both.
+
+```toml
+[inputs]
+rookery-exclude = "private"
+```
+
+```sh
+rheo compile . --input rookery-include=private   # the dev build, same source tree
+```
+
+The point is what a package can now do with it: `sys.inputs` reads need no `#context`, so a
+package can branch on a key *structurally* rather than rendering and hiding.
+`@rheo/rookery` 0.6.0's `exclude-tags` is the first consumer — one rookery, a public build
+with the `protected` notes genuinely absent (no page minted, no search index entry, no feed
+item) and a dev build that keeps them. Pairs with `--config rheo.public.toml` for
+per-variant input sets with no flags at all. Documented in `docs/contract.md`.
+
 **Author-facing primitives** **[landed]**: `<rheo-content page="..." select="..."/>`
 transclusion of compiled page HTML into bundle-emitted assets, `<rheo-head>` hoisting of a
 wrapper's children into that page's `<head>`, and the reserved `.rheo/` control-asset prefix
