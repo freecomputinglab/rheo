@@ -82,6 +82,13 @@ impl PackageResolver {
         self.configured.contains_key(namespace)
     }
 
+    /// Whether this namespace is served from a repository ref rather than a
+    /// releases host. A ref carries no build output, so its packages use their
+    /// source-mode asset block.
+    pub fn is_repo_backed(&self, namespace: &str) -> bool {
+        matches!(self.configured.get(namespace), Some(Backend::Repo(_)))
+    }
+
     /// Whether rheo knows how to fetch this namespace ahead of the asset scan.
     ///
     /// A namespace rheo cannot fetch must stay skipped rather than attempting a

@@ -635,7 +635,18 @@ impl Build {
                 .unwrap_or_default()
         };
         let css_paths: Vec<String> = asset_paths("css_stylesheet");
-        let js_paths: Vec<String> = asset_paths("js_scripts");
+        let js_scripts: Vec<crate::util::html::ScriptRef> = ctx
+            .resolved
+            .get("js_scripts")
+            .map(|v: &Vec<crate::plugins::Asset>| {
+                v.iter()
+                    .map(|a| crate::util::html::ScriptRef {
+                        src: a.built_relative_path.clone(),
+                        module: a.module,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let CompiledSpine {
             files: virtual_fs,
@@ -717,7 +728,7 @@ impl Build {
             if path_str.ends_with(".html") {
                 let html = String::from_utf8_lossy(&bytes);
                 let css = crate::util::html::depth_relative_refs(&css_paths, &path_str);
-                let js = crate::util::html::depth_relative_refs(&js_paths, &path_str);
+                let js = crate::util::html::depth_relative_scripts(&js_scripts, &path_str);
                 let modified = crate::util::html::HtmlDom::apply_head_mutations(
                     &html,
                     &css,
@@ -1039,6 +1050,7 @@ fn prewarm_and_resolve(
     }
     let packages = PackageIndex::resolved(package_imports, resolver);
     packages.check_min_versions()?;
+    packages.check_source_availability()?;
     Ok(packages)
 }
 

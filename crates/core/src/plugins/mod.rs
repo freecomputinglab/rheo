@@ -65,6 +65,9 @@ pub struct AssetConfig {
 #[derive(Debug, Clone)]
 pub struct Asset {
     pub config: AssetConfig,
+    /// Whether this script must be loaded as an ES module. Only ever true for a
+    /// package's source-mode block, whose unbundled files use `import`.
+    pub module: bool,
     /// Absolute path of the source file this asset was copied from.
     ///
     /// For user-declared assets this is under the project root; for
@@ -256,6 +259,8 @@ pub fn parse_package_spec(spec: &str) -> Option<(&str, &str, &str)> {
 pub struct PackageAssets {
     pub assets: PluginAssets,
     pub source_root: PathBuf,
+    /// Whether this block's scripts are ES modules (`js_module = true`).
+    pub js_module: bool,
 }
 
 /// A resolved package specifier ready for asset block synthesis.

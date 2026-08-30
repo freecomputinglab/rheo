@@ -6,7 +6,7 @@ use crate::{Result, RheoError};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use tracing::warn;
+use tracing::{debug, warn};
 use typst::syntax::Source;
 use typst::syntax::package::PackageSpec;
 
@@ -66,6 +66,19 @@ pub fn find_package_in_dirs(spec: &str, search_dirs: &[PathBuf]) -> Option<Resol
         namespace: Some(namespace.to_string()),
         version: Some(version.to_string()),
     })
+}
+
+/// A TOML value read as a list of strings, accepting a bare string as a
+/// one-element list — `js_scripts` has always allowed either spelling.
+fn toml_strings(value: &toml::Value) -> Vec<String> {
+    match value {
+        toml::Value::String(s) => vec![s.clone()],
+        toml::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// Locate one package: through `resolver` when its namespace is configured,
@@ -131,15 +144,85 @@ impl PackageManifest {
 
     /// The `[tool.rheo.{format_name}]` block, if present and non-empty.
     pub fn package_assets(&self, format_name: &str) -> Option<PackageAssets> {
-        let section = self
-            .toml
-            .get("tool")?
-            .get("rheo")?
-            .get(format_name)?
-            .as_table()?;
+        self.assets_block(format_name, false)
+    }
+
+    /// The asset block for this package, preferring the source-mode block when
+    /// the package came from a repository ref.
+    ///
+    /// A ref carries no `dist/`, so the ordinary block's bundle is absent there;
+    /// `[tool.rheo.source.{format}]` names the unbundled sources instead. When a
+    /// package declares no source block the ordinary one still applies — that is
+    /// the correct answer for a package with nothing to build.
+    pub fn assets_for(&self, format_name: &str, source_mode: bool) -> Option<PackageAssets> {
+        if source_mode && let Some(block) = self.assets_block(format_name, true) {
+            debug!(
+                package = %self.pkg.name,
+                format = format_name,
+                "using the package's source-mode asset block",
+            );
+            return Some(block);
+        }
+        self.assets_block(format_name, false)
+    }
+
+    /// Declared `js_scripts` paths that are not present under the package root.
+    ///
+    /// Scans every `[tool.rheo.<format>]` subtable, since which formats a
+    /// package declares is up to the package.
+    fn missing_declared_scripts(&self) -> Vec<String> {
+        let Some(rheo) = self.toml.get("tool").and_then(|t| t.get("rheo")) else {
+            return Vec::new();
+        };
+        let Some(table) = rheo.as_table() else {
+            return Vec::new();
+        };
+        let mut missing = Vec::new();
+        for (key, value) in table {
+            if key == "source" {
+                continue;
+            }
+            let Some(section) = value.as_table() else {
+                continue;
+            };
+            let Some(scripts) = section.get("js_scripts") else {
+                continue;
+            };
+            for path in toml_strings(scripts) {
+                if !self.pkg.source_root.join(&path).exists() {
+                    missing.push(path);
+                }
+            }
+        }
+        missing.sort();
+        missing.dedup();
+        missing
+    }
+
+    /// Whether this package declares a `[tool.rheo.source.*]` block at all.
+    fn has_source_block(&self) -> bool {
+        self.toml
+            .get("tool")
+            .and_then(|t| t.get("rheo"))
+            .and_then(|r| r.get("source"))
+            .and_then(|s| s.as_table())
+            .is_some_and(|t| !t.is_empty())
+    }
+
+    fn assets_block(&self, format_name: &str, source: bool) -> Option<PackageAssets> {
+        let rheo = self.toml.get("tool")?.get("rheo")?;
+        let section = if source {
+            rheo.get("source")?.get(format_name)?.as_table()?
+        } else {
+            rheo.get(format_name)?.as_table()?
+        };
         if section.is_empty() {
             return None;
         }
+        let js_module = section
+            .get("js_module")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let copy = section
             .get("copy")
             .and_then(|v| v.as_array())
@@ -163,6 +246,7 @@ impl PackageManifest {
                 extra,
             },
             source_root: self.pkg.source_root.clone(),
+            js_module,
         })
     }
 
@@ -198,10 +282,19 @@ pub fn manifest_package_assets(pkg: &ResolvedPackage, format_name: &str) -> Opti
 /// ships no manifest, or ships a malformed one is simply absent from the index
 /// rather than an error, since a broken manifest in someone else's package must
 /// never break a build.
+/// One import spec, resolved.
+struct IndexEntry {
+    /// Retained because [`PackageIndex::check_min_versions`] names it in errors.
+    spec: String,
+    pkg: ResolvedPackage,
+    manifest: Option<PackageManifest>,
+    /// Resolved from a repository ref, so any `dist/` build output is absent and
+    /// the source-mode asset block applies.
+    source_mode: bool,
+}
+
 pub struct PackageIndex {
-    /// `(import spec, package, its parsed manifest)`. The spec is retained
-    /// because [`Self::check_min_versions`] names it in the error.
-    resolved: Vec<(String, ResolvedPackage, Option<PackageManifest>)>,
+    resolved: Vec<IndexEntry>,
 }
 
 impl PackageIndex {
@@ -212,7 +305,12 @@ impl PackageIndex {
             .filter_map(|spec| {
                 let pkg = find_package_in_dirs(spec, search_dirs)?;
                 let manifest = PackageManifest::load(&pkg);
-                Some((spec.clone(), pkg, manifest))
+                Some(IndexEntry {
+                    spec: spec.clone(),
+                    pkg,
+                    manifest,
+                    source_mode: false,
+                })
             })
             .collect();
         Self { resolved }
@@ -237,18 +335,63 @@ impl PackageIndex {
             .filter_map(|spec| {
                 let pkg = resolve_package(spec, resolver, &search_dirs)?;
                 let manifest = PackageManifest::load(&pkg);
-                Some((spec.clone(), pkg, manifest))
+                let source_mode = pkg
+                    .namespace
+                    .as_deref()
+                    .is_some_and(|ns| resolver.is_repo_backed(ns));
+                Some(IndexEntry {
+                    spec: spec.clone(),
+                    pkg,
+                    manifest,
+                    source_mode,
+                })
             })
             .collect();
         Self { resolved }
     }
 
-    /// Each package's `[tool.rheo.{format_name}]` asset block, in import order.
+    /// Each package's asset block for this format, in import order — the
+    /// source-mode block for a package that came from a repository ref.
     pub fn manifest_assets(&self, format_name: &str) -> Vec<PackageAssets> {
         self.resolved
             .iter()
-            .filter_map(|(_, _, manifest)| manifest.as_ref()?.package_assets(format_name))
+            .filter_map(|entry| {
+                entry
+                    .manifest
+                    .as_ref()?
+                    .assets_for(format_name, entry.source_mode)
+            })
             .collect()
+    }
+
+    /// Reject a package that came from a ref, declares no source-mode block, and
+    /// whose declared scripts are the `dist/` output that no ref carries.
+    ///
+    /// Without this the failure is silent: the file simply is not there, so the
+    /// page loads with no behaviour and nothing says why.
+    pub fn check_source_availability(&self) -> Result<()> {
+        let mut lines: Vec<String> = Vec::new();
+        for entry in &self.resolved {
+            let Some(manifest) = &entry.manifest else {
+                continue;
+            };
+            if !entry.source_mode || manifest.has_source_block() {
+                continue;
+            }
+            for missing in manifest.missing_declared_scripts() {
+                lines.push(format!(
+                    "{spec} declares `js_scripts = \"{missing}\"`, which this ref does not \
+                     carry: the package is built, and a repository ref has no build output. \
+                     Add a `[tool.rheo.source.<format>]` block naming its `src/` scripts, or \
+                     consume the package from a release instead",
+                    spec = entry.spec,
+                ));
+            }
+        }
+        if lines.is_empty() {
+            return Ok(());
+        }
+        Err(crate::RheoError::project_config(lines.join("\n")))
     }
 
     /// Errors naming every package whose declared `[tool.rheo] min_version`
@@ -260,7 +403,8 @@ impl PackageIndex {
         let mut lines: Vec<String> = self
             .resolved
             .iter()
-            .filter_map(|(spec, _, manifest)| {
+            .filter_map(|entry| {
+                let (spec, manifest) = (&entry.spec, &entry.manifest);
                 let min = manifest.as_ref()?.min_version()?;
                 (min > current)
                     .then(|| format!("{spec} needs rheo >= {min}, but this is rheo {current}"))
@@ -286,7 +430,7 @@ impl PackageIndex {
     fn read_marrow(&self, filename: &str) -> Vec<String> {
         self.resolved
             .iter()
-            .filter_map(|(_, pkg, _)| package_marrow_file(pkg, filename))
+            .filter_map(|entry| package_marrow_file(&entry.pkg, filename))
             .collect()
     }
 }
@@ -619,11 +763,15 @@ css_stylesheet = "style.css"
     fn min_version_alongside_format_subtable() {
         // The real trap: `[tool.rheo] min_version` coexisting with a sibling
         // `[tool.rheo.<format>]` asset subtable must not shadow either field.
+        // `[tool.rheo.source.<format>]` joins the same namespace and must not
+        // disturb it either.
         let tmp = tempfile::tempdir().unwrap();
         let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
         std::fs::write(
             pkg_dir.join("typst.toml"),
-            "[tool.rheo]\nmin_version = \"0.5.0\"\n\n[tool.rheo.html]\ncss_stylesheet = \"a.css\"\n",
+            "[tool.rheo]\nmin_version = \"0.5.0\"\n\n[tool.rheo.html]\ncss_stylesheet = \"a.css\"\n\
+             js_scripts = \"dist/lib.js\"\n\n[tool.rheo.source.html]\n\
+             js_scripts = [\"src/a.js\", \"src/b.js\"]\njs_module = true\n",
         )
         .unwrap();
         let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
@@ -633,6 +781,62 @@ css_stylesheet = "style.css"
             Some(semver::Version::parse("0.5.0").unwrap())
         );
         assert!(manifest.package_assets("html").is_some());
+        assert!(manifest.has_source_block());
+
+        // Release mode keeps the bundle and its classic tag.
+        let release = manifest.assets_for("html", false).unwrap();
+        assert!(!release.js_module);
+        assert_eq!(
+            release.assets.extra.get("js_scripts").unwrap().as_str(),
+            Some("dist/lib.js"),
+        );
+
+        // Source mode takes the unbundled list and asks for modules.
+        let source = manifest.assets_for("html", true).unwrap();
+        assert!(source.js_module);
+        assert_eq!(
+            source
+                .assets
+                .extra
+                .get("js_scripts")
+                .and_then(|v| v.as_array())
+                .map(Vec::len),
+            Some(2),
+        );
+    }
+
+    /// A package with nothing to build declares no source block, and must still
+    /// get its ordinary block when served from a ref.
+    #[test]
+    fn source_mode_falls_back_to_the_ordinary_block() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(
+            pkg_dir.join("typst.toml"),
+            "[tool.rheo.html]\ncss_stylesheet = \"src/a.css\"\n",
+        )
+        .unwrap();
+        let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
+        let manifest = PackageManifest::load(&pkg).unwrap();
+        assert!(!manifest.has_source_block());
+        assert!(manifest.assets_for("html", true).is_some());
+        assert!(manifest.missing_declared_scripts().is_empty());
+    }
+
+    /// The scripts a ref cannot carry are named, so the failure is not a silent
+    /// absence of behaviour on the page.
+    #[test]
+    fn missing_declared_scripts_names_the_absent_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = make_pkg_dir(tmp.path(), "ns", "pkg", "1.0");
+        std::fs::write(
+            pkg_dir.join("typst.toml"),
+            "[tool.rheo.html]\njs_scripts = \"dist/lib.js\"\n",
+        )
+        .unwrap();
+        let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
+        let manifest = PackageManifest::load(&pkg).unwrap();
+        assert_eq!(manifest.missing_declared_scripts(), vec!["dist/lib.js"]);
     }
 
     fn write_min_version(dir: &std::path::Path, version: &str) {

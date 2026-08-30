@@ -52,6 +52,8 @@ impl<'a> AssetResolver<'a> {
                 root: &'b Path,
                 path: &'b str,
                 is_pkg: bool,
+                /// Load this script as an ES module (source-mode package block).
+                module: bool,
             }
 
             let mut all_pairs: Vec<AssetEntry<'_>> = Vec::new();
@@ -64,6 +66,7 @@ impl<'a> AssetResolver<'a> {
                     root: self.project_root,
                     path,
                     is_pkg: false,
+                    module: false,
                 });
             }
 
@@ -71,14 +74,22 @@ impl<'a> AssetResolver<'a> {
             // are additive to the project's own configuration: a package asset
             // lives in a different scope and must never stand in for it.
             for pkg in package_blocks {
-                if let Some(val) = pkg.assets.extra.get(asset_config.name)
-                    && let Some(s) = val.as_str()
-                {
+                // A list as well as a bare string: source mode names every
+                // unbundled script, where a release names one bundle.
+                let paths: Vec<&str> = match pkg.assets.extra.get(asset_config.name) {
+                    Some(toml::Value::String(s)) => vec![s.as_str()],
+                    Some(toml::Value::Array(items)) => {
+                        items.iter().filter_map(|v| v.as_str()).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                for path in paths {
                     all_pairs.push(AssetEntry {
                         dest: pkg.assets.dest.as_deref(),
                         root: &pkg.source_root,
-                        path: s,
+                        path,
                         is_pkg: true,
+                        module: pkg.js_module,
                     });
                 }
             }
@@ -92,6 +103,7 @@ impl<'a> AssetResolver<'a> {
                     root: self.project_root,
                     path: asset_config.default_path,
                     is_pkg: false,
+                    module: false,
                 });
             }
 
@@ -99,7 +111,7 @@ impl<'a> AssetResolver<'a> {
             struct AssetGroup<'b> {
                 dest: Option<&'b str>,
                 root: &'b Path,
-                entries: Vec<(&'b str, bool)>,
+                entries: Vec<(&'b str, bool, bool)>,
             }
             let mut groups: Vec<AssetGroup<'_>> = Vec::new();
             for entry in &all_pairs {
@@ -107,12 +119,12 @@ impl<'a> AssetResolver<'a> {
                     .iter_mut()
                     .find(|g| g.dest == entry.dest && g.root.as_os_str() == entry.root.as_os_str())
                 {
-                    group.entries.push((entry.path, entry.is_pkg));
+                    group.entries.push((entry.path, entry.is_pkg, entry.module));
                 } else {
                     groups.push(AssetGroup {
                         dest: entry.dest,
                         root: entry.root,
-                        entries: vec![(entry.path, entry.is_pkg)],
+                        entries: vec![(entry.path, entry.is_pkg, entry.module)],
                     });
                 }
             }
@@ -127,11 +139,13 @@ impl<'a> AssetResolver<'a> {
                 };
 
                 let mut sources: Vec<PathBuf> = Vec::new();
+                let mut modules: Vec<bool> = Vec::new();
                 let mut missing: Vec<(&str, bool)> = Vec::new();
-                for (path, is_pkg) in &group.entries {
+                for (path, is_pkg, module) in &group.entries {
                     let abs = group.root.join(path);
                     if abs.is_file() {
                         sources.push(abs);
+                        modules.push(*module);
                     } else {
                         missing.push((*path, *is_pkg));
                     }
@@ -159,7 +173,8 @@ impl<'a> AssetResolver<'a> {
                 let assets: Vec<Asset> = outputs
                     .into_iter()
                     .zip(sources.iter())
-                    .map(|(abs, src)| {
+                    .zip(modules.iter())
+                    .map(|((abs, src), module)| {
                         let rel = abs
                             .strip_prefix(self.plugin_output_dir)
                             .expect("copy_each output is always under plugin_output_dir")
@@ -176,6 +191,7 @@ impl<'a> AssetResolver<'a> {
                         seen_relative_paths.insert(rel.clone(), src.clone());
                         Ok(Asset {
                             config: asset_config.clone(),
+                            module: *module,
                             source_path: src.clone(),
                             resolved_path: abs,
                             built_relative_path: rel,
@@ -226,6 +242,7 @@ impl<'a> AssetResolver<'a> {
                         asset_config.name,
                         vec![Asset {
                             config: asset_config.clone(),
+                            module: false,
                             source_path: dest.clone(),
                             resolved_path: dest.clone(),
                             built_relative_path: rel,
@@ -964,6 +981,7 @@ mod tests {
                 dest: Some("pkg".into()),
                 extra,
             },
+            js_module: false,
             source_root: pkg_dir.clone(),
         }];
 
@@ -1007,6 +1025,7 @@ mod tests {
                 dest: Some("pkg".into()),
                 extra,
             },
+            js_module: false,
             source_root: pkg_dir,
         }];
 
@@ -1059,6 +1078,7 @@ mod tests {
                 dest: Some("pkg".into()),
                 extra: pkg_extra,
             },
+            js_module: false,
             source_root: pkg_dir,
         }];
 
@@ -1119,6 +1139,7 @@ mod tests {
                 dest: Some("pkg".into()),
                 extra: pkg_extra,
             },
+            js_module: false,
             source_root: pkg_dir,
         }];
 
@@ -1181,6 +1202,7 @@ mod tests {
                 dest: Some("pkg".into()),
                 extra: pkg_extra,
             },
+            js_module: false,
             source_root: pkg_dir,
         }];
 
@@ -1249,6 +1271,7 @@ mod tests {
                 dest: Some("pkg".into()),
                 extra: pkg_extra,
             },
+            js_module: false,
             source_root: pkg_dir,
         }];
 
