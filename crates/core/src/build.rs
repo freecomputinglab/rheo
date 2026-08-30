@@ -203,9 +203,10 @@ impl Build {
     /// deps that declare nothing are never watched).
     pub fn watch_asset_spec(&self) -> crate::assets::watch::WatchAssetSpec {
         let default_section = PluginSection::default();
-        let packages = PackageIndex::system(&crate::plugins::scan_project_package_imports(
-            &self.project.typ_files,
-        ));
+        let packages = PackageIndex::resolved(
+            &crate::plugins::scan_project_package_imports(&self.project.typ_files),
+            &self.package_resolver(),
+        );
 
         let mut asset_paths: Vec<PathBuf> = Vec::new();
         let mut copy_globs: Vec<(PathBuf, Vec<String>)> = Vec::new();
@@ -396,9 +397,14 @@ impl Build {
             // Behind the same opt-out that governs every other package-driven
             // behaviour.
             if plugin_section.auto_detect_packages_enabled() {
-                let packages = PackageIndex::system(&crate::plugins::scan_project_package_imports(
-                    &self.project.typ_files,
-                ));
+                // Through the resolver, not a directory probe: a package from a
+                // repository ref lives at a sha-keyed path no probe matches, so
+                // probing finds no `.marrow.typ` and the package mints none of
+                // the pages it exists to mint — silently, on a green build.
+                let packages = PackageIndex::resolved(
+                    &crate::plugins::scan_project_package_imports(&self.project.typ_files),
+                    resolver,
+                );
                 marrow.extend(packages.marrow());
                 marrow_prologue.extend(packages.marrow_prologue());
             }
