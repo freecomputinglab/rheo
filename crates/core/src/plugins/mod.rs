@@ -119,9 +119,9 @@ pub struct CastVertebra {
     pub author: Vec<String>,
     /// True when this output has no matching spine [`Vertebra`](crate::reticulate::spine::Vertebra) —
     /// a page minted at the bundle root by a `.marrow.typ` contribution, or (for
-    /// `SingleCombined` layouts) the merged multi-vertebra output. Plugins that
-    /// build reading-order indices (EPUB spine, nav) should exclude these; the
-    /// output itself still belongs in the format's container.
+    /// `SingleCombined` layouts) the merged multi-vertebra output. A plugin
+    /// building a reading-order index over its outputs should exclude these;
+    /// the output itself still belongs in the format's container.
     pub contributed: bool,
 }
 
@@ -146,8 +146,8 @@ impl CastVertebra {
 /// Typst export target — the format argument passed to `#document(…, format: "…")`.
 ///
 /// Distinct from `FormatPlugin::extension()`, which controls output filenames and
-/// `@ref` anchors. EPUB uses `.xhtml` as its extension but compiles via the `html`
-/// Typst target; PDF uses the `pdf` target.
+/// `@ref` anchors — a plugin's output extension need not match the Typst target
+/// it actually compiles through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypstFormat {
     Pdf,
@@ -221,12 +221,11 @@ pub struct PluginContext<'a> {
     /// marrow contribution), keyed by their path relative to the plugin output
     /// directory. Core writes these as loose files in the output directory
     /// unless [`FormatPlugin::embeds_bundle_assets`] returns `true`, in which
-    /// case the plugin takes over placing them (e.g. EPUB embeds them in the
-    /// container and adds a manifest item).
+    /// case the plugin takes over placing them itself (see that method for why).
     pub bundle_assets: &'a [(String, Bytes)],
     /// Bundle-root control assets (currently just `.rheo/head.html`) already
     /// extracted out of `bundle_assets` by core — never written, embedded, or
-    /// served. Plugins that render `<head>` (HTML) read
+    /// served. A plugin that renders a `<head>` element reads
     /// [`ControlAssets::head_fragment`] to append site-wide head content to
     /// every page; other plugins can ignore this field entirely.
     pub control: &'a ControlAssets,
@@ -314,9 +313,9 @@ pub trait FormatPlugin: Send + Sync {
     /// How the plugin wants the spine laid out for compilation.
     ///
     /// Core converts this to a `SpineLayout`, synthesizes the virtual main, and
-    /// runs one bundle compile. Plugins that produce one file per vertebra
-    /// (HTML) use `OnePerVertebra`; plugins that merge everything into one file
-    /// (PDF) use `SingleCombined`.
+    /// runs one bundle compile. Use `OnePerVertebra` for a plugin that emits one
+    /// output per vertebra; use `SingleCombined` for one that merges every
+    /// vertebra into a single output.
     fn spine_layout_kind(&self) -> SpineLayoutKind {
         SpineLayoutKind::OnePerVertebra
     }
@@ -324,8 +323,8 @@ pub trait FormatPlugin: Send + Sync {
     /// Typst export target emitted as the `format:` argument of `#document(…)`.
     ///
     /// Distinct from `extension()` (output filename / `@ref` anchor). Override when
-    /// the output extension differs from the Typst compile target (e.g. EPUB uses
-    /// `.xhtml` filenames but compiles via the `html` target).
+    /// a plugin's output extension differs from the Typst compile target it
+    /// actually compiles through.
     fn typst_format(&self) -> TypstFormat {
         TypstFormat::Html
     }
@@ -336,9 +335,9 @@ pub trait FormatPlugin: Send + Sync {
     ///
     /// Default `false` — most plugins produce a directory of files where a
     /// loose asset sits usefully alongside the pages that reference it. A
-    /// plugin that packages its output into a single container (e.g. EPUB)
-    /// overrides this to embed the bytes instead, since a loose file next to
-    /// the container is unreachable from inside it.
+    /// plugin whose output is a single container file overrides this to embed
+    /// the bytes instead, since a loose file next to the container is
+    /// unreachable from inside it.
     fn embeds_bundle_assets(&self) -> bool {
         false
     }
@@ -346,13 +345,13 @@ pub trait FormatPlugin: Send + Sync {
     /// The output-format name written into `sys.inputs.rheo-context.target`,
     /// surfaced to documents via the `target()` polyfill.
     ///
-    /// This keeps formats that share a Typst export target distinguishable: EPUB
-    /// and HTML both compile via the `html` target, but report `"epub"` and
-    /// `"html"` respectively, so packages can branch on the rheo output format.
+    /// This keeps formats that share a Typst export target distinguishable: two
+    /// plugins compiling through the same target can still report different
+    /// names here, so packages can branch on the rheo output format.
     ///
     /// Returning `None` injects nothing, leaving `target()` to fall back to
-    /// Typst's `std.target()` — used by PDF, which wants the native `"paged"`.
-    /// Defaults to `Some(name())`.
+    /// Typst's native `std.target()` — for a plugin whose compile target
+    /// already identifies it uniquely. Defaults to `Some(name())`.
     fn rheo_target(&self) -> Option<&'static str> {
         Some(self.name())
     }
