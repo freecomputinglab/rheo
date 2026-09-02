@@ -64,8 +64,7 @@ fn all_plugins() -> Vec<Box<dyn FormatPlugin>> {
 
 /// Build the top-level clap `Command`, adding per-plugin `--<name>` flags
 /// dynamically to `compile` and `watch` subcommands.
-fn build_cli() -> Command {
-    let plugins = all_plugins();
+fn build_cli(plugins: &[Box<dyn FormatPlugin>]) -> Command {
     Command::new("rheo")
         .about("A tool for flowing Typst documents into publishable outputs")
         .version(env!("CARGO_PKG_VERSION"))
@@ -87,8 +86,8 @@ fn build_cli() -> Command {
                 .global(true)
                 .help("Increase output verbosity (show debug information)"),
         )
-        .subcommand(build_compile_command(&plugins))
-        .subcommand(build_watch_command(&plugins))
+        .subcommand(build_compile_command(plugins))
+        .subcommand(build_watch_command(plugins))
         .subcommand(build_clean_command())
         .subcommand(build_init_command())
         .subcommand(build_migrate_command())
@@ -389,7 +388,8 @@ fn init_project(target_dir: &Path) -> Result<()> {
     let mut toml_doc: toml_edit::DocumentMut = template.parse().map_err(|e| {
         RheoError::project_config(format!("failed to parse built-in rheo.toml template: {e}"))
     })?;
-    for plugin in all_plugins() {
+    let plugins = all_plugins();
+    for plugin in &plugins {
         let tmpl = plugin.format_init_template();
         if let Some(section) = tmpl.options_toml {
             merge_plugin_toml(&mut toml_doc, plugin.name(), section)?;
@@ -428,7 +428,7 @@ fn init_project(target_dir: &Path) -> Result<()> {
     // Collect template contributions from all plugins
     let mut plugin_templates: std::collections::HashMap<&str, (&str, &str)> =
         std::collections::HashMap::new();
-    for plugin in all_plugins() {
+    for plugin in &plugins {
         let tmpl = plugin.format_init_template();
         for (path, content) in tmpl.files {
             if let Some((existing_plugin, _)) = plugin_templates.get(path) {
@@ -462,8 +462,15 @@ fn init_project(target_dir: &Path) -> Result<()> {
 /// Load the project, log a summary, and prepare a runnable [`Build`].
 ///
 /// The CLI owns project loading and arg mapping; all orchestration lives in
-/// [`rheo_core::Build`].
-fn prepare_build(path: &Path, config_path: Option<&Path>, opts: BuildOptions) -> Result<Build> {
+/// [`rheo_core::Build`]. Takes `plugins` rather than calling [`all_plugins`]
+/// itself, so a caller that already built the set for `BuildArgs` (which
+/// every caller does) hands over that same one instead of a second instance.
+fn prepare_build(
+    path: &Path,
+    config_path: Option<&Path>,
+    opts: BuildOptions,
+    plugins: Vec<Box<dyn FormatPlugin>>,
+) -> Result<Build> {
     info!(path = %path.display(), "loading project");
     let project = ProjectConfig::from_path(path, config_path)?;
     let file_word = if project.typ_files.len() == 1 {
@@ -479,7 +486,7 @@ fn prepare_build(path: &Path, config_path: Option<&Path>, opts: BuildOptions) ->
         file_word
     );
 
-    Build::prepare(project, all_plugins(), opts)
+    Build::prepare(project, plugins, opts)
 }
 
 /// The positional path, optional config override, and derived [`BuildOptions`]
@@ -532,7 +539,11 @@ impl BuildArgs {
 
 /// Main entry point using the builder-based dynamic CLI.
 pub fn run() -> Result<()> {
-    let cli = build_cli();
+    // Built once per invocation: `build_cli` reads it for the per-plugin
+    // `--<name>` flags, and whichever subcommand actually runs takes
+    // ownership of this same set below rather than building its own.
+    let plugins = all_plugins();
+    let cli = build_cli(&plugins);
     let matches = cli.get_matches();
 
     let quiet = matches.get_flag(arg::QUIET);
@@ -540,8 +551,8 @@ pub fn run() -> Result<()> {
     init_logging(verbose, quiet)?;
 
     match matches.subcommand() {
-        Some(("compile", sub)) => run_compile(sub),
-        Some(("watch", sub)) => run_watch(sub),
+        Some(("compile", sub)) => run_compile(sub, plugins),
+        Some(("watch", sub)) => run_watch(sub, plugins),
         Some(("clean", sub)) => run_clean(sub),
         Some(("migrate", sub)) => run_migrate(sub),
         Some(("init", sub)) => {
@@ -577,12 +588,16 @@ fn update_dev_server(build: &mut Build, server: &dyn ServerHandle, reload: bool)
     }
 }
 
-fn run_watch(sub: &ArgMatches) -> Result<()> {
-    let all = all_plugins();
-    let args = BuildArgs::from_matches(sub, &all)?;
+fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()> {
+    let args = BuildArgs::from_matches(sub, &plugins)?;
     let open = sub.get_flag(arg::OPEN);
 
-    let mut build = prepare_build(&args.path, args.config.as_deref(), args.build_options())?;
+    let mut build = prepare_build(
+        &args.path,
+        args.config.as_deref(),
+        args.build_options(),
+        plugins,
+    )?;
 
     // Initial compilation (best-effort; watch continues on failure)
     if let Err(e) = build.run() {
@@ -636,7 +651,12 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
                 }
                 WatchEvent::ConfigChanged => {
                     info!("config changed, reloading");
-                    match prepare_build(&args.path, args.config.as_deref(), args.build_options()) {
+                    match prepare_build(
+                        &args.path,
+                        args.config.as_deref(),
+                        args.build_options(),
+                        all_plugins(),
+                    ) {
                         Ok(new_build) => {
                             build = new_build;
                             if build.run().is_ok()
@@ -654,10 +674,14 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
     )
 }
 
-fn run_compile(sub: &ArgMatches) -> Result<()> {
-    let all = all_plugins();
-    let args = BuildArgs::from_matches(sub, &all)?;
-    let build = prepare_build(&args.path, args.config.as_deref(), args.build_options())?;
+fn run_compile(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()> {
+    let args = BuildArgs::from_matches(sub, &plugins)?;
+    let build = prepare_build(
+        &args.path,
+        args.config.as_deref(),
+        args.build_options(),
+        plugins,
+    )?;
     build.run().map(|_| ())
 }
 

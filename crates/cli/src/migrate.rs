@@ -355,8 +355,8 @@ fn migrate_link_syntax(project: &ProjectConfig, sources: &mut [Source]) -> Resul
             if link.href.contains("://") {
                 continue;
             }
-            let resolved = resolve_href(&link.href, parent, &content_dir)
-                .and_then(|p| canonicalize_path(&p).ok())
+            let resolved = canonicalize_path(&resolve_href(&link.href, parent, &content_dir))
+                .ok()
                 .and_then(|c| handle_map.get(&c).cloned());
             match resolved {
                 Some(target) => {
@@ -803,12 +803,23 @@ fn vertebrae_patterns(spine: &Spine) -> Option<Vec<String>> {
 /// same way the retired `SpineOptions::generate` used to (glob each pattern
 /// against `content_dir`, keep only `.typ` files). Paths are canonicalized so
 /// they compare equal to the directory-scan set regardless of path spelling.
+///
+/// Deliberately still the `glob` crate rather than `globset` (which core's
+/// `CopyGlobs` and the spine excludes now share): this reproduces what the
+/// *retired* `vertebrae` key actually matched, and `globset` additionally
+/// understands brace alternation (`*.{png,jpg}`) that `glob` doesn't — porting
+/// the engine here could change what an old project's `vertebrae` list
+/// expands to, silently changing the `exclude` this migration computes for it.
 fn expand_vertebrae_patterns(patterns: &[String], content_dir: &Path) -> HashSet<PathBuf> {
     let mut matched = HashSet::new();
     for pattern in patterns {
         let glob_pattern = content_dir.join(pattern).display().to_string();
-        let Ok(paths) = glob::glob(&glob_pattern) else {
-            continue;
+        let paths = match glob::glob(&glob_pattern) {
+            Ok(paths) => paths,
+            Err(e) => {
+                warn!(pattern = %pattern, error = %e, "invalid vertebrae glob pattern; skipping");
+                continue;
+            }
         };
         for path in paths.filter_map(|p| p.ok()) {
             if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("typ") {
@@ -985,14 +996,13 @@ fn apply_edits(text: &mut String, mut edits: Vec<(Range<usize>, String)>) {
 /// `/`-prefixed hrefs are resolved against the content directory (Typst's root);
 /// relative hrefs (including `./`) are resolved against the linking file's
 /// directory.
-fn resolve_href(href: &str, file_dir: &Path, content_dir: &Path) -> Option<PathBuf> {
+fn resolve_href(href: &str, file_dir: &Path, content_dir: &Path) -> PathBuf {
     let p = Path::new(href);
-    let resolved = if p.is_absolute() {
+    if p.is_absolute() {
         content_dir.join(p.strip_prefix("/").unwrap_or(p))
     } else {
         file_dir.join(p)
-    };
-    Some(resolved)
+    }
 }
 
 /// Collect every `.typ` file beneath `dir`, sorted lexicographically.
@@ -1079,11 +1089,11 @@ mod tests {
         let content_dir = Path::new("/proj/content");
 
         // Relative to the linking file's directory.
-        let rel = resolve_href("./sibling.typ", file_dir, content_dir).unwrap();
+        let rel = resolve_href("./sibling.typ", file_dir, content_dir);
         assert_eq!(rel, PathBuf::from("/proj/content/ch1/sibling.typ"));
 
         // Rooted at the content directory.
-        let root = resolve_href("/intro.typ", file_dir, content_dir).unwrap();
+        let root = resolve_href("/intro.typ", file_dir, content_dir);
         assert_eq!(root, PathBuf::from("/proj/content/intro.typ"));
     }
 
