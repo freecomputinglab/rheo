@@ -15,6 +15,7 @@ use crate::plugins::{
     CastVertebra, DocumentMeta, FormatPlugin, PackageIndex, PluginContext, TypstFormat,
     spine_layout_for,
 };
+use crate::reticulate::handle::Handle;
 use crate::reticulate::spine::{FormatContext, SpineScan, VirtualSpine};
 use crate::transclude::{ContentTransclusion, ControlAssetKind, ControlAssets};
 use crate::world::RheoWorld;
@@ -508,7 +509,7 @@ impl Build {
                         .and_then(DocumentMeta::title)?;
                     let beacon = Self::beacon_title_plain_text(&pass.bundle, &v.handle);
                     (beacon.as_deref() != Some(resolved))
-                        .then(|| (v.handle.clone(), resolved.to_string()))
+                        .then(|| (v.handle.to_string(), resolved.to_string()))
                 })
                 .collect();
             if !title_overrides.is_empty() {
@@ -591,11 +592,10 @@ impl Build {
     /// `None` when there's no beacon, no `title` field, or it's `none`.
     fn beacon_title_plain_text(
         bundle: &typst_bundle::Bundle,
-        handle: &str,
+        handle: &Handle,
     ) -> Option<ecow::EcoString> {
-        let label = typst::foundations::Label::new(typst::utils::PicoStr::intern(&format!(
-            "rheo-meta:{handle}"
-        )))?;
+        let label =
+            typst::foundations::Label::new(typst::utils::PicoStr::intern(&handle.meta_label()))?;
         let found = bundle
             .introspector
             .query(&typst::foundations::Selector::Label(label));

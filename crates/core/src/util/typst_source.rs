@@ -13,6 +13,7 @@
 //! modeled here; it rides as [`TypstStmt::Raw`] when it needs to sit in a
 //! statement list.
 
+use crate::reticulate::handle::Handle;
 use crate::util::constants::METADATA_MODULE_PATH;
 use crate::util::path::escape_typst_content;
 use crate::util::typst_literal::TypstLiteral;
@@ -42,7 +43,7 @@ pub enum TypstStmt {
     /// is a dict field rather than a method, calling it needs the awkward but
     /// necessary `(rheo-context().metadata-of)("some-handle")` form, not
     /// `rheo-context().metadata-of("some-handle")`.
-    ContextBinding { handle: String },
+    ContextBinding { handle: Handle },
     /// Brings `rheo-metadata` into scope once per vertebra ahead of
     /// [`TypstStmt::ContextBinding`] (which references it as `metadata-of`):
     /// an `#import` of the real query function from the synthetic
@@ -85,14 +86,14 @@ pub enum TypstStmt {
     /// Only emitted for `OnePerVertebra` layouts (HTML/EPUB); combined PDF
     /// leaks cross-vertebra `set document(...)` state within its one shared
     /// `#document(...)`, so no beacon is emitted there.
-    MetadataBeacon { handle: String },
+    MetadataBeacon { handle: Handle },
     /// `#state("<key>").update(<value>)`.
     StateUpdate { key: String, value: TypstLiteral },
     /// `#rheo-page-init("<handle>")` — the per-document init hook defined in
     /// `typ/rheo.typ`: it publishes the page handle to `state` and, for per-page
     /// (html/epub) output, resets the footnote counter so each page numbers its
     /// footnotes from 1.
-    PageInit { handle: String },
+    PageInit { handle: Handle },
     /// `#show link: rheo-link-rule("<handle>")` — the cross-vertebra link rule
     /// from `typ/rheo.typ`, applied per `#document` and closed over that page's
     /// handle so its depth arithmetic needs no `state` read and therefore no
@@ -106,7 +107,7 @@ pub enum TypstStmt {
     /// so a coin flip whenever a project attached a vertebra's handle to an element
     /// of its own. See `typ/rheo.typ`'s `rheo-link-rule` for the measurement,
     /// including what this change does NOT fix.
-    LinkRule { handle: String },
+    LinkRule { handle: Handle },
     /// A cross-vertebra handle anchor: a labeled, hidden `rheo-handle` `#figure`
     /// so `@label` / `#link(<label>)` resolve across the bundle. The figure's
     /// body calls `rheo-handle-title` (brought into scope by
@@ -120,7 +121,7 @@ pub enum TypstStmt {
     /// beacon is found (combined PDF layouts, which emit no beacons).
     HandleAnchor {
         label: String,
-        handle: String,
+        handle: Handle,
         fallback_title: String,
     },
     /// `#include "<path>"`.
@@ -137,8 +138,8 @@ pub enum TypstStmt {
 
 /// Quote `s` as a Typst string literal (escaped), for splicing a handle or
 /// key into a statement's rendered source.
-fn quote(s: &str) -> String {
-    TypstLiteral::str(s).serialize()
+fn quote(s: impl AsRef<str>) -> String {
+    TypstLiteral::str(s.as_ref()).serialize()
 }
 
 impl fmt::Display for TypstStmt {
@@ -166,8 +167,9 @@ impl fmt::Display for TypstStmt {
             }
             TypstStmt::MetadataBeacon { handle } => write!(
                 f,
-                "#context [#metadata((handle: {handle_lit}, title: document.title, author: document.author, description: document.description, keywords: document.keywords, date: document.date)) <rheo-meta:{handle}>]",
+                "#context [#metadata((handle: {handle_lit}, title: document.title, author: document.author, description: document.description, keywords: document.keywords, date: document.date)) <{label}>]",
                 handle_lit = quote(handle),
+                label = handle.meta_label(),
             ),
             TypstStmt::StateUpdate { key, value } => {
                 write!(f, "#state({}).update({})", quote(key), value.serialize())

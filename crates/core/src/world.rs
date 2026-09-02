@@ -856,13 +856,13 @@ mod tests {
                     "{}\n\n{}\n\n",
                     TypstStmt::MetadataHelper,
                     TypstStmt::ContextBinding {
-                        handle: "intro".to_string()
+                        handle: "intro".into()
                     }
                 ),
                 epilogue: format!(
                     "\n{}\n",
                     TypstStmt::MetadataBeacon {
-                        handle: "intro".to_string()
+                        handle: "intro".into()
                     }
                 ),
             },

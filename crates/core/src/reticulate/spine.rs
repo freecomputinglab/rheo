@@ -1,7 +1,8 @@
 use crate::config::SpineSection;
 use crate::parser;
 use crate::reticulate::bundle_source::BundleSource;
-use crate::util::path::{sanitize_handle_segment, to_forward_slash};
+use crate::reticulate::handle::Handle;
+use crate::util::path::to_forward_slash;
 use crate::util::pdf::DocumentTitle;
 use crate::util::typst_literal::TypstLiteral;
 use crate::util::typst_source::TypstStmt;
@@ -125,7 +126,7 @@ impl SpineScan {
                     to_forward_slash(&f.strip_prefix(content_dir).unwrap_or(f).with_extension(""));
                 let segment = stem
                     .split('/')
-                    .map(sanitize_handle_segment)
+                    .map(Handle::sanitize_segment)
                     .collect::<Vec<_>>()
                     .join(":");
                 SpineNode {
@@ -175,7 +176,7 @@ impl SpineScan {
         let idx = files.len();
         files.push(path.to_path_buf());
         SpineNode {
-            segment: sanitize_handle_segment(stem),
+            segment: Handle::sanitize_segment(stem),
             title: None,
             vertebra: Some(idx),
             children: Vec::new(),
@@ -282,7 +283,7 @@ impl SpineScan {
         }
 
         Ok(Some(SpineNode {
-            segment: sanitize_handle_segment(&dirname),
+            segment: Handle::sanitize_segment(&dirname),
             title,
             vertebra,
             children,
@@ -373,7 +374,7 @@ impl SpineScan {
     fn validate_sections(sections: &[SpineSection]) -> Result<()> {
         let mut seen: HashSet<&str> = HashSet::new();
         for s in sections {
-            if sanitize_handle_segment(&s.name).is_empty() {
+            if Handle::sanitize_segment(&s.name).is_empty() {
                 return Err(RheoError::project_config(format!(
                     "spine section name '{}' is not a valid slug",
                     s.name
@@ -439,7 +440,7 @@ impl SpineScan {
             let mut children: Vec<PathNode> = matched
                 .into_iter()
                 .map(|p| PathNode {
-                    segment: sanitize_handle_segment(
+                    segment: Handle::sanitize_segment(
                         p.file_stem().and_then(|s| s.to_str()).unwrap_or_default(),
                     ),
                     title: None,
@@ -455,7 +456,7 @@ impl SpineScan {
             )?);
 
             result.push(PathNode {
-                segment: sanitize_handle_segment(&s.name),
+                segment: Handle::sanitize_segment(&s.name),
                 title: Some(s.title.clone().unwrap_or_else(|| Self::prettify(&s.name))),
                 file: None,
                 children,
@@ -644,7 +645,7 @@ pub struct Vertebra {
     /// Output path key in VirtualFs (e.g. "intro.html").
     pub output_path: String,
     /// Primary synthesized cross-vertebra handle label (e.g. "intro" or "chapters:intro").
-    pub handle: String,
+    pub handle: Handle,
     /// Additional handle aliases; always includes the `<stem.typ>` escape form.
     pub extra_handles: Vec<String>,
     /// Whether the canonical `<handle>` label should be emitted as a bundle anchor.
@@ -804,7 +805,7 @@ impl VirtualSpine {
     /// Fill `handles[i]` with the `:`-joined segment path from the tree root to
     /// the node whose `vertebra` is `Some(i)`, walking pre-order. Group nodes
     /// contribute their segment as a prefix to descendants without claiming a slot.
-    fn assign_handles(nodes: &[SpineNode], prefix: &str, handles: &mut [String]) {
+    fn assign_handles(nodes: &[SpineNode], prefix: &str, handles: &mut [Handle]) {
         for n in nodes {
             let seg = if prefix.is_empty() {
                 n.segment.clone()
@@ -814,7 +815,7 @@ impl VirtualSpine {
             if let Some(i) = n.vertebra
                 && let Some(slot) = handles.get_mut(i)
             {
-                *slot = seg.clone();
+                *slot = Handle::new(seg.clone());
             }
             Self::assign_handles(&n.children, &seg, handles);
         }
@@ -833,13 +834,13 @@ impl VirtualSpine {
         // ':'-joined path of ancestor segments down to the file. For a plain
         // directory scan this equals the disk path; a file pulled under a
         // `[[spine.section]]` gains that section's segment as a prefix.
-        let mut handles: Vec<String> = vec![String::new(); files.len()];
+        let mut handles: Vec<Handle> = vec![Handle::default(); files.len()];
         Self::assign_handles(&tree, "", &mut handles);
 
         // First pass: parse each file, compute handles, collect user labels.
         struct FileInfo {
             file: PathBuf,
-            handle: String,
+            handle: Handle,
             escape: String,
             output_path: String,
             rel_path: String,
@@ -858,16 +859,10 @@ impl VirtualSpine {
             .zip(handles.iter())
             .map(|(file, handle)| {
                 let handle = handle.clone();
-                let escape = format!("{handle}.typ");
+                let escape = handle.escape();
 
                 let output_path = match &layout {
-                    // The handle joins nesting with ':' (a valid Typst label
-                    // char; '/' is not). output_path is a real file path, so
-                    // translate those separators back to '/' — nested vertebrae
-                    // land in on-disk subdirectories, not colon-flattened files.
-                    SpineLayout::OnePerVertebra { ext, .. } => {
-                        format!("{}.{ext}", handle.replace(':', "/"))
-                    }
+                    SpineLayout::OnePerVertebra { ext, .. } => handle.output_path(ext),
                     SpineLayout::SingleCombined { output_name, .. } => output_name.clone(),
                 };
 
@@ -934,15 +929,15 @@ impl VirtualSpine {
         let all_user_labels = user_labels;
 
         // Second pass: assign emit_handle and check escape uniqueness.
-        let mut seen_canonicals: HashSet<String> = HashSet::new();
+        let mut seen_canonicals: HashSet<Handle> = HashSet::new();
         let mut seen_escapes: HashSet<String> = HashSet::new();
 
         let vertebrae: Result<Vec<Vertebra>> = file_infos
             .into_iter()
             .map(|fi| {
                 // Canonical: skip if claimed by user or already emitted.
-                let emit_handle =
-                    !all_user_labels.contains(&fi.handle) && !seen_canonicals.contains(&fi.handle);
+                let emit_handle = !all_user_labels.contains(fi.handle.as_str())
+                    && !seen_canonicals.contains(&fi.handle);
                 seen_canonicals.insert(fi.handle.clone());
 
                 // Escape: must be unique — error on collision.
@@ -1190,11 +1185,11 @@ impl VirtualSpine {
         let segment_for = |v: &Vertebra| BundleSegment {
             anchors: v
                 .emit_handle
-                .then_some(&v.handle)
+                .then(|| v.handle.as_str())
                 .into_iter()
-                .chain(v.extra_handles.iter())
+                .chain(v.extra_handles.iter().map(String::as_str))
                 .map(|label| BundleAnchor {
-                    label: label.clone(),
+                    label: label.to_string(),
                     handle: v.handle.clone(),
                     title: v.title.clone(),
                 })
@@ -1230,7 +1225,7 @@ impl VirtualSpine {
                     title,
                     // Combined PDF is one document with no cross-vertebra link
                     // rule; the handle is unused.
-                    handle: String::new(),
+                    handle: Handle::default(),
                     segments: self.vertebrae.iter().map(segment_for).collect(),
                 }]
             }
