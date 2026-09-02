@@ -7,9 +7,10 @@ use crate::util::pdf::DocumentTitle;
 use crate::util::typst_literal::TypstLiteral;
 use crate::util::typst_source::TypstStmt;
 use crate::{MARROW_FILE, RESERVED_META_LABEL_PREFIX, Result, RheoError, TYP_EXT};
-use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::hash::Hash;
 use std::path::{Path, PathBuf};
 use tracing::warn;
 use typst::syntax::Source;
@@ -23,8 +24,19 @@ use typst::syntax::Source;
 pub struct SpineScan {
     /// Ordered flat file list in pre-order (feeds `VirtualSpine::build` later).
     pub files: Vec<PathBuf>,
-    /// Structured tree; `node.vertebra` indexes into `files` (== pre-order position).
+    /// Structured tree; `node.vertebra()` indexes into `files` (== pre-order position).
     pub tree: Vec<SpineNode>,
+}
+
+/// Compile one glob pattern with `literal_separator` (so `*` doesn't cross
+/// `/` while `**` still descends), wrapping a compile failure as a
+/// project-config error naming the pattern and `context` (a noun phrase
+/// ending in "glob", e.g. "exclude glob", "spine include glob").
+fn compile_glob(pattern: &str, context: &str) -> Result<Glob> {
+    GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()
+        .map_err(|e| RheoError::project_config(format!("invalid {context} '{pattern}': {e}")))
 }
 
 impl SpineScan {
@@ -98,13 +110,7 @@ impl SpineScan {
     fn build_exclude_set(exclude: &[String]) -> Result<GlobSet> {
         let mut builder = GlobSetBuilder::new();
         for g in exclude {
-            let glob = GlobBuilder::new(g)
-                .literal_separator(true)
-                .build()
-                .map_err(|e| {
-                    RheoError::project_config(format!("invalid exclude glob '{}': {}", g, e))
-                })?;
-            builder.add(glob);
+            builder.add(compile_glob(g, "exclude glob")?);
         }
         builder
             .build()
@@ -129,12 +135,7 @@ impl SpineScan {
                     .map(Handle::sanitize_segment)
                     .collect::<Vec<_>>()
                     .join(":");
-                SpineNode {
-                    segment,
-                    title: None,
-                    vertebra: Some(i),
-                    children: Vec::new(),
-                }
+                SpineNode::leaf(segment, i)
             })
             .collect();
         SpineScan {
@@ -175,12 +176,7 @@ impl SpineScan {
             .unwrap_or_default();
         let idx = files.len();
         files.push(path.to_path_buf());
-        SpineNode {
-            segment: Handle::sanitize_segment(stem),
-            title: None,
-            vertebra: Some(idx),
-            children: Vec::new(),
-        }
+        SpineNode::leaf(Handle::sanitize_segment(stem), idx)
     }
 
     /// Scan one directory, recursing into subdirectories. Returns the child
@@ -229,65 +225,58 @@ impl SpineScan {
             .unwrap_or_default()
             .to_string();
 
-        let entries = Self::read_sorted_entries(dir)?;
+        // Excluded once, up front — both the landing-file search and the
+        // children loop below read this same pre-filtered list.
+        let entries: Vec<PathBuf> = Self::read_sorted_entries(dir)?
+            .into_iter()
+            .map(|e| e.path())
+            .filter(|p| !Self::is_excluded(content_dir, p, exclude))
+            .collect();
 
         // Find the landing file: prefer index.typ, else <dirname>.typ.
         let index_name = format!("index{}", TYP_EXT);
         let named_name = format!("{}{}", dirname, TYP_EXT);
-
-        let candidates: Vec<PathBuf> = entries
-            .iter()
-            .map(|e| e.path())
-            .filter(|p| !Self::is_excluded(content_dir, p, exclude))
-            .collect();
         let named = |name: &str| {
-            candidates
+            entries
                 .iter()
                 .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(name))
                 .cloned()
         };
         let landing_path = named(&index_name).or_else(|| named(&named_name));
 
-        let (vertebra, title) = if let Some(landing) = &landing_path {
+        let landing_idx = landing_path.as_ref().map(|landing| {
             let idx = files.len();
             files.push(landing.clone());
-            (Some(idx), None)
-        } else {
-            (None, Some(Self::prettify(&dirname)))
-        };
+            idx
+        });
 
         // Recurse for children, skipping the landing file itself.
         let mut children = Vec::new();
-        for entry in &entries {
-            let path = entry.path();
-
-            if Some(&path) == landing_path.as_ref() {
-                continue;
-            }
-            if Self::is_excluded(content_dir, &path, exclude) {
+        for path in &entries {
+            if Some(path) == landing_path.as_ref() {
                 continue;
             }
 
             if path.is_dir() {
-                if let Some(node) = Self::scan_subdir(content_dir, &path, exclude, files)? {
+                if let Some(node) = Self::scan_subdir(content_dir, path, exclude, files)? {
                     children.push(node);
                 }
-            } else if Self::is_typ_file(&path) {
-                children.push(Self::push_typ_leaf(&path, files));
+            } else if Self::is_typ_file(path) {
+                children.push(Self::push_typ_leaf(path, files));
             }
         }
 
-        if vertebra.is_none() && children.is_empty() {
+        let segment = Handle::sanitize_segment(&dirname);
+        Ok(match landing_idx {
+            Some(idx) => Some(SpineNode::landing(segment, idx, children)),
             // Empty subtree after exclusion/pruning: drop the whole node.
-            return Ok(None);
-        }
-
-        Ok(Some(SpineNode {
-            segment: Handle::sanitize_segment(&dirname),
-            title,
-            vertebra,
-            children,
-        }))
+            None if children.is_empty() => None,
+            None => Some(SpineNode::group(
+                segment,
+                Self::prettify(&dirname),
+                children,
+            )),
+        })
     }
 
     /// Derive a group title from a directory name: strip a leading numeric
@@ -340,8 +329,7 @@ impl SpineScan {
         let mut roots = Self::to_path_nodes(&self.tree, &self.files);
 
         // All movable (leaf) file paths currently in the tree.
-        let mut leaves = Vec::new();
-        Self::collect_leaf_files(&roots, &mut leaves);
+        let leaves = Self::collect_leaf_files(&roots);
 
         // Build virtual section nodes, claiming leaf files (each to the first
         // section, pre-order, whose include matches it).
@@ -350,7 +338,7 @@ impl SpineScan {
             Self::build_section_nodes(content_dir, sections, &leaves, &mut claimed)?;
 
         // Remove claimed leaves from the scanned tree, pruning emptied groups.
-        Self::prune_claimed(&mut roots, &claimed);
+        PathNode::retain_unclaimed(&mut roots, &claimed);
 
         // Insert virtual dirs at top level; order top-level siblings by segment,
         // just as on-disk directories are ordered by name.
@@ -391,29 +379,29 @@ impl SpineScan {
         Ok(())
     }
 
-    /// Convert an indexed [`SpineNode`] tree into a path-carrying working tree.
+    /// Convert an indexed [`SpineNode`] tree into a path-carrying working
+    /// tree: a structural [`Node::map`] from vertebra index to real path.
     fn to_path_nodes(nodes: &[SpineNode], files: &[PathBuf]) -> Vec<PathNode> {
         nodes
             .iter()
-            .map(|n| PathNode {
-                segment: n.segment.clone(),
-                title: n.title.clone(),
-                file: n.vertebra.and_then(|i| files.get(i)).cloned(),
-                children: Self::to_path_nodes(&n.children, files),
-            })
+            .map(|n| n.map(&mut |&i| files[i].clone()))
             .collect()
     }
 
-    /// Collect every movable leaf file path (a node with a file and no children).
-    fn collect_leaf_files(nodes: &[PathNode], out: &mut Vec<PathBuf>) {
+    /// Collect every movable leaf file path (a childless landing node) —
+    /// candidates a `[[spine.section]]` include list may claim.
+    fn collect_leaf_files(nodes: &[PathNode]) -> Vec<PathBuf> {
+        let mut out = Vec::new();
         for n in nodes {
-            if n.children.is_empty()
-                && let Some(f) = &n.file
-            {
-                out.push(f.clone());
-            }
-            Self::collect_leaf_files(&n.children, out);
+            n.visit("", &mut |_, node| {
+                if node.is_leaf()
+                    && let NodeKind::Landing(p) = &node.kind
+                {
+                    out.push(p.clone());
+                }
+            });
         }
+        out
     }
 
     /// Build virtual-directory nodes from `sections`, claiming leaf files.
@@ -428,8 +416,11 @@ impl SpineScan {
         for s in sections {
             // A file is claimed by the first section that matches; the whole
             // section errors only if every one of its patterns matched nothing.
-            let matched =
-                matcher.resolve(&s.include, claimed, &format!("spine section '{}'", s.name))?;
+            let matched = matcher.resolve(
+                &s.include,
+                claimed,
+                &format!("spine section '{}' include glob", s.name),
+            )?;
             if !s.include.is_empty() && matched.is_empty() {
                 return Err(RheoError::project_config(format!(
                     "spine section '{}' include matched no files",
@@ -439,13 +430,11 @@ impl SpineScan {
 
             let mut children: Vec<PathNode> = matched
                 .into_iter()
-                .map(|p| PathNode {
-                    segment: Handle::sanitize_segment(
+                .map(|p| {
+                    let segment = Handle::sanitize_segment(
                         p.file_stem().and_then(|s| s.to_str()).unwrap_or_default(),
-                    ),
-                    title: None,
-                    file: Some(p),
-                    children: Vec::new(),
+                    );
+                    PathNode::leaf(segment, p)
                 })
                 .collect();
             children.extend(Self::build_section_nodes(
@@ -455,12 +444,11 @@ impl SpineScan {
                 claimed,
             )?);
 
-            result.push(PathNode {
-                segment: Handle::sanitize_segment(&s.name),
-                title: Some(s.title.clone().unwrap_or_else(|| Self::prettify(&s.name))),
-                file: None,
+            result.push(PathNode::group(
+                Handle::sanitize_segment(&s.name),
+                s.title.clone().unwrap_or_else(|| Self::prettify(&s.name)),
                 children,
-            });
+            ));
         }
         Ok(result)
     }
@@ -476,11 +464,10 @@ impl SpineScan {
         }
 
         let roots = Self::to_path_nodes(&self.tree, &self.files);
-        let mut leaf_nodes = Vec::new();
-        Self::collect_leaf_nodes(roots, &mut leaf_nodes);
+        let leaf_nodes = Self::collect_leaf_nodes(&roots);
         let mut by_path: HashMap<PathBuf, PathNode> = leaf_nodes
             .into_iter()
-            .filter_map(|n| n.file.clone().map(|f| (f, n)))
+            .filter_map(|n| n.vertebra().cloned().map(|f| (f, n)))
             .collect();
         let leaves: Vec<PathBuf> = by_path.keys().cloned().collect();
 
@@ -489,7 +476,7 @@ impl SpineScan {
         let mut new_roots = Vec::new();
         for g in include {
             let pattern = std::slice::from_ref(g);
-            let matched = matcher.resolve(pattern, &mut claimed, "spine include")?;
+            let matched = matcher.resolve(pattern, &mut claimed, "spine include glob")?;
             if matched.is_empty() {
                 return Err(RheoError::project_config(format!(
                     "spine include pattern '{}' matched no files",
@@ -509,52 +496,35 @@ impl SpineScan {
         Ok(SpineScan { files, tree })
     }
 
-    /// Move every leaf [`PathNode`] (childless, file-bearing) out of `nodes`
-    /// into `out`, dropping non-movable group/landing-page structure around it —
-    /// the counterpart of [`Self::collect_leaf_files`] that yields owned nodes
-    /// (segment/title intact) rather than just their paths.
-    fn collect_leaf_nodes(nodes: Vec<PathNode>, out: &mut Vec<PathNode>) {
+    /// Extract every genuine leaf (childless landing) node, discarding
+    /// non-movable group/landing-page structure around it — the counterpart
+    /// of [`Self::collect_leaf_files`] that yields owned nodes (segment
+    /// intact) rather than just their paths.
+    fn collect_leaf_nodes(nodes: &[PathNode]) -> Vec<PathNode> {
+        let mut out = Vec::new();
         for n in nodes {
-            if n.children.is_empty() && n.file.is_some() {
-                out.push(n);
-            } else {
-                Self::collect_leaf_nodes(n.children, out);
-            }
+            n.visit("", &mut |_, node| {
+                if node.is_leaf() {
+                    out.push(node.clone());
+                }
+            });
         }
-    }
-
-    /// Remove claimed leaf files from the working tree, dropping any group node
-    /// left with neither a file nor children.
-    fn prune_claimed(nodes: &mut Vec<PathNode>, claimed: &HashSet<PathBuf>) {
-        nodes.retain_mut(|n| {
-            Self::prune_claimed(&mut n.children, claimed);
-            if n.children.is_empty()
-                && let Some(f) = &n.file
-                && claimed.contains(f)
-            {
-                return false;
-            }
-            !(n.file.is_none() && n.children.is_empty())
-        });
+        out
     }
 
     /// Re-index a working tree into an indexed [`SpineNode`] tree, rebuilding the
-    /// flat file list in pre-order (parent before children).
+    /// flat file list in pre-order (parent before children): a structural
+    /// [`Node::map`] whose leaf transform assigns each landing file the next
+    /// index by push order.
     fn reindex(nodes: &[PathNode], files: &mut Vec<PathBuf>) -> Vec<SpineNode> {
         nodes
             .iter()
             .map(|n| {
-                let vertebra = n.file.as_ref().map(|f| {
+                n.map(&mut |f| {
                     let idx = files.len();
                     files.push(f.clone());
                     idx
-                });
-                SpineNode {
-                    segment: n.segment.clone(),
-                    title: n.title.clone(),
-                    vertebra,
-                    children: Self::reindex(&n.children, files),
-                }
+                })
             })
             .collect()
     }
@@ -562,12 +532,7 @@ impl SpineScan {
 
 /// A working spine node carrying file PATHS (not indices), used while
 /// transforming the scanned tree before re-indexing into [`SpineNode`].
-struct PathNode {
-    segment: String,
-    title: Option<String>,
-    file: Option<PathBuf>,
-    children: Vec<PathNode>,
-}
+type PathNode = Node<PathBuf>;
 
 /// Ordered-glob resolution shared by `[[spine.section]] include` and flat
 /// `[spine] include`: matches patterns against unclaimed leaves in listed
@@ -589,7 +554,8 @@ impl<'a> OrderedGlobMatch<'a> {
     }
 
     /// Resolve `patterns` in listed order, claiming matches as they're found.
-    /// `context` names the enclosing include list for the invalid-glob error.
+    /// `context` is passed straight through to [`compile_glob`] (a noun phrase
+    /// ending in "glob") for the invalid-glob error.
     fn resolve(
         &self,
         patterns: &[String],
@@ -598,16 +564,7 @@ impl<'a> OrderedGlobMatch<'a> {
     ) -> Result<Vec<PathBuf>> {
         let mut matched = Vec::new();
         for g in patterns {
-            let matcher = GlobBuilder::new(g)
-                .literal_separator(true)
-                .build()
-                .map_err(|e| {
-                    RheoError::project_config(format!(
-                        "invalid include glob '{}' in {}: {}",
-                        g, context, e
-                    ))
-                })?
-                .compile_matcher();
+            let matcher = compile_glob(g, context)?.compile_matcher();
             let mut ms: Vec<PathBuf> = self
                 .leaves
                 .iter()
@@ -677,43 +634,156 @@ pub struct VertebraInjection {
     pub epilogue: String,
 }
 
-/// One node in the structured spine. Mirrors directory / section nesting to
-/// arbitrary depth as a structural overlay over the flat `vertebrae`.
-#[derive(Debug)]
-pub struct SpineNode {
-    /// Handle segment contributed by this node (dir name, file stem, or section
-    /// name). For the trivial flat tree this is the vertebra's full handle.
+/// One node in a spine tree, generic over the payload of a "landing" node —
+/// one that resolves to a file. [`SpineNode`] (`L = usize`, a vertebra index)
+/// is the final indexed tree; [`PathNode`] (`L = PathBuf`) is the working
+/// tree `apply_sections`/`apply_include` reshape before re-indexing.
+///
+/// A node is exactly one of two shapes ([`NodeKind`]) — never neither, never
+/// a pair of `Option`s that could disagree:
+/// - [`NodeKind::Landing`]: this node itself resolves to a file. `children`
+///   may still be empty (an ordinary leaf) or non-empty (a directory whose
+///   `index.typ`/`<dirname>.typ` landing file gives the directory itself a
+///   handle, alongside its own children) — landing-ness and having children
+///   are independent, so it lives on `Node` rather than inside the enum.
+/// - [`NodeKind::Group`]: no landing file; a non-clickable directory/section
+///   with its own display title, nesting its (always non-empty) children.
+#[derive(Debug, Clone)]
+pub struct Node<L> {
+    /// Handle segment contributed by this node (dir name, file stem, or
+    /// section name). For the trivial flat tree this is the vertebra's full
+    /// handle.
     pub segment: String,
-    /// Explicit group title. `None` for a leaf — display title comes from the
-    /// vertebra it points at.
-    pub title: Option<String>,
-    /// Index into `VirtualSpine.vertebrae` for this node's landing page, or
-    /// `None` for a non-clickable group node.
-    pub vertebra: Option<usize>,
+    pub kind: NodeKind<L>,
     /// Child nodes, in order.
-    pub children: Vec<SpineNode>,
+    pub children: Vec<Node<L>>,
 }
 
-/// Every vertebra index the tree references, in pre-order.
+/// See [`Node`] for what each variant means and why `children` lives outside it.
+#[derive(Debug, Clone)]
+pub enum NodeKind<L> {
+    Landing(L),
+    Group(String),
+}
+
+/// The final spine tree: `L = usize` indexes into `VirtualSpine.vertebrae`.
+pub type SpineNode = Node<usize>;
+
+impl<L> Node<L> {
+    fn leaf(segment: String, payload: L) -> Self {
+        Node {
+            segment,
+            kind: NodeKind::Landing(payload),
+            children: Vec::new(),
+        }
+    }
+
+    fn landing(segment: String, payload: L, children: Vec<Node<L>>) -> Self {
+        Node {
+            segment,
+            kind: NodeKind::Landing(payload),
+            children,
+        }
+    }
+
+    fn group(segment: String, title: String, children: Vec<Node<L>>) -> Self {
+        Node {
+            segment,
+            kind: NodeKind::Group(title),
+            children,
+        }
+    }
+
+    /// This node's own landing payload, if it resolves to a file (leaf or
+    /// landing directory). `None` for a pure group node.
+    pub fn vertebra(&self) -> Option<&L> {
+        match &self.kind {
+            NodeKind::Landing(p) => Some(p),
+            NodeKind::Group(_) => None,
+        }
+    }
+
+    /// This node's own display title. Only a group node carries one — a
+    /// landing node's display title comes from the vertebra it points at.
+    pub fn title(&self) -> Option<&str> {
+        match &self.kind {
+            NodeKind::Group(t) => Some(t.as_str()),
+            NodeKind::Landing(_) => None,
+        }
+    }
+
+    /// True for a genuine leaf: a landing node with no children (as opposed
+    /// to a landing directory, which also has a payload but nests children).
+    fn is_leaf(&self) -> bool {
+        self.children.is_empty() && matches!(self.kind, NodeKind::Landing(_))
+    }
+
+    /// Pre-order structural transform: rebuild this node with its landing
+    /// payload passed through `f`, shape otherwise preserved. `f` runs on
+    /// this node before its children, so a stateful `f` (e.g. one assigning
+    /// fresh indices by push order) numbers a node before its descendants.
+    fn map<M>(&self, f: &mut impl FnMut(&L) -> M) -> Node<M> {
+        let kind = match &self.kind {
+            NodeKind::Landing(p) => NodeKind::Landing(f(p)),
+            NodeKind::Group(t) => NodeKind::Group(t.clone()),
+        };
+        Node {
+            segment: self.segment.clone(),
+            kind,
+            children: self.children.iter().map(|c| c.map(f)).collect(),
+        }
+    }
+
+    /// Post-order (bottom-up) fold: build a `T` for every child first, then
+    /// combine this node with its children's `T`s via `f`.
+    fn fold<T>(&self, f: &mut impl FnMut(&Node<L>, Vec<T>) -> T) -> T {
+        let children = self.children.iter().map(|c| c.fold(f)).collect();
+        f(self, children)
+    }
+
+    /// Pre-order walk, threading the `:`-joined handle-path from the root
+    /// down to (and including) each node's own segment. `f` receives that
+    /// path and the node.
+    fn visit(&self, prefix: &str, f: &mut impl FnMut(&str, &Node<L>)) {
+        let path = if prefix.is_empty() {
+            self.segment.clone()
+        } else {
+            format!("{prefix}:{}", self.segment)
+        };
+        f(&path, self);
+        for c in &self.children {
+            c.visit(&path, f);
+        }
+    }
+}
+
+impl<L: Eq + Hash> Node<L> {
+    /// Remove claimed leaf payloads from the tree in place, dropping any
+    /// group node left with no children.
+    fn retain_unclaimed(nodes: &mut Vec<Node<L>>, claimed: &HashSet<L>) {
+        nodes.retain_mut(|n| {
+            Self::retain_unclaimed(&mut n.children, claimed);
+            match &n.kind {
+                NodeKind::Landing(p) => !(n.children.is_empty() && claimed.contains(p)),
+                NodeKind::Group(_) => !n.children.is_empty(),
+            }
+        });
+    }
+}
+
+/// Every vertebra index the tree references, in pre-order: a node's own
+/// landing index (if any), then its children's, regardless of whether this
+/// node itself yielded one.
 fn tree_indices(tree: &[SpineNode]) -> Vec<usize> {
     let mut indices = Vec::new();
     for node in tree {
-        node.collect_indices(&mut indices);
+        node.visit("", &mut |_, n| {
+            if let NodeKind::Landing(i) = &n.kind {
+                indices.push(*i);
+            }
+        });
     }
     indices
-}
-
-impl SpineNode {
-    /// Pre-order walk: push this node's vertebra index (if any) then recurse
-    /// into children regardless of whether this node itself yielded one.
-    fn collect_indices(&self, out: &mut Vec<usize>) {
-        if let Some(i) = self.vertebra {
-            out.push(i);
-        }
-        for child in &self.children {
-            child.collect_indices(out);
-        }
-    }
 }
 
 /// The per-format values that ride on `sys.inputs.rheo-context` alongside the
@@ -799,25 +869,21 @@ impl VirtualSpine {
     /// The vertebra a tree node points at, or `None` for a group node or a
     /// stale index. Never panics — looks up via `.get`.
     pub fn vertebra_of(&self, node: &SpineNode) -> Option<&Vertebra> {
-        node.vertebra.and_then(|i| self.vertebrae.get(i))
+        node.vertebra().and_then(|&i| self.vertebrae.get(i))
     }
 
     /// Fill `handles[i]` with the `:`-joined segment path from the tree root to
-    /// the node whose `vertebra` is `Some(i)`, walking pre-order. Group nodes
+    /// the node whose `vertebra()` is `Some(i)`, walking pre-order. Group nodes
     /// contribute their segment as a prefix to descendants without claiming a slot.
-    fn assign_handles(nodes: &[SpineNode], prefix: &str, handles: &mut [Handle]) {
+    fn assign_handles(nodes: &[SpineNode], handles: &mut [Handle]) {
         for n in nodes {
-            let seg = if prefix.is_empty() {
-                n.segment.clone()
-            } else {
-                format!("{prefix}:{}", n.segment)
-            };
-            if let Some(i) = n.vertebra
-                && let Some(slot) = handles.get_mut(i)
-            {
-                *slot = Handle::new(seg.clone());
-            }
-            Self::assign_handles(&n.children, &seg, handles);
+            n.visit("", &mut |path, node| {
+                if let Some(&i) = node.vertebra()
+                    && let Some(slot) = handles.get_mut(i)
+                {
+                    *slot = Handle::new(path.to_string());
+                }
+            });
         }
     }
 
@@ -835,7 +901,7 @@ impl VirtualSpine {
         // directory scan this equals the disk path; a file pulled under a
         // `[[spine.section]]` gains that section's segment as a prefix.
         let mut handles: Vec<Handle> = vec![Handle::default(); files.len()];
-        Self::assign_handles(&tree, "", &mut handles);
+        Self::assign_handles(&tree, &mut handles);
 
         // First pass: parse each file, compute handles, collect user labels.
         struct FileInfo {
@@ -1096,26 +1162,26 @@ impl VirtualSpine {
     /// metadata is not part of this shape — read it live via
     /// `rheo-context().metadata-of` (see [`TypstStmt::MetadataHelper`]).
     fn node_literal(&self, node: &SpineNode) -> TypstLiteral {
-        let (handle, path, title) = match node.vertebra.and_then(|i| self.vertebrae.get(i)) {
-            Some(v) => (
-                TypstLiteral::str(v.handle.as_str()),
-                TypstLiteral::str(v.rel_path.as_str()),
-                TypstLiteral::str(v.title.as_str()),
-            ),
-            None => (
-                TypstLiteral::None,
-                TypstLiteral::None,
-                TypstLiteral::str(node.title.as_deref().unwrap_or(node.segment.as_str())),
-            ),
-        };
-        let children =
-            TypstLiteral::Array(node.children.iter().map(|c| self.node_literal(c)).collect());
-        TypstLiteral::Dict(vec![
-            ("title".to_string(), title),
-            ("handle".to_string(), handle),
-            ("path".to_string(), path),
-            ("children".to_string(), children),
-        ])
+        node.fold(&mut |n, children| {
+            let (handle, path, title) = match n.vertebra().and_then(|&i| self.vertebrae.get(i)) {
+                Some(v) => (
+                    TypstLiteral::str(v.handle.as_str()),
+                    TypstLiteral::str(v.rel_path.as_str()),
+                    TypstLiteral::str(v.title.as_str()),
+                ),
+                None => (
+                    TypstLiteral::None,
+                    TypstLiteral::None,
+                    TypstLiteral::str(n.title().unwrap_or(n.segment.as_str())),
+                ),
+            };
+            TypstLiteral::Dict(vec![
+                ("title".to_string(), title),
+                ("handle".to_string(), handle),
+                ("path".to_string(), path),
+                ("children".to_string(), TypstLiteral::Array(children)),
+            ])
+        })
     }
 
     /// The flat spine as a [`TypstLiteral`] array-of-dictionaries, in the same
@@ -1934,17 +2000,17 @@ mod tests {
         assert_eq!(result.files.len(), 6);
 
         let guide = find_node(&result.tree, "guide");
-        assert!(guide.vertebra.is_some());
+        assert!(guide.vertebra().is_some());
         assert_eq!(guide.segment, "guide");
 
         let a = find_node(&guide.children, "a");
-        assert!(a.vertebra.is_some());
+        assert!(a.vertebra().is_some());
         let _b = find_node(&guide.children, "b");
 
         let deep = find_node(&guide.children, "deep");
-        assert!(deep.vertebra.is_none());
+        assert!(deep.vertebra().is_none());
         let x = find_node(&deep.children, "x");
-        assert!(x.vertebra.is_some());
+        assert!(x.vertebra().is_some());
     }
 
     #[test]
@@ -1953,8 +2019,8 @@ mod tests {
         let result = SpineScan::run(temp.path(), &[]).unwrap();
 
         let extras = find_node(&result.tree, "extras");
-        assert!(extras.vertebra.is_none());
-        assert_eq!(extras.title, Some("Extras".to_string()));
+        assert!(extras.vertebra().is_none());
+        assert_eq!(extras.title(), Some("Extras"));
     }
 
     /// Marrow is emitted at the bundle root, outside every document, so the
@@ -2086,7 +2152,7 @@ mod tests {
         let result = SpineScan::run(temp.path(), &[]).unwrap();
 
         let basics = find_node(&result.tree, "01-basics");
-        assert_eq!(basics.title, Some("Basics".to_string()));
+        assert_eq!(basics.title(), Some("Basics"));
     }
 
     #[test]
@@ -2131,18 +2197,18 @@ mod tests {
         // c stays top-level; guide is a group node holding a and b.
         assert_eq!(out.files.len(), 3);
         let guide = out.tree.iter().find(|n| n.segment == "guide").unwrap();
-        assert!(guide.vertebra.is_none()); // non-clickable group
-        assert_eq!(guide.title.as_deref(), Some("Guide")); // derived from name
+        assert!(guide.vertebra().is_none()); // non-clickable group
+        assert_eq!(guide.title(), Some("Guide")); // derived from name
         let child_segs: Vec<&str> = guide.children.iter().map(|c| c.segment.as_str()).collect();
         assert_eq!(child_segs, vec!["a", "b"]);
         assert!(
             out.tree
                 .iter()
-                .any(|n| n.segment == "c" && n.vertebra.is_some())
+                .any(|n| n.segment == "c" && n.vertebra().is_some())
         );
         // Children reindexed to valid file positions.
         for c in &guide.children {
-            let idx = c.vertebra.expect("section child is a leaf vertebra");
+            let idx = *c.vertebra().expect("section child is a leaf vertebra");
             assert!(idx < out.files.len());
         }
     }
@@ -2163,7 +2229,7 @@ mod tests {
             .iter()
             .find(|n| n.segment == "advanced")
             .unwrap();
-        assert!(advanced.vertebra.is_none());
+        assert!(advanced.vertebra().is_none());
         assert_eq!(advanced.children[0].segment, "c");
         assert!(out.tree.iter().any(|n| n.segment == "b"));
     }
@@ -2176,7 +2242,7 @@ mod tests {
             .apply_sections(temp.path(), &[section("01-guide", &["a.typ"])])
             .unwrap();
         let guide = out.tree.iter().find(|n| n.segment == "01-guide").unwrap();
-        assert_eq!(guide.title.as_deref(), Some("Guide")); // prefix stripped for title, kept in segment
+        assert_eq!(guide.title(), Some("Guide")); // prefix stripped for title, kept in segment
     }
 
     #[test]
