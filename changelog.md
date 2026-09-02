@@ -1,3 +1,31 @@
+# Unreleased — user-visible changes
+
+## A package namespace can resolve straight from a directory on disk
+
+`[packages.<ns>]` gained a third source alongside `repo` and `releases`: `path
+= "../pkgs"` points a namespace at a directory holding `<name>/<version>/`
+package trees, read in place. There is no git operation and no cache — the
+directory the Typst compile reads IS the working tree, so an edit to the
+package shows up on the very next build rather than needing a commit and a
+bookmark move first.
+
+This is for the loop of editing a package and the site that consumes it
+together. Before, that loop went through `repo = "<local checkout>"`, which
+works but still clones a fresh tree into `~/.cache/rheo/git/` for every commit
+along the way. `path` skips all of that.
+
+It is deliberately machine-local: a relative `path` resolves against
+`rheo.toml`'s own directory, but the directory it names is still a line on
+your own disk, not something committed for anyone else to build against.
+rheo has no local-override config file (yet) to keep a `path` entry out of a
+shared `rheo.toml` — flip it locally, and flip it back before committing.
+
+`rheo watch` picks this up too: a `path`-backed package's directory is watched
+the same as the project itself, so editing a `.typ` file inside it rebuilds
+the consuming site within the usual debounce window — even when the package
+declares no `[tool.rheo.*]` assets of its own, which is the common case for a
+package that is pure Typst with no stylesheet or script.
+
 # 0.6.2 — user-visible changes
 
 ## A package served from a repository ref contributes its marrow again

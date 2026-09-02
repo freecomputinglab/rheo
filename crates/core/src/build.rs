@@ -199,18 +199,27 @@ impl Build {
     /// plugins actually declare rather than a hard-coded extension list.
     ///
     /// Only packages that declare rheo assets in their `typst.toml` contribute a
-    /// source root here, so the watched set stays tight (immutable `@preview`
-    /// deps that declare nothing are never watched).
+    /// source root here through the per-plugin pass below, so the watched set
+    /// stays tight (immutable `@preview` deps that declare nothing are never
+    /// watched) — EXCEPT a `path`-backed package, added unconditionally just
+    /// after: unlike a repository ref or a release, both immutable caches, its
+    /// tree can change while the watch is running, so it must be covered
+    /// whether or not it ships an asset block.
     pub fn watch_asset_spec(&self) -> crate::assets::watch::WatchAssetSpec {
         let default_section = PluginSection::default();
+        let resolver = self.package_resolver();
         let packages = PackageIndex::resolved(
             &crate::plugins::scan_project_package_imports(&self.project.typ_files),
-            &self.package_resolver(),
+            &resolver,
         );
 
         let mut asset_paths: Vec<PathBuf> = Vec::new();
         let mut copy_globs: Vec<(PathBuf, Vec<String>)> = Vec::new();
-        let mut package_roots: Vec<PathBuf> = Vec::new();
+        let mut package_roots: Vec<PathBuf> = packages
+            .source_roots()
+            .filter(|(namespace, _)| resolver.is_path_backed(namespace))
+            .map(|(_, root)| root.to_path_buf())
+            .collect();
 
         for plugin in &self.plugins {
             // A resolve failure must not silently shrink the watched set: warn
@@ -1456,6 +1465,77 @@ mod tests {
         let head_end = html.find("</head>").expect("has head");
         let meta_pos = html.find("name=\"x\"").expect("meta present");
         assert!(meta_pos < head_end, "meta not hoisted into head:\n{html}");
+    }
+
+    /// A `path`-backed package with no `[tool.rheo.*]` assets at all still gets
+    /// its directory watched — unlike a repository ref or a release, its tree
+    /// can change while the watch is running, so watch coverage cannot be
+    /// gated on whether the package happens to declare an asset block.
+    #[test]
+    fn test_watch_asset_spec_watches_path_backed_package_without_assets() {
+        use crate::config::project::ProjectConfig;
+        use crate::config::{NamespaceSource, PathSource};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("content")).expect("create content dir");
+        std::fs::write(
+            root.join("content/index.typ"),
+            "#import \"@demo/thing:0.1.0\": greet\n#greet()\n",
+        )
+        .expect("write content/index.typ");
+
+        let pkg_dir = root.join("pkgs/thing/0.1.0");
+        std::fs::create_dir_all(pkg_dir.join("src")).expect("create package dir");
+        std::fs::write(
+            pkg_dir.join("typst.toml"),
+            "[package]\nname = \"thing\"\nversion = \"0.1.0\"\nentrypoint = \"src/lib.typ\"\n",
+        )
+        .expect("write typst.toml");
+        std::fs::write(pkg_dir.join("src/lib.typ"), "#let greet() = [Hi]\n")
+            .expect("write lib.typ");
+
+        let project = ProjectConfig {
+            name: "test".to_string(),
+            root: root.to_path_buf(),
+            config: crate::RheoConfig {
+                content_dir: Some("content".to_string()),
+                formats: vec!["html".to_string()],
+                packages: HashMap::from([(
+                    "demo".to_string(),
+                    NamespaceSource::Path(PathSource {
+                        root: root.join("pkgs"),
+                        subdir: String::new(),
+                    }),
+                )]),
+                ..Default::default()
+            },
+            typ_files: vec![root.join("content/index.typ")],
+            mode: ProjectMode::Directory,
+            config_path: None,
+        };
+
+        struct HtmlNoAssets;
+        impl FormatPlugin for HtmlNoAssets {
+            fn name(&self) -> &'static str {
+                "html"
+            }
+            fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[CastVertebra]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let plugin: Box<dyn FormatPlugin> = Box::new(HtmlNoAssets);
+        let build =
+            Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
+
+        let spec = build.watch_asset_spec();
+        let expected = pkg_dir.canonicalize().unwrap_or(pkg_dir);
+        assert!(
+            spec.package_roots().contains(&expected),
+            "expected {expected:?} in package_roots, got {:?}",
+            spec.package_roots()
+        );
     }
 
     /// Same as above, but with a CSS asset present, so the shared step's

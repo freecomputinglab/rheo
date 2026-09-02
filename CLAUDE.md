@@ -90,12 +90,16 @@ releases = "freecomputinglab/rookery"  # <owner>/<repo>, or a URL template
 repo = "https://github.com/freecomputinglab/rheo-packages"  # any URL git accepts
 branch = "feat-x"                      # or tag = "...", or rev = "<sha>"
 subdir = ""                            # optional path prefix inside the repo
+
+[packages.demo]                        # resolves from a directory on disk
+path = "../pkgs"                       # a package's own working tree, read in place
 ```
 
-**`[packages.<namespace>]`** declares where one namespace comes from. Set exactly one of `repo` or `releases` — switching a project between a release and a branch is an explicit edit, not a precedence rule.
+**`[packages.<namespace>]`** declares where one namespace comes from. Set exactly one of `repo`, `releases` or `path` — switching a project between a release, a branch and a local directory is an explicit edit, not a precedence rule.
 
 - `releases` takes an `<owner>/<repo>` shorthand (detected by having no scheme), expanded to GitHub's download base, or a full URL template containing both `{name}` and `{version}` for any other forge. Assets are `<name>-<version>.tar.gz` under the tag `<name>-<version>`.
 - `repo` takes any URL the `git` binary accepts — https, ssh, or a local path. `branch` (default `main`), `tag` and `rev` select the ref; when more than one is set the precedence is `rev`, then `tag`, then `branch`, and the losing keys are warned about rather than silently dropped. `subdir` (default empty) is a path prefix inside the repository, so `@<ns>/<name>:<version>` lives at `<subdir>/<name>/<version>/`.
+- `path` points straight at a directory holding `<name>/<version>/` package trees — no git, no clone, no cache, so an edit to the package shows up on the very next build. A relative `path` resolves against `rheo.toml`'s own directory. There is no `branch`/`tag`/`rev` alongside it (there is no ref to select); `subdir` still applies. **This is machine-local** — it is a line you flip on your own checkout, not something a teammate's build can see, and rheo has no local-override config file to keep it out of a committed `rheo.toml`.
 
 The namespace key must be a Typst identifier, since it appears in every import spec as `@<namespace>/name:1.0.0`.
 

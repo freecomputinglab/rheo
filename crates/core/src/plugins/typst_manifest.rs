@@ -357,7 +357,7 @@ impl PackageIndex {
                 let source_mode = pkg
                     .namespace
                     .as_deref()
-                    .is_some_and(|ns| resolver.is_repo_backed(ns));
+                    .is_some_and(|ns| resolver.is_source_backed(ns));
                 Some(IndexEntry {
                     spec: spec.clone(),
                     pkg,
@@ -381,6 +381,21 @@ impl PackageIndex {
                     .assets_for(format_name, entry.source_mode)
             })
             .collect()
+    }
+
+    /// Every resolved package's namespace and source directory, independent of
+    /// whether it declares any `[tool.rheo.*]` assets — unlike
+    /// [`manifest_assets`](Self::manifest_assets), which only ever sees a
+    /// package that declares one. The watcher needs this wider view: a
+    /// `path`-backed package's tree must be watched whether or not it ships an
+    /// asset block.
+    pub fn source_roots(&self) -> impl Iterator<Item = (&str, &Path)> {
+        self.resolved.iter().filter_map(|entry| {
+            Some((
+                entry.pkg.namespace.as_deref()?,
+                entry.pkg.source_root.as_path(),
+            ))
+        })
     }
 
     /// Reject a package that came from a ref, declares no source-mode block, and
