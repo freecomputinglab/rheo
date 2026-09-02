@@ -152,8 +152,6 @@ impl CastVertebra {
 pub enum TypstFormat {
     Pdf,
     Html,
-    Png,
-    Svg,
 }
 
 impl TypstFormat {
@@ -161,8 +159,6 @@ impl TypstFormat {
         match self {
             Self::Pdf => "pdf",
             Self::Html => "html",
-            Self::Png => "png",
-            Self::Svg => "svg",
         }
     }
 }
@@ -221,9 +217,6 @@ pub struct PluginContext<'a> {
     /// The CLI copies each declared input from the project root to the output directory
     /// before calling `compile()`.
     pub assets: &'a HashMap<&'static str, Vec<Asset>>,
-    /// Additional font directories to search, resolved by the build (autoscan +
-    /// config + `--font-dir`). Threaded into worlds the plugin creates if needed.
-    pub font_dirs: &'a [PathBuf],
     /// Bundle-emitted `asset()` bytes with no matching spine vertebra (e.g. a
     /// marrow contribution), keyed by their path relative to the plugin output
     /// directory. Core writes these as loose files in the output directory

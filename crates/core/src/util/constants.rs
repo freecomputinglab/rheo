@@ -1,7 +1,4 @@
 /// File extension constants and shared regex patterns used throughout rheo
-use regex::Regex;
-use std::sync::LazyLock;
-
 // File extensions
 pub const TYP_EXT: &str = ".typ";
 
@@ -38,7 +35,3 @@ pub const PDF_EXT: &str = ".pdf";
 pub const HTML_EXT: &str = ".html";
 pub const XHTML_EXT: &str = ".xhtml";
 pub const EPUB_EXT: &str = ".epub";
-
-/// Pattern for Typst label references: #label[text]
-pub static TYPST_LABEL_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"#\w+\[([^\]]+)\]").expect("invalid TYPST_LABEL_PATTERN"));

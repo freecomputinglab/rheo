@@ -863,7 +863,6 @@ impl Build {
                 spine: &virtual_spine,
                 config: plugin_section,
                 assets: &plugin_assets.resolved,
-                font_dirs: &self.font_dirs,
                 bundle_assets: &asset_files,
                 control: &control,
             };

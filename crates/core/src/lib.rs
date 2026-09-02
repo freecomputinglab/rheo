@@ -21,7 +21,6 @@ pub use diagnostics::error::RheoError;
 pub use diagnostics::results::{CompilationResults, FormatResult};
 pub use globset::{Glob, GlobSet, GlobSetBuilder};
 pub use util::constants::*;
-pub use util::path::PathExt;
 
 // === Plugin API re-exports ===
 

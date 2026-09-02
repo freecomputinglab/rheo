@@ -1,20 +1,5 @@
 //! PDF utility functions shared across rheo core and plugins.
 
-/// Sanitize a filename to create a valid Typst label name.
-///
-/// Replaces non-alphanumeric characters (except hyphens and underscores) with underscores.
-pub fn sanitize_label_name(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 /// Filename-to-title helper.
 ///
 /// The real document title is read from `#set document(title: …)` by Typst
@@ -45,14 +30,6 @@ impl DocumentTitle {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_sanitize_label_name() {
-        assert_eq!(sanitize_label_name("chapter 01"), "chapter_01");
-        assert_eq!(sanitize_label_name("severance-01"), "severance-01");
-        assert_eq!(sanitize_label_name("my_file!@#"), "my_file___");
-        assert_eq!(sanitize_label_name("test.typ"), "test_typ");
-    }
 
     #[test]
     fn test_filename_to_title() {

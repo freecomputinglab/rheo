@@ -215,7 +215,6 @@ mod tests {
         };
         let section = PluginSection::default();
         let assets = HashMap::new();
-        let font_dirs: Vec<std::path::PathBuf> = vec![];
         let layout = SpineLayout::OnePerVertebra {
             ext: "html".into(),
             format: "html".into(),
@@ -233,7 +232,6 @@ mod tests {
             spine: &virtual_spine,
             config: &section,
             assets: &assets,
-            font_dirs: &font_dirs,
             bundle_assets: &bundle_assets,
             control: &control,
         };
