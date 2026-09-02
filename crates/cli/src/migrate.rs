@@ -82,15 +82,47 @@ const REMOVED_VAR_BINDINGS: &[(&str, &str)] = &[
     ),
 ];
 
+/// One `.typ` file's source, loaded once per `migrate` run and shared across
+/// every migration that reads or rewrites it — so a project's sources are
+/// walked and read exactly once regardless of how many migrations touch them.
+/// A rewriting migration mutates `text` in place and sets `dirty`; the report-only
+/// migration only reads. `migrate_project` flushes every `dirty` source to disk
+/// once, after all due migrations have run.
+struct Source {
+    path: PathBuf,
+    text: String,
+    dirty: bool,
+}
+
+/// Load every `.typ` file under `content_dir` and read it once. A file that
+/// fails to read is skipped with the same `warn!` every migration used to
+/// emit individually, now emitted once at load instead of per migration.
+fn load_sources(content_dir: &Path) -> Vec<Source> {
+    collect_typ_files(content_dir)
+        .into_iter()
+        .filter_map(|path| match fs::read_to_string(&path) {
+            Ok(text) => Some(Source {
+                path,
+                text,
+                dirty: false,
+            }),
+            Err(e) => {
+                warn!(file = %path.display(), error = %e, "skipping unreadable file");
+                None
+            }
+        })
+        .collect()
+}
+
 /// One version-gated migration: `since` is the version at which its change
 /// landed (projects older than that need it run), `plan` is its one-line
 /// summary in the plan block, `heading` precedes its own output, and `run`
-/// performs it.
+/// performs it against the sources loaded once by `migrate_project`.
 struct Migration {
     since: &'static str,
     plan: &'static str,
     heading: &'static str,
-    run: fn(&ProjectConfig, &Path, bool) -> Result<()>,
+    run: fn(&ProjectConfig, &Path, &mut [Source], bool) -> Result<()>,
 }
 
 impl Migration {
@@ -174,12 +206,26 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     }
     println!("  - bump rheo.toml version to {to}");
 
+    // Loaded once regardless of how many due migrations read/rewrite sources
+    // (empty when `due` needs none, e.g. a version bump with no pending migration).
+    let mut sources = if due.is_empty() {
+        Vec::new()
+    } else {
+        load_sources(&resolve_effective_content_dir(&project))
+    };
+
     for m in &due {
         println!("{}", m.heading);
-        (m.run)(&project, config_path, apply)?;
+        (m.run)(&project, config_path, &mut sources, apply)?;
     }
 
     if apply {
+        for source in &sources {
+            if source.dirty {
+                fs::write(&source.path, source.text.as_bytes())
+                    .map_err(|e| RheoError::io(e, format!("writing {}", source.path.display())))?;
+            }
+        }
         bump_version(config_path, &to)?;
         println!("\nBumped rheo.toml version to {to}.");
     } else {
@@ -195,18 +241,18 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
 /// when the stem is unique, and path-qualified with `:` separator (`<chapters:intro>`)
 /// for nested files. The `<stem.typ>` escape alias is ambiguous when stems collide,
 /// so it is never used as a rewrite target.
-fn migrate_link_syntax(project: &ProjectConfig, apply: bool) -> Result<()> {
-    let content_dir = resolve_effective_content_dir(project);
-    let typ_files = collect_typ_files(&content_dir);
-    if typ_files.is_empty() {
+fn migrate_link_syntax(project: &ProjectConfig, sources: &mut [Source], apply: bool) -> Result<()> {
+    if sources.is_empty() {
         return Ok(());
     }
+    let content_dir = resolve_effective_content_dir(project);
 
     // Build the handle map over every source file so any `.typ` target resolves.
     let layout = SpineLayout::OnePerVertebra {
         ext: "html".into(),
         format: "html".into(),
     };
+    let typ_files: Vec<PathBuf> = sources.iter().map(|s| s.path.clone()).collect();
     let spine = VirtualSpine::build(
         SpineScan::flat(&typ_files, &content_dir),
         &project.root,
@@ -222,22 +268,15 @@ fn migrate_link_syntax(project: &ProjectConfig, apply: bool) -> Result<()> {
     for v in &spine.vertebrae {
         let abs = project.root.join(&v.rel_path);
         let canon = canonicalize_path(&abs).unwrap_or(abs);
-        handle_map.insert(canon, v.handle.clone());
+        handle_map.insert(canon, v.handle.to_string());
     }
 
     let re = Regex::new(r##"#link\("([^"]*\.typ)"\)"##).expect("hardcoded link regex must compile");
-    for file in &typ_files {
-        let content = match fs::read_to_string(file) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(file = %file.display(), error = %e, "skipping unreadable file");
-                continue;
-            }
-        };
-        let parent = file.parent().unwrap_or_else(|| Path::new(""));
+    for source in sources.iter_mut() {
+        let parent = source.path.parent().unwrap_or_else(|| Path::new(""));
         let mut changed = false;
 
-        let rewritten = re.replace_all(&content, |caps: &Captures| -> String {
+        let rewritten = re.replace_all(&source.text, |caps: &Captures| -> String {
             let href = &caps[1];
             // Leave external URLs untouched.
             if href.contains("://") {
@@ -249,11 +288,11 @@ fn migrate_link_syntax(project: &ProjectConfig, apply: bool) -> Result<()> {
                 .and_then(|c| handle_map.get(&c).cloned())
             {
                 Some(target) => {
-                    let line = line_number(&content, caps.get(0).unwrap().start());
-                    info!(file = %file.display(), line, old = href, new = %target, "rewrite link");
+                    let line = line_number(&source.text, caps.get(0).unwrap().start());
+                    info!(file = %source.path.display(), line, old = href, new = %target, "rewrite link");
                     println!(
                         "{}:{}: #link(\"{}\")  ->  #link(<{}>)",
-                        file.display(),
+                        source.path.display(),
                         line,
                         href,
                         target
@@ -262,15 +301,15 @@ fn migrate_link_syntax(project: &ProjectConfig, apply: bool) -> Result<()> {
                     format!("#link(<{target}>)")
                 }
                 None => {
-                    warn!(file = %file.display(), href, "link target is not a vertebra; skipping");
+                    warn!(file = %source.path.display(), href, "link target is not a vertebra; skipping");
                     caps[0].to_string()
                 }
             }
         });
 
         if changed && apply {
-            fs::write(file, rewritten.as_bytes())
-                .map_err(|e| RheoError::io(e, format!("writing {}", file.display())))?;
+            source.text = rewritten.into_owned();
+            source.dirty = true;
         }
     }
 
@@ -278,8 +317,13 @@ fn migrate_link_syntax(project: &ProjectConfig, apply: bool) -> Result<()> {
 }
 
 /// Adapts [`migrate_link_syntax`] to the [`Migration::run`] signature.
-fn run_link_syntax(project: &ProjectConfig, _config_path: &Path, apply: bool) -> Result<()> {
-    migrate_link_syntax(project, apply)
+fn run_link_syntax(
+    project: &ProjectConfig,
+    _config_path: &Path,
+    sources: &mut [Source],
+    apply: bool,
+) -> Result<()> {
+    migrate_link_syntax(project, sources, apply)
 }
 
 /// Rewrite direct author references to the removed `sys.inputs.rheo-target` key
@@ -297,10 +341,8 @@ fn run_link_syntax(project: &ProjectConfig, _config_path: &Path, apply: bool) ->
 /// containing the literal `rheo-target` afterwards (e.g. a
 /// `sys.inputs.at("rheo-target")` form this does not rewrite) is reported with a
 /// `warn!` for manual fixing.
-fn migrate_target_references(project: &ProjectConfig, apply: bool) -> Result<()> {
-    let content_dir = resolve_effective_content_dir(project);
-    let typ_files = collect_typ_files(&content_dir);
-    if typ_files.is_empty() {
+fn migrate_target_references(sources: &mut [Source], apply: bool) -> Result<()> {
+    if sources.is_empty() {
         return Ok(());
     }
 
@@ -323,22 +365,16 @@ fn migrate_target_references(project: &ProjectConfig, apply: bool) -> Result<()>
         ),
     ];
 
-    for file in &typ_files {
-        let mut content = match fs::read_to_string(file) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(file = %file.display(), error = %e, "skipping unreadable file");
-                continue;
-            }
-        };
+    for source in sources.iter_mut() {
+        let mut content = source.text.clone();
         let mut changed = false;
 
         for (re, replacement, label) in &rules {
             let mut hit = false;
             let out = re.replace_all(&content, |caps: &Captures| -> String {
                 let line = line_number(&content, caps.get(0).unwrap().start());
-                info!(file = %file.display(), line, rewrite = label, "rewrite target reference");
-                println!("{}:{}: {}", file.display(), line, label);
+                info!(file = %source.path.display(), line, rewrite = label, "rewrite target reference");
+                println!("{}:{}: {}", source.path.display(), line, label);
                 hit = true;
                 (*replacement).to_string()
             });
@@ -351,14 +387,14 @@ fn migrate_target_references(project: &ProjectConfig, apply: bool) -> Result<()>
         // Forms this migration does not auto-rewrite leave the literal behind.
         if content.contains("rheo-target") {
             warn!(
-                file = %file.display(),
+                file = %source.path.display(),
                 "residual `rheo-target` reference remains after migration; hand-fix to `rheo-context.target`"
             );
         }
 
         if changed && apply {
-            fs::write(file, content.as_bytes())
-                .map_err(|e| RheoError::io(e, format!("writing {}", file.display())))?;
+            source.text = content;
+            source.dirty = true;
         }
     }
 
@@ -366,8 +402,13 @@ fn migrate_target_references(project: &ProjectConfig, apply: bool) -> Result<()>
 }
 
 /// Adapts [`migrate_target_references`] to the [`Migration::run`] signature.
-fn run_target_references(project: &ProjectConfig, _config_path: &Path, apply: bool) -> Result<()> {
-    migrate_target_references(project, apply)
+fn run_target_references(
+    _project: &ProjectConfig,
+    _config_path: &Path,
+    sources: &mut [Source],
+    apply: bool,
+) -> Result<()> {
+    migrate_target_references(sources, apply)
 }
 
 /// The compatibility shim prepended to files that read the per-vertebra
@@ -392,37 +433,27 @@ const CONTEXT_SHIM: &str = "#let rheo-context = rheo-context()";
 /// excludes the lead-in chars of the non-binding forms — `.` (`sys.inputs.rheo-context`
 /// field), `"` (string), `<` (label), `@` (ref), a backtick (raw span), and word/`-`
 /// (a longer identifier); `post` excludes `(` (already a call) and word/`-`.
-fn migrate_context_references(project: &ProjectConfig, apply: bool) -> Result<()> {
-    let content_dir = resolve_effective_content_dir(project);
-    let typ_files = collect_typ_files(&content_dir);
-    if typ_files.is_empty() {
+fn migrate_context_references(sources: &mut [Source], apply: bool) -> Result<()> {
+    if sources.is_empty() {
         return Ok(());
     }
 
     let re = Regex::new(r#"(?:^|[^.\w"<@`-])rheo-context(?:$|[^\w(-])"#)
         .expect("hardcoded context regex must compile");
 
-    for file in &typ_files {
-        let content = match fs::read_to_string(file) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(file = %file.display(), error = %e, "skipping unreadable file");
-                continue;
-            }
-        };
+    for source in sources.iter_mut() {
         // Already shimmed (e.g. a re-run) or no binding use: nothing to do.
-        if content.contains(CONTEXT_SHIM) || !re.is_match(&content) {
+        if source.text.contains(CONTEXT_SHIM) || !re.is_match(&source.text) {
             continue;
         }
 
         let label = "prepend `#let rheo-context = rheo-context()` compatibility shim";
-        info!(file = %file.display(), rewrite = label, "shim context binding");
-        println!("{}: {}", file.display(), label);
+        info!(file = %source.path.display(), rewrite = label, "shim context binding");
+        println!("{}: {}", source.path.display(), label);
 
         if apply {
-            let shimmed = format!("{CONTEXT_SHIM}\n{content}");
-            fs::write(file, shimmed.as_bytes())
-                .map_err(|e| RheoError::io(e, format!("writing {}", file.display())))?;
+            source.text = format!("{CONTEXT_SHIM}\n{}", source.text);
+            source.dirty = true;
         }
     }
 
@@ -430,8 +461,13 @@ fn migrate_context_references(project: &ProjectConfig, apply: bool) -> Result<()
 }
 
 /// Adapts [`migrate_context_references`] to the [`Migration::run`] signature.
-fn run_context_references(project: &ProjectConfig, _config_path: &Path, apply: bool) -> Result<()> {
-    migrate_context_references(project, apply)
+fn run_context_references(
+    _project: &ProjectConfig,
+    _config_path: &Path,
+    sources: &mut [Source],
+    apply: bool,
+) -> Result<()> {
+    migrate_context_references(sources, apply)
 }
 
 /// Reports (never rewrites) every removed `[html] feed_*` rheo.toml key and
@@ -439,7 +475,7 @@ fn run_context_references(project: &ProjectConfig, _config_path: &Path, apply: b
 /// to its replacement. A feed's title/author/base-url/inclusion rules do not
 /// map one-to-one onto `@rheo/feeds`'s Typst configuration, so a mechanical
 /// rewrite would produce something subtly wrong — this stays report-only.
-fn report_removed_feed_surface(project: &ProjectConfig) {
+fn report_removed_feed_surface(project: &ProjectConfig, sources: &[Source]) {
     if let Some(html) = project.config.plugin_sections.get("html") {
         for retired in RETIRED_KEYS.iter().filter(|r| r.table == "[html]") {
             if html.extra.contains_key(retired.key) {
@@ -448,8 +484,6 @@ fn report_removed_feed_surface(project: &ProjectConfig) {
         }
     }
 
-    let content_dir = resolve_effective_content_dir(project);
-    let typ_files = collect_typ_files(&content_dir);
     // Built from REMOVED_VAR_BINDINGS so the names live in one place: the table
     // below is already consulted for each match's replacement text.
     let names = REMOVED_VAR_BINDINGS
@@ -460,19 +494,20 @@ fn report_removed_feed_surface(project: &ProjectConfig) {
     let re = Regex::new(&format!(r"(?m)^\s*#let\s+({names})\b"))
         .expect("alternation over REMOVED_VAR_BINDINGS must compile");
 
-    for file in &typ_files {
-        let Ok(content) = fs::read_to_string(file) else {
-            continue;
-        };
-        for caps in re.captures_iter(&content) {
+    for source in sources {
+        for caps in re.captures_iter(&source.text) {
             let name = &caps[1];
-            let line = line_number(&content, caps.get(0).unwrap().start());
+            let line = line_number(&source.text, caps.get(0).unwrap().start());
             let replacement = REMOVED_VAR_BINDINGS
                 .iter()
                 .find(|(n, _)| *n == name)
                 .map(|(_, r)| *r)
                 .expect("matched name comes from REMOVED_VAR_BINDINGS");
-            report_removed(&format!("{}:{}", file.display(), line), name, replacement);
+            report_removed(
+                &format!("{}:{}", source.path.display(), line),
+                name,
+                replacement,
+            );
         }
     }
 }
@@ -481,9 +516,10 @@ fn report_removed_feed_surface(project: &ProjectConfig) {
 fn run_removed_feed_surface(
     project: &ProjectConfig,
     _config_path: &Path,
+    sources: &mut [Source],
     _apply: bool,
 ) -> Result<()> {
-    report_removed_feed_surface(project);
+    report_removed_feed_surface(project, sources);
     Ok(())
 }
 
@@ -553,6 +589,7 @@ fn expand_vertebrae_patterns(patterns: &[String], content_dir: &Path) -> HashSet
 fn migrate_vertebrae_to_exclude(
     project: &ProjectConfig,
     config_path: &Path,
+    _sources: &mut [Source],
     apply: bool,
 ) -> Result<()> {
     let mut sites = Vec::new();
@@ -724,6 +761,17 @@ fn bump_version(config_path: &Path, target: &ManifestVersion) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// Write every `dirty` source to disk — what `migrate_project` does in one
+    /// pass after all due migrations have run. Tests below call a single
+    /// migration directly, so they flush by hand to inspect the result on disk.
+    fn flush_sources(sources: &[Source]) {
+        for source in sources {
+            if source.dirty {
+                fs::write(&source.path, source.text.as_bytes()).unwrap();
+            }
+        }
+    }
+
     #[test]
     fn manifest_version_orders() {
         let old = ManifestVersion::parse("0.3.0").unwrap();
@@ -808,7 +856,9 @@ mod tests {
         )
         .unwrap();
 
-        migrate_link_syntax(&project, true).unwrap();
+        let mut sources = load_sources(&content);
+        migrate_link_syntax(&project, &mut sources, true).unwrap();
+        flush_sources(&sources);
 
         let rewritten = fs::read_to_string(content.join("intro.typ")).unwrap();
         assert!(rewritten.contains("#link(<about>)[About]"));
@@ -830,25 +880,15 @@ mod tests {
         )
         .unwrap();
 
-        let project = ProjectConfig {
-            root: root.to_path_buf(),
-            name: "test".into(),
-            config: rheo_core::RheoConfig {
-                version: ManifestVersion::parse("0.4.0").unwrap(),
-                content_dir: Some("content".into()),
-                ..Default::default()
-            },
-            typ_files: vec![content.join("page.typ")],
-            mode: rheo_core::config::project::ProjectMode::Directory,
-            config_path: Some(root.join("rheo.toml")),
-        };
         fs::write(
             root.join("rheo.toml"),
             "version = \"0.4.0\"\ncontent_dir = \"content\"\n",
         )
         .unwrap();
 
-        migrate_target_references(&project, true).unwrap();
+        let mut sources = load_sources(&content);
+        migrate_target_references(&mut sources, true).unwrap();
+        flush_sources(&sources);
 
         let out = fs::read_to_string(content.join("page.typ")).unwrap();
         // Helper call -> polyfilled target().
@@ -892,25 +932,15 @@ mod tests {
         )
         .unwrap();
 
-        let project = ProjectConfig {
-            root: root.to_path_buf(),
-            name: "test".into(),
-            config: rheo_core::RheoConfig {
-                version: ManifestVersion::parse("0.5.0").unwrap(),
-                content_dir: Some("content".into()),
-                ..Default::default()
-            },
-            typ_files: vec![content.join("page.typ"), content.join("link_only.typ")],
-            mode: rheo_core::config::project::ProjectMode::Directory,
-            config_path: Some(root.join("rheo.toml")),
-        };
         fs::write(
             root.join("rheo.toml"),
             "version = \"0.5.0\"\ncontent_dir = \"content\"\n",
         )
         .unwrap();
 
-        migrate_context_references(&project, true).unwrap();
+        let mut sources = load_sources(&content);
+        migrate_context_references(&mut sources, true).unwrap();
+        flush_sources(&sources);
 
         let out = fs::read_to_string(content.join("page.typ")).unwrap();
         // The shim is prepended once, ahead of the body.
@@ -983,11 +1013,11 @@ mod tests {
         .unwrap();
 
         // Dry run: no write.
-        migrate_vertebrae_to_exclude(&project, &toml_path, false).unwrap();
+        migrate_vertebrae_to_exclude(&project, &toml_path, &mut [], false).unwrap();
         let unchanged = fs::read_to_string(&toml_path).unwrap();
         assert!(unchanged.contains("vertebrae"));
 
-        migrate_vertebrae_to_exclude(&project, &toml_path, true).unwrap();
+        migrate_vertebrae_to_exclude(&project, &toml_path, &mut [], true).unwrap();
         let updated = fs::read_to_string(&toml_path).unwrap();
         assert!(!updated.contains("vertebrae"), "{updated}");
         assert!(updated.contains("exclude"), "{updated}");
@@ -1042,7 +1072,7 @@ mod tests {
         )
         .unwrap();
 
-        migrate_vertebrae_to_exclude(&project, &toml_path, true).unwrap();
+        migrate_vertebrae_to_exclude(&project, &toml_path, &mut [], true).unwrap();
         let updated = fs::read_to_string(&toml_path).unwrap();
         assert!(!updated.contains("vertebrae"), "{updated}");
         assert!(!updated.contains("exclude"), "{updated}");
@@ -1081,7 +1111,9 @@ mod tests {
         )
         .unwrap();
 
-        migrate_link_syntax(&project, true).unwrap();
+        let mut sources = load_sources(&content);
+        migrate_link_syntax(&project, &mut sources, true).unwrap();
+        flush_sources(&sources);
 
         let rewritten = fs::read_to_string(sub.join("intro.typ")).unwrap();
         // The root file's primary handle stays bare `intro` even under collision
@@ -1122,7 +1154,9 @@ mod tests {
         )
         .unwrap();
 
-        migrate_link_syntax(&project, true).unwrap();
+        let mut sources = load_sources(&content);
+        migrate_link_syntax(&project, &mut sources, true).unwrap();
+        flush_sources(&sources);
 
         let rewritten = fs::read_to_string(content.join("intro.typ")).unwrap();
         // Nested collision member -> path-qualified primary handle `chapters:intro`,
