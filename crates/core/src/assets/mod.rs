@@ -9,9 +9,11 @@ pub mod watch;
 use crate::config::PluginSection;
 use crate::plugins::{Asset, FormatPlugin, PackageAssets};
 use crate::{Result, RheoError};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
+use walkdir::WalkDir;
 
 /// Resolves plugin assets and copies source files into the build output directory.
 ///
@@ -319,11 +321,67 @@ fn copy_each(
     Ok(out)
 }
 
-/// Expand glob patterns against `source_root` and copy matching files into
+/// A `copy` pattern list compiled once against a base directory, shared by the
+/// copy step ([`copy_glob_patterns`]) and [`crate::assets::watch::WatchAssetSpec`]
+/// so both agree on exactly the same file set — unifying what used to be two
+/// drifting engines (the `glob` crate here, `globset` in the watcher), where
+/// only the latter understood brace alternation (`*.{png,jpg}`).
+///
+/// `literal_separator` is enabled so `*` does not cross `/` while `**` still
+/// descends, matching both the old `glob`-crate copy behaviour and the
+/// exclude/include globs in [`crate::reticulate::spine`].
+#[derive(Debug)]
+pub struct CopyGlobs {
+    set: GlobSet,
+    /// Successfully compiled patterns, in the same order as `set`'s indices —
+    /// used only to report a pattern that matched nothing.
+    patterns: Vec<String>,
+}
+
+impl CopyGlobs {
+    /// Compile `patterns` (relative to `base`) into an absolute-path glob set.
+    /// A pattern that fails to compile is warned about and skipped rather than
+    /// failing the whole build. Returns `None` when nothing compiled.
+    pub fn compile(base: &Path, patterns: &[String]) -> Option<Self> {
+        let mut builder = GlobSetBuilder::new();
+        let mut compiled = Vec::new();
+        for pattern in patterns {
+            let abs = base.join(pattern).display().to_string();
+            match GlobBuilder::new(&abs).literal_separator(true).build() {
+                Ok(glob) => {
+                    builder.add(glob);
+                    compiled.push(pattern.clone());
+                }
+                Err(e) => warn!(pattern = %pattern, error = %e, "invalid copy pattern, skipping"),
+            }
+        }
+        if compiled.is_empty() {
+            return None;
+        }
+        builder.build().ok().map(|set| Self {
+            set,
+            patterns: compiled,
+        })
+    }
+
+    /// True if `path` matches any compiled pattern.
+    pub fn is_match(&self, path: &Path) -> bool {
+        self.set.is_match(path)
+    }
+
+    /// Indices into `self.patterns` that match `path`.
+    fn matches(&self, path: &Path) -> Vec<usize> {
+        self.set.matches(path)
+    }
+}
+
+/// Walk `source_root` and copy every file matching a compiled copy-glob into
 /// `plugin_output_dir` (optionally under `dest_prefix`).
 ///
 /// When `warn_on_overwrite` is true, logs a warning for each destination file
-/// that already exists before it is overwritten.
+/// that already exists before it is overwritten. A directory-walk error (e.g.
+/// a permission-denied subdirectory) is warned about and skipped rather than
+/// silently dropped.
 fn copy_glob_patterns(
     patterns: &[String],
     source_root: &Path,
@@ -331,42 +389,58 @@ fn copy_glob_patterns(
     dest_prefix: Option<&str>,
     warn_on_overwrite: bool,
 ) -> Result<()> {
-    for pattern in patterns {
-        let abs_pattern = source_root.join(pattern).display().to_string();
-        let entries = glob::glob(&abs_pattern).map_err(|e| {
-            RheoError::project_config(format!("invalid copy pattern '{}': {}", pattern, e))
-        })?;
-        let mut matched = false;
-        for entry in entries.filter_map(|e| e.ok()).filter(|p| p.is_file()) {
-            matched = true;
-            let rel = entry.strip_prefix(source_root).unwrap_or(entry.as_path());
-            let dest = match dest_prefix {
-                Some(d) => plugin_output_dir.join(d).join(rel),
-                None => plugin_output_dir.join(rel),
-            };
-            if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    RheoError::io(
-                        e,
-                        format!("creating directory for copy of {}", rel.display()),
-                    )
-                })?;
+    let Some(globs) = CopyGlobs::compile(source_root, patterns) else {
+        return Ok(());
+    };
+    let mut matched = vec![false; globs.patterns.len()];
+    for entry in WalkDir::new(source_root) {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                warn!(error = %e, "error walking source tree for copy globs");
+                continue;
             }
-            if warn_on_overwrite && dest.exists() {
-                warn!(
-                    src = %entry.display(),
-                    dest = %dest.display(),
-                    "copy glob overwrites existing bundle output"
-                );
-            }
-            std::fs::copy(&entry, &dest).map_err(|e| RheoError::AssetCopy {
-                source: entry.clone(),
-                dest: dest.clone(),
-                error: e,
-            })?;
-            debug!(src = %entry.display(), dest = %dest.display(), "copied file");
+        };
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
         }
-        if !matched {
+        let idxs = globs.matches(path);
+        if idxs.is_empty() {
+            continue;
+        }
+        for i in idxs {
+            matched[i] = true;
+        }
+        let rel = path.strip_prefix(source_root).unwrap_or(path);
+        let dest = match dest_prefix {
+            Some(d) => plugin_output_dir.join(d).join(rel),
+            None => plugin_output_dir.join(rel),
+        };
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                RheoError::io(
+                    e,
+                    format!("creating directory for copy of {}", rel.display()),
+                )
+            })?;
+        }
+        if warn_on_overwrite && dest.exists() {
+            warn!(
+                src = %path.display(),
+                dest = %dest.display(),
+                "copy glob overwrites existing bundle output"
+            );
+        }
+        std::fs::copy(path, &dest).map_err(|e| RheoError::AssetCopy {
+            source: path.to_path_buf(),
+            dest: dest.clone(),
+            error: e,
+        })?;
+        debug!(src = %path.display(), dest = %dest.display(), "copied file");
+    }
+    for (pattern, was_matched) in globs.patterns.iter().zip(matched.iter()) {
+        if !was_matched {
             debug!(pattern = %pattern, "copy pattern matched no files");
         }
     }

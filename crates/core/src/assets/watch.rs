@@ -1,8 +1,8 @@
 use crate::{
     Result,
+    assets::CopyGlobs,
     config::project::{ProjectConfig, ProjectMode},
 };
-use globset::{Glob, GlobSet, GlobSetBuilder};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -23,42 +23,30 @@ pub struct WatchAssetSpec {
     /// Absolute (canonicalized where possible) source paths of every resolved
     /// asset across all enabled plugins.
     asset_paths: HashSet<PathBuf>,
-    /// Compiled glob set matching copy-pattern sources (absolute patterns).
-    copy_globs: Option<GlobSet>,
+    /// Compiled copy-glob sets (absolute patterns), pre-compiled by the caller
+    /// so the watcher and the copy step share one glob engine and one
+    /// compilation — see [`CopyGlobs`].
+    copy_globs: Vec<CopyGlobs>,
     /// Package `source_root` directories that must be watched in addition to the
     /// project root, since package assets live outside the project tree.
     package_roots: Vec<PathBuf>,
 }
 
 impl WatchAssetSpec {
-    /// Assemble a spec from resolved asset source paths, `(base, patterns)` copy
-    /// globs, and package source roots. Asset paths and glob bases are
-    /// canonicalized where possible so they compare equal to the (canonicalized)
-    /// paths reported by the filesystem watcher.
+    /// Assemble a spec from resolved asset source paths, pre-compiled copy
+    /// globs, and package source roots. Asset paths are canonicalized where
+    /// possible so they compare equal to the (canonicalized) paths reported by
+    /// the filesystem watcher; each `CopyGlobs`'s base must already have been
+    /// canonicalized by the caller for the same reason.
     pub fn new(
         asset_paths: Vec<PathBuf>,
-        copy_globs: Vec<(PathBuf, Vec<String>)>,
+        copy_globs: Vec<CopyGlobs>,
         mut package_roots: Vec<PathBuf>,
     ) -> Self {
         let asset_paths = asset_paths
             .into_iter()
             .map(|p| p.canonicalize().unwrap_or(p))
             .collect();
-
-        let mut builder = GlobSetBuilder::new();
-        let mut any_glob = false;
-        for (base, patterns) in &copy_globs {
-            let base = base.canonicalize().unwrap_or_else(|_| base.clone());
-            for pattern in patterns {
-                if let Some(abs) = base.join(pattern).to_str()
-                    && let Ok(glob) = Glob::new(abs)
-                {
-                    builder.add(glob);
-                    any_glob = true;
-                }
-            }
-        }
-        let copy_globs = if any_glob { builder.build().ok() } else { None };
 
         package_roots = package_roots
             .into_iter()
@@ -89,17 +77,9 @@ impl WatchAssetSpec {
         {
             return true;
         }
-        if let Some(set) = &self.copy_globs {
-            if set.is_match(path) {
-                return true;
-            }
-            if let Some(c) = &canonical
-                && set.is_match(c)
-            {
-                return true;
-            }
-        }
-        false
+        self.copy_globs
+            .iter()
+            .any(|g| g.is_match(path) || canonical.as_deref().is_some_and(|c| g.is_match(c)))
     }
 }
 
@@ -412,7 +392,7 @@ mod tests {
 
         let spec = WatchAssetSpec::new(
             vec![],
-            vec![(project.root.clone(), vec!["images/**".to_string()])],
+            vec![CopyGlobs::compile(&project.root, &["images/**".to_string()]).unwrap()],
             vec![],
         );
 

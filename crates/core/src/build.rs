@@ -214,7 +214,10 @@ impl Build {
         );
 
         let mut asset_paths: Vec<PathBuf> = Vec::new();
-        let mut copy_globs: Vec<(PathBuf, Vec<String>)> = Vec::new();
+        let mut copy_globs: Vec<crate::assets::CopyGlobs> = Vec::new();
+        // Canonicalized so a compiled pattern's base compares equal to the
+        // (canonicalized) paths the filesystem watcher reports.
+        let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
         let mut package_roots: Vec<PathBuf> = packages
             .source_roots()
             .filter(|(namespace, _)| resolver.is_path_backed(namespace))
@@ -249,18 +252,31 @@ impl Build {
             }
 
             // Copy globs: project-level, per-package, and per-plugin asset blocks.
-            if !self.project.config.copy.is_empty() {
-                copy_globs.push((self.project.root.clone(), self.project.config.copy.clone()));
+            if !self.project.config.copy.is_empty()
+                && let Some(g) = crate::assets::CopyGlobs::compile(
+                    &canon(&self.project.root),
+                    &self.project.config.copy,
+                )
+            {
+                copy_globs.push(g);
             }
             for block in &ctx.manifest_blocks {
-                if !block.assets.copy.is_empty() {
-                    copy_globs.push((block.source_root.clone(), block.assets.copy.clone()));
+                if !block.assets.copy.is_empty()
+                    && let Some(g) = crate::assets::CopyGlobs::compile(
+                        &canon(&block.source_root),
+                        &block.assets.copy,
+                    )
+                {
+                    copy_globs.push(g);
                 }
                 package_roots.push(block.source_root.clone());
             }
             for block in ctx.section.asset_blocks() {
-                if !block.copy.is_empty() {
-                    copy_globs.push((self.project.root.clone(), block.copy.clone()));
+                if !block.copy.is_empty()
+                    && let Some(g) =
+                        crate::assets::CopyGlobs::compile(&canon(&self.project.root), &block.copy)
+                {
+                    copy_globs.push(g);
                 }
             }
         }

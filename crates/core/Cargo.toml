@@ -31,7 +31,6 @@ semver = { workspace = true }
 # File system and patterns
 walkdir = { workspace = true }
 globset = { workspace = true }
-glob = { workspace = true }
 pathdiff = { workspace = true }
 opener = { workspace = true }
 dirs = { workspace = true }

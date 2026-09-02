@@ -2653,7 +2653,6 @@ dependencies = [
  "dirs",
  "ecow",
  "flate2",
- "glob",
  "globset",
  "html5ever",
  "markup5ever_rcdom",
