@@ -61,31 +61,6 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use walkdir::WalkDir;
 
-/// Version at which the `#link("./file.typ")` syntax was replaced by the
-/// `#link(<handle>)` label syntax. Projects older than this need a link rewrite.
-const LINK_SYNTAX_VERSION: &str = "0.4.0";
-
-/// Version at which `sys.inputs.rheo-target` and the `rheo-target()` helper were
-/// removed in favour of `sys.inputs.rheo-context.target` / the polyfilled
-/// `target()`. Projects older than this have their direct references rewritten.
-const TARGET_REMOVED_VERSION: &str = "0.5.0";
-
-/// Version at which the `[spine] vertebrae` inclusion-filter glob list was retired
-/// by the directory-scan default. Projects older than this have any `vertebrae`
-/// list converted to an equivalent `exclude`.
-const VERTEBRAE_RETIRED_VERSION: &str = "0.5.0";
-
-/// Version at which the per-vertebra `rheo-context` binding changed from a bare
-/// dict to a zero-arg function `rheo-context()`. Projects older than this have a
-/// compatibility shim prepended to each file that reads the binding.
-const CONTEXT_FN_VERSION: &str = "0.5.1";
-
-/// Version at which the Rust Atom feed generator, its `[html] feed_*`
-/// rheo.toml keys, and the `rheo-*` `.typ` variable convention were removed.
-/// Projects older than this have every affected key/binding REPORTED (see
-/// `report_removed_feed_surface`) — not rewritten.
-const FEED_REMOVED_VERSION: &str = "0.6.0";
-
 /// `#let rheo-<key>` bindings retired alongside the Rust feed generator, and
 /// what replaces each.
 const REMOVED_VAR_BINDINGS: &[(&str, &str)] = &[
@@ -105,6 +80,65 @@ const REMOVED_VAR_BINDINGS: &[(&str, &str)] = &[
         "rheo-author",
         "use `#set document(author: \"...\")` instead",
     ),
+];
+
+/// One version-gated migration: `since` is the version at which its change
+/// landed (projects older than that need it run), `plan` is its one-line
+/// summary in the plan block, `heading` precedes its own output, and `run`
+/// performs it.
+struct Migration {
+    since: &'static str,
+    plan: &'static str,
+    heading: &'static str,
+    run: fn(&ProjectConfig, &Path, bool) -> Result<()>,
+}
+
+impl Migration {
+    /// Whether a project recorded at `from` needs this migration.
+    /// `since` is a hardcoded semver literal covered by
+    /// `migrations_since_versions_parse`.
+    fn needed(&self, from: &ManifestVersion) -> bool {
+        let since = ManifestVersion::parse(self.since)
+            .expect("MIGRATIONS entries are covered by migrations_since_versions_parse");
+        *from < since
+    }
+}
+
+/// Migrations in the order they run. Each is gated on the version at which
+/// its change actually landed, so a patch/minor bump only runs the migrations
+/// introduced since the project's recorded version — not every historical
+/// migration on every bump.
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        since: "0.4.0",
+        plan: "  - rewrite #link(\"./file.typ\") syntax to #link(<handle>)",
+        heading: "\nLink rewrites:",
+        run: run_link_syntax,
+    },
+    Migration {
+        since: "0.5.0",
+        plan: "  - rewrite sys.inputs.rheo-target -> sys.inputs.rheo-context.target (and rheo-target() -> target())",
+        heading: "\nTarget references:",
+        run: run_target_references,
+    },
+    Migration {
+        since: "0.5.0",
+        plan: "  - convert retired [spine] vertebrae glob lists to [spine] exclude",
+        heading: "\nSpine config:",
+        run: migrate_vertebrae_to_exclude,
+    },
+    Migration {
+        since: "0.5.1",
+        plan: "  - shim `rheo-context` binding for its new `rheo-context()` function form",
+        heading: "\nContext references:",
+        run: run_context_references,
+    },
+    Migration {
+        since: "0.6.0",
+        plan: "  - report removed Atom feed config keys and rheo-* variables (no rewrite)",
+        heading: "\nRemoved feed surface:",
+        run: run_removed_feed_surface,
+    },
 ];
 
 /// Run migration for the project at `path`.
@@ -132,60 +166,17 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Each migration is gated on the version at which its change actually landed,
-    // so a patch/minor bump only runs the migrations introduced since the
-    // project's recorded version — not every historical migration on every bump.
-    let threshold =
-        |v: &str| ManifestVersion::parse(v).expect("hardcoded threshold must be valid semver");
-    let needs_link_rewrite = from < threshold(LINK_SYNTAX_VERSION);
-    let needs_target_rewrite = from < threshold(TARGET_REMOVED_VERSION);
-    let needs_vertebrae_migration = from < threshold(VERTEBRAE_RETIRED_VERSION);
-    let needs_context_rewrite = from < threshold(CONTEXT_FN_VERSION);
-    let needs_feed_report = from < threshold(FEED_REMOVED_VERSION);
+    let due: Vec<&Migration> = MIGRATIONS.iter().filter(|m| m.needed(&from)).collect();
 
     println!("\nMigrations:");
-    if needs_link_rewrite {
-        println!("  - rewrite #link(\"./file.typ\") syntax to #link(<handle>)");
-    }
-    if needs_target_rewrite {
-        println!(
-            "  - rewrite sys.inputs.rheo-target -> sys.inputs.rheo-context.target (and rheo-target() -> target())"
-        );
-    }
-    if needs_vertebrae_migration {
-        println!("  - convert retired [spine] vertebrae glob lists to [spine] exclude");
-    }
-    if needs_context_rewrite {
-        println!("  - shim `rheo-context` binding for its new `rheo-context()` function form");
-    }
-    if needs_feed_report {
-        println!("  - report removed Atom feed config keys and rheo-* variables (no rewrite)");
+    for m in &due {
+        println!("{}", m.plan);
     }
     println!("  - bump rheo.toml version to {to}");
 
-    if needs_link_rewrite {
-        println!("\nLink rewrites:");
-        migrate_link_syntax(&project, apply)?;
-    }
-
-    if needs_target_rewrite {
-        println!("\nTarget references:");
-        migrate_target_references(&project, apply)?;
-    }
-
-    if needs_vertebrae_migration {
-        println!("\nSpine config:");
-        migrate_vertebrae_to_exclude(&project, config_path, apply)?;
-    }
-
-    if needs_context_rewrite {
-        println!("\nContext references:");
-        migrate_context_references(&project, apply)?;
-    }
-
-    if needs_feed_report {
-        println!("\nRemoved feed surface:");
-        report_removed_feed_surface(&project);
+    for m in &due {
+        println!("{}", m.heading);
+        (m.run)(&project, config_path, apply)?;
     }
 
     if apply {
@@ -286,6 +277,11 @@ fn migrate_link_syntax(project: &ProjectConfig, apply: bool) -> Result<()> {
     Ok(())
 }
 
+/// Adapts [`migrate_link_syntax`] to the [`Migration::run`] signature.
+fn run_link_syntax(project: &ProjectConfig, _config_path: &Path, apply: bool) -> Result<()> {
+    migrate_link_syntax(project, apply)
+}
+
 /// Rewrite direct author references to the removed `sys.inputs.rheo-target` key
 /// into the `sys.inputs.rheo-context.target` form, and calls to the removed
 /// `rheo-target()` helper into Typst's polyfilled `target()`.
@@ -369,6 +365,11 @@ fn migrate_target_references(project: &ProjectConfig, apply: bool) -> Result<()>
     Ok(())
 }
 
+/// Adapts [`migrate_target_references`] to the [`Migration::run`] signature.
+fn run_target_references(project: &ProjectConfig, _config_path: &Path, apply: bool) -> Result<()> {
+    migrate_target_references(project, apply)
+}
+
 /// The compatibility shim prepended to files that read the per-vertebra
 /// `rheo-context` binding, which changed from a bare dict to a zero-arg function
 /// `rheo-context()`.
@@ -428,6 +429,11 @@ fn migrate_context_references(project: &ProjectConfig, apply: bool) -> Result<()
     Ok(())
 }
 
+/// Adapts [`migrate_context_references`] to the [`Migration::run`] signature.
+fn run_context_references(project: &ProjectConfig, _config_path: &Path, apply: bool) -> Result<()> {
+    migrate_context_references(project, apply)
+}
+
 /// Reports (never rewrites) every removed `[html] feed_*` rheo.toml key and
 /// `#let rheo-*` binding still present, each with its location and a pointer
 /// to its replacement. A feed's title/author/base-url/inclusion rules do not
@@ -469,6 +475,16 @@ fn report_removed_feed_surface(project: &ProjectConfig) {
             report_removed(&format!("{}:{}", file.display(), line), name, replacement);
         }
     }
+}
+
+/// Adapts [`report_removed_feed_surface`] to the [`Migration::run`] signature.
+fn run_removed_feed_surface(
+    project: &ProjectConfig,
+    _config_path: &Path,
+    _apply: bool,
+) -> Result<()> {
+    report_removed_feed_surface(project);
+    Ok(())
 }
 
 /// One location's finding: `<location>: \`<name>\` — <replacement>`. The one
@@ -714,6 +730,17 @@ mod tests {
         let new = ManifestVersion::parse("0.4.0").unwrap();
         assert!(old < new);
         assert!(new > old);
+    }
+
+    #[test]
+    fn migrations_since_versions_parse() {
+        for m in MIGRATIONS {
+            assert!(
+                ManifestVersion::parse(m.since).is_ok(),
+                "MIGRATIONS entry {:?} has an unparseable `since`",
+                m.plan
+            );
+        }
     }
 
     #[test]
