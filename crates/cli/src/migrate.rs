@@ -279,7 +279,7 @@ fn migrate_link_syntax(project: &ProjectConfig, apply: bool) -> Result<()> {
 
         if changed && apply {
             fs::write(file, rewritten.as_bytes())
-                .map_err(|e| RheoError::io(e, format!("failed to write {}", file.display())))?;
+                .map_err(|e| RheoError::io(e, format!("writing {}", file.display())))?;
         }
     }
 
@@ -362,7 +362,7 @@ fn migrate_target_references(project: &ProjectConfig, apply: bool) -> Result<()>
 
         if changed && apply {
             fs::write(file, content.as_bytes())
-                .map_err(|e| RheoError::io(e, format!("failed to write {}", file.display())))?;
+                .map_err(|e| RheoError::io(e, format!("writing {}", file.display())))?;
         }
     }
 
@@ -421,7 +421,7 @@ fn migrate_context_references(project: &ProjectConfig, apply: bool) -> Result<()
         if apply {
             let shimmed = format!("{CONTEXT_SHIM}\n{content}");
             fs::write(file, shimmed.as_bytes())
-                .map_err(|e| RheoError::io(e, format!("failed to write {}", file.display())))?;
+                .map_err(|e| RheoError::io(e, format!("writing {}", file.display())))?;
         }
     }
 
@@ -577,7 +577,7 @@ fn migrate_vertebrae_to_exclude(
         .collect();
 
     let text = fs::read_to_string(config_path)
-        .map_err(|e| RheoError::io(e, format!("failed to read {}", config_path.display())))?;
+        .map_err(|e| RheoError::io(e, format!("reading {}", config_path.display())))?;
     let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| {
         RheoError::project_config(format!("failed to parse {}: {}", config_path.display(), e))
     })?;
@@ -645,7 +645,7 @@ fn migrate_vertebrae_to_exclude(
 
     if apply {
         fs::write(config_path, doc.to_string())
-            .map_err(|e| RheoError::io(e, format!("failed to write {}", config_path.display())))?;
+            .map_err(|e| RheoError::io(e, format!("writing {}", config_path.display())))?;
     }
 
     Ok(())
@@ -692,7 +692,7 @@ fn line_number(text: &str, byte_offset: usize) -> usize {
 /// reformat the file).
 fn bump_version(config_path: &Path, target: &ManifestVersion) -> Result<()> {
     let text = fs::read_to_string(config_path)
-        .map_err(|e| RheoError::io(e, format!("failed to read {}", config_path.display())))?;
+        .map_err(|e| RheoError::io(e, format!("reading {}", config_path.display())))?;
     let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| {
         RheoError::project_config(format!("failed to parse {}: {}", config_path.display(), e))
     })?;
@@ -700,7 +700,7 @@ fn bump_version(config_path: &Path, target: &ManifestVersion) -> Result<()> {
     doc["version"] = toml_edit::value(target.to_string());
 
     fs::write(config_path, doc.to_string())
-        .map_err(|e| RheoError::io(e, format!("failed to write {}", config_path.display())))?;
+        .map_err(|e| RheoError::io(e, format!("writing {}", config_path.display())))?;
     Ok(())
 }
 
