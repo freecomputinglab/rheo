@@ -14,9 +14,14 @@ use typst_syntax::package::PackageSpec;
 use crate::config::{NamespaceSource, ReleasesSource};
 
 mod git;
+mod manifest;
 mod path;
 
 pub use git::GitPackages;
+pub use manifest::{
+    PackageIndex, find_package_in_dirs, manifest_package_assets, prewarm_packages,
+    scan_project_package_imports, typst_package_search_dirs,
+};
 pub use path::PathPackages;
 
 /// The download base `@rheo` uses when no `[packages.rheo]` table overrides it.

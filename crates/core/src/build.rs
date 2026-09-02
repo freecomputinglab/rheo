@@ -11,10 +11,9 @@ use crate::config::PluginSection;
 use crate::config::output::OutputConfig;
 use crate::config::project::{ProjectConfig, ProjectMode};
 use crate::diagnostics::results::CompilationResults;
-use crate::plugins::{
-    CastVertebra, DocumentMeta, FormatPlugin, PackageIndex, PluginContext, TypstFormat,
-    spine_layout_for,
-};
+use crate::packages::PackageIndex;
+use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, TypstFormat, spine_layout_for};
+use crate::reticulate::document_meta::DocumentMeta;
 use crate::reticulate::handle::Handle;
 use crate::reticulate::spine::{FormatContext, SpineScan, VirtualSpine};
 use crate::transclude::{ContentTransclusion, ControlAssetKind, ControlAssets};
@@ -210,7 +209,7 @@ impl Build {
         let default_section = PluginSection::default();
         let resolver = self.package_resolver();
         let packages = PackageIndex::resolved(
-            &crate::plugins::scan_project_package_imports(&self.project.typ_files),
+            &crate::packages::scan_project_package_imports(&self.project.typ_files),
             &resolver,
         );
 
@@ -428,7 +427,7 @@ impl Build {
                 // probing finds no `.marrow.typ` and the package mints none of
                 // the pages it exists to mint — silently, on a green build.
                 let packages = PackageIndex::resolved(
-                    &crate::plugins::scan_project_package_imports(&self.project.typ_files),
+                    &crate::packages::scan_project_package_imports(&self.project.typ_files),
                     resolver,
                 );
                 marrow.extend(packages.marrow());
@@ -636,7 +635,8 @@ impl Build {
         // Scanned per rebuild rather than once per `Build`: a `.typ` file
         // gaining an `@rheo/...` import mid-session must be picked up, and the
         // `Build` is only rebuilt when `rheo.toml` itself changes.
-        let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
+        let package_imports =
+            crate::packages::scan_project_package_imports(&self.project.typ_files);
         let plugin_section: &PluginSection = self
             .project
             .config
@@ -794,7 +794,8 @@ impl Build {
         // Scan .typ files for package imports once, and resolve each imported
         // package (a directory probe plus a `typst.toml` parse) once — both
         // shared across every plugin in this build.
-        let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
+        let package_imports =
+            crate::packages::scan_project_package_imports(&self.project.typ_files);
         let package_resolver = self.package_resolver();
         let packages = prewarm_and_resolve(
             &package_imports,
@@ -1076,7 +1077,7 @@ fn prewarm_and_resolve(
     resolver: &crate::packages::PackageResolver,
 ) -> Result<PackageIndex> {
     if auto_detect {
-        crate::plugins::prewarm_packages(package_imports, resolver);
+        crate::packages::prewarm_packages(package_imports, resolver);
     }
     let packages = PackageIndex::resolved(package_imports, resolver);
     packages.check_min_versions()?;

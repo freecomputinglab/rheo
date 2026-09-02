@@ -7,14 +7,6 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 use typst::foundations::Bytes;
 
-pub mod document_meta;
-pub mod typst_manifest;
-pub use document_meta::DocumentMeta;
-pub use typst_manifest::{
-    PackageIndex, find_package_in_dirs, manifest_package_assets, prewarm_packages,
-    scan_project_package_imports, typst_package_search_dirs,
-};
-
 /// Trait for managing a running preview server.
 pub trait ServerHandle: Send + Sync {
     fn url(&self) -> &str;

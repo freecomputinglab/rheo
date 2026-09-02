@@ -3,7 +3,7 @@
 /// Filename-to-title helper.
 ///
 /// The real document title is read from `#set document(title: …)` by Typst
-/// itself, post-compile (see `crate::plugins::document_meta::DocumentMeta`);
+/// itself, post-compile (see `crate::reticulate::document_meta::DocumentMeta`);
 /// this type only carries the filename-derived fallback used pre-compile, and
 /// when a vertebra's output has no resolved title at all.
 pub struct DocumentTitle;
