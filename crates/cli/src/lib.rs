@@ -432,6 +432,51 @@ fn prepare_build(path: &Path, config_path: Option<&Path>, opts: BuildOptions) ->
     Build::prepare(project, all_plugins(), opts)
 }
 
+/// The positional path, optional config override, and derived [`BuildOptions`]
+/// shared by `compile` and `watch`. `BuildOptions` doesn't derive `Clone` (it's
+/// defined in `rheo_core`, not touched here), so a config-change rebuild
+/// re-derives it via [`Self::build_options`] from these already-clonable
+/// fields rather than re-parsing `ArgMatches` a second time.
+struct BuildArgs {
+    path: PathBuf,
+    config: Option<PathBuf>,
+    formats: Vec<String>,
+    build_dir: Option<PathBuf>,
+    font_dirs: Vec<PathBuf>,
+    inputs: HashMap<String, String>,
+    emit_bundle_source: bool,
+    metadata_two_pass: bool,
+}
+
+impl BuildArgs {
+    fn from_matches(sub: &ArgMatches, plugins: &[Box<dyn FormatPlugin>]) -> Result<Self> {
+        Ok(Self {
+            path: PathBuf::from(sub.get_one::<String>("path").unwrap()),
+            config: sub.get_one::<String>("config").map(PathBuf::from),
+            formats: enabled_formats_from_matches(sub, plugins),
+            build_dir: sub.get_one::<String>("build-dir").map(PathBuf::from),
+            font_dirs: sub
+                .get_many::<String>("font-dir")
+                .map(|vals| vals.map(PathBuf::from).collect())
+                .unwrap_or_default(),
+            inputs: parse_inputs(sub)?,
+            emit_bundle_source: sub.get_flag("emit-bundle-source"),
+            metadata_two_pass: sub.get_flag("metadata-two-pass"),
+        })
+    }
+
+    fn build_options(&self) -> BuildOptions {
+        BuildOptions {
+            formats: self.formats.clone(),
+            build_dir: self.build_dir.clone(),
+            font_dirs: self.font_dirs.clone(),
+            inputs: self.inputs.clone(),
+            emit_bundle_source: self.emit_bundle_source,
+            metadata_two_pass: self.metadata_two_pass,
+        }
+    }
+}
+
 /// Main entry point using the builder-based dynamic CLI.
 pub fn run() -> Result<()> {
     let cli = build_cli();
@@ -455,33 +500,11 @@ pub fn run() -> Result<()> {
 }
 
 fn run_watch(sub: &ArgMatches) -> Result<()> {
-    let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
-    let config_path = sub.get_one::<String>("config").map(PathBuf::from);
-    let build_dir = sub.get_one::<String>("build-dir").map(PathBuf::from);
-    let cli_font_dirs: Vec<PathBuf> = sub
-        .get_many::<String>("font-dir")
-        .map(|vals| vals.map(PathBuf::from).collect())
-        .unwrap_or_default();
-    let cli_inputs = parse_inputs(sub)?;
-    let open = sub.get_flag("open");
-    let emit_bundle_source = sub.get_flag("emit-bundle-source");
-    let metadata_two_pass = sub.get_flag("metadata-two-pass");
-
     let all = all_plugins();
-    let enabled = enabled_formats_from_matches(sub, &all);
+    let args = BuildArgs::from_matches(sub, &all)?;
+    let open = sub.get_flag("open");
 
-    let mut build = prepare_build(
-        &path,
-        config_path.as_deref(),
-        BuildOptions {
-            formats: enabled.clone(),
-            build_dir: build_dir.clone(),
-            font_dirs: cli_font_dirs.clone(),
-            inputs: cli_inputs.clone(),
-            emit_bundle_source,
-            metadata_two_pass,
-        },
-    )?;
+    let mut build = prepare_build(&args.path, args.config.as_deref(), args.build_options())?;
 
     // Initial compilation (best-effort; watch continues on failure)
     if let Err(e) = build.run() {
@@ -558,18 +581,7 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
                 }
                 WatchEvent::ConfigChanged => {
                     info!("config changed, reloading");
-                    match prepare_build(
-                        &path,
-                        config_path.as_deref(),
-                        BuildOptions {
-                            formats: enabled.clone(),
-                            build_dir: build_dir.clone(),
-                            font_dirs: cli_font_dirs.clone(),
-                            inputs: cli_inputs.clone(),
-                            emit_bundle_source,
-                            metadata_two_pass,
-                        },
-                    ) {
+                    match prepare_build(&args.path, args.config.as_deref(), args.build_options()) {
                         Ok(new_build) => {
                             build = new_build;
                             if build.run().is_ok() {
@@ -598,32 +610,9 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
 }
 
 fn run_compile(sub: &ArgMatches) -> Result<()> {
-    let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
-    let config = sub.get_one::<String>("config").map(PathBuf::from);
-    let build_dir = sub.get_one::<String>("build-dir").map(PathBuf::from);
-    let cli_font_dirs: Vec<PathBuf> = sub
-        .get_many::<String>("font-dir")
-        .map(|vals| vals.map(PathBuf::from).collect())
-        .unwrap_or_default();
-    let cli_inputs = parse_inputs(sub)?;
-    let emit_bundle_source = sub.get_flag("emit-bundle-source");
-    let metadata_two_pass = sub.get_flag("metadata-two-pass");
-
     let all = all_plugins();
-    let enabled = enabled_formats_from_matches(sub, &all);
-
-    let mut build = prepare_build(
-        &path,
-        config.as_deref(),
-        BuildOptions {
-            formats: enabled,
-            build_dir,
-            font_dirs: cli_font_dirs,
-            inputs: cli_inputs,
-            emit_bundle_source,
-            metadata_two_pass,
-        },
-    )?;
+    let args = BuildArgs::from_matches(sub, &all)?;
+    let mut build = prepare_build(&args.path, args.config.as_deref(), args.build_options())?;
     build.run().map(|_| ())
 }
 
