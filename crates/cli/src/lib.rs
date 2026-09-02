@@ -16,6 +16,30 @@ pub use rheo_core::diagnostics::logging;
 
 mod migrate;
 
+/// Clap argument ids shared between the builder functions that declare an
+/// `Arg` and the runner functions that later read it back out of
+/// `ArgMatches`. clap only checks an id at runtime, so a typo in either half
+/// of the pair is a panic ("Mismatch between definition and access of
+/// ...") rather than a compile error; defining each id once here turns that
+/// typo into an ordinary Rust name-resolution error instead.
+///
+/// Per-plugin format flags (`--html`, `--pdf`, ...) are NOT here: their ids
+/// come from `plugin.name()` and stay dynamic, one per [`all_plugins`] entry.
+mod arg {
+    pub const PATH: &str = "path";
+    pub const CONFIG: &str = "config";
+    pub const BUILD_DIR: &str = "build-dir";
+    pub const FONT_DIR: &str = "font-dir";
+    pub const INPUT: &str = "input";
+    pub const EMIT_BUNDLE_SOURCE: &str = "emit-bundle-source";
+    pub const METADATA_TWO_PASS: &str = "metadata-two-pass";
+    pub const OPEN: &str = "open";
+    pub const PACKAGES: &str = "packages";
+    pub const QUIET: &str = "quiet";
+    pub const VERBOSE: &str = "verbose";
+    pub const APPLY: &str = "apply";
+}
+
 /// Initialize logging with specified verbosity
 pub fn init_logging(verbose: bool, quiet: bool) -> Result<()> {
     let verbosity = if quiet {
@@ -46,20 +70,20 @@ fn build_cli() -> Command {
         .about("A tool for flowing Typst documents into publishable outputs")
         .version(env!("CARGO_PKG_VERSION"))
         .arg(
-            Arg::new("quiet")
+            Arg::new(arg::QUIET)
                 .short('q')
-                .long("quiet")
+                .long(arg::QUIET)
                 .action(ArgAction::SetTrue)
-                .conflicts_with("verbose")
+                .conflicts_with(arg::VERBOSE)
                 .global(true)
                 .help("Decrease output verbosity (errors only)"),
         )
         .arg(
-            Arg::new("verbose")
+            Arg::new(arg::VERBOSE)
                 .short('v')
-                .long("verbose")
+                .long(arg::VERBOSE)
                 .action(ArgAction::SetTrue)
-                .conflicts_with("quiet")
+                .conflicts_with(arg::QUIET)
                 .global(true)
                 .help("Increase output verbosity (show debug information)"),
         )
@@ -90,20 +114,20 @@ fn add_format_flags(mut cmd: Command, plugins: &[Box<dyn FormatPlugin>]) -> Comm
 /// `--help` order unchanged.
 fn add_common_flags(cmd: Command) -> Command {
     cmd.arg(
-        Arg::new("path")
+        Arg::new(arg::PATH)
             .required(true)
             .index(1)
             .help("Path to project directory or single .typ file"),
     )
     .arg(
-        Arg::new("config")
-            .long("config")
+        Arg::new(arg::CONFIG)
+            .long(arg::CONFIG)
             .value_name("PATH")
             .help("Path to custom rheo.toml config file"),
     )
     .arg(
-        Arg::new("build-dir")
-            .long("build-dir")
+        Arg::new(arg::BUILD_DIR)
+            .long(arg::BUILD_DIR)
             .help("Build output directory (overrides rheo.toml if set)"),
     )
 }
@@ -111,21 +135,21 @@ fn add_common_flags(cmd: Command) -> Command {
 /// The build flags both `compile` and `watch` declare last.
 fn add_build_flags(cmd: Command) -> Command {
     cmd.arg(
-        Arg::new("font-dir")
-            .long("font-dir")
+        Arg::new(arg::FONT_DIR)
+            .long(arg::FONT_DIR)
             .value_name("DIR")
             .action(ArgAction::Append)
             .help("Additional font directory (can be repeated; appended to autoscan/config)"),
     )
     .arg(
-        Arg::new("emit-bundle-source")
-            .long("emit-bundle-source")
+        Arg::new(arg::EMIT_BUNDLE_SOURCE)
+            .long(arg::EMIT_BUNDLE_SOURCE)
             .action(ArgAction::SetTrue)
             .help("Write each plugin's synthesized bundle source to <build_dir>/<plugin>/.rheo-bundle.typ (debug artifact, not an input)"),
     )
     .arg(
-        Arg::new("metadata-two-pass")
-            .long("metadata-two-pass")
+        Arg::new(arg::METADATA_TWO_PASS)
+            .long(arg::METADATA_TWO_PASS)
             .action(ArgAction::SetTrue)
             .help("Recompile once more (only if needed) to resolve a #set document(title:) set inside a bounded code block for cross-vertebra metadata-of/@handle reads"),
     )
@@ -133,8 +157,8 @@ fn add_build_flags(cmd: Command) -> Command {
     // get it from one definition and cannot drift. Repeatable, like `--font-dir`
     // just above.
     .arg(
-        Arg::new("input")
-            .long("input")
+        Arg::new(arg::INPUT)
+            .long(arg::INPUT)
             .value_name("KEY=VALUE")
             .action(ArgAction::Append)
             .help("Set a sys.inputs key for the Typst compile (repeatable; values are always strings)"),
@@ -160,7 +184,7 @@ fn add_build_flags(cmd: Command) -> Command {
 /// forged spine.
 fn parse_inputs(sub: &ArgMatches) -> Result<HashMap<String, String>> {
     let mut map = HashMap::new();
-    for raw in sub.get_many::<String>("input").into_iter().flatten() {
+    for raw in sub.get_many::<String>(arg::INPUT).into_iter().flatten() {
         let Some((key, value)) = raw.split_once('=') else {
             return Err(RheoError::ProjectConfig {
                 message: format!(
@@ -201,8 +225,8 @@ fn build_watch_command(plugins: &[Box<dyn FormatPlugin>]) -> Command {
         Command::new("watch").about("Watch Typst documents and recompile on changes"),
     )
     .arg(
-        Arg::new("open")
-            .long("open")
+        Arg::new(arg::OPEN)
+            .long(arg::OPEN)
             .action(ArgAction::SetTrue)
             .help("Open output in appropriate viewer (HTML opens in browser with live reload)"),
     );
@@ -213,25 +237,25 @@ fn build_clean_command() -> Command {
     Command::new("clean")
         .about("Clean build artifacts for a project")
         .arg(
-            Arg::new("path")
+            Arg::new(arg::PATH)
                 .index(1)
                 .default_value(".")
                 .help("Path to project directory or single .typ file"),
         )
         .arg(
-            Arg::new("config")
-                .long("config")
+            Arg::new(arg::CONFIG)
+                .long(arg::CONFIG)
                 .value_name("PATH")
                 .help("Path to custom rheo.toml config file"),
         )
         .arg(
-            Arg::new("build-dir")
-                .long("build-dir")
+            Arg::new(arg::BUILD_DIR)
+                .long(arg::BUILD_DIR)
                 .help("Build output directory to clean (overrides rheo.toml if set)"),
         )
         .arg(
-            Arg::new("packages")
-                .long("packages")
+            Arg::new(arg::PACKAGES)
+                .long(arg::PACKAGES)
                 .action(ArgAction::SetTrue)
                 .help(
                     "Also delete cached repository checkouts for this project's \
@@ -244,7 +268,7 @@ fn build_init_command() -> Command {
     Command::new("init")
         .about("Initialize a new Rheo project")
         .arg(
-            Arg::new("path")
+            Arg::new(arg::PATH)
                 .required(true)
                 .index(1)
                 .help("Path to the new project directory"),
@@ -255,14 +279,14 @@ fn build_migrate_command() -> Command {
     Command::new("migrate")
         .about("Migrate an older Rheo project to the latest version (experimental)")
         .arg(
-            Arg::new("path")
+            Arg::new(arg::PATH)
                 .required(true)
                 .index(1)
                 .help("Path to project directory"),
         )
         .arg(
-            Arg::new("apply")
-                .long("apply")
+            Arg::new(arg::APPLY)
+                .long(arg::APPLY)
                 .action(ArgAction::SetTrue)
                 .help("Apply migrations (default is a dry run that writes nothing)"),
         )
@@ -451,17 +475,20 @@ struct BuildArgs {
 impl BuildArgs {
     fn from_matches(sub: &ArgMatches, plugins: &[Box<dyn FormatPlugin>]) -> Result<Self> {
         Ok(Self {
-            path: PathBuf::from(sub.get_one::<String>("path").unwrap()),
-            config: sub.get_one::<String>("config").map(PathBuf::from),
+            path: PathBuf::from(
+                sub.get_one::<String>(arg::PATH)
+                    .expect("clap enforces `path` is present (required or defaulted)"),
+            ),
+            config: sub.get_one::<String>(arg::CONFIG).map(PathBuf::from),
             formats: enabled_formats_from_matches(sub, plugins),
-            build_dir: sub.get_one::<String>("build-dir").map(PathBuf::from),
+            build_dir: sub.get_one::<String>(arg::BUILD_DIR).map(PathBuf::from),
             font_dirs: sub
-                .get_many::<String>("font-dir")
+                .get_many::<String>(arg::FONT_DIR)
                 .map(|vals| vals.map(PathBuf::from).collect())
                 .unwrap_or_default(),
             inputs: parse_inputs(sub)?,
-            emit_bundle_source: sub.get_flag("emit-bundle-source"),
-            metadata_two_pass: sub.get_flag("metadata-two-pass"),
+            emit_bundle_source: sub.get_flag(arg::EMIT_BUNDLE_SOURCE),
+            metadata_two_pass: sub.get_flag(arg::METADATA_TWO_PASS),
         })
     }
 
@@ -482,8 +509,8 @@ pub fn run() -> Result<()> {
     let cli = build_cli();
     let matches = cli.get_matches();
 
-    let quiet = matches.get_flag("quiet");
-    let verbose = matches.get_flag("verbose");
+    let quiet = matches.get_flag(arg::QUIET);
+    let verbose = matches.get_flag(arg::VERBOSE);
     init_logging(verbose, quiet)?;
 
     match matches.subcommand() {
@@ -492,7 +519,10 @@ pub fn run() -> Result<()> {
         Some(("clean", sub)) => run_clean(sub),
         Some(("migrate", sub)) => run_migrate(sub),
         Some(("init", sub)) => {
-            let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
+            let path = PathBuf::from(
+                sub.get_one::<String>(arg::PATH)
+                    .expect("clap enforces `path` is present (required or defaulted)"),
+            );
             init_project(&path)
         }
         _ => unreachable!("subcommand_required enforced by clap"),
@@ -524,7 +554,7 @@ fn update_dev_server(build: &mut Build, server: &dyn ServerHandle, reload: bool)
 fn run_watch(sub: &ArgMatches) -> Result<()> {
     let all = all_plugins();
     let args = BuildArgs::from_matches(sub, &all)?;
-    let open = sub.get_flag("open");
+    let open = sub.get_flag(arg::OPEN);
 
     let mut build = prepare_build(&args.path, args.config.as_deref(), args.build_options())?;
 
@@ -606,9 +636,12 @@ fn run_compile(sub: &ArgMatches) -> Result<()> {
 }
 
 fn run_clean(sub: &ArgMatches) -> Result<()> {
-    let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
-    let config = sub.get_one::<String>("config").map(PathBuf::from);
-    let build_dir = sub.get_one::<String>("build-dir").map(PathBuf::from);
+    let path = PathBuf::from(
+        sub.get_one::<String>(arg::PATH)
+            .expect("clap enforces `path` is present (required or defaulted)"),
+    );
+    let config = sub.get_one::<String>(arg::CONFIG).map(PathBuf::from);
+    let build_dir = sub.get_one::<String>(arg::BUILD_DIR).map(PathBuf::from);
 
     info!(path = %path.display(), "loading project");
     let project = ProjectConfig::from_path(&path, config.as_deref())?;
@@ -620,7 +653,7 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
 
     // Opt-in, and never on the build path: a checkout is cheap to re-clone, but
     // deleting one out from under a running build is not recoverable.
-    if sub.get_flag("packages") {
+    if sub.get_flag(arg::PACKAGES) {
         let resolver = rheo_core::packages::PackageResolver::new(&project.config.packages);
         for (namespace, result) in resolver.prune_checkouts() {
             match result {
@@ -634,8 +667,11 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
 }
 
 fn run_migrate(sub: &ArgMatches) -> Result<()> {
-    let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
-    let apply = sub.get_flag("apply");
+    let path = PathBuf::from(
+        sub.get_one::<String>(arg::PATH)
+            .expect("clap enforces `path` is present (required or defaulted)"),
+    );
+    let apply = sub.get_flag(arg::APPLY);
     info!(path = %path.display(), apply, "migrating project");
     migrate::migrate_project(&path, apply)
 }
