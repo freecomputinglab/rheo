@@ -2,12 +2,13 @@
 //!
 //! Without this table `@rheo` resolves from its built-in releases host and every
 //! other namespace goes to Typst universe. A table entry replaces that for one
-//! namespace, either with a repository checked out at a ref or with a different
-//! releases host.
+//! namespace: a repository checked out at a ref, a different releases host, or
+//! a directory on disk.
 
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::path::PathBuf;
 use tracing::warn;
 
 /// The GitHub download base a bare `<owner>/<repo>` shorthand expands to.
@@ -98,6 +99,16 @@ impl ReleasesSource {
     }
 }
 
+/// A namespace served from a directory on disk — a package's own working
+/// tree, read in place. No ref, because there is nothing to check out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathSource {
+    /// The directory holding `<name>/<version>/` package trees.
+    pub root: PathBuf,
+    /// Path prefix inside it, the same meaning `RepoSource::subdir` has.
+    pub subdir: String,
+}
+
 /// Where one namespace resolves from. Exactly one variant per namespace: moving
 /// a project between a release and a branch is an explicit edit, not a
 /// precedence rule.
@@ -105,6 +116,7 @@ impl ReleasesSource {
 pub enum NamespaceSource {
     Repo(RepoSource),
     Releases(ReleasesSource),
+    Path(PathSource),
 }
 
 /// The `[packages.<ns>]` keys as written, before the one-of and ref-precedence
@@ -113,6 +125,7 @@ pub enum NamespaceSource {
 struct NamespaceSourceRaw {
     repo: Option<String>,
     releases: Option<String>,
+    path: Option<String>,
     branch: Option<String>,
     tag: Option<String>,
     rev: Option<String>,
@@ -163,17 +176,19 @@ impl NamespaceSource {
             ("subdir", raw.subdir.as_ref()),
         ];
 
-        match (raw.repo, raw.releases) {
-            (Some(_), Some(_)) => reject(
+        match (raw.repo, raw.releases, raw.path) {
+            (Some(_), Some(_), _) | (Some(_), _, Some(_)) | (_, Some(_), Some(_)) => reject(
                 namespace,
-                "set `repo` or `releases`, not both. Switching a project between a release and a \
-                 branch is an explicit edit, not a precedence rule",
+                "set exactly one of `repo` (a repository at a ref), `releases` (a releases host) \
+                 or `path` (a directory on disk). Switching a project between a release, a \
+                 branch and a local directory is an explicit edit, not a precedence rule",
             ),
-            (None, None) => reject(
+            (None, None, None) => reject(
                 namespace,
-                "set one of `repo` (a repository at a ref) or `releases` (a releases host)",
+                "set one of `repo` (a repository at a ref), `releases` (a releases host) or \
+                 `path` (a directory on disk)",
             ),
-            (None, Some(releases)) => {
+            (None, Some(releases), None) => {
                 if let Some((key, _)) = ref_keys.iter().find(|(_, value)| value.is_some()) {
                     return reject(
                         namespace,
@@ -187,11 +202,33 @@ impl NamespaceSource {
                     namespace, releases,
                 )?))
             }
-            (Some(url), None) => Ok(NamespaceSource::Repo(RepoSource {
+            (Some(url), None, None) => Ok(NamespaceSource::Repo(RepoSource {
                 url,
                 git_ref: Self::git_ref(namespace, raw.branch, raw.tag, raw.rev),
                 subdir: Self::subdir(namespace, raw.subdir)?,
             })),
+            (None, None, Some(path)) => {
+                let path_ref_keys = [
+                    ("branch", raw.branch.as_ref()),
+                    ("tag", raw.tag.as_ref()),
+                    ("rev", raw.rev.as_ref()),
+                ];
+                if let Some((key, _)) = path_ref_keys.iter().find(|(_, value)| value.is_some()) {
+                    return reject(
+                        namespace,
+                        format!(
+                            "`{key}` selects a ref inside a repository, and `path` reads a \
+                             directory in place, so there is no ref to select. Use \
+                             `repo = \"<path>\"` with `{key}` if you want a local repository AT \
+                             a ref."
+                        ),
+                    );
+                }
+                Ok(NamespaceSource::Path(PathSource {
+                    root: PathBuf::from(path),
+                    subdir: Self::subdir(namespace, raw.subdir)?,
+                }))
+            }
         }
     }
 
@@ -442,7 +479,7 @@ mod tests {
     fn repo_and_releases_together_are_rejected() {
         let msg = error("[packages.ns]\nrepo = \"u\"\nreleases = \"a/b\"");
         assert!(
-            msg.contains("[packages.ns]") && msg.contains("not both"),
+            msg.contains("[packages.ns]") && msg.contains("exactly one"),
             "{msg}"
         );
     }
@@ -482,6 +519,44 @@ mod tests {
             msg.contains("[packages.ns]") && msg.contains("relative"),
             "{msg}"
         );
+    }
+
+    #[test]
+    fn path_alone_parses() {
+        let NamespaceSource::Path(path) = source("[packages.ns]\npath = \"../pkgs\"", "ns") else {
+            panic!("expected a path source");
+        };
+        assert_eq!(path.root, std::path::PathBuf::from("../pkgs"));
+        assert_eq!(path.subdir, "");
+    }
+
+    #[test]
+    fn path_and_repo_together_are_rejected() {
+        let msg = error("[packages.ns]\npath = \"../pkgs\"\nrepo = \"u\"");
+        assert!(
+            msg.contains("[packages.ns]") && msg.contains("exactly one"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn path_and_branch_together_are_rejected() {
+        let msg = error("[packages.ns]\npath = \"../pkgs\"\nbranch = \"b\"");
+        assert!(
+            msg.contains("[packages.ns]") && msg.contains("branch") && msg.contains("repo"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn path_keeps_subdir() {
+        let NamespaceSource::Path(path) = source(
+            "[packages.ns]\npath = \"../pkgs\"\nsubdir = \"packages\"",
+            "ns",
+        ) else {
+            panic!("expected a path source");
+        };
+        assert_eq!(path.subdir, "packages");
     }
 
     #[test]

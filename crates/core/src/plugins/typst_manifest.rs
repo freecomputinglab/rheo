@@ -357,7 +357,7 @@ impl PackageIndex {
                 let source_mode = pkg
                     .namespace
                     .as_deref()
-                    .is_some_and(|ns| resolver.is_repo_backed(ns));
+                    .is_some_and(|ns| resolver.is_source_backed(ns));
                 Some(IndexEntry {
                     spec: spec.clone(),
                     pkg,

@@ -12,7 +12,7 @@ pub mod retired;
 pub mod validation;
 
 pub use manifest_version::ManifestVersion;
-pub use packages::{GitRef, NamespaceSource, ReleasesSource, RepoSource};
+pub use packages::{GitRef, NamespaceSource, PathSource, ReleasesSource, RepoSource};
 pub use retired::{RETIRED_KEYS, RetiredKey};
 use validation::ValidateConfig;
 
@@ -379,7 +379,7 @@ impl RheoConfig {
         }
 
         debug!(path = %config_path.display(), "loading configuration");
-        Self::parse_config(&config_path, "rheo.toml")
+        Self::parse_config(&config_path, "rheo.toml", project_root)
     }
 
     /// Load configuration from a specific path with validation.
@@ -397,20 +397,33 @@ impl RheoConfig {
             ));
         }
 
-        let config = Self::parse_config(config_path, "config file")?;
+        let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+        let config = Self::parse_config(config_path, "config file", base_dir)?;
         debug!(path = %config_path.display(), "loaded custom configuration");
         Ok(config)
     }
 
     /// Read, parse, convert, and validate a config file.
-    fn parse_config(config_path: &Path, label: &str) -> Result<Self> {
+    ///
+    /// `base_dir` is the directory a relative `[packages.<ns>] path` resolves
+    /// against — the config file's own directory, not the process's cwd, so
+    /// `path = "../rookery"` means the same thing however rheo was invoked.
+    fn parse_config(config_path: &Path, label: &str, base_dir: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(config_path)
             .map_err(|e| crate::RheoError::io(e, format!("reading {}", config_path.display())))?;
 
         let raw: RheoConfigRaw = toml::from_str(&contents)
             .map_err(|e| crate::RheoError::project_config(format!("invalid {}: {}", label, e)))?;
-        let config = RheoConfig::try_from(raw)
+        let mut config = RheoConfig::try_from(raw)
             .map_err(|e| crate::RheoError::project_config(format!("invalid {}: {}", label, e)))?;
+
+        for source in config.packages.values_mut() {
+            if let NamespaceSource::Path(path) = source
+                && path.root.is_relative()
+            {
+                path.root = base_dir.join(&path.root);
+            }
+        }
 
         config.validate()?;
         Ok(config)
@@ -1101,5 +1114,49 @@ mod tests {
         assert!(section.title.is_none());
         assert!(section.include.len() == 1);
         assert!(section.section.is_empty());
+    }
+
+    /// A relative `[packages.<ns>] path` resolves against the CONFIG FILE'S OWN
+    /// directory, not the process's cwd — so it means the same thing however
+    /// rheo was invoked.
+    #[test]
+    fn test_relative_package_path_resolves_against_config_dir() {
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("rheo.toml");
+        std::fs::write(
+            &config_path,
+            versioned_toml("[packages.ns]\npath = \"../pkgs\"\n"),
+        )
+        .unwrap();
+
+        let config = RheoConfig::load_from_path(&config_path).expect("load failed");
+        let NamespaceSource::Path(source) = config.packages.get("ns").expect("namespace absent")
+        else {
+            panic!("expected a path source");
+        };
+        assert_eq!(source.root, temp.path().join("../pkgs"));
+    }
+
+    /// An absolute `path` passes through unchanged.
+    #[test]
+    fn test_absolute_package_path_is_left_unchanged() {
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("rheo.toml");
+        std::fs::write(
+            &config_path,
+            versioned_toml("[packages.ns]\npath = \"/abs/pkgs\"\n"),
+        )
+        .unwrap();
+
+        let config = RheoConfig::load_from_path(&config_path).expect("load failed");
+        let NamespaceSource::Path(source) = config.packages.get("ns").expect("namespace absent")
+        else {
+            panic!("expected a path source");
+        };
+        assert_eq!(source.root, std::path::PathBuf::from("/abs/pkgs"));
     }
 }

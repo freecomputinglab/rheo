@@ -15,8 +15,10 @@ use typst_kit::packages::SystemPackages;
 use crate::config::{NamespaceSource, ReleasesSource};
 
 mod git;
+mod path;
 
 pub use git::GitPackages;
+pub use path::PathPackages;
 
 /// The download base `@rheo` uses when no `[packages.rheo]` table overrides it.
 const REGISTRY_URL: &str = "https://github.com/freecomputinglab/rheo-packages/releases/download";
@@ -28,6 +30,7 @@ const USER_AGENT: &str = concat!("rheo/", env!("CARGO_PKG_VERSION"));
 enum Backend {
     Repo(GitPackages),
     Releases(RheoPackages),
+    Path(PathPackages),
 }
 
 /// Resolves a package spec to a directory on disk, routing by namespace.
@@ -56,6 +59,9 @@ impl PackageResolver {
                     NamespaceSource::Releases(releases) => {
                         Backend::Releases(RheoPackages::with_source(downloader(), releases.clone()))
                     }
+                    NamespaceSource::Path(path) => {
+                        Backend::Path(PathPackages::new(namespace, path.clone()))
+                    }
                 };
                 (namespace.clone(), backend)
             })
@@ -72,6 +78,7 @@ impl PackageResolver {
         match self.configured.get(spec.namespace.as_str()) {
             Some(Backend::Repo(repo)) => repo.obtain(spec),
             Some(Backend::Releases(releases)) => releases.obtain(spec),
+            Some(Backend::Path(path)) => path.obtain(spec),
             None if spec.namespace == "rheo" => self.rheo.obtain(spec),
             None => self.universe.obtain(spec),
         }
@@ -88,7 +95,7 @@ impl PackageResolver {
             .iter()
             .filter_map(|(namespace, backend)| match backend {
                 Backend::Repo(repo) => Some((namespace.clone(), repo.prune())),
-                Backend::Releases(_) => None,
+                Backend::Releases(_) | Backend::Path(_) => None,
             })
             .collect();
         pruned.sort_by(|a, b| a.0.cmp(&b.0));
@@ -100,11 +107,14 @@ impl PackageResolver {
         self.configured.contains_key(namespace)
     }
 
-    /// Whether this namespace is served from a repository ref rather than a
-    /// releases host. A ref carries no build output, so its packages use their
-    /// source-mode asset block.
-    pub fn is_repo_backed(&self, namespace: &str) -> bool {
-        matches!(self.configured.get(namespace), Some(Backend::Repo(_)))
+    /// Whether this namespace is served from a repository ref or a directory on
+    /// disk, rather than a releases host. Neither carries a build output, so
+    /// their packages use their source-mode asset block.
+    pub fn is_source_backed(&self, namespace: &str) -> bool {
+        matches!(
+            self.configured.get(namespace),
+            Some(Backend::Repo(_)) | Some(Backend::Path(_))
+        )
     }
 
     /// Whether rheo knows how to fetch this namespace ahead of the asset scan.
