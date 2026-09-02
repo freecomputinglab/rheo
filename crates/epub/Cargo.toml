@@ -29,7 +29,6 @@ chrono = { workspace = true }
 
 # EPUB-specific
 zip = { workspace = true }
-markup5ever_rcdom = { workspace = true }
 iref = { workspace = true }
 uuid = { workspace = true }
 itertools = { workspace = true }

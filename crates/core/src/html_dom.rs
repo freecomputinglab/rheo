@@ -18,7 +18,10 @@ use std::fmt::Write as _;
 pub enum SerializeMode {
     /// Standard HTML: void elements emit `<tag>`.
     Html,
-    /// XHTML: void elements self-close `<tag/>`, attribute values fully escaped.
+    /// Portable XHTML for EPUB: an `<?xml?>` declaration and a trailing
+    /// newline after the doctype, void elements self-closing (`<tag/>`), the
+    /// XHTML namespace stamped onto `<html>`, and `<body>`'s children wrapped
+    /// in `<article>`.
     Xhtml,
 }
 
@@ -32,7 +35,7 @@ pub(crate) fn is_raw_text_element(tag: &str) -> bool {
 }
 
 /// Returns true if the given tag name is an HTML void element.
-pub fn is_void_element(tag_name: &str) -> bool {
+pub(crate) fn is_void_element(tag_name: &str) -> bool {
     matches!(
         tag_name,
         "area"
@@ -53,7 +56,7 @@ pub fn is_void_element(tag_name: &str) -> bool {
 }
 
 /// Escape text content for HTML/XHTML output.
-pub fn escape_text(text: &str) -> String {
+pub(crate) fn escape_text(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -65,7 +68,7 @@ pub fn escape_text(text: &str) -> String {
 /// double quotes, and html5ever DECODES entities while parsing, so a value that
 /// arrived as `&quot;` is a bare `"` in memory and would close the attribute
 /// early on the way back out.
-pub fn escape_attr(value: &str) -> String {
+pub(crate) fn escape_attr(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -100,9 +103,34 @@ impl HtmlDom {
         Ok(output)
     }
 
+    /// Serialize the DOM tree as portable XHTML (see [`SerializeMode::Xhtml`]),
+    /// for EPUB packaging.
+    pub fn serialize_xhtml(&self) -> Result<String> {
+        let mut output = String::new();
+        serialize_node(&self.dom.document, &mut output, &SerializeMode::Xhtml)?;
+        Ok(output)
+    }
+
     /// Find an element by tag name (depth-first search).
     pub fn find_element(&self, tag_name: &str) -> Option<Element> {
         find_element_by_tag(&self.dom.document, tag_name).map(|handle| Element { handle })
+    }
+
+    /// The document's `<html lang="...">` attribute, if set.
+    pub fn html_lang(&self) -> Option<String> {
+        self.find_element("html")?.attr("lang")
+    }
+
+    /// Finds every `h2`–`h6` heading, in document order, deriving a slug `id`
+    /// from each one's text and stamping it onto the element so a later
+    /// [`Self::serialize`]/[`Self::serialize_xhtml`] emits it — a caller
+    /// building a table of contents needs that same id to link to it. Calling
+    /// this more than once re-stamps (and duplicates) the `id` attribute, so
+    /// call it exactly once per parse.
+    pub fn collect_headings(&mut self) -> Vec<Heading> {
+        let mut out = Vec::new();
+        collect_headings(&self.dom.document, &mut out);
+        out
     }
 
     /// Hoists every `<rheo-head>` wrapper element's children into `<head>`,
@@ -352,11 +380,6 @@ impl HtmlDom {
             }
         }
     }
-
-    /// Returns a reference to the underlying DOM document root node.
-    pub fn document_root(&self) -> &Handle {
-        &self.dom.document
-    }
 }
 
 /// Wrapper around html5ever's Handle for type-safe element manipulation.
@@ -430,6 +453,18 @@ impl Element {
             .into_iter()
             .map(|handle| Element { handle })
             .collect()
+    }
+
+    /// The value of attribute `name` on this element, if present.
+    pub fn attr(&self, name: &str) -> Option<String> {
+        let NodeData::Element { attrs, .. } = &self.handle.data else {
+            return None;
+        };
+        attrs
+            .borrow()
+            .iter()
+            .find(|a| a.name.local.as_ref() == name)
+            .map(|a| a.value.to_string())
     }
 
     /// Returns the index of the last `<meta>` child in this element's children, if any.
@@ -521,6 +556,67 @@ fn find_element_where(
         .find_map(|child| find_element_where(child, matches))
 }
 
+/// A heading (`h2`–`h6`) found by [`HtmlDom::collect_headings`], in document order.
+pub struct Heading {
+    /// Slug id derived from `text`, also stamped onto the heading element.
+    pub id: String,
+    /// Heading level, 2–6.
+    pub level: u8,
+    /// The heading's text content.
+    pub text: String,
+}
+
+/// Returns the heading level (2–6) for tag names `h2`..`h6`, or `None` for
+/// any other tag (including `h1`, reserved for the document/page title).
+fn heading_level(tag: &str) -> Option<u8> {
+    let mut chars = tag.chars();
+    if chars.next()? != 'h' {
+        return None;
+    }
+    let digit = chars.next()?;
+    if !digit.is_ascii_digit() || digit == '1' || chars.next().is_some() {
+        return None;
+    }
+    digit.to_digit(10).map(|d| d as u8)
+}
+
+fn collect_headings(handle: &Handle, out: &mut Vec<Heading>) {
+    if let NodeData::Element { name, attrs, .. } = &handle.data
+        && let Some(level) = heading_level(&name.local)
+    {
+        let text = text_content(handle);
+        let id = text_to_id(&text);
+        attrs.borrow_mut().push(Attribute {
+            name: QualName::new(None, ns!(), LocalName::from("id")),
+            value: StrTendril::from(id.as_str()),
+        });
+        out.push(Heading { id, level, text });
+    }
+    for child in handle.children.borrow().iter() {
+        collect_headings(child, out);
+    }
+}
+
+fn text_to_id(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_whitespace() {
+                '-'
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
+        .collect()
+}
+
+/// Recursively collect all text content from a DOM node.
+fn text_content(handle: &Handle) -> String {
+    match &handle.data {
+        NodeData::Text { contents } => contents.borrow().to_string(),
+        _ => handle.children.borrow().iter().map(text_content).collect(),
+    }
+}
+
 /// Serialize the inner HTML of an element: its children without the surrounding
 /// tag.
 fn inner_html(handle: &Handle) -> Result<String> {
@@ -534,12 +630,21 @@ fn inner_html(handle: &Handle) -> Result<String> {
 fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) -> Result<()> {
     match &handle.data {
         NodeData::Document => {
+            if matches!(mode, SerializeMode::Xhtml) {
+                write_html(
+                    output,
+                    format_args!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"),
+                )?;
+            }
             for child in handle.children.borrow().iter() {
                 serialize_node(child, output, mode)?;
             }
         }
         NodeData::Doctype { name, .. } => {
             write_html(output, format_args!("<!DOCTYPE {}>", name))?;
+            if matches!(mode, SerializeMode::Xhtml) {
+                output.push('\n');
+            }
         }
         NodeData::Text { contents } => {
             let text = contents.borrow();
@@ -556,6 +661,12 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
         } => {
             write_html(output, format_args!("<{}", name.local))?;
 
+            // XHTML EPUB pages need the XHTML namespace on the root element;
+            // Typst's own HTML output never carries one.
+            if matches!(mode, SerializeMode::Xhtml) && &*name.local == "html" {
+                output.push_str(" xmlns=\"http://www.w3.org/1999/xhtml\"");
+            }
+
             for attr in attrs.borrow().iter() {
                 let escaped_value = escape_attr(&attr.value);
                 write_html(
@@ -571,6 +682,12 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
                 }
             } else {
                 output.push('>');
+                // EPUB readers expect a page's flow content under a landmark
+                // element; Typst emits bare children directly under `<body>`.
+                let wrap_article = matches!(mode, SerializeMode::Xhtml) && &*name.local == "body";
+                if wrap_article {
+                    output.push_str("<article>");
+                }
                 let is_raw =
                     matches!(mode, SerializeMode::Html) && is_raw_text_element(name.local.as_ref());
                 // A `<template>`'s children live in `template_contents`, a
@@ -583,6 +700,9 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
                     } else {
                         serialize_node(child, output, mode)?;
                     }
+                }
+                if wrap_article {
+                    output.push_str("</article>");
                 }
                 write_html(output, format_args!("</{}>", name.local))?;
             }
@@ -657,7 +777,7 @@ mod tests {
     fn test_parse_html() {
         let html = "<html><head><title>Test</title></head><body></body></html>";
         let dom = HtmlDom::parse(html).unwrap();
-        assert!(!dom.document_root().children.borrow().is_empty());
+        assert!(dom.find_element("title").is_some());
     }
 
     #[test]

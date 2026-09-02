@@ -7,6 +7,7 @@ use xhtml::HtmlInfo;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
+use rheo_core::html_dom::{Heading, HtmlDom};
 use rheo_core::{
     CastVertebra, FormatInitTemplate, FormatPlugin, PluginContext, PluginSection, Result,
     RheoError, Spine, SpineLayoutKind, eco_format, eco_vec,
@@ -430,41 +431,9 @@ impl EpubConfig {
 ///
 /// Returns `None` if no lang attribute is found or if parsing fails.
 fn extract_language(html_string: &str) -> Option<String> {
-    use markup5ever_rcdom::NodeData;
-    use rheo_core::html_dom::HtmlDom;
-
-    let dom = HtmlDom::parse(html_string).ok()?;
-
-    // Walk DOM to find <html> element and extract lang attribute.
-    fn find_html_lang(handle: &markup5ever_rcdom::Handle) -> Option<String> {
-        match &handle.data {
-            NodeData::Element { name, attrs, .. } => {
-                if name.local.as_ref() == "html" {
-                    for attr in attrs.borrow().iter() {
-                        if attr.name.local.as_ref() == "lang" {
-                            return Some(attr.value.to_string());
-                        }
-                    }
-                }
-                for child in handle.children.borrow().iter() {
-                    if let Some(lang) = find_html_lang(child) {
-                        return Some(lang);
-                    }
-                }
-            }
-            NodeData::Document => {
-                for child in handle.children.borrow().iter() {
-                    if let Some(lang) = find_html_lang(child) {
-                        return Some(lang);
-                    }
-                }
-            }
-            _ => {}
-        }
-        None
-    }
-
-    find_html_lang(dom.document_root())
+    rheo_core::html_dom::HtmlDom::parse(html_string)
+        .ok()?
+        .html_lang()
 }
 
 pub struct EpubItem {
@@ -483,33 +452,6 @@ pub struct EpubItem {
 /// only by extension (`hello.txt` / `hello.json`) would otherwise collide.
 fn asset_item_id(path: &str) -> EcoString {
     format!("asset-{}", path.replace(['/', '.'], "-")).into()
-}
-
-fn text_to_id(s: &str) -> EcoString {
-    s.chars()
-        .map(|c| {
-            if c.is_whitespace() {
-                '-'
-            } else {
-                c.to_ascii_lowercase()
-            }
-        })
-        .collect()
-}
-
-/// Recursively collect all text content from a DOM node.
-fn text_content(handle: &markup5ever_rcdom::Handle) -> EcoString {
-    use markup5ever_rcdom::NodeData;
-    let mut out = EcoString::new();
-    match &handle.data {
-        NodeData::Text { contents } => out.push_str(&contents.borrow()),
-        _ => {
-            for child in handle.children.borrow().iter() {
-                out.push_str(&text_content(child));
-            }
-        }
-    }
-    out
 }
 
 impl EpubItem {
@@ -533,8 +475,9 @@ impl EpubItem {
             RheoError::epub_generation(format!("invalid href for EPUB item: {}", e))
         })?;
 
-        let (heading_ids, outline) = Self::outline_from_html(&html_string, &href)?;
-        let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids)?;
+        let mut dom = HtmlDom::parse(&html_string)?;
+        let outline = Self::outline_from_headings(dom.collect_headings(), &href);
+        let (xhtml, info) = xhtml::html_to_portable_xhtml(&dom)?;
 
         Ok(EpubItem {
             href,
@@ -545,68 +488,20 @@ impl EpubItem {
         })
     }
 
-    /// Parse `html_string` to extract heading IDs and build the nav outline.
-    ///
-    /// Walks the DOM to find h2–h6 elements, derives an ID from their text content,
-    /// and builds the nav tree. Returns `(heading_ids, outline)` in DOM order so that
-    /// `html_to_portable_xhtml` can stamp the same IDs onto the XHTML output.
-    fn outline_from_html(
-        html_string: &str,
-        href: &IriRef,
-    ) -> Result<(Vec<EcoString>, Vec<OutlineNode<EcoString>>)> {
-        use markup5ever_rcdom::{Handle, NodeData};
-        use rheo_core::html_dom::HtmlDom;
-
-        let dom = HtmlDom::parse(html_string)?;
-
-        // Recursive walk to collect (id, level, link_html) for h2–h6.
-        fn collect_headings(
-            handle: &Handle,
-            href: &IriRef,
-            out: &mut Vec<(EcoString, u8, EcoString)>,
-        ) {
-            match &handle.data {
-                NodeData::Element { name, .. } => {
-                    let tag = name.local.as_ref();
-                    let mut chars = tag.chars();
-                    if let Some('h') = chars.next()
-                        && let Some(c) = chars.next()
-                        && c.is_ascii_digit()
-                        && c != '1'
-                        && chars.next().is_none()
-                    {
-                        let level = c.to_digit(10).unwrap_or(2) as u8;
-                        let text: EcoString = text_content(handle);
-                        let id = text_to_id(&text);
-                        let mut anchored = href.to_owned();
-                        anchored.set_fragment(Fragment::new(id.as_bytes()).ok());
-                        let link = eco_format!(r#"<a href="{anchored}">{text}</a>"#);
-                        out.push((id, level, link));
-                    }
-                    for child in handle.children.borrow().iter() {
-                        collect_headings(child, href, out);
-                    }
-                }
-                NodeData::Document => {
-                    for child in handle.children.borrow().iter() {
-                        collect_headings(child, href, out);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let mut raw: Vec<(EcoString, u8, EcoString)> = Vec::new();
-        collect_headings(dom.document_root(), href, &mut raw);
-
-        let heading_ids: Vec<EcoString> = raw.iter().map(|(id, _, _)| id.clone()).collect();
-        let nodes: Vec<(EcoString, NonZero<usize>, bool)> = raw
+    /// Builds the nav outline tree from headings already stamped by
+    /// [`HtmlDom::collect_headings`], anchoring each entry at this item's own
+    /// `href#id`.
+    fn outline_from_headings(headings: Vec<Heading>, href: &IriRef) -> Vec<OutlineNode<EcoString>> {
+        let nodes: Vec<(EcoString, NonZero<usize>, bool)> = headings
             .into_iter()
-            .map(|(_, level, link)| (link, NonZero::new(level as usize).unwrap(), true))
+            .map(|h| {
+                let mut anchored = href.to_owned();
+                anchored.set_fragment(Fragment::new(h.id.as_bytes()).ok());
+                let link = eco_format!(r#"<a href="{anchored}">{}</a>"#, h.text);
+                (link, NonZero::new(h.level as usize).unwrap(), true)
+            })
             .collect();
-        let outline = OutlineNode::build_tree(nodes);
-
-        Ok((heading_ids, outline))
+        OutlineNode::build_tree(nodes)
     }
 
     fn title(&self) -> EcoString {
