@@ -14,9 +14,8 @@
 //! statement list.
 
 use crate::reticulate::handle::Handle;
+use crate::synth::typst_literal::{TypstLiteral, escape_typst_content};
 use crate::util::constants::METADATA_MODULE_PATH;
-use crate::util::path::escape_typst_content;
-use crate::util::typst_literal::TypstLiteral;
 use std::fmt;
 
 /// A synthesized top-level Typst statement, rendered via [`fmt::Display`].

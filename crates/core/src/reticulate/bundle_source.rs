@@ -1,5 +1,5 @@
 use crate::reticulate::handle::Handle;
-use crate::util::typst_source::TypstStmt;
+use crate::synth::typst_source::TypstStmt;
 use std::fmt;
 
 /// A handle anchor emitted into a `BundleDocument` body so that `@label` cross-references

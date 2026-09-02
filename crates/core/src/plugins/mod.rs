@@ -127,11 +127,11 @@ impl CastVertebra {
     /// Parse this output as an HTML DOM.
     ///
     /// Returns an error if `format` is not `TypstFormat::Html`.
-    pub fn html(&self) -> crate::Result<crate::util::html::HtmlDom> {
+    pub fn html(&self) -> crate::Result<crate::html_dom::HtmlDom> {
         if self.format != TypstFormat::Html {
             return Err(crate::RheoError::invalid_data("output is not HTML-shaped"));
         }
-        crate::util::html::HtmlDom::parse(&String::from_utf8_lossy(&self.bytes))
+        crate::html_dom::HtmlDom::parse(&String::from_utf8_lossy(&self.bytes))
     }
 }
 

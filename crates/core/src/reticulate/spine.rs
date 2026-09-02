@@ -1,11 +1,11 @@
 use crate::config::SpineSection;
 use crate::parser;
 use crate::reticulate::bundle_source::BundleSource;
+use crate::reticulate::document_meta::DocumentTitle;
 use crate::reticulate::handle::Handle;
+use crate::synth::typst_literal::TypstLiteral;
+use crate::synth::typst_source::TypstStmt;
 use crate::util::path::to_forward_slash;
-use crate::util::pdf::DocumentTitle;
-use crate::util::typst_literal::TypstLiteral;
-use crate::util::typst_source::TypstStmt;
 use crate::{MARROW_FILE, RESERVED_META_LABEL_PREFIX, Result, RheoError, TYP_EXT};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use std::collections::{HashMap, HashSet};

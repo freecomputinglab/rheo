@@ -2,7 +2,7 @@
 
 use markup5ever_rcdom::{Handle, NodeData};
 use rheo_core::Result;
-use rheo_core::util::html::{HtmlDom, escape_attr, escape_text, is_void_element};
+use rheo_core::html_dom::{HtmlDom, escape_attr, escape_text, is_void_element};
 use rheo_core::util::typst_types::EcoString;
 use std::{fmt::Write, slice};
 

@@ -693,7 +693,7 @@ impl Build {
         main: String,
         sources: HashMap<String, String>,
         rheo_context: HashMap<String, crate::reticulate::VertebraInjection>,
-        global_context: crate::util::typst_literal::TypstLiteral,
+        global_context: crate::synth::typst_literal::TypstLiteral,
         resolver: &Arc<crate::packages::PackageResolver>,
     ) -> Result<CompiledBundlePass> {
         let world = RheoWorld::new_for_bundle(
@@ -839,12 +839,12 @@ impl Build {
                 .unwrap_or_default()
         };
         let css_paths: Vec<String> = asset_paths("css_stylesheet");
-        let js_scripts: Vec<crate::util::html::ScriptRef> = ctx
+        let js_scripts: Vec<crate::html_dom::ScriptRef> = ctx
             .resolved
             .get("js_scripts")
             .map(|v: &Vec<crate::plugins::Asset>| {
                 v.iter()
-                    .map(|a| crate::util::html::ScriptRef {
+                    .map(|a| crate::html_dom::ScriptRef {
                         src: a.built_relative_path.clone(),
                         module: a.module,
                     })
@@ -926,9 +926,9 @@ impl Build {
 
             if path_str.ends_with(".html") {
                 let html = String::from_utf8_lossy(&bytes);
-                let css = crate::util::html::depth_relative_refs(&css_paths, &path_str);
-                let js = crate::util::html::depth_relative_scripts(&js_scripts, &path_str);
-                let modified = crate::util::html::HtmlDom::apply_head_mutations(
+                let css = crate::html_dom::depth_relative_refs(&css_paths, &path_str);
+                let js = crate::html_dom::depth_relative_scripts(&js_scripts, &path_str);
+                let modified = crate::html_dom::HtmlDom::apply_head_mutations(
                     &html,
                     &css,
                     &js,

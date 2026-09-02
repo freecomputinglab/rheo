@@ -1,12 +1,6 @@
-//! Stateless helper modules shared across the crate.
-//!
-//! Open question: `html` is large and HTML-specific but remains a pure
-//! helper; it lives here rather than in the html plugin for now.
+//! Small stateless leaves with no better-fitting home: extension/path
+//! constants, generic path helpers, and Typst-type re-exports for plugins.
 
 pub mod constants;
-pub mod html;
 pub mod path;
-pub mod pdf;
-pub mod typst_literal;
-pub mod typst_source;
 pub mod typst_types;

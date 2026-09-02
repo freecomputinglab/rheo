@@ -3,10 +3,12 @@ pub mod build;
 pub mod compile;
 pub mod config;
 pub mod diagnostics;
+pub mod html_dom;
 pub mod packages;
 pub mod parser;
 pub mod plugins;
 pub mod reticulate;
+pub(crate) mod synth;
 pub mod templates;
 pub mod transclude;
 pub mod util;
@@ -40,13 +42,13 @@ pub use transclude::ControlAssets;
 
 // HTML/PDF export utilities
 pub use compile::{compile_document_to_string, document_to_pdf_bytes};
-pub use util::html::HtmlDom;
+pub use html_dom::HtmlDom;
 
 // World (Typst compilation context)
 pub use world::RheoWorld;
 
-// PDF utilities
-pub use util::pdf::DocumentTitle;
+// Document title utilities
+pub use reticulate::DocumentTitle;
 
 // Typst types (commonly used by plugins)
 pub use util::typst_types::{

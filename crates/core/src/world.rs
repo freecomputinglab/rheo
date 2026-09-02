@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use crate::packages::PackageResolver;
 use crate::reticulate::VertebraInjection;
+use crate::synth::typst_literal::TypstLiteral;
+use crate::synth::typst_source::TypstStmt;
 use crate::util::constants::METADATA_MODULE_PATH;
-use crate::util::typst_literal::TypstLiteral;
-use crate::util::typst_source::TypstStmt;
 use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};

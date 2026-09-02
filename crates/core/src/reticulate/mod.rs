@@ -5,7 +5,7 @@ pub mod mould;
 pub mod spine;
 
 pub use bundle_source::BundleSource;
-pub use document_meta::DocumentMeta;
+pub use document_meta::{DocumentMeta, DocumentTitle};
 pub use handle::Handle;
 pub use mould::{Rewrites, SpineMould, SyntaxRewrite};
 pub use spine::{SpineLayout, SpineScan, Vertebra, VertebraInjection, VirtualSpine};
