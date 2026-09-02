@@ -1,7 +1,6 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use ecow::eco_format;
 use parking_lot::Mutex;
@@ -10,6 +9,7 @@ use typst_kit::files::FsRoot;
 use typst_library::diag::{PackageError, PackageResult};
 use typst_syntax::package::PackageSpec;
 
+use super::{Announce, PackageSource, SourceKind, cache_root, package_dir};
 use crate::config::{GitRef, RepoSource};
 
 /// Serves a namespace from a repository, checked out at a resolved commit sha.
@@ -31,12 +31,12 @@ pub struct GitPackages {
     /// The resolved sha, memoised so `ls-remote` runs once per build rather than
     /// once per file read.
     sha: Mutex<Option<String>>,
-    announced: AtomicBool,
+    announced: Announce,
 }
 
 impl GitPackages {
     pub fn new(namespace: &str, source: RepoSource) -> Self {
-        Self::with_cache_root(namespace, source, dirs::cache_dir())
+        Self::with_cache_root(namespace, source, cache_root())
     }
 
     fn with_cache_root(namespace: &str, source: RepoSource, cache_root: Option<PathBuf>) -> Self {
@@ -46,7 +46,7 @@ impl GitPackages {
             cache_root,
             binary: "git".to_string(),
             sha: Mutex::new(None),
-            announced: AtomicBool::new(false),
+            announced: Announce::new(),
         }
     }
 
@@ -55,24 +55,18 @@ impl GitPackages {
         let sha = self.resolve_sha()?;
         let checkout = self.checkout(&sha)?;
 
-        let mut dir = checkout;
-        if !self.source.subdir.is_empty() {
-            dir.push(&self.source.subdir);
-        }
-        dir.push(spec.name.as_str());
-        dir.push(spec.version.to_string());
-
-        if !dir.exists() {
-            return Err(PackageError::Other(Some(eco_format!(
-                "@{namespace}/{name}:{version} not found in {url} at {git_ref} ({sha})",
-                namespace = self.namespace,
-                name = spec.name,
-                version = spec.version,
-                url = self.source.url,
-                git_ref = self.source.git_ref,
-            ))));
-        }
-        Ok(FsRoot::new(dir))
+        package_dir(&checkout, &self.source.subdir, spec)
+            .map(FsRoot::new)
+            .map_err(|_| {
+                PackageError::Other(Some(eco_format!(
+                    "@{namespace}/{name}:{version} not found in {url} at {git_ref} ({sha})",
+                    namespace = self.namespace,
+                    name = spec.name,
+                    version = spec.version,
+                    url = self.source.url,
+                    git_ref = self.source.git_ref,
+                )))
+            })
     }
 
     fn resolve_sha(&self) -> PackageResult<String> {
@@ -102,12 +96,12 @@ impl GitPackages {
             }
         };
 
-        if !self.announced.swap(true, Ordering::Relaxed) {
+        self.announced.once(|| {
             info!(
                 "@{} resolves from {} at {} ({})",
                 self.namespace, self.source.url, self.source.git_ref, sha,
             );
-        }
+        });
         *cached = Some(sha.clone());
         Ok(sha)
     }
@@ -246,6 +240,20 @@ impl GitPackages {
             ))));
         }
         Ok(output)
+    }
+}
+
+impl PackageSource for GitPackages {
+    fn obtain(&self, spec: &PackageSpec) -> PackageResult<FsRoot> {
+        self.obtain(spec)
+    }
+
+    fn kind(&self) -> SourceKind {
+        SourceKind::Repo
+    }
+
+    fn prune(&self) -> std::io::Result<usize> {
+        self.prune()
     }
 }
 

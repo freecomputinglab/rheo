@@ -1,11 +1,10 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use ecow::eco_format;
 use tracing::info;
 use typst_kit::files::FsRoot;
 use typst_library::diag::{PackageError, PackageResult};
 use typst_syntax::package::PackageSpec;
 
+use super::{Announce, PackageSource, SourceKind, package_dir};
 use crate::config::PathSource;
 
 /// Serves a namespace from a directory on disk — a package's own working tree,
@@ -14,7 +13,7 @@ use crate::config::PathSource;
 pub struct PathPackages {
     namespace: String,
     source: PathSource,
-    announced: AtomicBool,
+    announced: Announce,
 }
 
 impl PathPackages {
@@ -22,37 +21,41 @@ impl PathPackages {
         Self {
             namespace: namespace.to_string(),
             source,
-            announced: AtomicBool::new(false),
+            announced: Announce::new(),
         }
     }
 
     /// The directory for `@<ns>/<name>:<version>` inside the configured root.
     pub fn obtain(&self, spec: &PackageSpec) -> PackageResult<FsRoot> {
-        if !self.announced.swap(true, Ordering::Relaxed) {
+        self.announced.once(|| {
             info!(
                 "@{} resolves from {} (a directory on disk)",
                 self.namespace,
                 self.source.root.display(),
             );
-        }
+        });
 
-        let mut dir = self.source.root.clone();
-        if !self.source.subdir.is_empty() {
-            dir.push(&self.source.subdir);
-        }
-        dir.push(spec.name.as_str());
-        dir.push(spec.version.to_string());
+        package_dir(&self.source.root, &self.source.subdir, spec)
+            .map(FsRoot::new)
+            .map_err(|dir| {
+                PackageError::Other(Some(eco_format!(
+                    "@{namespace}/{name}:{version} not found at {dir}",
+                    namespace = self.namespace,
+                    name = spec.name,
+                    version = spec.version,
+                    dir = dir.display(),
+                )))
+            })
+    }
+}
 
-        if !dir.exists() {
-            return Err(PackageError::Other(Some(eco_format!(
-                "@{namespace}/{name}:{version} not found at {dir}",
-                namespace = self.namespace,
-                name = spec.name,
-                version = spec.version,
-                dir = dir.display(),
-            ))));
-        }
-        Ok(FsRoot::new(dir))
+impl PackageSource for PathPackages {
+    fn obtain(&self, spec: &PackageSpec) -> PackageResult<FsRoot> {
+        self.obtain(spec)
+    }
+
+    fn kind(&self) -> SourceKind {
+        SourceKind::Path
     }
 }
 

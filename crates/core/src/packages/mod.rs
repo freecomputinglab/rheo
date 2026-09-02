@@ -1,16 +1,15 @@
+use std::collections::HashMap;
 use std::io::Cursor;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use ecow::eco_format;
 use flate2::read::GzDecoder;
 use typst_kit::downloader::{Downloader, SystemDownloader};
 use typst_kit::files::FsRoot;
-use typst_kit::packages::FsPackages;
+use typst_kit::packages::{FsPackages, SystemPackages};
 use typst_library::diag::{PackageError, PackageResult};
 use typst_syntax::package::PackageSpec;
-
-use std::collections::HashMap;
-
-use typst_kit::packages::SystemPackages;
 
 use crate::config::{NamespaceSource, ReleasesSource};
 
@@ -26,11 +25,58 @@ const REGISTRY_URL: &str = "https://github.com/freecomputinglab/rheo-packages/re
 /// The user agent every package download identifies itself with.
 const USER_AGENT: &str = concat!("rheo/", env!("CARGO_PKG_VERSION"));
 
-/// Where one configured namespace is served from.
-enum Backend {
-    Repo(GitPackages),
-    Releases(RheoPackages),
-    Path(PathPackages),
+/// Where one configured namespace serves packages from.
+pub(crate) trait PackageSource: Send + Sync {
+    fn obtain(&self, spec: &PackageSpec) -> PackageResult<FsRoot>;
+    fn kind(&self) -> SourceKind;
+
+    /// Delete any cached checkouts backing this source. Only a repository ref
+    /// has one to prune.
+    fn prune(&self) -> std::io::Result<usize> {
+        Ok(0)
+    }
+}
+
+/// Which kind of `[packages.<ns>]` table backs a namespace.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourceKind {
+    Repo,
+    Releases,
+    Path,
+}
+
+/// Runs `f` the first time only, for a one-time log line that would otherwise
+/// repeat on every `obtain`.
+struct Announce(AtomicBool);
+
+impl Announce {
+    fn new() -> Self {
+        Self(AtomicBool::new(false))
+    }
+
+    fn once(&self, f: impl FnOnce()) {
+        if !self.0.swap(true, Ordering::Relaxed) {
+            f();
+        }
+    }
+}
+
+/// The base directory every package cache lives under.
+fn cache_root() -> Option<PathBuf> {
+    dirs::cache_dir()
+}
+
+/// The directory for `@<ns>/<name>:<version>` under `root` (and `subdir`, when
+/// set). `Err` carries that same path when it doesn't exist, so each backend
+/// can word its own not-found error around it.
+fn package_dir(root: &Path, subdir: &str, spec: &PackageSpec) -> Result<PathBuf, PathBuf> {
+    let mut dir = root.to_path_buf();
+    if !subdir.is_empty() {
+        dir.push(subdir);
+    }
+    dir.push(spec.name.as_str());
+    dir.push(spec.version.to_string());
+    if dir.exists() { Ok(dir) } else { Err(dir) }
 }
 
 /// Resolves a package spec to a directory on disk, routing by namespace.
@@ -42,7 +88,7 @@ pub struct PackageResolver {
     /// Namespaces with a `[packages.<ns>]` table. Consulted FIRST, so
     /// `[packages.rheo]` overrides the built-in `@rheo` rather than losing to
     /// it — that override is how a project tests a branch of rheo-packages.
-    configured: HashMap<String, Backend>,
+    configured: HashMap<String, Box<dyn PackageSource>>,
     rheo: RheoPackages,
     universe: SystemPackages,
 }
@@ -52,15 +98,15 @@ impl PackageResolver {
         let configured = sources
             .iter()
             .map(|(namespace, source)| {
-                let backend = match source {
+                let backend: Box<dyn PackageSource> = match source {
                     NamespaceSource::Repo(repo) => {
-                        Backend::Repo(GitPackages::new(namespace, repo.clone()))
+                        Box::new(GitPackages::new(namespace, repo.clone()))
                     }
                     NamespaceSource::Releases(releases) => {
-                        Backend::Releases(RheoPackages::with_source(downloader(), releases.clone()))
+                        Box::new(RheoPackages::with_source(downloader(), releases.clone()))
                     }
                     NamespaceSource::Path(path) => {
-                        Backend::Path(PathPackages::new(namespace, path.clone()))
+                        Box::new(PathPackages::new(namespace, path.clone()))
                     }
                 };
                 (namespace.clone(), backend)
@@ -76,9 +122,7 @@ impl PackageResolver {
 
     pub fn obtain(&self, spec: &PackageSpec) -> PackageResult<FsRoot> {
         match self.configured.get(spec.namespace.as_str()) {
-            Some(Backend::Repo(repo)) => repo.obtain(spec),
-            Some(Backend::Releases(releases)) => releases.obtain(spec),
-            Some(Backend::Path(path)) => path.obtain(spec),
+            Some(source) => source.obtain(spec),
             None if spec.namespace == "rheo" => self.rheo.obtain(spec),
             None => self.universe.obtain(spec),
         }
@@ -93,10 +137,8 @@ impl PackageResolver {
         let mut pruned: Vec<(String, std::io::Result<usize>)> = self
             .configured
             .iter()
-            .filter_map(|(namespace, backend)| match backend {
-                Backend::Repo(repo) => Some((namespace.clone(), repo.prune())),
-                Backend::Releases(_) | Backend::Path(_) => None,
-            })
+            .filter(|(_, source)| source.kind() == SourceKind::Repo)
+            .map(|(namespace, source)| (namespace.clone(), source.prune()))
             .collect();
         pruned.sort_by(|a, b| a.0.cmp(&b.0));
         pruned
@@ -111,10 +153,9 @@ impl PackageResolver {
     /// disk, rather than a releases host. Neither carries a build output, so
     /// their packages use their source-mode asset block.
     pub fn is_source_backed(&self, namespace: &str) -> bool {
-        matches!(
-            self.configured.get(namespace),
-            Some(Backend::Repo(_)) | Some(Backend::Path(_))
-        )
+        self.configured
+            .get(namespace)
+            .is_some_and(|source| matches!(source.kind(), SourceKind::Repo | SourceKind::Path))
     }
 
     /// Whether this namespace is served from a directory on disk.
@@ -125,7 +166,9 @@ impl PackageResolver {
     /// watch must cover it regardless of whether the package declares any
     /// `[tool.rheo.*]` assets. See `Build::watch_asset_spec`.
     pub fn is_path_backed(&self, namespace: &str) -> bool {
-        matches!(self.configured.get(namespace), Some(Backend::Path(_)))
+        self.configured
+            .get(namespace)
+            .is_some_and(|source| source.kind() == SourceKind::Path)
     }
 
     /// Whether rheo knows how to fetch this namespace ahead of the asset scan.
@@ -164,7 +207,7 @@ impl RheoPackages {
     pub fn with_source(downloader: SystemDownloader, source: ReleasesSource) -> Self {
         Self {
             source,
-            cache: dirs::cache_dir().map(|d| FsPackages::new(d.join("typst/packages"))),
+            cache: cache_root().map(|d| FsPackages::new(d.join("typst/packages"))),
             downloader,
         }
     }
@@ -229,6 +272,16 @@ impl RheoPackages {
         cache
             .obtain(spec)
             .ok_or_else(|| PackageError::NotFound(spec.clone()))
+    }
+}
+
+impl PackageSource for RheoPackages {
+    fn obtain(&self, spec: &PackageSpec) -> PackageResult<FsRoot> {
+        self.obtain(spec)
+    }
+
+    fn kind(&self) -> SourceKind {
+        SourceKind::Releases
     }
 }
 
