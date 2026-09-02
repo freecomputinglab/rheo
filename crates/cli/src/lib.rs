@@ -657,7 +657,7 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
 fn run_compile(sub: &ArgMatches) -> Result<()> {
     let all = all_plugins();
     let args = BuildArgs::from_matches(sub, &all)?;
-    let mut build = prepare_build(&args.path, args.config.as_deref(), args.build_options())?;
+    let build = prepare_build(&args.path, args.config.as_deref(), args.build_options())?;
     build.run().map(|_| ())
 }
 
