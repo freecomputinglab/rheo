@@ -5,7 +5,7 @@ use rheo_core::build::{Build, BuildOptions, resolve_build_dir};
 use rheo_core::config::manifest_version;
 use rheo_core::config::output::OutputConfig;
 use rheo_core::config::project::ProjectConfig;
-use rheo_core::{FormatPlugin, Result, RheoError};
+use rheo_core::{FormatPlugin, Result, RheoError, ServerHandle};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -499,6 +499,28 @@ pub fn run() -> Result<()> {
     }
 }
 
+/// Compile a fresh VirtualFs for the dev server and push it, then optionally
+/// reload connected browsers. The initial `--open` push has nothing to reload
+/// yet (the browser is only just being launched), so it passes `reload: false`;
+/// both watch-loop arms want a reload after every successful push.
+fn update_dev_server(build: &mut Build, server: &dyn ServerHandle, reload: bool) {
+    match build.compile_for_watch() {
+        Ok(Some(vfs)) => {
+            let t = std::time::Instant::now();
+            server.update_virtual_fs(vfs);
+            debug!(
+                ms = t.elapsed().as_millis(),
+                "VirtualFs pushed to dev server"
+            );
+        }
+        Ok(None) => {}
+        Err(e) => warn!(error = %e, "VirtualFs compile failed, reload will serve stale content"),
+    }
+    if reload {
+        server.reload();
+    }
+}
+
 fn run_watch(sub: &ArgMatches) -> Result<()> {
     let all = all_plugins();
     let args = BuildArgs::from_matches(sub, &all)?;
@@ -511,13 +533,15 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         warn!(error = %e, "initial compilation failed");
     }
 
-    // Open outputs if --open requested; collect server handles for live reload
-    let mut open_handles: Vec<OpenHandle> = Vec::new();
+    // Open outputs if --open requested; resolve at most one server handle for
+    // live reload (only the HTML plugin ever returns OpenHandle::Server).
+    let mut server: Option<Box<dyn ServerHandle>> = None;
     if open {
         for plugin in build.plugins() {
             let out_dir = build.output_config().dir_for_plugin(plugin.name());
             match plugin.open(&out_dir, plugin.name()) {
-                Ok(handle) => open_handles.push(handle),
+                Ok(OpenHandle::Server(handle)) if server.is_none() => server = Some(handle),
+                Ok(_) => {}
                 Err(e) => warn!(error = %e, plugin = plugin.name(), "failed to open"),
             }
         }
@@ -525,18 +549,8 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         // HTML from memory rather than re-reading disk on each request.
         // compile_for_watch() reuses comemo-cached Typst state from build.run(),
         // so this second compile is near-instant.
-        if let Some(OpenHandle::Server(server)) = open_handles
-            .iter()
-            .find(|h| matches!(h, OpenHandle::Server(_)))
-        {
-            match build.compile_for_watch() {
-                Ok(Some(vfs)) => {
-                    server.update_virtual_fs(vfs);
-                    debug!("initial VirtualFs pushed to dev server");
-                }
-                Ok(None) => {}
-                Err(e) => warn!(error = %e, "initial VirtualFs compile failed, serving from disk"),
-            }
+        if let Some(server) = &server {
+            update_dev_server(&mut build, server.as_ref(), false);
         }
     }
 
@@ -558,25 +572,10 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
             match event {
                 WatchEvent::FilesChanged => {
                     info!("files changed, recompiling");
-                    if build.run().is_ok() {
-                        // Update HTML dev server VirtualFs before triggering browser reload.
-                        for handle in &open_handles {
-                            if let OpenHandle::Server(server) = handle {
-                                match build.compile_for_watch() {
-                                    Ok(Some(vfs)) => {
-                                        let t = std::time::Instant::now();
-                                        server.update_virtual_fs(vfs);
-                                        debug!(ms = t.elapsed().as_millis(), "VirtualFs updated");
-                                    }
-                                    Ok(None) => {}
-                                    Err(e) => {
-                                        warn!(error = %e, "VirtualFs compile failed, reload will serve stale content")
-                                    }
-                                }
-                                server.reload();
-                                break; // only one server handle expected
-                            }
-                        }
+                    if build.run().is_ok()
+                        && let Some(server) = &server
+                    {
+                        update_dev_server(&mut build, server.as_ref(), true);
                     }
                 }
                 WatchEvent::ConfigChanged => {
@@ -584,20 +583,10 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
                     match prepare_build(&args.path, args.config.as_deref(), args.build_options()) {
                         Ok(new_build) => {
                             build = new_build;
-                            if build.run().is_ok() {
-                                for handle in &open_handles {
-                                    if let OpenHandle::Server(server) = handle {
-                                        match build.compile_for_watch() {
-                                            Ok(Some(vfs)) => server.update_virtual_fs(vfs),
-                                            Ok(None) => {}
-                                            Err(e) => {
-                                                warn!(error = %e, "VirtualFs compile failed after config reload")
-                                            }
-                                        }
-                                        server.reload();
-                                        break;
-                                    }
-                                }
+                            if build.run().is_ok()
+                                && let Some(server) = &server
+                            {
+                                update_dev_server(&mut build, server.as_ref(), true);
                             }
                         }
                         Err(e) => warn!(error = %e, "failed to reload config"),
