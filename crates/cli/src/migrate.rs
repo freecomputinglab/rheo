@@ -117,12 +117,16 @@ fn load_sources(content_dir: &Path) -> Vec<Source> {
 /// One version-gated migration: `since` is the version at which its change
 /// landed (projects older than that need it run), `plan` is its one-line
 /// summary in the plan block, `heading` precedes its own output, and `run`
-/// performs it against the sources loaded once by `migrate_project`.
+/// performs it against the sources and the `rheo.toml` document loaded once
+/// by `migrate_project`. A migration always mutates its in-memory targets
+/// when it finds something to change — `migrate_project` alone decides
+/// afterward whether that in-memory state gets flushed to disk (dry run) or
+/// not, so no migration needs to know which mode it's running in.
 struct Migration {
     since: &'static str,
     plan: &'static str,
     heading: &'static str,
-    run: fn(&ProjectConfig, &Path, &mut [Source], bool) -> Result<()>,
+    run: fn(&ProjectConfig, &mut [Source], &mut toml_edit::DocumentMut) -> Result<()>,
 }
 
 impl Migration {
@@ -177,7 +181,10 @@ const MIGRATIONS: &[Migration] = &[
 ///
 /// `apply == false` is a dry run: it reports the version gap, prints each link
 /// that would be rewritten, but writes nothing. `apply == true` rewrites links
-/// and bumps the `version` field in `rheo.toml`.
+/// and bumps the `version` field in `rheo.toml`. Every migration mutates its
+/// in-memory sources/document unconditionally; `apply` is consulted in
+/// exactly one place, below, which decides whether that in-memory state is
+/// flushed to disk.
 pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     info!(path = %path.display(), "loading project for migration");
     let project = ProjectConfig::from_path(path, None)?;
@@ -214,10 +221,18 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
         load_sources(&resolve_effective_content_dir(&project))
     };
 
+    // One document for the whole run: migrations that touch `rheo.toml`
+    // (currently just `migrate_vertebrae_to_exclude`) and the version bump
+    // below all mutate this same `doc`, which is written at most once.
+    let mut doc = load_toml_doc(config_path)?;
+
     for m in &due {
         println!("{}", m.heading);
-        (m.run)(&project, config_path, &mut sources, apply)?;
+        (m.run)(&project, &mut sources, &mut doc)?;
     }
+
+    // Last, so the file ends up with both any migration's edits and the bump.
+    bump_version(&mut doc, &to);
 
     if apply {
         for source in &sources {
@@ -226,12 +241,24 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
                     .map_err(|e| RheoError::io(e, format!("writing {}", source.path.display())))?;
             }
         }
-        bump_version(config_path, &to)?;
+        fs::write(config_path, doc.to_string())
+            .map_err(|e| RheoError::io(e, format!("writing {}", config_path.display())))?;
         println!("\nBumped rheo.toml version to {to}.");
     } else {
         println!("\nDry run; no changes made. Re-run with --apply to write them.");
     }
     Ok(())
+}
+
+/// Read and parse `rheo.toml` into an editable document. `toml_edit` (rather
+/// than a serde round-trip) is what lets a rewrite preserve the user's
+/// formatting and comments.
+fn load_toml_doc(config_path: &Path) -> Result<toml_edit::DocumentMut> {
+    let text = fs::read_to_string(config_path)
+        .map_err(|e| RheoError::io(e, format!("reading {}", config_path.display())))?;
+    text.parse().map_err(|e| {
+        RheoError::project_config(format!("failed to parse {}: {}", config_path.display(), e))
+    })
 }
 
 /// Rewrite old `#link("./file.typ")` syntax to the `#link(<handle>)` form.
@@ -241,7 +268,7 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
 /// when the stem is unique, and path-qualified with `:` separator (`<chapters:intro>`)
 /// for nested files. The `<stem.typ>` escape alias is ambiguous when stems collide,
 /// so it is never used as a rewrite target.
-fn migrate_link_syntax(project: &ProjectConfig, sources: &mut [Source], apply: bool) -> Result<()> {
+fn migrate_link_syntax(project: &ProjectConfig, sources: &mut [Source]) -> Result<()> {
     if sources.is_empty() {
         return Ok(());
     }
@@ -307,7 +334,7 @@ fn migrate_link_syntax(project: &ProjectConfig, sources: &mut [Source], apply: b
             }
         });
 
-        if changed && apply {
+        if changed {
             source.text = rewritten.into_owned();
             source.dirty = true;
         }
@@ -319,11 +346,10 @@ fn migrate_link_syntax(project: &ProjectConfig, sources: &mut [Source], apply: b
 /// Adapts [`migrate_link_syntax`] to the [`Migration::run`] signature.
 fn run_link_syntax(
     project: &ProjectConfig,
-    _config_path: &Path,
     sources: &mut [Source],
-    apply: bool,
+    _doc: &mut toml_edit::DocumentMut,
 ) -> Result<()> {
-    migrate_link_syntax(project, sources, apply)
+    migrate_link_syntax(project, sources)
 }
 
 /// Rewrite direct author references to the removed `sys.inputs.rheo-target` key
@@ -341,7 +367,7 @@ fn run_link_syntax(
 /// containing the literal `rheo-target` afterwards (e.g. a
 /// `sys.inputs.at("rheo-target")` form this does not rewrite) is reported with a
 /// `warn!` for manual fixing.
-fn migrate_target_references(sources: &mut [Source], apply: bool) -> Result<()> {
+fn migrate_target_references(sources: &mut [Source]) -> Result<()> {
     if sources.is_empty() {
         return Ok(());
     }
@@ -392,7 +418,7 @@ fn migrate_target_references(sources: &mut [Source], apply: bool) -> Result<()> 
             );
         }
 
-        if changed && apply {
+        if changed {
             source.text = content;
             source.dirty = true;
         }
@@ -404,11 +430,10 @@ fn migrate_target_references(sources: &mut [Source], apply: bool) -> Result<()> 
 /// Adapts [`migrate_target_references`] to the [`Migration::run`] signature.
 fn run_target_references(
     _project: &ProjectConfig,
-    _config_path: &Path,
     sources: &mut [Source],
-    apply: bool,
+    _doc: &mut toml_edit::DocumentMut,
 ) -> Result<()> {
-    migrate_target_references(sources, apply)
+    migrate_target_references(sources)
 }
 
 /// The compatibility shim prepended to files that read the per-vertebra
@@ -433,7 +458,7 @@ const CONTEXT_SHIM: &str = "#let rheo-context = rheo-context()";
 /// excludes the lead-in chars of the non-binding forms — `.` (`sys.inputs.rheo-context`
 /// field), `"` (string), `<` (label), `@` (ref), a backtick (raw span), and word/`-`
 /// (a longer identifier); `post` excludes `(` (already a call) and word/`-`.
-fn migrate_context_references(sources: &mut [Source], apply: bool) -> Result<()> {
+fn migrate_context_references(sources: &mut [Source]) -> Result<()> {
     if sources.is_empty() {
         return Ok(());
     }
@@ -451,10 +476,8 @@ fn migrate_context_references(sources: &mut [Source], apply: bool) -> Result<()>
         info!(file = %source.path.display(), rewrite = label, "shim context binding");
         println!("{}: {}", source.path.display(), label);
 
-        if apply {
-            source.text = format!("{CONTEXT_SHIM}\n{}", source.text);
-            source.dirty = true;
-        }
+        source.text = format!("{CONTEXT_SHIM}\n{}", source.text);
+        source.dirty = true;
     }
 
     Ok(())
@@ -463,11 +486,10 @@ fn migrate_context_references(sources: &mut [Source], apply: bool) -> Result<()>
 /// Adapts [`migrate_context_references`] to the [`Migration::run`] signature.
 fn run_context_references(
     _project: &ProjectConfig,
-    _config_path: &Path,
     sources: &mut [Source],
-    apply: bool,
+    _doc: &mut toml_edit::DocumentMut,
 ) -> Result<()> {
-    migrate_context_references(sources, apply)
+    migrate_context_references(sources)
 }
 
 /// Reports (never rewrites) every removed `[html] feed_*` rheo.toml key and
@@ -515,9 +537,8 @@ fn report_removed_feed_surface(project: &ProjectConfig, sources: &[Source]) {
 /// Adapts [`report_removed_feed_surface`] to the [`Migration::run`] signature.
 fn run_removed_feed_surface(
     project: &ProjectConfig,
-    _config_path: &Path,
     sources: &mut [Source],
-    _apply: bool,
+    _doc: &mut toml_edit::DocumentMut,
 ) -> Result<()> {
     report_removed_feed_surface(project, sources);
     Ok(())
@@ -588,9 +609,8 @@ fn expand_vertebrae_patterns(patterns: &[String], content_dir: &Path) -> HashSet
 /// no exclude is needed — the key is simply dropped.
 fn migrate_vertebrae_to_exclude(
     project: &ProjectConfig,
-    config_path: &Path,
     _sources: &mut [Source],
-    apply: bool,
+    doc: &mut toml_edit::DocumentMut,
 ) -> Result<()> {
     let mut sites = Vec::new();
     if let Some(spine) = &project.config.spine
@@ -629,12 +649,6 @@ fn migrate_vertebrae_to_exclude(
         .map(|f| canonicalize_path(&f).unwrap_or(f))
         .collect();
 
-    let text = fs::read_to_string(config_path)
-        .map_err(|e| RheoError::io(e, format!("reading {}", config_path.display())))?;
-    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| {
-        RheoError::project_config(format!("failed to parse {}: {}", config_path.display(), e))
-    })?;
-
     for site in &sites {
         // An empty pattern list means "auto-discover everything" under the old
         // semantics too — already equivalent to the new default, no diff.
@@ -664,41 +678,34 @@ fn migrate_vertebrae_to_exclude(
             );
         }
 
-        if apply {
-            let item = match &site.plugin {
-                Some(name) => &mut doc[name.as_str()]["spine"],
-                None => &mut doc["spine"],
-            };
-            if let Some(table) = item.as_table_like_mut() {
-                table.remove("vertebrae");
-                if !newly_included.is_empty() {
-                    match table.get_mut("exclude").and_then(|i| i.as_array_mut()) {
-                        Some(arr) => {
-                            for f in &newly_included {
-                                if !arr.iter().any(|v| v.as_str() == Some(f.as_str())) {
-                                    arr.push(f.as_str());
-                                }
-                            }
-                        }
-                        None => {
-                            let mut arr = toml_edit::Array::new();
-                            for f in &newly_included {
+        let item = match &site.plugin {
+            Some(name) => &mut doc[name.as_str()]["spine"],
+            None => &mut doc["spine"],
+        };
+        if let Some(table) = item.as_table_like_mut() {
+            table.remove("vertebrae");
+            if !newly_included.is_empty() {
+                match table.get_mut("exclude").and_then(|i| i.as_array_mut()) {
+                    Some(arr) => {
+                        for f in &newly_included {
+                            if !arr.iter().any(|v| v.as_str() == Some(f.as_str())) {
                                 arr.push(f.as_str());
                             }
-                            table.insert(
-                                "exclude",
-                                toml_edit::Item::Value(toml_edit::Value::Array(arr)),
-                            );
                         }
+                    }
+                    None => {
+                        let mut arr = toml_edit::Array::new();
+                        for f in &newly_included {
+                            arr.push(f.as_str());
+                        }
+                        table.insert(
+                            "exclude",
+                            toml_edit::Item::Value(toml_edit::Value::Array(arr)),
+                        );
                     }
                 }
             }
         }
-    }
-
-    if apply {
-        fs::write(config_path, doc.to_string())
-            .map_err(|e| RheoError::io(e, format!("writing {}", config_path.display())))?;
     }
 
     Ok(())
@@ -740,21 +747,11 @@ fn line_number(text: &str, byte_offset: usize) -> usize {
         + 1
 }
 
-/// Rewrite the top-level `version` key in `rheo.toml`, preserving all other
-/// formatting via `toml_edit` (a serde round-trip would drop comments and
-/// reformat the file).
-fn bump_version(config_path: &Path, target: &ManifestVersion) -> Result<()> {
-    let text = fs::read_to_string(config_path)
-        .map_err(|e| RheoError::io(e, format!("reading {}", config_path.display())))?;
-    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| {
-        RheoError::project_config(format!("failed to parse {}: {}", config_path.display(), e))
-    })?;
-
+/// Set the top-level `version` key on an already-parsed document, preserving
+/// all other formatting (the reason `toml_edit` is used over a serde
+/// round-trip, which would drop comments and reformat the file).
+fn bump_version(doc: &mut toml_edit::DocumentMut, target: &ManifestVersion) {
     doc["version"] = toml_edit::value(target.to_string());
-
-    fs::write(config_path, doc.to_string())
-        .map_err(|e| RheoError::io(e, format!("writing {}", config_path.display())))?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -793,15 +790,13 @@ mod tests {
 
     #[test]
     fn bump_version_preserves_formatting() {
-        let dir = tempfile::tempdir().unwrap();
-        let toml_path = dir.path().join("rheo.toml");
         let original = "# a leading comment\nversion = \"0.3.0\"\ncontent_dir = \"pages\"\n\n[pdf.spine]\nvertebrae = [\"a.typ\"]\ntitle = \"Book\"\n";
-        fs::write(&toml_path, original).unwrap();
+        let mut doc: toml_edit::DocumentMut = original.parse().unwrap();
 
         let target = ManifestVersion::parse("0.4.0").unwrap();
-        bump_version(&toml_path, &target).unwrap();
+        bump_version(&mut doc, &target);
 
-        let updated = fs::read_to_string(&toml_path).unwrap();
+        let updated = doc.to_string();
         assert!(updated.starts_with("# a leading comment\n"));
         assert!(updated.contains("content_dir = \"pages\""));
         assert!(updated.contains("title = \"Book\""));
@@ -857,7 +852,7 @@ mod tests {
         .unwrap();
 
         let mut sources = load_sources(&content);
-        migrate_link_syntax(&project, &mut sources, true).unwrap();
+        migrate_link_syntax(&project, &mut sources).unwrap();
         flush_sources(&sources);
 
         let rewritten = fs::read_to_string(content.join("intro.typ")).unwrap();
@@ -887,7 +882,7 @@ mod tests {
         .unwrap();
 
         let mut sources = load_sources(&content);
-        migrate_target_references(&mut sources, true).unwrap();
+        migrate_target_references(&mut sources).unwrap();
         flush_sources(&sources);
 
         let out = fs::read_to_string(content.join("page.typ")).unwrap();
@@ -939,7 +934,7 @@ mod tests {
         .unwrap();
 
         let mut sources = load_sources(&content);
-        migrate_context_references(&mut sources, true).unwrap();
+        migrate_context_references(&mut sources).unwrap();
         flush_sources(&sources);
 
         let out = fs::read_to_string(content.join("page.typ")).unwrap();
@@ -1012,13 +1007,9 @@ mod tests {
         )
         .unwrap();
 
-        // Dry run: no write.
-        migrate_vertebrae_to_exclude(&project, &toml_path, &mut [], false).unwrap();
-        let unchanged = fs::read_to_string(&toml_path).unwrap();
-        assert!(unchanged.contains("vertebrae"));
-
-        migrate_vertebrae_to_exclude(&project, &toml_path, &mut [], true).unwrap();
-        let updated = fs::read_to_string(&toml_path).unwrap();
+        let mut doc = load_toml_doc(&toml_path).unwrap();
+        migrate_vertebrae_to_exclude(&project, &mut [], &mut doc).unwrap();
+        let updated = doc.to_string();
         assert!(!updated.contains("vertebrae"), "{updated}");
         assert!(updated.contains("exclude"), "{updated}");
         assert!(updated.contains("lib/helper.typ"), "{updated}");
@@ -1072,8 +1063,9 @@ mod tests {
         )
         .unwrap();
 
-        migrate_vertebrae_to_exclude(&project, &toml_path, &mut [], true).unwrap();
-        let updated = fs::read_to_string(&toml_path).unwrap();
+        let mut doc = load_toml_doc(&toml_path).unwrap();
+        migrate_vertebrae_to_exclude(&project, &mut [], &mut doc).unwrap();
+        let updated = doc.to_string();
         assert!(!updated.contains("vertebrae"), "{updated}");
         assert!(!updated.contains("exclude"), "{updated}");
     }
@@ -1112,7 +1104,7 @@ mod tests {
         .unwrap();
 
         let mut sources = load_sources(&content);
-        migrate_link_syntax(&project, &mut sources, true).unwrap();
+        migrate_link_syntax(&project, &mut sources).unwrap();
         flush_sources(&sources);
 
         let rewritten = fs::read_to_string(sub.join("intro.typ")).unwrap();
@@ -1155,7 +1147,7 @@ mod tests {
         .unwrap();
 
         let mut sources = load_sources(&content);
-        migrate_link_syntax(&project, &mut sources, true).unwrap();
+        migrate_link_syntax(&project, &mut sources).unwrap();
         flush_sources(&sources);
 
         let rewritten = fs::read_to_string(content.join("intro.typ")).unwrap();
