@@ -22,6 +22,9 @@ rheo-html = { workspace = true }
 rheo-pdf = { workspace = true }
 rheo-epub = { workspace = true }
 
+# Typst syntax tree, for migrating authored source by span rather than by regex
+typst-syntax = { workspace = true }
+
 # CLI and utilities
 clap = { workspace = true }
 walkdir = { workspace = true }
@@ -34,7 +37,6 @@ toml_edit = { workspace = true }
 
 # Patterns
 glob = { workspace = true }
-regex = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

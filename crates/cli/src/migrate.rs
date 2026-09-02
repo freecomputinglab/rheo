@@ -47,18 +47,21 @@
 //! affected key and binding, with its location, pointing at `@rheo/feeds`
 //! or (for `rheo-author`) the `#set document(...)` replacement.
 
-use regex::{Captures, Regex};
 use rheo_core::build::resolve_effective_content_dir;
 use rheo_core::config::RETIRED_KEYS;
 use rheo_core::config::manifest_version::ManifestVersion;
 use rheo_core::config::project::ProjectConfig;
+use rheo_core::parser::{SyntaxSite, WalkCtx};
 use rheo_core::reticulate::{SpineLayout, SpineScan, VirtualSpine};
 use rheo_core::util::path::{canonicalize_path, to_forward_slash};
 use rheo_core::{Result, RheoError, Spine};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
+use typst_syntax::ast::AstNode;
+use typst_syntax::{Source as TypstSource, SyntaxKind, SyntaxNode, ast};
 use walkdir::WalkDir;
 
 /// `#let rheo-<key>` bindings retired alongside the Rust feed generator, and
@@ -261,6 +264,49 @@ fn load_toml_doc(config_path: &Path) -> Result<toml_edit::DocumentMut> {
     })
 }
 
+/// A `link("...")` call whose first (and only inspected) argument is a `Str`
+/// ending `.typ` — a candidate for the `#link(<handle>)` rewrite.
+///
+/// `range` covers only the `Str` token, not the surrounding call, so splicing
+/// in the handle leaves `#link(`, `)`, and any trailing content block
+/// untouched. Matching on `FuncCall`/`Ident` rather than raw text also means a
+/// `link(...)` mentioned inside a `//`/`/* */` comment or a raw span never
+/// produces a node at all, so those false positives disappear for free.
+struct LinkTarget {
+    href: String,
+    range: Range<usize>,
+    /// The enclosing `FuncCall`'s own start offset, for the reported line
+    /// number (matches the old regex, which anchored on `#link(`).
+    call_start: usize,
+}
+
+impl SyntaxSite for LinkTarget {
+    fn visit(
+        _source: &TypstSource,
+        node: &SyntaxNode,
+        offset: usize,
+        _ctx: WalkCtx,
+        out: &mut Vec<Self>,
+    ) {
+        if node.kind() != SyntaxKind::FuncCall {
+            return;
+        }
+        let Some(call) = node.cast::<ast::FuncCall>() else {
+            return;
+        };
+        if !matches!(call.callee(), ast::Expr::Ident(id) if id.as_str() == "link") {
+            return;
+        }
+        if let Some((href, range)) = first_str_arg(node, offset) {
+            out.push(LinkTarget {
+                href,
+                range,
+                call_start: offset,
+            });
+        }
+    }
+}
+
 /// Rewrite old `#link("./file.typ")` syntax to the `#link(<handle>)` form.
 ///
 /// Handles are taken from `VirtualSpine::build` (`crates/core/src/reticulate/
@@ -298,44 +344,41 @@ fn migrate_link_syntax(project: &ProjectConfig, sources: &mut [Source]) -> Resul
         handle_map.insert(canon, v.handle.to_string());
     }
 
-    let re = Regex::new(r##"#link\("([^"]*\.typ)"\)"##).expect("hardcoded link regex must compile");
     for source in sources.iter_mut() {
         let parent = source.path.parent().unwrap_or_else(|| Path::new(""));
-        let mut changed = false;
+        let typ_source = TypstSource::detached(source.text.as_str());
 
-        let rewritten = re.replace_all(&source.text, |caps: &Captures| -> String {
-            let href = &caps[1];
+        // One walk collects every candidate; edits are spliced back-to-front below.
+        let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+        for link in LinkTarget::collect(&typ_source) {
             // Leave external URLs untouched.
-            if href.contains("://") {
-                return caps[0].to_string();
+            if link.href.contains("://") {
+                continue;
             }
-            let resolved = resolve_href(href, parent, &content_dir);
-            match resolved
+            let resolved = resolve_href(&link.href, parent, &content_dir)
                 .and_then(|p| canonicalize_path(&p).ok())
-                .and_then(|c| handle_map.get(&c).cloned())
-            {
+                .and_then(|c| handle_map.get(&c).cloned());
+            match resolved {
                 Some(target) => {
-                    let line = line_number(&source.text, caps.get(0).unwrap().start());
-                    info!(file = %source.path.display(), line, old = href, new = %target, "rewrite link");
+                    let line = line_number(&source.text, link.call_start);
+                    info!(file = %source.path.display(), line, old = %link.href, new = %target, "rewrite link");
                     println!(
                         "{}:{}: #link(\"{}\")  ->  #link(<{}>)",
                         source.path.display(),
                         line,
-                        href,
+                        link.href,
                         target
                     );
-                    changed = true;
-                    format!("#link(<{target}>)")
+                    edits.push((link.range, format!("<{target}>")));
                 }
                 None => {
-                    warn!(file = %source.path.display(), href, "link target is not a vertebra; skipping");
-                    caps[0].to_string()
+                    warn!(file = %source.path.display(), href = %link.href, "link target is not a vertebra; skipping");
                 }
             }
-        });
+        }
 
-        if changed {
-            source.text = rewritten.into_owned();
+        if !edits.is_empty() {
+            apply_edits(&mut source.text, edits);
             source.dirty = true;
         }
     }
@@ -352,62 +395,193 @@ fn run_link_syntax(
     migrate_link_syntax(project, sources)
 }
 
+/// One rewritable occurrence of the removed `rheo-target` surface.
+///
+/// `rank` fixes the print/apply order to match the four forms below, so
+/// output stays grouped exactly as the old sequential-regex passes grouped
+/// it, even though a single tree walk finds all of them in document order.
+struct TargetSite {
+    rank: u8,
+    range: Range<usize>,
+    old: String,
+    new: String,
+}
+
+/// `expr` is the `sys.inputs` field access (the shared receiver of every
+/// `rheo-target` form below).
+fn is_sys_inputs(expr: ast::Expr) -> bool {
+    matches!(expr, ast::Expr::FieldAccess(fa)
+        if matches!(fa.target(), ast::Expr::Ident(id) if id.as_str() == "sys")
+            && fa.field().as_str() == "inputs")
+}
+
+/// `sys.inputs.at("rheo-target"[, default: <expr>])` -> `sys.inputs.rheo-context.at("target"[, default: <expr>])`.
+///
+/// The form the old regex missed entirely (it only matched a bare
+/// `sys.inputs.rheo-target` field access). A `default:` argument is copied
+/// verbatim by source span, since dropping a fallback would change what the
+/// document compiles to. Any other second-argument shape (positional, or a
+/// named argument other than `default`) is left unrewritten — the residual
+/// `rheo-target` check below still flags it for manual fixing.
+fn at_rewrite(
+    source: &TypstSource,
+    call_node: &SyntaxNode,
+    call_offset: usize,
+) -> Option<TargetSite> {
+    let (args_node, args_offset) = args_of(call_node, call_offset)?;
+    let items = args_items(args_node, args_offset);
+    let (key_node, _) = items.first()?;
+    if key_node.cast::<ast::Str>()?.get().as_str() != "rheo-target" {
+        return None;
+    }
+
+    let (old, new) = match items.as_slice() {
+        [_] => (
+            "sys.inputs.at(\"rheo-target\")".to_string(),
+            "sys.inputs.rheo-context.at(\"target\")".to_string(),
+        ),
+        [_, (named_node, named_range)] => {
+            let named = named_node.cast::<ast::Named>()?;
+            if named.name().as_str() != "default" {
+                return None;
+            }
+            let default_text = &source.text()[named_range.clone()];
+            (
+                format!("sys.inputs.at(\"rheo-target\", {default_text})"),
+                format!("sys.inputs.rheo-context.at(\"target\", {default_text})"),
+            )
+        }
+        _ => return None,
+    };
+
+    Some(TargetSite {
+        rank: 3,
+        range: call_offset..call_offset + call_node.len(),
+        old,
+        new,
+    })
+}
+
+impl SyntaxSite for TargetSite {
+    fn visit(
+        source: &TypstSource,
+        node: &SyntaxNode,
+        offset: usize,
+        _ctx: WalkCtx,
+        out: &mut Vec<Self>,
+    ) {
+        match node.kind() {
+            SyntaxKind::FuncCall => {
+                let Some(call) = node.cast::<ast::FuncCall>() else {
+                    return;
+                };
+                match call.callee() {
+                    // rheo-target() -> target()
+                    ast::Expr::Ident(id)
+                        if id.as_str() == "rheo-target"
+                            && args_of(node, offset)
+                                .is_some_and(|(a, o)| args_items(a, o).is_empty()) =>
+                    {
+                        out.push(TargetSite {
+                            rank: 0,
+                            range: offset..offset + node.len(),
+                            old: "rheo-target()".to_string(),
+                            new: "target()".to_string(),
+                        });
+                    }
+                    // sys.inputs.at("rheo-target") -> sys.inputs.rheo-context.at("target")
+                    ast::Expr::FieldAccess(fa)
+                        if fa.field().as_str() == "at" && is_sys_inputs(fa.target()) =>
+                    {
+                        if let Some(site) = at_rewrite(source, node, offset) {
+                            out.push(site);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            SyntaxKind::Binary => {
+                let Some(bin) = node.cast::<ast::Binary>() else {
+                    return;
+                };
+                // "rheo-target" in sys.inputs -> guarded rheo-context membership
+                if bin.op() == ast::BinOp::In
+                    && matches!(bin.lhs(), ast::Expr::Str(s) if s.get().as_str() == "rheo-target")
+                    && is_sys_inputs(bin.rhs())
+                {
+                    out.push(TargetSite {
+                        rank: 1,
+                        range: offset..offset + node.len(),
+                        old: "\"rheo-target\" in sys.inputs".to_string(),
+                        new: "\"rheo-context\" in sys.inputs and \"target\" in sys.inputs.rheo-context".to_string(),
+                    });
+                }
+            }
+            SyntaxKind::FieldAccess => {
+                let Some(fa) = node.cast::<ast::FieldAccess>() else {
+                    return;
+                };
+                // sys.inputs.rheo-target -> sys.inputs.rheo-context.target
+                if fa.field().as_str() == "rheo-target" && is_sys_inputs(fa.target()) {
+                    out.push(TargetSite {
+                        rank: 2,
+                        range: offset..offset + node.len(),
+                        old: "sys.inputs.rheo-target".to_string(),
+                        new: "sys.inputs.rheo-context.target".to_string(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Rewrite direct author references to the removed `sys.inputs.rheo-target` key
 /// into the `sys.inputs.rheo-context.target` form, and calls to the removed
 /// `rheo-target()` helper into Typst's polyfilled `target()`.
 ///
-/// Three textual forms are handled, in order (no rewrite's output contains
-/// another rule's match text, so the passes are independent):
-/// - `rheo-target()`               -> `target()`
-/// - `"rheo-target" in sys.inputs` -> `"rheo-context" in sys.inputs and "target" in sys.inputs.rheo-context`
-/// - `sys.inputs.rheo-target`      -> `sys.inputs.rheo-context.target`
+/// Four forms are handled (no rewrite's output contains another form's match
+/// text, so applying all of a file's edits together, back-to-front, is
+/// equivalent to running the old rules in sequence):
+/// - `rheo-target()`                    -> `target()`
+/// - `"rheo-target" in sys.inputs`      -> `"rheo-context" in sys.inputs and "target" in sys.inputs.rheo-context`
+/// - `sys.inputs.rheo-target`           -> `sys.inputs.rheo-context.target`
+/// - `sys.inputs.at("rheo-target", ..)` -> `sys.inputs.rheo-context.at("target", ..)`
 ///
 /// Authors using the polyfilled `target()` need no change — it already reports
-/// the output format. Any file still
-/// containing the literal `rheo-target` afterwards (e.g. a
-/// `sys.inputs.at("rheo-target")` form this does not rewrite) is reported with a
-/// `warn!` for manual fixing.
+/// the output format. Any file still containing the literal `rheo-target`
+/// afterwards (e.g. an `at(...)` call with an unsupported second argument) is
+/// reported with a `warn!` for manual fixing.
 fn migrate_target_references(sources: &mut [Source]) -> Result<()> {
     if sources.is_empty() {
         return Ok(());
     }
 
-    let rules: [(Regex, &str, &str); 3] = [
-        (
-            Regex::new(r"rheo-target\(\s*\)").expect("hardcoded regex must compile"),
-            "target()",
-            "rheo-target()  ->  target()",
-        ),
-        (
-            Regex::new(r#""rheo-target"\s+in\s+sys\.inputs"#)
-                .expect("hardcoded regex must compile"),
-            r#""rheo-context" in sys.inputs and "target" in sys.inputs.rheo-context"#,
-            "\"rheo-target\" in sys.inputs  ->  \"rheo-context\" in sys.inputs and \"target\" in sys.inputs.rheo-context",
-        ),
-        (
-            Regex::new(r"sys\.inputs\.rheo-target").expect("hardcoded regex must compile"),
-            "sys.inputs.rheo-context.target",
-            "sys.inputs.rheo-target  ->  sys.inputs.rheo-context.target",
-        ),
-    ];
-
     for source in sources.iter_mut() {
-        let mut content = source.text.clone();
-        let mut changed = false;
+        let typ_source = TypstSource::detached(source.text.as_str());
 
-        for (re, replacement, label) in &rules {
-            let mut hit = false;
-            let out = re.replace_all(&content, |caps: &Captures| -> String {
-                let line = line_number(&content, caps.get(0).unwrap().start());
-                info!(file = %source.path.display(), line, rewrite = label, "rewrite target reference");
-                println!("{}:{}: {}", source.path.display(), line, label);
-                hit = true;
-                (*replacement).to_string()
-            });
-            if hit {
-                content = out.into_owned();
-                changed = true;
-            }
+        // One walk finds every form; `rank` (then document position) sorts the
+        // print order back into the old per-form grouping.
+        let mut sites = TargetSite::collect(&typ_source);
+        sites.sort_by_key(|s| (s.rank, s.range.start));
+
+        let mut content = source.text.clone();
+        let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+        for site in &sites {
+            let line = line_number(&source.text, site.range.start);
+            info!(file = %source.path.display(), line, old = %site.old, new = %site.new, "rewrite target reference");
+            println!(
+                "{}:{}: {}  ->  {}",
+                source.path.display(),
+                line,
+                site.old,
+                site.new
+            );
+            edits.push((site.range.clone(), site.new.clone()));
+        }
+        let changed = !edits.is_empty();
+        if changed {
+            apply_edits(&mut content, edits);
         }
 
         // Forms this migration does not auto-rewrite leave the literal behind.
@@ -441,34 +615,56 @@ fn run_target_references(
 /// `rheo-context()`.
 const CONTEXT_SHIM: &str = "#let rheo-context = rheo-context()";
 
+/// Whether `node`'s subtree contains an `Ident` reading the `rheo-context`
+/// value binding, i.e. any `rheo-context` identifier except the `field` of a
+/// `sys.inputs.rheo-context` field access (which reads the shared, unaffected
+/// bundle-wide dict, not the per-file binding).
+///
+/// Typst tokenizes a hyphenated identifier as one token, so `rheo-context` is
+/// never split across nodes — the label `<rheo-context>`, the ref
+/// `@rheo-context`, a raw span, and a `"rheo-context"` string are their own
+/// distinct `SyntaxKind`s (`Label`, `RefMarker`, `Raw`, `Str`), never `Ident`,
+/// so they're excluded by construction rather than by an escape-char list.
+/// The only case needing explicit exclusion — a `FieldAccess`'s `field`
+/// child — has no representation in the shared walker's `WalkCtx` (which
+/// tracks code/file-scope, not parent shape), so this walks the tree directly.
+fn references_context_binding(node: &SyntaxNode) -> bool {
+    if node.kind() == SyntaxKind::Ident && node.leaf_text().as_str() == "rheo-context" {
+        return true;
+    }
+    if let Some(access) = node.cast::<ast::FieldAccess>() {
+        let field = access.field().to_untyped();
+        return node
+            .children()
+            .any(|child| !std::ptr::eq(child, field) && references_context_binding(child));
+    }
+    node.children().any(references_context_binding)
+}
+
 /// Keep authored files that read the per-vertebra `rheo-context` binding working
 /// after it changed from a bare dict to a function `rheo-context()`.
 ///
 /// Rather than rewrite every reference (a `rheo-context` identifier also appears
 /// as a label `<rheo-context>`, a ref `@rheo-context`, a raw span, a `.rheo-context`
-/// field, and a `"rheo-context"` string — regex can't safely splice `()` into all
-/// those), this prepends a one-line shim, `#let rheo-context = rheo-context()`,
-/// to each file that reads the binding. The shim calls the injected function once
-/// and rebinds the name to its dict, so existing `rheo-context.field` /
-/// `ctx: rheo-context` code keeps working untouched.
+/// field, and a `"rheo-context"` string — splicing `()` into all those safely is
+/// more than this migration needs), this prepends a one-line shim, `#let
+/// rheo-context = rheo-context()`, to each file that reads the binding. The shim
+/// calls the injected function once and rebinds the name to its dict, so existing
+/// `rheo-context.field` / `ctx: rheo-context` code keeps working untouched.
 ///
-/// The detection regex only decides *whether* a file needs the shim (a false
-/// positive would add a harmless extra shim, so it errs toward precision without
-/// needing to be exact). It matches a `rheo-context` value reference: `pre`
-/// excludes the lead-in chars of the non-binding forms — `.` (`sys.inputs.rheo-context`
-/// field), `"` (string), `<` (label), `@` (ref), a backtick (raw span), and word/`-`
-/// (a longer identifier); `post` excludes `(` (already a call) and word/`-`.
+/// [`references_context_binding`] only decides *whether* a file needs the shim.
 fn migrate_context_references(sources: &mut [Source]) -> Result<()> {
     if sources.is_empty() {
         return Ok(());
     }
 
-    let re = Regex::new(r#"(?:^|[^.\w"<@`-])rheo-context(?:$|[^\w(-])"#)
-        .expect("hardcoded context regex must compile");
-
     for source in sources.iter_mut() {
         // Already shimmed (e.g. a re-run) or no binding use: nothing to do.
-        if source.text.contains(CONTEXT_SHIM) || !re.is_match(&source.text) {
+        if source.text.contains(CONTEXT_SHIM) {
+            continue;
+        }
+        let root = typst_syntax::parse(&source.text);
+        if !references_context_binding(&root) {
             continue;
         }
 
@@ -492,6 +688,43 @@ fn run_context_references(
     migrate_context_references(sources)
 }
 
+/// A `#let <name> = ...` binding whose `<name>` is one of `REMOVED_VAR_BINDINGS`.
+struct RemovedBindingSite {
+    name: &'static str,
+    replacement: &'static str,
+    range: Range<usize>,
+}
+
+impl SyntaxSite for RemovedBindingSite {
+    fn visit(
+        _source: &TypstSource,
+        node: &SyntaxNode,
+        offset: usize,
+        _ctx: WalkCtx,
+        out: &mut Vec<Self>,
+    ) {
+        if node.kind() != SyntaxKind::LetBinding {
+            return;
+        }
+        let Some(binding) = node.cast::<ast::LetBinding>() else {
+            return;
+        };
+        let Some((name, replacement)) = binding.kind().bindings().into_iter().find_map(|ident| {
+            REMOVED_VAR_BINDINGS
+                .iter()
+                .find(|(n, _)| *n == ident.as_str())
+                .copied()
+        }) else {
+            return;
+        };
+        out.push(RemovedBindingSite {
+            name,
+            replacement,
+            range: offset..offset + node.len(),
+        });
+    }
+}
+
 /// Reports (never rewrites) every removed `[html] feed_*` rheo.toml key and
 /// `#let rheo-*` binding still present, each with its location and a pointer
 /// to its replacement. A feed's title/author/base-url/inclusion rules do not
@@ -506,29 +739,14 @@ fn report_removed_feed_surface(project: &ProjectConfig, sources: &[Source]) {
         }
     }
 
-    // Built from REMOVED_VAR_BINDINGS so the names live in one place: the table
-    // below is already consulted for each match's replacement text.
-    let names = REMOVED_VAR_BINDINGS
-        .iter()
-        .map(|(name, _)| regex::escape(name))
-        .collect::<Vec<_>>()
-        .join("|");
-    let re = Regex::new(&format!(r"(?m)^\s*#let\s+({names})\b"))
-        .expect("alternation over REMOVED_VAR_BINDINGS must compile");
-
     for source in sources {
-        for caps in re.captures_iter(&source.text) {
-            let name = &caps[1];
-            let line = line_number(&source.text, caps.get(0).unwrap().start());
-            let replacement = REMOVED_VAR_BINDINGS
-                .iter()
-                .find(|(n, _)| *n == name)
-                .map(|(_, r)| *r)
-                .expect("matched name comes from REMOVED_VAR_BINDINGS");
+        let typ_source = TypstSource::detached(source.text.as_str());
+        for site in RemovedBindingSite::collect(&typ_source) {
+            let line = line_number(&source.text, site.range.start);
             report_removed(
                 &format!("{}:{}", source.path.display(), line),
-                name,
-                replacement,
+                site.name,
+                site.replacement,
             );
         }
     }
@@ -711,6 +929,57 @@ fn migrate_vertebrae_to_exclude(
     Ok(())
 }
 
+/// Locate a `FuncCall` node's `Args` child and its absolute byte offset,
+/// given the call's own offset (as supplied by the tree walker).
+fn args_of(call_node: &SyntaxNode, call_offset: usize) -> Option<(&SyntaxNode, usize)> {
+    let mut offset = call_offset;
+    for child in call_node.children() {
+        if child.kind() == SyntaxKind::Args {
+            return Some((child, offset));
+        }
+        offset += child.len();
+    }
+    None
+}
+
+/// Every "real" (non-trivia, non-punctuation) child of an `Args` node, each
+/// paired with its absolute byte range — `args_offset` is the `Args` node's
+/// own offset, from [`args_of`].
+fn args_items(args_node: &SyntaxNode, args_offset: usize) -> Vec<(&SyntaxNode, Range<usize>)> {
+    let mut offset = args_offset;
+    let mut items = Vec::new();
+    for child in args_node.children() {
+        if !child.kind().is_trivia()
+            && !matches!(
+                child.kind(),
+                SyntaxKind::LeftParen | SyntaxKind::RightParen | SyntaxKind::Comma
+            )
+        {
+            items.push((child, offset..offset + child.len()));
+        }
+        offset += child.len();
+    }
+    items
+}
+
+/// If `call_node`'s first argument is a `Str` ending `.typ`, its unescaped
+/// text and byte range (of the `Str` token alone, quotes included).
+fn first_str_arg(call_node: &SyntaxNode, call_offset: usize) -> Option<(String, Range<usize>)> {
+    let (args_node, args_offset) = args_of(call_node, call_offset)?;
+    let (node, range) = args_items(args_node, args_offset).into_iter().next()?;
+    let text = node.cast::<ast::Str>()?.get().to_string();
+    text.ends_with(".typ").then_some((text, range))
+}
+
+/// Splice `edits` into `text`, back-to-front (highest byte offset first) so
+/// each replacement leaves every not-yet-applied range's offsets valid.
+fn apply_edits(text: &mut String, mut edits: Vec<(Range<usize>, String)>) {
+    edits.sort_by_key(|(range, _)| range.start);
+    for (range, replacement) in edits.into_iter().rev() {
+        text.replace_range(range, &replacement);
+    }
+}
+
 /// Resolve a `.typ` link href to an absolute path.
 ///
 /// `/`-prefixed hrefs are resolved against the content directory (Typst's root);
@@ -859,6 +1128,69 @@ mod tests {
         assert!(rewritten.contains("#link(<about>)[About]"));
         // External URL untouched.
         assert!(rewritten.contains("#link(\"https://example.com\")[ex]"));
+    }
+
+    #[test]
+    fn rewrite_ignores_link_syntax_in_comments_and_raw_spans() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("about.typ"), "= About\n").unwrap();
+        // Three demonstrated false positives for the old regex (a `//` line
+        // comment, a `/* */` block comment, a raw span), plus a real link on
+        // its own line that must still be rewritten.
+        fs::write(
+            content.join("intro.typ"),
+            "= Intro\n\
+             // #link(\"./about.typ\")[commented out]\n\
+             /* #link(\"./about.typ\")[also commented out] */\n\
+             `#link(\"./about.typ\")[raw, not code]`\n\
+             #link(\"./about.typ\")[Real link]\n",
+        )
+        .unwrap();
+
+        let project = ProjectConfig {
+            root: root.to_path_buf(),
+            name: "test".into(),
+            config: rheo_core::RheoConfig {
+                version: ManifestVersion::parse("0.3.0").unwrap(),
+                content_dir: Some("content".into()),
+                ..Default::default()
+            },
+            typ_files: vec![content.join("intro.typ"), content.join("about.typ")],
+            mode: rheo_core::config::project::ProjectMode::Directory,
+            config_path: Some(root.join("rheo.toml")),
+        };
+        fs::write(
+            root.join("rheo.toml"),
+            "version = \"0.3.0\"\ncontent_dir = \"content\"\n",
+        )
+        .unwrap();
+
+        let mut sources = load_sources(&content);
+        migrate_link_syntax(&project, &mut sources).unwrap();
+        flush_sources(&sources);
+
+        let rewritten = fs::read_to_string(content.join("intro.typ")).unwrap();
+        // The three false positives are left exactly as written.
+        assert!(
+            rewritten.contains("// #link(\"./about.typ\")[commented out]"),
+            "line comment must be untouched:\n{rewritten}"
+        );
+        assert!(
+            rewritten.contains("/* #link(\"./about.typ\")[also commented out] */"),
+            "block comment must be untouched:\n{rewritten}"
+        );
+        assert!(
+            rewritten.contains("`#link(\"./about.typ\")[raw, not code]`"),
+            "raw span must be untouched:\n{rewritten}"
+        );
+        // The real link is still rewritten.
+        assert!(
+            rewritten.contains("#link(<about>)[Real link]"),
+            "real link must be rewritten:\n{rewritten}"
+        );
     }
 
     #[test]

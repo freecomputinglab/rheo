@@ -2630,7 +2630,6 @@ version = "0.6.2"
 dependencies = [
  "clap",
  "glob",
- "regex",
  "rheo-core",
  "rheo-epub",
  "rheo-html",
@@ -2639,6 +2638,7 @@ dependencies = [
  "toml 1.1.2+spec-1.1.0",
  "toml_edit",
  "tracing",
+ "typst-syntax",
  "walkdir",
 ]
 
