@@ -2628,37 +2628,18 @@ dependencies = [
 name = "rheo"
 version = "0.6.2"
 dependencies = [
- "atty",
- "axum",
- "chrono",
  "clap",
- "dirs",
  "glob",
- "globset",
- "mime_guess",
- "notify",
- "opener",
- "parking_lot",
- "pathdiff",
  "regex",
  "rheo-core",
  "rheo-epub",
  "rheo-html",
  "rheo-pdf",
- "semver",
- "serde",
  "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-stream",
  "toml 1.1.2+spec-1.1.0",
  "toml_edit",
- "tower",
- "tower-http",
  "tracing",
- "tracing-subscriber",
  "walkdir",
- "webbrowser",
 ]
 
 [[package]]
