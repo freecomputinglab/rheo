@@ -304,49 +304,74 @@ fn enabled_formats_from_matches(
         .collect()
 }
 
-/// Rewrites TOML section headers to be nested under a given prefix.
+/// Nests a plugin's `options_toml` init-template snippet under `[<name>.*]` and
+/// merges it into the generated `rheo.toml` document.
 ///
-/// `[spine]` becomes `[prefix.spine]` and `[[items]]` becomes `[[prefix.items]]`.
-/// Only matches bare headers (no leading whitespace, no inline comments).
-/// Non-header lines and already-prefixed headers are returned unchanged.
-fn prefix_toml_headers(content: &str, prefix: &str) -> String {
-    content
-        .lines()
-        .map(|line| {
-            let trimmed = line.trim();
-            // Skip already-prefixed headers (idempotent)
-            if trimmed.starts_with(&format!("[{prefix}."))
-                || trimmed.starts_with(&format!("[[{prefix}."))
-            {
-                return line.to_string();
+/// Parses the snippet with `toml_edit` rather than rewriting header lines as
+/// text, so a header's exact source form (leading whitespace, a trailing
+/// inline comment) never matters — the snippet's own comments and layout
+/// still round-trip because `toml_edit` preserves them. `[spine]` becoming
+/// `[<name>.spine]` and `[[items]]` becoming `[[<name>.items]]` need no
+/// separate handling: both are just an `Item` (a `Table` or an
+/// `ArrayOfTables`) relocated one level down, and `toml_edit` renders either
+/// with the right header form on its own.
+fn merge_plugin_toml(doc: &mut toml_edit::DocumentMut, name: &str, snippet: &str) -> Result<()> {
+    let snippet_doc: toml_edit::DocumentMut = snippet.parse().map_err(|e| {
+        RheoError::project_config(format!(
+            "failed to parse `{name}` plugin's init template snippet: {e}"
+        ))
+    })?;
+
+    match doc.as_table_mut().entry(name) {
+        toml_edit::Entry::Occupied(mut existing) => {
+            let table = existing.get_mut().as_table_mut().ok_or_else(|| {
+                RheoError::project_config(format!(
+                    "`{name}` is already a non-table key in the generated rheo.toml"
+                ))
+            })?;
+            for (key, item) in snippet_doc.as_table().iter() {
+                let mut item = item.clone();
+                add_blank_line_before(&mut item);
+                table.insert(key, item);
             }
-            if let Some(inner) = trimmed
-                .strip_prefix("[[")
-                .and_then(|s| s.strip_suffix("]]"))
-            {
-                let inner = inner.trim();
-                if !inner.is_empty()
-                    && inner
-                        .chars()
-                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
-                {
-                    return line.replace(trimmed, &format!("[[{prefix}.{inner}]]"));
-                }
-            } else if let Some(inner) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']'))
-            {
-                let inner = inner.trim();
-                if !inner.is_empty()
-                    && inner
-                        .chars()
-                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
-                {
-                    return line.replace(trimmed, &format!("[{prefix}.{inner}]"));
-                }
+        }
+        toml_edit::Entry::Vacant(slot) => {
+            // Implicit: this table exists only to carry the `<name>.` path
+            // segment. The plugin never declares a bare `[<name>]` section of
+            // its own, so one must not be printed either.
+            let mut nested = toml_edit::Table::new();
+            nested.set_implicit(true);
+            for (key, item) in snippet_doc.as_table().iter() {
+                let mut item = item.clone();
+                add_blank_line_before(&mut item);
+                nested.insert(key, item);
             }
-            line.to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+            slot.insert(toml_edit::Item::Table(nested));
+        }
+    }
+    Ok(())
+}
+
+/// Prepends a blank separating line to a relocated item's own header decor
+/// (any comment already attached is kept, just pushed down a line), so a
+/// plugin's appended `[<name>.*]` section doesn't run straight into whatever
+/// precedes it. For `[[array.of.tables]]`, only the first entry carries the
+/// header the reader sees first, so only it is touched.
+fn add_blank_line_before(item: &mut toml_edit::Item) {
+    let table = match item {
+        toml_edit::Item::Table(t) => Some(t),
+        toml_edit::Item::ArrayOfTables(a) => a.get_mut(0),
+        _ => None,
+    };
+    if let Some(table) = table {
+        let existing = table
+            .decor()
+            .prefix()
+            .and_then(|p| p.as_str())
+            .unwrap_or("")
+            .to_string();
+        table.decor_mut().set_prefix(format!("\n{existing}"));
+    }
 }
 
 fn init_project(target_dir: &Path) -> Result<()> {
@@ -359,17 +384,18 @@ fn init_project(target_dir: &Path) -> Result<()> {
 
     fs::create_dir_all(target_dir).map_err(|e| RheoError::io(e, "creating target directory"))?;
 
-    let mut toml_content =
+    let template =
         rheo_core::templates::RHEO_TOML.replace("{{VERSION}}", manifest_version::CURRENT);
+    let mut toml_doc: toml_edit::DocumentMut = template.parse().map_err(|e| {
+        RheoError::project_config(format!("failed to parse built-in rheo.toml template: {e}"))
+    })?;
     for plugin in all_plugins() {
         let tmpl = plugin.format_init_template();
         if let Some(section) = tmpl.options_toml {
-            toml_content.push('\n');
-            toml_content.push_str(&prefix_toml_headers(section, plugin.name()));
-            toml_content.push('\n');
+            merge_plugin_toml(&mut toml_doc, plugin.name(), section)?;
         }
     }
-    fs::write(target_dir.join("rheo.toml"), &toml_content)
+    fs::write(target_dir.join("rheo.toml"), toml_doc.to_string())
         .map_err(|e| RheoError::io(e, "writing rheo.toml"))?;
 
     let content_dir = target_dir.join("content");
@@ -692,5 +718,53 @@ mod tests {
             "Expected at least 3 plugins, got {}",
             names.len()
         );
+    }
+
+    // The old line-based `prefix_toml_headers` mishandled a header with
+    // leading whitespace or a trailing inline comment (see its doc comment,
+    // now gone) since it only matched a bare `[header]` line. Parsing with
+    // `toml_edit` has no such restriction; these two pin the forms that used
+    // to be left un-nested.
+
+    #[test]
+    fn merge_plugin_toml_nests_header_with_leading_whitespace() {
+        let mut doc: toml_edit::DocumentMut = "version = \"0.1.0\"\n".parse().unwrap();
+        merge_plugin_toml(&mut doc, "pdf", "  [spine]\n  title = \"rheo_project\"\n").unwrap();
+        assert_eq!(doc["pdf"]["spine"]["title"].as_str(), Some("rheo_project"));
+        assert!(doc.to_string().contains("[pdf.spine]"));
+    }
+
+    #[test]
+    fn merge_plugin_toml_nests_header_with_trailing_comment() {
+        let mut doc: toml_edit::DocumentMut = "version = \"0.1.0\"\n".parse().unwrap();
+        merge_plugin_toml(
+            &mut doc,
+            "epub",
+            "[spine] # per-plugin override\ntitle = \"rheo_project\"\n",
+        )
+        .unwrap();
+        assert_eq!(doc["epub"]["spine"]["title"].as_str(), Some("rheo_project"));
+        assert!(doc.to_string().contains("[epub.spine]"));
+    }
+
+    #[test]
+    fn merge_plugin_toml_preserves_surrounding_comments() {
+        let mut doc: toml_edit::DocumentMut = "# keep me\nversion = \"0.1.0\"\n".parse().unwrap();
+        merge_plugin_toml(&mut doc, "pdf", "[spine]\ntitle = \"rheo_project\"\n").unwrap();
+        assert!(doc.to_string().starts_with("# keep me"));
+    }
+
+    /// Nesting now happens structurally (a fresh `[<name>]` table keyed by
+    /// the plugin's own name), not by text-matching an already-prefixed
+    /// header, so a repeat merge can't double-nest — it's a no-op rewrite of
+    /// the same values rather than needing a dedicated idempotence check.
+    #[test]
+    fn merge_plugin_toml_repeat_call_is_a_no_op() {
+        let mut doc: toml_edit::DocumentMut = "version = \"0.1.0\"\n".parse().unwrap();
+        let snippet = "[spine]\ntitle = \"rheo_project\"\n";
+        merge_plugin_toml(&mut doc, "pdf", snippet).unwrap();
+        merge_plugin_toml(&mut doc, "pdf", snippet).unwrap();
+        assert_eq!(doc["pdf"]["spine"]["title"].as_str(), Some("rheo_project"));
+        assert_eq!(doc.to_string().matches("[pdf.spine]").count(), 1);
     }
 }
