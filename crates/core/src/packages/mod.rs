@@ -117,6 +117,17 @@ impl PackageResolver {
         )
     }
 
+    /// Whether this namespace is served from a directory on disk.
+    ///
+    /// Unlike a repository ref (a sha-keyed cache directory) or a release (an
+    /// immutable, version-keyed cache directory), a `path` source's tree can
+    /// change while a watch is running — editing it is the whole point — so a
+    /// watch must cover it regardless of whether the package declares any
+    /// `[tool.rheo.*]` assets. See `Build::watch_asset_spec`.
+    pub fn is_path_backed(&self, namespace: &str) -> bool {
+        matches!(self.configured.get(namespace), Some(Backend::Path(_)))
+    }
+
     /// Whether rheo knows how to fetch this namespace ahead of the asset scan.
     ///
     /// A namespace rheo cannot fetch must stay skipped rather than attempting a

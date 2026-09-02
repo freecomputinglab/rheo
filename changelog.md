@@ -20,6 +20,12 @@ your own disk, not something committed for anyone else to build against.
 rheo has no local-override config file (yet) to keep a `path` entry out of a
 shared `rheo.toml` — flip it locally, and flip it back before committing.
 
+`rheo watch` picks this up too: a `path`-backed package's directory is watched
+the same as the project itself, so editing a `.typ` file inside it rebuilds
+the consuming site within the usual debounce window — even when the package
+declares no `[tool.rheo.*]` assets of its own, which is the common case for a
+package that is pure Typst with no stylesheet or script.
+
 # 0.6.2 — user-visible changes
 
 ## A package served from a repository ref contributes its marrow again
