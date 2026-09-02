@@ -1,15 +1,25 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["crates/core", "crates/html", "crates/pdf", "crates/epub", "crates/cli"]
 
 [workspace.package]
 version = "0.6.2"
 edition = "2024"
+rust-version = "1.88"
 authors = ["Lachlan Kermode <lachie@ohrg.org>"]
 description = "A typesetting and static site engine based on Typst"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/freecomputinglab/rheo"
 readme = "README.md"
+
+[workspace.lints.rust]
+unexpected_cfgs = "warn"
+
+[workspace.lints.clippy]
+correctness = "deny"
+suspicious = "warn"
+complexity = "warn"
+perf = "warn"
 
 [workspace.dependencies]
 # Internal crates (for convenience in workspace)
