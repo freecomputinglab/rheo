@@ -46,7 +46,7 @@ pub struct BuildOptions {
     /// `--input KEY=VALUE` pairs, seeded onto `sys.inputs` for the Typst compile.
     /// Typst has no environment access, so this is the only way a build script can
     /// parameterise a compile. Values are strings, always. A key equal to
-    /// `world::RESERVED_INPUT_KEY` (`rheo-context`) is rejected by the CLI and
+    /// `config::RESERVED_INPUT_KEY` (`rheo-context`) is rejected by the CLI and
     /// ignored here.
     pub inputs: HashMap<String, String>,
     /// `--emit-bundle-source`: write each plugin's synthesized bundle main to
@@ -217,7 +217,7 @@ impl Build {
         // specific statement of intent. Keys the config sets and the CLI does not
         // survive untouched, so overriding one input does not clear the rest.
         //
-        // Both sources reject `world::RESERVED_INPUT_KEY` before reaching here
+        // Both sources reject `config::RESERVED_INPUT_KEY` before reaching here
         // (the CLI in `parse_inputs`, the config in its `TryFrom`), and
         // `build_inputs` refuses it a third time — a library caller can construct
         // `WorldSpec` directly, so the last line of defence lives there.
@@ -370,7 +370,8 @@ impl Build {
                 .plugin_sections
                 .get(plugin.name())
                 .unwrap_or(&default_section)
-                .auto_detect_packages_enabled()
+                .auto_detect_packages
+                .get()
         })
     }
 
@@ -528,8 +529,7 @@ impl Build {
                 &spine.exclude,
                 self.project.config.marrow_file(),
             )?
-            .apply_sections(content_dir, &spine.section)?
-            .apply_include(content_dir, &spine.include)?,
+            .apply_layering(content_dir, spine.layering.as_ref())?,
         };
 
         debug!(
@@ -577,7 +577,7 @@ impl Build {
         if ext.is_some() {
             // Behind the same opt-out that governs every other package-driven
             // behaviour.
-            if plugin_section.auto_detect_packages_enabled() {
+            if plugin_section.auto_detect_packages.get() {
                 // Through the resolver, not a directory probe: a package from a
                 // repository ref lives at a sha-keyed path no probe matches, so
                 // probing finds no `.marrow.typ` and the package mints none of
@@ -593,7 +593,7 @@ impl Build {
             let marrow_path = content_dir.join(self.project.config.marrow_file());
             match std::fs::read_to_string(&marrow_path) {
                 Ok(text) => {
-                    if self.project.config.marrow_prologue() {
+                    if self.project.config.marrow_prologue.get() {
                         marrow_prologue.push(text);
                     } else {
                         marrow.push(text);
@@ -652,7 +652,8 @@ impl Build {
             .project
             .config
             .plugin_section(plugin.name())
-            .reset_footnotes();
+            .reset_footnotes
+            .get();
 
         MouldedBundle {
             main: moulded.main,
@@ -811,7 +812,7 @@ impl Build {
         let package_resolver = self.package_resolver();
         let packages = prewarm_and_resolve(
             &package_imports,
-            plugin_section.auto_detect_packages_enabled(),
+            plugin_section.auto_detect_packages.get(),
             &package_resolver,
         )?;
 
@@ -1288,7 +1289,7 @@ fn manifest_blocks_for(
     plugin_section: &PluginSection,
     format_name: &str,
 ) -> Vec<crate::plugins::PackageAssets> {
-    if plugin_section.auto_detect_packages_enabled() {
+    if plugin_section.auto_detect_packages.get() {
         packages.manifest_assets(format_name)
     } else {
         vec![]
@@ -1845,7 +1846,7 @@ mod tests {
             config: crate::RheoConfig {
                 content_dir: Some("content".to_string()),
                 formats: vec!["html".to_string()],
-                marrow_prologue: Some(marrow_prologue),
+                marrow_prologue: marrow_prologue.into(),
                 ..Default::default()
             },
             typ_files: vec![root.join("content/index.typ")],

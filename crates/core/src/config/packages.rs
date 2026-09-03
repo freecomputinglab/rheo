@@ -8,7 +8,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::warn;
 
 /// The GitHub download base a bare `<owner>/<repo>` shorthand expands to.
@@ -109,6 +109,17 @@ pub struct PathSource {
     pub subdir: String,
 }
 
+impl PathSource {
+    /// Anchor a relative root against `base_dir` — the config file's own
+    /// directory, so `path = "../pkgs"` means the same thing however rheo was
+    /// invoked. An absolute root is already anchored.
+    pub fn anchor_to(&mut self, base_dir: &Path) {
+        if self.root.is_relative() {
+            self.root = base_dir.join(&self.root);
+        }
+    }
+}
+
 /// Where one namespace resolves from. Exactly one variant per namespace: moving
 /// a project between a release and a branch is an explicit edit, not a
 /// precedence rule.
@@ -139,6 +150,14 @@ fn reject<T>(namespace: &str, message: impl Display) -> Result<T, toml::de::Erro
 }
 
 impl NamespaceSource {
+    /// Anchor whatever part of this source is a relative path against the
+    /// config file's own directory. Only a [`PathSource`] has one.
+    pub fn anchor_to(&mut self, base_dir: &Path) {
+        if let NamespaceSource::Path(path) = self {
+            path.anchor_to(base_dir);
+        }
+    }
+
     /// Parse the whole `[packages]` table, validating each namespace.
     pub(super) fn parse_table(
         value: toml::Value,

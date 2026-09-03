@@ -143,8 +143,7 @@ impl FormatPlugin for HtmlPlugin {
         for output in outputs {
             let html_string = output.html_string()?;
             let css = rheo_core::html_dom::depth_relative_refs(&css_paths, &output.output_path);
-            let js =
-                rheo_core::html_dom::depth_relative_scripts(&js_scripts, &output.output_path);
+            let js = rheo_core::html_dom::depth_relative_scripts(&js_scripts, &output.output_path);
             let html_string = rheo_core::html_dom::HtmlDom::apply_head_mutations(
                 &html_string,
                 &css,

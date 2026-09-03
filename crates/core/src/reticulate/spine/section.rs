@@ -1,7 +1,7 @@
 use super::SpineScan;
 use super::scan::compile_glob;
 use super::tree::{Node, NodeKind, SpineNode};
-use crate::config::SpineSection;
+use crate::config::{SpineLayering, SpineSection};
 use crate::reticulate::handle::Handle;
 use crate::util::path::to_forward_slash;
 use crate::{Result, RheoError};
@@ -64,6 +64,19 @@ impl<'a> OrderedGlobMatch<'a> {
 }
 
 impl SpineScan {
+    /// Apply whichever layering the spine table configured, or none.
+    pub fn apply_layering(
+        self,
+        content_dir: &Path,
+        layering: Option<&SpineLayering>,
+    ) -> Result<SpineScan> {
+        match layering {
+            Some(SpineLayering::Sections(sections)) => self.apply_sections(content_dir, sections),
+            Some(SpineLayering::Include(include)) => self.apply_include(content_dir, include),
+            None => Ok(self),
+        }
+    }
+
     /// Apply `[[spine.section]]` virtual-directory layering (knob 2) to a scanned
     /// spine, returning a new [`SpineScan`] with the tree + flat file list rebuilt.
     ///

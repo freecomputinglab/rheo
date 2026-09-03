@@ -197,7 +197,7 @@ fn parse_inputs(sub: &ArgMatches) -> Result<HashMap<String, String>> {
                 message: format!("--input expects a non-empty key, got `{raw}`"),
             });
         }
-        if key == rheo_core::world::RESERVED_INPUT_KEY {
+        if key == rheo_core::config::RESERVED_INPUT_KEY {
             return Err(RheoError::ProjectConfig {
                 message: format!(
                     "--input {key}=... is reserved: rheo owns the `{key}` key, which \

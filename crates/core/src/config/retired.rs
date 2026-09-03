@@ -1,6 +1,6 @@
 //! Keys retired from `rheo.toml` in a past version, still parsed harmlessly
 //! into an `extra` flatten map (see [`super::Spine::extra`]) but otherwise
-//! inert. One shared table so the build-time warning ([`super::validation`])
+//! inert. One shared table so the parse-time warning ([`warn_on_retired_keys`])
 //! and `rheo migrate`'s reporting read the same list instead of keeping two
 //! in step.
 

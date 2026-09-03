@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::config::RESERVED_INPUT_KEY;
 use crate::packages::PackageResolver;
 use crate::reticulate::VertebraInjection;
 use crate::synth::typst_literal::TypstLiteral;
@@ -21,11 +22,6 @@ use typst::{Library, LibraryExt, World};
 use typst_kit::fonts::FontStore;
 use typst_library::Feature;
 use typst_library::foundations::Duration;
-
-/// The one `sys.inputs` key rheo owns. A project may not set it from
-/// `--input`/`[inputs]`: a forged spine or target would be indistinguishable
-/// from the real one to every package reading it.
-pub const RESERVED_INPUT_KEY: &str = "rheo-context";
 
 /// Build sys.inputs Dict for Typst compilation.
 ///

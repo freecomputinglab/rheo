@@ -1,34 +1,78 @@
 use crate::Result;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
-use std::path::Path;
-use tracing::debug;
+use std::path::{Path, PathBuf};
+use tracing::{debug, warn};
 
 pub mod manifest_version;
 pub mod output;
 pub mod packages;
 pub mod project;
 pub mod retired;
-pub mod validation;
 
 pub use manifest_version::ManifestVersion;
 pub use packages::{GitRef, NamespaceSource, PathSource, ReleasesSource, RepoSource};
+use retired::warn_on_retired_keys;
 pub use retired::{RETIRED_KEYS, RetiredKey};
-use validation::ValidateConfig;
+
+/// The one `sys.inputs` key rheo owns. A project may not set it from
+/// `--input`/`[inputs]`: a forged spine or target would be indistinguishable
+/// from the real one to every package reading it.
+pub const RESERVED_INPUT_KEY: &str = "rheo-context";
+
+/// A `bool` config key whose absence means `DEFAULT` — one type for every
+/// "unset means this" toggle, in place of an `Option<bool>` field paired with
+/// its own `unwrap_or` accessor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Flag<const DEFAULT: bool>(Option<bool>);
+
+impl<const DEFAULT: bool> Flag<DEFAULT> {
+    /// The configured value, or `DEFAULT` when the key is unset.
+    pub fn get(&self) -> bool {
+        self.0.unwrap_or(DEFAULT)
+    }
+}
+
+impl<const DEFAULT: bool> From<bool> for Flag<DEFAULT> {
+    fn from(value: bool) -> Self {
+        Self(Some(value))
+    }
+}
+
+impl<'de, const DEFAULT: bool> Deserialize<'de> for Flag<DEFAULT> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        Option::<bool>::deserialize(deserializer).map(Flag)
+    }
+}
 
 /// One format's resolved spine knobs: every field already merged over the
 /// global `[spine]` table. See [`Spine::merged_over`].
 pub struct MergedSpine {
     pub exclude: Vec<String>,
-    pub section: Vec<SpineSection>,
-    pub include: Vec<String>,
+    pub layering: Option<SpineLayering>,
     pub title: Option<String>,
+}
+
+/// How a spine lays out its leaves beyond the plain directory scan.
+///
+/// `include` is a flat reorder and `section` nests into virtual directories, so
+/// a table sets one or the other — an enum rather than two `Option` fields
+/// because "both at once" names nothing.
+#[derive(Debug, Clone)]
+pub enum SpineLayering {
+    /// Virtual directories: each section groups matched files under a named
+    /// node without moving them on disk.
+    Sections(Vec<SpineSection>),
+    /// Ordered glob list replacing this spine's scan order, dropping any leaf
+    /// it does not match, without [`SpineLayering::Sections`]' group nesting.
+    Include(Vec<String>),
 }
 
 /// Spine configuration from `rheo.toml`: directory-scan knobs and title.
 ///
 /// All format plugins share this single config type.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(try_from = "SpineRaw")]
 pub struct Spine {
     /// Title for the combined output document, when applicable.
     pub title: Option<String>,
@@ -41,32 +85,60 @@ pub struct Spine {
     /// `exclude` falls back to the global `[spine] exclude` field-by-field,
     /// rather than a per-format table's mere presence blanking every global
     /// spine key at once (rheo-9vl.2).
-    #[serde(default)]
     pub exclude: Option<Vec<String>>,
 
-    /// Virtual-directory layering over flat files (knob 2). Each section groups
-    /// matched files under a virtual subdirectory without moving them on disk.
-    ///
-    /// `None` when unset, for the same per-field fallback reason as `exclude`.
-    #[serde(default)]
-    pub section: Option<Vec<SpineSection>>,
+    /// `section` or `include`, whichever this table set; `None` when neither,
+    /// for the same per-field fallback reason as `exclude`.
+    pub layering: Option<SpineLayering>,
 
-    /// Ordered glob list (knob 3) that replaces this spine's scan order,
-    /// dropping any leaf it does not match, without `section`'s group nesting.
-    #[serde(default)]
-    pub include: Option<Vec<String>>,
-
-    /// Unrecognized keys, captured so [`validation`](super::validation) can warn
-    /// when a field retired from `Spine` in a past version (e.g. the removed
+    /// Unrecognized keys, captured so [`warn_on_retired_keys`] can warn when a
+    /// field retired from `Spine` in a past version (e.g. the removed
     /// `vertebrae` glob list) is still set in an older `rheo.toml`, rather than
     /// silently dropping it.
-    #[serde(flatten, default)]
     pub extra: toml::Table,
+}
+
+/// The `[spine]` keys as written, before the `section`/`include` one-of rule.
+#[derive(Debug, Deserialize)]
+pub struct SpineRaw {
+    title: Option<String>,
+    #[serde(default)]
+    exclude: Option<Vec<String>>,
+    #[serde(default)]
+    section: Option<Vec<SpineSection>>,
+    #[serde(default)]
+    include: Option<Vec<String>>,
+    #[serde(flatten, default)]
+    extra: toml::Table,
+}
+
+impl TryFrom<SpineRaw> for Spine {
+    type Error = toml::de::Error;
+
+    fn try_from(raw: SpineRaw) -> std::result::Result<Self, Self::Error> {
+        let layering = match (raw.section, raw.include) {
+            (Some(_), Some(_)) => {
+                return Err(serde::de::Error::custom(
+                    "include is a flat reorder, section nests into virtual \
+                     directories: set one, not both",
+                ));
+            }
+            (Some(section), None) => Some(SpineLayering::Sections(section)),
+            (None, Some(include)) => Some(SpineLayering::Include(include)),
+            (None, None) => None,
+        };
+        Ok(Spine {
+            title: raw.title,
+            exclude: raw.exclude,
+            layering,
+            extra: raw.extra,
+        })
+    }
 }
 
 /// A virtual directory in the spine: groups flat files under a named node,
 /// behaving like an on-disk subdirectory. Nests to arbitrary depth via `section`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SpineSection {
     /// Slug — the node's handle segment and sibling sort key (like a dir name).
     pub name: String,
@@ -86,7 +158,7 @@ pub struct SpineSection {
 /// (`dest`), and AssetConfig path overrides (any other key). Separating these
 /// into their own subtable ensures AssetConfig names cannot clash with other
 /// `[plugin_name]` fields like `spine`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
 pub struct PluginAssets {
     /// Glob patterns for files to copy into this plugin's output directory.
     /// Paths are relative to the project root; directory structure is preserved.
@@ -110,7 +182,7 @@ pub struct PluginAssets {
 }
 
 /// Accepts either `[plugin.assets]` (single table) or `[[plugin.assets]]` (array-of-tables).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum AssetsField {
     Single(PluginAssets),
@@ -133,7 +205,7 @@ impl AssetsField {
 /// `extra`. Each plugin reads only the keys it knows about from `extra`; unknown
 /// keys are silently ignored. Adding a new plugin requires no changes to this
 /// struct.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct PluginSection {
     /// Spine configuration (shared by all plugins).
     pub spine: Option<Spine>,
@@ -146,15 +218,15 @@ pub struct PluginSection {
     /// statements in .typ files by reading each package's `typst.toml` `[tool.rheo.*]`.
     /// Set to false to disable import-driven asset injection for this format.
     #[serde(default)]
-    pub auto_detect_packages: Option<bool>,
+    pub auto_detect_packages: Flag<true>,
 
     /// When true (default), per-page output for this format resets the footnote
     /// counter to 1 on every page; false lets footnotes accumulate across the
     /// bundle. Only meaningful for the per-page formats (HTML/EPUB); PDF combines
     /// into a single document with no `ext`, so the reset gate in `typ/rheo.typ`
-    /// never fires there regardless. Read via [`PluginSection::reset_footnotes`].
+    /// never fires there regardless.
     #[serde(default)]
-    pub reset_footnotes: Option<bool>,
+    pub reset_footnotes: Flag<true>,
 
     /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
     /// `fonts` for HTML; `identifier`, `date` for EPUB).
@@ -211,7 +283,7 @@ pub struct RheoConfig {
     /// global-by-default and powerful, so it is opt-in only. A package
     /// declares its own marrow's position by filename instead (`.marrow.typ`
     /// vs `.marrow-prologue.typ`); this key affects only the project's marrow.
-    pub marrow_prologue: Option<bool>,
+    pub marrow_prologue: Flag<false>,
 
     /// `[inputs]` — project-declared `sys.inputs` keys for the Typst compile.
     ///
@@ -259,8 +331,7 @@ impl Spine {
 
         MergedSpine {
             exclude: pick(this, global, |s| s.exclude.as_ref()).unwrap_or_default(),
-            section: pick(this, global, |s| s.section.as_ref()).unwrap_or_default(),
-            include: pick(this, global, |s| s.include.as_ref()).unwrap_or_default(),
+            layering: pick(this, global, |s| s.layering.as_ref()),
             title: pick(this, global, |s| s.title.as_ref()),
         }
     }
@@ -278,7 +349,7 @@ impl Default for RheoConfig {
             plugin_sections: HashMap::new(),
             spine: None,
             marrow: None,
-            marrow_prologue: None,
+            marrow_prologue: Flag::default(),
             inputs: HashMap::new(),
             packages: HashMap::new(),
         }
@@ -298,7 +369,8 @@ pub struct RheoConfigRaw {
     #[serde(default)]
     font_dirs: Vec<String>,
     marrow: Option<String>,
-    marrow_prologue: Option<bool>,
+    #[serde(default)]
+    marrow_prologue: Flag<false>,
     #[serde(flatten)]
     extra: HashMap<String, toml::Value>,
 }
@@ -327,12 +399,11 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             Some(value) => value.try_into()?,
             None => HashMap::new(),
         };
-        if inputs.contains_key(crate::world::RESERVED_INPUT_KEY) {
+        if inputs.contains_key(RESERVED_INPUT_KEY) {
             return Err(serde::de::Error::custom(format!(
-                "[inputs] may not set `{key}`: rheo owns that key, which carries \
-                 the spine and the output format that every package reads. Choose \
+                "[inputs] may not set `{RESERVED_INPUT_KEY}`: rheo owns that key, which \
+                 carries the spine and the output format that every package reads. Choose \
                  another name, e.g. a package-prefixed one like `rookery-exclude`.",
-                key = crate::world::RESERVED_INPUT_KEY,
             )));
         }
         // Pulled out before the plugin-section loop for the same reason `inputs`
@@ -350,6 +421,27 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             }
             // Non-table entries (unknown scalar fields) are silently ignored.
         }
+
+        let current = ManifestVersion::current();
+        if raw.version != current {
+            warn!(
+                "rheo.toml version {} does not match rheo version {}. Run `rheo migrate` to \
+                 update it (add --apply to write the changes).",
+                raw.version, current
+            );
+        }
+        // Naming the table each key was authored in, so a per-format table's
+        // retired key does not send the reader to the global one.
+        if let Some(spine) = &spine {
+            warn_on_retired_keys("[spine]", &spine.extra);
+        }
+        for (name, section) in &plugin_sections {
+            warn_on_retired_keys(&format!("[{name}]"), &section.extra);
+            if let Some(spine) = &section.spine {
+                warn_on_retired_keys(&format!("[{name}.spine]"), &spine.extra);
+            }
+        }
+
         Ok(RheoConfig {
             version: raw.version,
             content_dir: raw.content_dir,
@@ -367,6 +459,14 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
     }
 }
 
+/// Anchor a config-declared directory against the project root. An absolute
+/// `dir` wins, as `Path::join` defines.
+fn resolve_dir(base_dir: &Path, dir: &str, kind: &str) -> PathBuf {
+    let path = base_dir.join(dir);
+    debug!(kind, dir = %path.display(), "resolved directory");
+    path
+}
+
 impl RheoConfig {
     /// Load configuration from rheo.toml in the given directory.
     /// If the file doesn't exist, returns default configuration.
@@ -382,7 +482,7 @@ impl RheoConfig {
         Self::parse_config(&config_path, "rheo.toml", project_root)
     }
 
-    /// Load configuration from a specific path with validation.
+    /// Load configuration from a specific path.
     pub fn load_from_path(config_path: &Path) -> Result<Self> {
         if !config_path.exists() {
             return Err(crate::RheoError::path(
@@ -403,7 +503,8 @@ impl RheoConfig {
         Ok(config)
     }
 
-    /// Read, parse, convert, and validate a config file.
+    /// Read and parse a config file. Invalid state is rejected by
+    /// [`RheoConfig::try_from`], so a parsed config needs no further pass.
     ///
     /// `base_dir` is the directory a relative `[packages.<ns>] path` resolves
     /// against — the config file's own directory, not the process's cwd, so
@@ -418,14 +519,9 @@ impl RheoConfig {
             .map_err(|e| crate::RheoError::project_config(format!("invalid {}: {}", label, e)))?;
 
         for source in config.packages.values_mut() {
-            if let NamespaceSource::Path(path) = source
-                && path.root.is_relative()
-            {
-                path.root = base_dir.join(&path.root);
-            }
+            source.anchor_to(base_dir);
         }
 
-        config.validate()?;
         Ok(config)
     }
 
@@ -434,30 +530,18 @@ impl RheoConfig {
         self.marrow.as_deref().unwrap_or(crate::MARROW_FILE)
     }
 
-    /// Whether the project's own marrow is spliced before the documents.
-    /// Defaults to `false` (spliced after, today's behaviour).
-    pub fn marrow_prologue(&self) -> bool {
-        self.marrow_prologue.unwrap_or(false)
+    /// Resolve content_dir against the project root, if configured.
+    pub fn resolve_content_dir(&self, base_dir: &Path) -> Option<PathBuf> {
+        self.content_dir
+            .as_ref()
+            .map(|dir| resolve_dir(base_dir, dir, "content"))
     }
 
-    /// Resolve content_dir to an absolute path if configured.
-    pub fn resolve_content_dir(&self, base_dir: &Path) -> Option<std::path::PathBuf> {
-        self.content_dir.as_ref().map(|dir| {
-            let path = base_dir.join(dir);
-            debug!(content_dir = %path.display(), "resolved content directory");
-            path
-        })
-    }
-
-    /// Resolve all font_dirs to absolute paths.
-    pub fn resolve_font_dirs(&self, base_dir: &Path) -> Vec<std::path::PathBuf> {
+    /// Resolve all font_dirs against the project root.
+    pub fn resolve_font_dirs(&self, base_dir: &Path) -> Vec<PathBuf> {
         self.font_dirs
             .iter()
-            .map(|dir| {
-                let path = base_dir.join(dir);
-                debug!(dir = %path.display(), "resolved font directory");
-                path
-            })
+            .map(|dir| resolve_dir(base_dir, dir, "font"))
             .collect()
     }
 
@@ -484,18 +568,6 @@ impl PluginSection {
     /// Returns the asset blocks, normalised to a slice regardless of source syntax.
     pub fn asset_blocks(&self) -> &[PluginAssets] {
         self.assets.as_ref().map(|a| a.blocks()).unwrap_or(&[])
-    }
-
-    /// Auto-detection of `@preview` package assets defaults to true; users can
-    /// disable per-plugin with `auto_detect_packages = false`.
-    pub fn auto_detect_packages_enabled(&self) -> bool {
-        self.auto_detect_packages.unwrap_or(true)
-    }
-
-    /// Per-page footnote-counter reset (HTML/EPUB) defaults to true; users can
-    /// disable per-format with `reset_footnotes = false`.
-    pub fn reset_footnotes(&self) -> bool {
-        self.reset_footnotes.unwrap_or(true)
     }
 
     /// Deserialize the format-specific `extra` fields into a typed config struct.
@@ -546,6 +618,14 @@ mod tests {
         format!("version = \"{}\"\n{}", env!("CARGO_PKG_VERSION"), rest)
     }
 
+    /// The sections of a spine's layering; every caller here set `section`.
+    fn sections(spine: &Spine) -> &[SpineSection] {
+        match spine.layering.as_ref() {
+            Some(SpineLayering::Sections(sections)) => sections,
+            other => panic!("expected sections, got {other:?}"),
+        }
+    }
+
     fn parse(toml: &str) -> RheoConfig {
         let raw: RheoConfigRaw = toml::from_str(toml).expect("parse failed");
         RheoConfig::try_from(raw).expect("convert failed")
@@ -583,17 +663,17 @@ mod tests {
     fn test_reset_footnotes_defaults_true_and_honors_false_per_format() {
         // No [html] section at all -> default section, defaults to true.
         let config = parse(&versioned_toml(r#"formats = ["html"]"#));
-        assert!(config.plugin_section("html").reset_footnotes());
+        assert!(config.plugin_section("html").reset_footnotes.get());
 
         // Explicit false on [html] is honored, and is per-format: [epub] still
         // defaults to true.
         let config = parse(&versioned_toml("[html]\nreset_footnotes = false\n[epub]\n"));
-        assert!(!config.plugin_section("html").reset_footnotes());
-        assert!(config.plugin_section("epub").reset_footnotes());
+        assert!(!config.plugin_section("html").reset_footnotes.get());
+        assert!(config.plugin_section("epub").reset_footnotes.get());
 
         // Explicit true.
         let config = parse(&versioned_toml("[html]\nreset_footnotes = true\n"));
-        assert!(config.plugin_section("html").reset_footnotes());
+        assert!(config.plugin_section("html").reset_footnotes.get());
     }
 
     #[test]
@@ -626,8 +706,7 @@ mod tests {
         // Neither table present: empty lists and no title.
         let merged = Spine::merged_over(None, None);
         assert!(merged.exclude.is_empty());
-        assert!(merged.section.is_empty());
-        assert!(merged.include.is_empty());
+        assert!(merged.layering.is_none());
         assert_eq!(merged.title, None);
     }
 
@@ -635,13 +714,13 @@ mod tests {
     fn test_marrow_prologue_defaults_false_and_honors_true() {
         // No key at all -> defaults to epilogue (today's behaviour).
         let config = parse(&versioned_toml(""));
-        assert!(!config.marrow_prologue());
+        assert!(!config.marrow_prologue.get());
 
         let config = parse(&versioned_toml("marrow_prologue = true"));
-        assert!(config.marrow_prologue());
+        assert!(config.marrow_prologue.get());
 
         let config = parse(&versioned_toml("marrow_prologue = false"));
-        assert!(!config.marrow_prologue());
+        assert!(!config.marrow_prologue.get());
     }
 
     #[test]
@@ -986,7 +1065,7 @@ mod tests {
             spine.exclude.clone().unwrap(),
             vec!["drafts/**", "*.tmp.typ"]
         );
-        let sections = spine.section.clone().unwrap();
+        let sections = sections(spine);
         assert_eq!(sections.len(), 1);
         assert_eq!(sections[0].name, "guides");
         assert_eq!(sections[0].section.len(), 1);
@@ -1009,7 +1088,7 @@ mod tests {
         let config = parse(&toml);
         let spine = config.spine_for_plugin("pdf").unwrap();
         assert_eq!(spine.exclude.clone().unwrap(), vec!["scratch/**"]);
-        let sections = spine.section.clone().unwrap();
+        let sections = sections(spine);
         assert_eq!(sections.len(), 1);
         assert_eq!(sections[0].name, "appendix");
         assert_eq!(sections[0].include, vec!["appendix/*.typ"]);
@@ -1024,7 +1103,60 @@ mod tests {
         let spine = config.spine_for_plugin("pdf").unwrap();
         assert!(spine.extra.contains_key("vertebrae"));
         assert!(spine.exclude.is_none());
-        assert!(spine.section.is_none());
+        assert!(spine.layering.is_none());
+    }
+
+    /// `include` and `section` in one table is rejected where the table is
+    /// parsed, so no later pass can be skipped and no `Spine` value can carry
+    /// both at once.
+    #[test]
+    fn test_spine_rejects_include_with_section() {
+        let toml =
+            versioned_toml("[spine]\ninclude = [\"a.typ\"]\n\n[[spine.section]]\nname = \"g\"");
+        let raw: RheoConfigRaw = toml::from_str(&toml).expect("raw parse should succeed");
+        let err = RheoConfig::try_from(raw).expect_err("both knobs at once must fail");
+        assert!(
+            err.to_string().contains("flat reorder"),
+            "error should explain the two knobs, got: {err}",
+        );
+    }
+
+    #[test]
+    fn test_spine_include_alone_is_a_flat_reorder() {
+        let config = parse(&versioned_toml("[spine]\ninclude = [\"b.typ\", \"a.typ\"]"));
+        let spine = config.spine.as_ref().unwrap();
+        let Some(SpineLayering::Include(include)) = &spine.layering else {
+            panic!("expected a flat include, got {:?}", spine.layering);
+        };
+        assert_eq!(include, &vec!["b.typ".to_string(), "a.typ".to_string()]);
+    }
+
+    /// A retired key (and an unrecognized one) is a warning at most: an old
+    /// `rheo.toml` still parses, in the global table and a per-format one alike.
+    #[test]
+    fn test_retired_and_unknown_keys_still_parse() {
+        let config = parse(&versioned_toml(
+            "[spine]\nvertebrae = [\"[invalid\"]\nmerge = true\nsome_future_key = \"x\"\n\
+             [pdf.spine]\nmerge = true\n[html]\nfeed_title = \"gone\"\n",
+        ));
+        assert!(config.spine.as_ref().unwrap().extra.contains_key("merge"));
+        assert!(
+            config
+                .spine_for_plugin("pdf")
+                .unwrap()
+                .extra
+                .contains_key("merge")
+        );
+    }
+
+    /// A version that does not match the running rheo warns; it never fails the
+    /// parse, or the project could not be read by the tool that migrates it.
+    #[test]
+    fn test_mismatched_manifest_version_still_parses() {
+        let raw: RheoConfigRaw = toml::from_str("version = \"0.0.1\"").unwrap();
+        assert!(RheoConfig::try_from(raw).is_ok());
+        let raw: RheoConfigRaw = toml::from_str("version = \"99.0.0\"").unwrap();
+        assert!(RheoConfig::try_from(raw).is_ok());
     }
 
     /// `[inputs]` reaches `RheoConfig::inputs` and — the part this test exists
