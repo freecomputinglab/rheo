@@ -122,6 +122,42 @@ impl SpineScan {
             tree,
         }
     }
+
+    /// The handle each scanned file gets from its position in the tree: the
+    /// `:`-joined path of ancestor segments down to it, indexed like
+    /// [`SpineScan::files`]. Group nodes (a directory with no landing page, a
+    /// `[[spine.section]]`) prefix their descendants without claiming a slot.
+    ///
+    /// Derivation is format-independent — no output layout, no extension — so a
+    /// caller that only wants handles (`rheo migrate` resolving a `.typ` link
+    /// target) asks for them without naming a format.
+    pub fn handles(&self) -> Vec<Handle> {
+        let mut handles: Vec<Handle> = vec![Handle::default(); self.files.len()];
+        for node in &self.tree {
+            node.visit("", &mut |path, node| {
+                if let Some(&i) = node.vertebra()
+                    && let Some(slot) = handles.get_mut(i)
+                {
+                    *slot = Handle::new(path.to_string());
+                }
+            });
+        }
+        handles
+    }
+
+    /// The same handles, keyed by each file's canonical path — the direction a
+    /// caller resolving an on-disk path into a handle needs.
+    pub fn handles_by_path(&self) -> HashMap<PathBuf, Handle> {
+        self.files
+            .iter()
+            .zip(self.handles())
+            .map(|(file, handle)| {
+                let path =
+                    crate::util::path::canonicalize_path(file).unwrap_or_else(|_| file.clone());
+                (path, handle)
+            })
+            .collect()
+    }
 }
 
 // ── Bundle spine: VirtualSpine, Vertebra, SpineLayout ────────────────────────
@@ -239,21 +275,6 @@ impl VirtualSpine {
         node.vertebra().and_then(|&i| self.vertebrae.get(i))
     }
 
-    /// Fill `handles[i]` with the `:`-joined segment path from the tree root to
-    /// the node whose `vertebra()` is `Some(i)`, walking pre-order. Group nodes
-    /// contribute their segment as a prefix to descendants without claiming a slot.
-    fn assign_handles(nodes: &[SpineNode], handles: &mut [Handle]) {
-        for n in nodes {
-            n.visit("", &mut |path, node| {
-                if let Some(&i) = node.vertebra()
-                    && let Some(slot) = handles.get_mut(i)
-                {
-                    *slot = Handle::new(path.to_string());
-                }
-            });
-        }
-    }
-
     /// Resolve a list of spine files into a `VirtualSpine` with computed handles,
     /// output paths, and titles.
     ///
@@ -261,14 +282,8 @@ impl VirtualSpine {
     /// so `content/chapters/intro.typ` yields handle `intro` (or `chapters:intro`
     /// on a cross-directory stem collision). Pass `project_root` for `#include` paths.
     pub fn build(scan: SpineScan, project_root: &Path, layout: SpineLayout) -> Result<Self> {
+        let handles = scan.handles();
         let SpineScan { files, tree } = scan;
-
-        // Handle per file, derived from its position in the spine tree: the
-        // ':'-joined path of ancestor segments down to the file. For a plain
-        // directory scan this equals the disk path; a file pulled under a
-        // `[[spine.section]]` gains that section's segment as a prefix.
-        let mut handles: Vec<Handle> = vec![Handle::default(); files.len()];
-        Self::assign_handles(&tree, &mut handles);
 
         // First pass: parse each file, compute handles, collect user labels.
         struct FileInfo {

@@ -53,10 +53,10 @@ use rheo_core::config::RETIRED_KEYS;
 use rheo_core::config::manifest_version::ManifestVersion;
 use rheo_core::parser::{SyntaxSite, WalkCtx};
 use rheo_core::project::ProjectConfig;
-use rheo_core::reticulate::{SpineLayout, SpineScan, VirtualSpine};
+use rheo_core::reticulate::SpineScan;
 use rheo_core::util::path::{canonicalize_path, to_forward_slash};
 use rheo_core::{Result, RheoError, Spine};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -326,29 +326,16 @@ fn migrate_link_syntax(
     }
     let content_dir = resolve_effective_content_dir(project);
 
-    // Build the handle map over every source file so any `.typ` target resolves.
-    let layout = SpineLayout::OnePerVertebra {
-        ext: "html".into(),
-        format: "html".into(),
-    };
-    let typ_files: Vec<PathBuf> = sources.iter().map(|s| s.path.clone()).collect();
-    let spine = VirtualSpine::build(
-        SpineScan::flat(&typ_files, &content_dir),
-        &project.root,
-        layout,
-    )?;
-
-    // Canonical absolute source path -> label to emit.
+    // Canonical source path -> the handle to emit. Handle derivation is
+    // format-independent, so this asks the scan for handles alone rather than
+    // naming an output format it does not have.
+    //
     // The primary handle is always unique: bare (`intro`) for root-level files,
-    // path-qualified with ':' (`chapters:intro`) for nested files.
-    // The `<stem.typ>` escape alias is basename-based and AMBIGUOUS on
-    // stem collision, so it is never used as a rewrite target.
-    let mut handle_map: HashMap<PathBuf, String> = HashMap::new();
-    for v in &spine.vertebrae {
-        let abs = project.root.join(&v.rel_path);
-        let canon = canonicalize_path(&abs).unwrap_or(abs);
-        handle_map.insert(canon, v.handle.to_string());
-    }
+    // path-qualified with ':' (`chapters:intro`) for nested files. The
+    // `<stem.typ>` escape alias is basename-based and AMBIGUOUS on stem
+    // collision, so it is never used as a rewrite target.
+    let typ_files: Vec<PathBuf> = sources.iter().map(|s| s.path.clone()).collect();
+    let handle_map = SpineScan::flat(&typ_files, &content_dir).handles_by_path();
 
     for source in sources.iter_mut() {
         let parent = source.path.parent().unwrap_or_else(|| Path::new(""));
@@ -1036,6 +1023,7 @@ fn bump_version(doc: &mut toml_edit::DocumentMut, target: &ManifestVersion) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     /// Write every `dirty` source to disk — what `migrate_project` does in one
     /// pass after all due migrations have run. Tests below call a single
