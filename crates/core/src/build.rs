@@ -8,6 +8,7 @@
 use crate::assets::AssetResolver;
 use crate::compile::export_bundle;
 use crate::config::PluginSection;
+use crate::diagnostics::DiagnosticReport;
 use crate::diagnostics::results::CompilationResults;
 use crate::output::OutputConfig;
 use crate::packages::PackageIndex;
@@ -19,6 +20,7 @@ use crate::reticulate::spine::{FormatContext, SpineLayout, SpineScan, VirtualSpi
 use crate::transclude::{ContentTransclusion, ControlAssetKind, ControlAssets};
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
+use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -75,6 +77,10 @@ pub struct Build {
     plugins: Vec<Box<dyn FormatPlugin>>,
     output: OutputConfig,
     font_dirs: Vec<PathBuf>,
+    /// Every diagnostic this build's compiles have reported, waiting for a
+    /// caller to render (see [`Build::take_diagnostics`]). Core writes none of
+    /// them anywhere itself.
+    diagnostics: Mutex<DiagnosticReport>,
     /// Scanned on the first compile and shared by every plugin and pass after
     /// it: the system font scan is slow and identical across them. Lazy, so a
     /// `Build` that is only inspected (the watcher's asset spec) never pays it.
@@ -234,6 +240,7 @@ impl Build {
             output,
             font_dirs,
             fonts: OnceLock::new(),
+            diagnostics: Mutex::new(DiagnosticReport::default()),
             inputs,
             emit_bundle_source: opts.emit_bundle_source,
             metadata_two_pass: opts.metadata_two_pass,
@@ -361,6 +368,15 @@ impl Build {
     ///
     /// Built per build rather than cached on `Build`, so a `watch` session that
     /// keeps one `Build` alive still re-resolves a branch as it advances.
+    /// Take every diagnostic this build has collected so far, leaving it empty.
+    ///
+    /// Warnings reach a caller no other way — only errors travel out through
+    /// [`crate::RheoError`] — and rendering belongs to whoever owns the
+    /// terminal, so a CLI drains this after each run and prints what it finds.
+    pub fn take_diagnostics(&self) -> DiagnosticReport {
+        std::mem::take(&mut self.diagnostics.lock())
+    }
+
     /// This build's font store, scanned on first use and shared thereafter.
     fn fonts(&self) -> Arc<FontStore> {
         Arc::clone(
@@ -716,7 +732,11 @@ impl Build {
                 ..Default::default()
             },
         )?;
-        let bundle = world.compile_bundle()?;
+        // Drained whether or not the compile succeeded: a failed pass's
+        // diagnostics are exactly the ones worth rendering.
+        let compiled = world.compile_bundle();
+        self.diagnostics.lock().extend(world.take_diagnostics());
+        let bundle = compiled?;
         let mut assets: HashSet<String> = HashSet::new();
         let mut meta: HashMap<String, DocumentMeta> = HashMap::new();
         for (path, file) in bundle.files.iter() {

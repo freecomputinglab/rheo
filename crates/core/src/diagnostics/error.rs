@@ -20,17 +20,15 @@ pub enum RheoError {
     #[error("Compilation failed with {count} error(s):\n{errors}")]
     Compilation { count: usize, errors: String },
 
-    /// PDF generation error
-    #[error("PDF generation failed with {count} error(s):\n{errors}")]
-    PdfGeneration { count: usize, errors: String },
-
-    /// HTML generation error
-    #[error("HTML generation failed with {count} error(s):\n{errors}")]
-    HtmlGeneration { count: usize, errors: String },
-
-    /// EPUB export error
-    #[error("EPUB generation failed with {count} error(s):\n{errors}")]
-    EpubGeneration { count: usize, errors: String },
+    /// One output format failed to export. `format` names it as the user knows
+    /// it ("PDF", "HTML", "EPUB") — a per-format variant would differ in
+    /// nothing else.
+    #[error("{format} generation failed with {count} error(s):\n{errors}")]
+    Export {
+        format: &'static str,
+        count: usize,
+        errors: String,
+    },
 
     /// Project configuration detection error
     #[error("Project configuration error: {message}")]
@@ -101,27 +99,12 @@ impl RheoError {
         }
     }
 
-    /// Helper to create an EPUB generation error (single-error convenience).
-    pub fn epub_generation(msg: impl Into<String>) -> Self {
-        RheoError::EpubGeneration {
+    /// A single-message export failure for `format` ("PDF", "HTML", "EPUB").
+    pub fn export(format: &'static str, message: impl Into<String>) -> Self {
+        RheoError::Export {
+            format,
             count: 1,
-            errors: msg.into(),
-        }
-    }
-
-    /// Helper to create a PDF generation error (single-error convenience).
-    pub fn pdf_generation(msg: impl Into<String>) -> Self {
-        RheoError::PdfGeneration {
-            count: 1,
-            errors: msg.into(),
-        }
-    }
-
-    /// Helper to create an HTML generation error (single-error convenience).
-    pub fn html_generation(msg: impl Into<String>) -> Self {
-        RheoError::HtmlGeneration {
-            count: 1,
-            errors: msg.into(),
+            errors: message.into(),
         }
     }
 }

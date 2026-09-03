@@ -27,10 +27,13 @@ typst-syntax = { workspace = true }
 
 # CLI and utilities
 clap = { workspace = true }
+codespan-reporting = { workspace = true }
 walkdir = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+atty = { workspace = true }
 
 # Serialization
 toml_edit = { workspace = true }

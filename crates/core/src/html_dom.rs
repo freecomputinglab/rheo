@@ -89,10 +89,7 @@ impl HtmlDom {
         let dom = html5ever::parse_document(RcDom::default(), ParseOpts::default())
             .from_utf8()
             .read_from(&mut html.as_bytes())
-            .map_err(|e| RheoError::HtmlGeneration {
-                count: 1,
-                errors: format!("failed to parse HTML: {}", e),
-            })?;
+            .map_err(|e| RheoError::export("HTML", format!("failed to parse HTML: {e}")))?;
         Ok(Self { dom })
     }
 
@@ -165,12 +162,9 @@ impl HtmlDom {
             return Ok(());
         }
 
-        let head = self
-            .find_element("head")
-            .ok_or_else(|| RheoError::HtmlGeneration {
-                count: 1,
-                errors: "HTML document does not contain a <head> element".to_string(),
-            })?;
+        let head = self.find_element("head").ok_or_else(|| {
+            RheoError::export("HTML", "HTML document does not contain a <head> element")
+        })?;
 
         for handle in collected {
             head.append_child(Element { handle });
@@ -203,19 +197,16 @@ impl HtmlDom {
     pub fn append_head_fragment(&mut self, fragment_html: &str) -> Result<()> {
         let stub = format!("<!DOCTYPE html><html><head>{fragment_html}</head><body></body></html>");
         let stub_dom = Self::parse(&stub)?;
-        let stub_head = stub_dom
-            .find_element("head")
-            .ok_or_else(|| RheoError::HtmlGeneration {
-                count: 1,
-                errors: "failed to parse head fragment: stub document has no <head>".to_string(),
-            })?;
+        let stub_head = stub_dom.find_element("head").ok_or_else(|| {
+            RheoError::export(
+                "HTML",
+                "failed to parse head fragment: stub document has no <head>",
+            )
+        })?;
 
-        let head = self
-            .find_element("head")
-            .ok_or_else(|| RheoError::HtmlGeneration {
-                count: 1,
-                errors: "HTML document does not contain a <head> element".to_string(),
-            })?;
+        let head = self.find_element("head").ok_or_else(|| {
+            RheoError::export("HTML", "HTML document does not contain a <head> element")
+        })?;
 
         for child in stub_head.take_children() {
             head.append_child(child);
@@ -238,12 +229,9 @@ impl HtmlDom {
         stylesheets: &[&str],
         scripts: &[ScriptRef],
     ) -> Result<()> {
-        let head = self
-            .find_element("head")
-            .ok_or_else(|| RheoError::HtmlGeneration {
-                count: 1,
-                errors: "HTML document does not contain a <head> element".to_string(),
-            })?;
+        let head = self.find_element("head").ok_or_else(|| {
+            RheoError::export("HTML", "HTML document does not contain a <head> element")
+        })?;
 
         let insert_pos = head.last_meta_index().map(|i| i + 1).unwrap_or(0);
 
@@ -309,10 +297,7 @@ impl HtmlDom {
     /// the body before or after injecting head links.
     pub fn body_inner_html(&self) -> Result<String> {
         let body = find_element_by_tag(&self.dom.document, "body").ok_or_else(|| {
-            RheoError::HtmlGeneration {
-                count: 1,
-                errors: "HTML document does not contain a <body> element".to_string(),
-            }
+            RheoError::export("HTML", "HTML document does not contain a <body> element")
         })?;
         inner_html(&body)
     }
@@ -362,18 +347,12 @@ impl HtmlDom {
             Some(sel) => {
                 if let Some(class) = sel.strip_prefix('.') {
                     let el = find_element_by_class(&self.dom.document, class).ok_or_else(|| {
-                        RheoError::HtmlGeneration {
-                            count: 1,
-                            errors: format!("no element with class '{}' found", class),
-                        }
+                        RheoError::export("HTML", format!("no element with class '{class}' found"))
                     })?;
                     inner_html(&el)
                 } else {
                     let el = find_element_by_tag(&self.dom.document, sel).ok_or_else(|| {
-                        RheoError::HtmlGeneration {
-                            count: 1,
-                            errors: format!("no <{}> element found", sel),
-                        }
+                        RheoError::export("HTML", format!("no <{sel}> element found"))
                     })?;
                     inner_html(&el)
                 }
@@ -721,10 +700,7 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
 fn write_html(output: &mut String, args: std::fmt::Arguments) -> Result<()> {
     output
         .write_fmt(args)
-        .map_err(|e| RheoError::HtmlGeneration {
-            count: 1,
-            errors: format!("failed to serialize HTML: {e}"),
-        })
+        .map_err(|e| RheoError::export("HTML", format!("failed to serialize HTML: {e}")))
 }
 
 /// The `../` prefix that makes a build-root asset ref resolve from a page at the

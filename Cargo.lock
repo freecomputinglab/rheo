@@ -2628,7 +2628,9 @@ dependencies = [
 name = "rheo"
 version = "0.6.2"
 dependencies = [
+ "atty",
  "clap",
+ "codespan-reporting",
  "glob",
  "rheo-core",
  "rheo-epub",
@@ -2638,6 +2640,7 @@ dependencies = [
  "toml 1.1.2+spec-1.1.0",
  "toml_edit",
  "tracing",
+ "tracing-subscriber",
  "typst-syntax",
  "walkdir",
 ]
@@ -2646,7 +2649,6 @@ dependencies = [
 name = "rheo-core"
 version = "0.6.2"
 dependencies = [
- "atty",
  "chrono",
  "codespan-reporting",
  "comemo",
@@ -2668,7 +2670,6 @@ dependencies = [
  "thiserror 2.0.18",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
- "tracing-subscriber",
  "typst",
  "typst-bundle",
  "typst-html",

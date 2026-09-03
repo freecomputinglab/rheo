@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 // Re-export logging functionality
-pub use rheo_core::diagnostics::logging;
+pub mod logging;
 
+mod diagnostics;
 mod migrate;
 mod reporter;
 
@@ -571,8 +572,19 @@ pub fn run() -> Result<()> {
 /// reload connected browsers. The initial `--open` push has nothing to reload
 /// yet (the browser is only just being launched), so it passes `reload: false`;
 /// both watch-loop arms want a reload after every successful push.
+/// Run a build and render whatever it reported — the pairing every command
+/// that compiles wants, since core collects diagnostics rather than printing
+/// them.
+fn compile_and_report(build: &Build) -> Result<rheo_core::CompilationResults> {
+    let results = build.run();
+    diagnostics::render(&build.take_diagnostics());
+    results
+}
+
 fn update_dev_server(build: &mut Build, server: &dyn ServerHandle, reload: bool) {
-    match build.compile_for_watch() {
+    let compiled = build.compile_for_watch();
+    diagnostics::render(&build.take_diagnostics());
+    match compiled {
         Ok(Some(vfs)) => {
             let t = std::time::Instant::now();
             server.update_virtual_fs(vfs);
@@ -601,7 +613,7 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
     )?;
 
     // Initial compilation (best-effort; watch continues on failure)
-    if let Err(e) = build.run() {
+    if let Err(e) = compile_and_report(&build) {
         warn!(error = %e, "initial compilation failed");
     }
 
@@ -644,7 +656,7 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
             match event {
                 WatchEvent::FilesChanged => {
                     info!("files changed, recompiling");
-                    if build.run().is_ok()
+                    if compile_and_report(&build).is_ok()
                         && let Some(server) = &server
                     {
                         update_dev_server(&mut build, server.as_ref(), true);
@@ -660,7 +672,7 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
                     ) {
                         Ok(new_build) => {
                             build = new_build;
-                            if build.run().is_ok()
+                            if compile_and_report(&build).is_ok()
                                 && let Some(server) = &server
                             {
                                 update_dev_server(&mut build, server.as_ref(), true);
@@ -683,7 +695,7 @@ fn run_compile(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<
         args.build_options(),
         plugins,
     )?;
-    build.run().map(|_| ())
+    compile_and_report(&build).map(|_| ())
 }
 
 fn run_clean(sub: &ArgMatches) -> Result<()> {

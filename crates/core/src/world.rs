@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::config::RESERVED_INPUT_KEY;
+use crate::diagnostics::DiagnosticReport;
 use crate::packages::PackageResolver;
 use crate::reticulate::VertebraInjection;
 use crate::synth::source_injector::SourceInjector;
@@ -145,6 +146,10 @@ pub struct RheoWorld {
     /// `rheo-context` (its handle and the spine); the epilogue (a metadata
     /// beacon, when emitted for the layout) is appended after it.
     rheo_context: Arc<HashMap<String, VertebraInjection>>,
+    /// Everything this world's compiles have reported, resolved against it and
+    /// waiting to be rendered. Errors also travel out through `RheoError`, but
+    /// warnings have no other way out, and core renders neither.
+    diagnostics: Mutex<DiagnosticReport>,
 }
 
 struct FileSlot {
@@ -184,6 +189,7 @@ impl RheoWorld {
             virtual_main_source: spec.virtual_main_source,
             source_overlay: spec.source_overlay,
             rheo_context: spec.rheo_context,
+            diagnostics: Mutex::new(DiagnosticReport::default()),
         }
     }
 
@@ -321,7 +327,6 @@ impl RheoWorld {
 
     /// Compile the current main file to an HTML document.
     pub fn compile_html(&self) -> crate::Result<typst_html::HtmlDocument> {
-        use crate::diagnostics::unwrap_compilation_result;
         use typst::diag::SourceDiagnostic;
 
         tracing::info!("compiling to HTML");
@@ -330,16 +335,14 @@ impl RheoWorld {
             !w.message
                 .contains("html export is under active development and incomplete")
         };
-        unwrap_compilation_result(Some(self), result, Some(filter))
+        self.finish(result, Some(filter))
     }
 
     /// Compile the current main file to a paged (PDF) document.
     pub fn compile_pdf(&self) -> crate::Result<typst_layout::PagedDocument> {
-        use crate::diagnostics::unwrap_compilation_result;
-
         tracing::info!("compiling to PDF");
         let result = typst::compile::<typst_layout::PagedDocument>(self);
-        unwrap_compilation_result(Some(self), result, None::<fn(&_) -> bool>)
+        self.finish(result, None::<fn(&_) -> bool>)
     }
 
     /// Compile the spine to its per-file outputs.
@@ -347,14 +350,58 @@ impl RheoWorld {
     /// Internally this drives Typst's multi-file bundle target, but that is an
     /// implementation detail: nothing user-facing references "bundle".
     pub fn compile_bundle(&self) -> crate::Result<typst_bundle::Bundle> {
-        use crate::diagnostics::unwrap_compilation_result;
         use typst::diag::SourceDiagnostic;
 
         tracing::debug!("compiling spine via bundle target");
         let result = typst::compile::<typst_bundle::Bundle>(self);
         // Suppress Typst's experimental-feature notice; bundle is internal-only.
         let filter = |w: &SourceDiagnostic| !w.message.contains("bundle export is experimental");
-        unwrap_compilation_result(Some(self), result, Some(filter))
+        self.finish(result, Some(filter))
+    }
+
+    /// Record a compile's diagnostics against this world and unwrap its output.
+    ///
+    /// `filter` keeps the warnings it returns `true` for (Typst's own
+    /// experimental-feature notices are rheo's business, not the author's).
+    /// Errors are recorded too, so a failed compile's diagnostics are as
+    /// renderable as a successful one's — the returned [`crate::RheoError`]
+    /// carries only their messages.
+    fn finish<T, F>(
+        &self,
+        result: typst::diag::Warned<typst::diag::SourceResult<T>>,
+        filter: Option<F>,
+    ) -> crate::Result<T>
+    where
+        F: Fn(&typst::diag::SourceDiagnostic) -> bool,
+    {
+        let warnings: Vec<_> = match filter {
+            Some(keep) => result
+                .warnings
+                .iter()
+                .filter(|w| keep(w))
+                .cloned()
+                .collect(),
+            None => result.warnings.to_vec(),
+        };
+        self.record(&warnings);
+        result.output.map_err(|errors| {
+            self.record(&errors);
+            crate::diagnostics::compilation_error(&errors)
+        })
+    }
+
+    /// Resolve `diagnostics` against this world and add them to its log.
+    fn record(&self, diagnostics: &[typst::diag::SourceDiagnostic]) {
+        if diagnostics.is_empty() {
+            return;
+        }
+        let detached = DiagnosticReport::detach(self, diagnostics);
+        self.diagnostics.lock().extend(detached);
+    }
+
+    /// Take every diagnostic recorded so far, leaving the log empty.
+    pub fn take_diagnostics(&self) -> DiagnosticReport {
+        std::mem::take(&mut self.diagnostics.lock())
     }
 
     /// Create a new world and compile the given file to an HTML document.

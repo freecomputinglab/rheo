@@ -331,11 +331,11 @@ pub fn generate_package(
 
     let package = builder
         .build()
-        .map_err(|e| RheoError::epub_generation(format!("Package validation failed: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("Package validation failed: {}", e)))?;
 
     let xml = package
         .to_xml()
-        .map_err(|e| RheoError::epub_generation(format!("Package XML generation failed: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("Package XML generation failed: {}", e)))?;
 
     Ok(xml)
 }
@@ -358,35 +358,35 @@ pub fn zip_epub(
         "mimetype",
         opts.compression_method(zip::CompressionMethod::Stored),
     )
-    .map_err(|e| RheoError::epub_generation(format!("failed to start mimetype file: {}", e)))?;
+    .map_err(|e| RheoError::export("EPUB", format!("failed to start mimetype file: {}", e)))?;
     zip.write_all(EPUB_MEDIATYPE.as_bytes())
         .map_err(|e| RheoError::io(e, "writing mimetype"))?;
 
     zip.add_directory("META-INF", opts).map_err(|e| {
-        RheoError::epub_generation(format!("failed to add META-INF directory: {}", e))
+        RheoError::export("EPUB", format!("failed to add META-INF directory: {}", e))
     })?;
     zip.start_file("META-INF/container.xml", opts)
-        .map_err(|e| RheoError::epub_generation(format!("failed to start container.xml: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("failed to start container.xml: {}", e)))?;
     zip.write_all(CONTAINER_XML.as_bytes())
         .map_err(|e| RheoError::io(e, "writing container.xml"))?;
 
     zip.add_directory("EPUB", opts)
-        .map_err(|e| RheoError::epub_generation(format!("failed to add EPUB directory: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("failed to add EPUB directory: {}", e)))?;
 
     zip.start_file("EPUB/package.opf", opts)
-        .map_err(|e| RheoError::epub_generation(format!("failed to start package.opf: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("failed to start package.opf: {}", e)))?;
     zip.write_all(package_string.as_bytes())
         .map_err(|e| RheoError::io(e, "writing package.opf"))?;
 
     zip.start_file("EPUB/nav.xhtml", opts)
-        .map_err(|e| RheoError::epub_generation(format!("failed to start nav.xhtml: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("failed to start nav.xhtml: {}", e)))?;
     zip.write_all(nav_xhtml.as_bytes())
         .map_err(|e| RheoError::io(e, "writing nav.xhtml"))?;
 
     for item in items {
         let filename = format!("EPUB/{}", item.href);
         zip.start_file(&filename, opts).map_err(|e| {
-            RheoError::epub_generation(format!("failed to start file {}: {}", filename, e))
+            RheoError::export("EPUB", format!("failed to start file {}: {}", filename, e))
         })?;
         zip.write_all(item.xhtml.as_bytes())
             .map_err(|e| RheoError::io(e, format!("writing {}", filename)))?;
@@ -395,14 +395,14 @@ pub fn zip_epub(
     for (path, bytes) in bundle_assets {
         let filename = format!("EPUB/{}", path);
         zip.start_file(&filename, opts).map_err(|e| {
-            RheoError::epub_generation(format!("failed to start file {}: {}", filename, e))
+            RheoError::export("EPUB", format!("failed to start file {}: {}", filename, e))
         })?;
         zip.write_all(bytes.as_slice())
             .map_err(|e| RheoError::io(e, format!("writing {}", filename)))?;
     }
 
     zip.finish()
-        .map_err(|e| RheoError::epub_generation(format!("failed to finish EPUB zip: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("failed to finish EPUB zip: {}", e)))?;
     Ok(())
 }
 
@@ -471,9 +471,8 @@ impl EpubItem {
             .with_extension("xhtml")
             .display()
             .to_string();
-        let href = IriRefBuf::new(xhtml_name).map_err(|e| {
-            RheoError::epub_generation(format!("invalid href for EPUB item: {}", e))
-        })?;
+        let href = IriRefBuf::new(xhtml_name)
+            .map_err(|e| RheoError::export("EPUB", format!("invalid href for EPUB item: {}", e)))?;
 
         let mut dom = HtmlDom::parse(&html_string)?;
         let outline = Self::outline_from_headings(dom.collect_headings(), &href);
