@@ -21,10 +21,11 @@ use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tracing::{debug, error, info};
 use typst::introspection::Introspector as _;
 use typst::model::Document as _;
+use typst_kit::fonts::FontStore;
 
 /// Inputs for preparing a [`Build`], typically mapped from CLI flags and config.
 ///
@@ -74,6 +75,10 @@ pub struct Build {
     plugins: Vec<Box<dyn FormatPlugin>>,
     output: OutputConfig,
     font_dirs: Vec<PathBuf>,
+    /// Scanned on the first compile and shared by every plugin and pass after
+    /// it: the system font scan is slow and identical across them. Lazy, so a
+    /// `Build` that is only inspected (the watcher's asset spec) never pays it.
+    fonts: OnceLock<Arc<FontStore>>,
     inputs: HashMap<String, String>,
     emit_bundle_source: bool,
     metadata_two_pass: bool,
@@ -133,13 +138,12 @@ struct MarrowContext {
 /// debug bundle source, and the resolved footnote-reset toggle — everything
 /// [`Build::compile_bundle_once`] needs beyond the spine itself.
 ///
-/// `main`/`sources`/`rheo_context` are consumed by clone in `compile_spine`'s
-/// first pass rather than moved, so the originals survive for the gated
-/// second pass.
+/// `sources`/`rheo_context` are shared rather than copied into each world: the
+/// gated second pass compiles the same ones again, as does the next format.
 struct MouldedBundle {
     main: String,
-    sources: HashMap<String, String>,
-    rheo_context: HashMap<String, crate::reticulate::VertebraInjection>,
+    sources: Arc<HashMap<String, String>>,
+    rheo_context: Arc<HashMap<String, crate::reticulate::VertebraInjection>>,
     bundle_source: Option<String>,
     reset_footnotes: bool,
 }
@@ -229,6 +233,7 @@ impl Build {
             plugins,
             output,
             font_dirs,
+            fonts: OnceLock::new(),
             inputs,
             emit_bundle_source: opts.emit_bundle_source,
             metadata_two_pass: opts.metadata_two_pass,
@@ -356,6 +361,14 @@ impl Build {
     ///
     /// Built per build rather than cached on `Build`, so a `watch` session that
     /// keeps one `Build` alive still re-resolves a branch as it advances.
+    /// This build's font store, scanned on first use and shared thereafter.
+    fn fonts(&self) -> Arc<FontStore> {
+        Arc::clone(
+            self.fonts
+                .get_or_init(|| Arc::new(crate::world::scan_fonts(&self.font_dirs))),
+        )
+    }
+
     fn package_resolver(&self) -> Arc<crate::packages::PackageResolver> {
         Arc::new(crate::packages::PackageResolver::new(
             &self.project.config.packages,
@@ -429,6 +442,7 @@ impl Build {
         plugin: &dyn FormatPlugin,
         plugin_section: &PluginSection,
         content_dir: &Path,
+        packages: &PackageIndex,
         resolver: &Arc<crate::packages::PackageResolver>,
     ) -> Result<CompiledSpine> {
         let SpineScanResult {
@@ -436,7 +450,7 @@ impl Build {
             layout,
             title,
         } = self.resolve_spine_scan(plugin, plugin_section, content_dir)?;
-        let marrow_ctx = self.resolve_marrow(plugin, plugin_section, content_dir, resolver)?;
+        let marrow_ctx = self.resolve_marrow(plugin, plugin_section, content_dir, packages)?;
 
         let virtual_spine = self.build_virtual_spine(
             scan,
@@ -450,9 +464,7 @@ impl Build {
 
         let mut pass = self.compile_bundle_once(
             plugin,
-            moulded.main.clone(),
-            moulded.sources.clone(),
-            moulded.rheo_context.clone(),
+            &moulded,
             virtual_spine.global_context(FormatContext {
                 target: marrow_ctx.target,
                 ext: marrow_ctx.ext,
@@ -480,9 +492,7 @@ impl Build {
             if !title_overrides.is_empty() {
                 pass = self.compile_bundle_once(
                     plugin,
-                    moulded.main,
-                    moulded.sources,
-                    moulded.rheo_context,
+                    &moulded,
                     virtual_spine.global_context(FormatContext {
                         target: marrow_ctx.target,
                         ext: marrow_ctx.ext,
@@ -567,7 +577,7 @@ impl Build {
         plugin: &dyn FormatPlugin,
         plugin_section: &PluginSection,
         content_dir: &Path,
-        resolver: &Arc<crate::packages::PackageResolver>,
+        packages: &PackageIndex,
     ) -> Result<MarrowContext> {
         let target = plugin.rheo_target();
         let ext = target.map(|_| plugin.extension());
@@ -578,14 +588,11 @@ impl Build {
             // Behind the same opt-out that governs every other package-driven
             // behaviour.
             if plugin_section.auto_detect_packages.get() {
-                // Through the resolver, not a directory probe: a package from a
-                // repository ref lives at a sha-keyed path no probe matches, so
-                // probing finds no `.marrow.typ` and the package mints none of
-                // the pages it exists to mint — silently, on a green build.
-                let packages = PackageIndex::resolved(
-                    &crate::packages::scan_project_package_imports(&self.project.typ_files),
-                    resolver,
-                );
+                // The index this build already resolved (through the resolver,
+                // not a directory probe: a package from a repository ref lives
+                // at a sha-keyed path no probe matches, so probing finds no
+                // `.marrow.typ` and the package mints none of the pages it
+                // exists to mint — silently, on a green build).
                 marrow.extend(packages.marrow());
                 marrow_prologue.extend(packages.marrow_prologue());
             }
@@ -657,8 +664,8 @@ impl Build {
 
         MouldedBundle {
             main: moulded.main,
-            sources: moulded.sources,
-            rheo_context,
+            sources: Arc::new(moulded.sources),
+            rheo_context: Arc::new(rheo_context),
             bundle_source,
             reset_footnotes,
         }
@@ -691,21 +698,19 @@ impl Build {
     fn compile_bundle_once(
         &self,
         plugin: &dyn FormatPlugin,
-        main: String,
-        sources: HashMap<String, String>,
-        rheo_context: HashMap<String, crate::reticulate::VertebraInjection>,
+        moulded: &MouldedBundle,
         global_context: crate::synth::typst_literal::TypstLiteral,
         resolver: &Arc<crate::packages::PackageResolver>,
     ) -> Result<CompiledBundlePass> {
         let world = RheoWorld::new_for_bundle(
             &self.project.root,
-            main,
+            moulded.main.clone(),
             crate::world::WorldSpec {
-                source_overlay: sources,
-                rheo_context,
+                source_overlay: Arc::clone(&moulded.sources),
+                rheo_context: Arc::clone(&moulded.rheo_context),
                 global_context: Some(global_context),
                 format_name: plugin.rheo_target().map(str::to_string),
-                font_dirs: self.font_dirs.clone(),
+                fonts: Some(self.fonts()),
                 user_inputs: self.inputs.clone(),
                 packages: Some(Arc::clone(resolver)),
                 ..Default::default()
@@ -772,7 +777,8 @@ impl Build {
         package_resolver: &Arc<crate::packages::PackageResolver>,
     ) -> Result<PluginCompile<'a>> {
         let ctx = self.plugin_asset_context(plugin, packages, default_section, true)?;
-        let spine = self.compile_spine(plugin, ctx.section, content_dir, package_resolver)?;
+        let spine =
+            self.compile_spine(plugin, ctx.section, content_dir, packages, package_resolver)?;
         Ok(PluginCompile { ctx, spine })
     }
 

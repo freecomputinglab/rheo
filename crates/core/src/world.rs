@@ -58,6 +58,27 @@ fn build_inputs(
     dict
 }
 
+/// Scan the fonts a compile can use: Typst's embedded faces, the system's
+/// (unless `TYPST_IGNORE_SYSTEM_FONTS` is set), then each configured directory.
+///
+/// The system scan is slow enough to be worth doing once per build rather than
+/// once per world — hence [`WorldSpec::fonts`].
+pub fn scan_fonts(font_dirs: &[PathBuf]) -> FontStore {
+    if !font_dirs.is_empty() {
+        tracing::info!(dirs = ?font_dirs, "loading fonts from {} additional directories", font_dirs.len());
+    }
+    let include_system_fonts = std::env::var("TYPST_IGNORE_SYSTEM_FONTS").is_err();
+    let mut fonts = FontStore::new();
+    fonts.extend(typst_kit::fonts::embedded());
+    if include_system_fonts {
+        fonts.extend(typst_kit::fonts::system());
+    }
+    for dir in font_dirs {
+        fonts.extend(typst_kit::fonts::scan(dir));
+    }
+    fonts
+}
+
 /// Everything a [`RheoWorld`] needs beyond its root and its main file.
 ///
 /// Every field defaults to "unset", so a caller sets only what it means and
@@ -72,18 +93,24 @@ pub struct WorldSpec {
     /// In-memory source served for the main file instead of reading from disk.
     pub virtual_main_source: Option<String>,
     /// Per-vertebra rewritten sources from the Mould stage, keyed by
-    /// project-relative include path.
-    pub source_overlay: HashMap<String, String>,
-    /// Per-vertebra prelude/epilogue injections, keyed the same way.
-    pub rheo_context: HashMap<String, VertebraInjection>,
+    /// project-relative include path. Shared rather than copied: one build
+    /// compiles the same overlay once per format, and again on a second pass.
+    pub source_overlay: Arc<HashMap<String, String>>,
+    /// Per-vertebra prelude/epilogue injections, keyed the same way and shared
+    /// for the same reason.
+    pub rheo_context: Arc<HashMap<String, VertebraInjection>>,
     /// The file-independent context seeded onto `sys.inputs.rheo-context`.
     pub global_context: Option<TypstLiteral>,
     /// Project-supplied `sys.inputs` keys, from `rheo.toml [inputs]` and
     /// `--input KEY=VALUE`. Values are always strings. A key equal to
     /// [`RESERVED_INPUT_KEY`] is ignored rather than honoured.
     pub user_inputs: HashMap<String, String>,
-    /// Extra font directories to scan.
+    /// Extra font directories to scan. Ignored when `fonts` is set — that store
+    /// was scanned with these directories already.
     pub font_dirs: Vec<PathBuf>,
+    /// A font store scanned once and shared across a build's worlds. `None`
+    /// scans one for this world alone.
+    pub fonts: Option<Arc<FontStore>>,
     /// The per-build package resolver. `None` builds a default one, which routes
     /// exactly as rheo did before namespaces were configurable.
     pub packages: Option<Arc<PackageResolver>>,
@@ -94,8 +121,10 @@ pub struct RheoWorld {
     root: PathBuf,
     main: FileId,
     library: LazyHash<Library>,
-    book: LazyHash<FontBook>,
-    font_store: FontStore,
+    /// Shared with every other world of the same build: scanning the system's
+    /// fonts is the expensive part of building one, and the result is identical
+    /// across a build's plugins and passes.
+    fonts: Arc<FontStore>,
     packages: Arc<PackageResolver>,
     slots: Mutex<HashMap<FileId, FileSlot>>,
     /// Output format name for polyfill injection.
@@ -109,13 +138,13 @@ pub struct RheoWorld {
     /// Per-vertebra source overlay from the Mould stage, keyed by project-relative
     /// include path (e.g. `content/intro.typ`). When an included file matches, the
     /// world serves the rewritten source instead of reading it from disk.
-    source_overlay: HashMap<String, String>,
+    source_overlay: Arc<HashMap<String, String>>,
     /// Per-vertebra Typst injections (prelude + epilogue), keyed by
     /// project-relative include path. The prelude is prepended to each
     /// matching vertebra's served source so authored Typst can read
     /// `rheo-context` (its handle and the spine); the epilogue (a metadata
     /// beacon, when emitted for the layout) is appended after it.
-    rheo_context: HashMap<String, VertebraInjection>,
+    rheo_context: Arc<HashMap<String, VertebraInjection>>,
 }
 
 struct FileSlot {
@@ -135,14 +164,15 @@ impl RheoWorld {
             ))
             .build();
 
-        let font_store = Self::init_resources(&spec.font_dirs);
-
         Self {
             root,
             main,
-            book: font_store.book().clone(),
             library: LazyHash::new(library),
-            font_store,
+            // A build that compiles several formats scans once and passes the
+            // store in; a lone world scans for itself.
+            fonts: spec
+                .fonts
+                .unwrap_or_else(|| Arc::new(scan_fonts(&spec.font_dirs))),
             // A caller that built one per build passes it in; otherwise a
             // default resolver reproduces today's routing exactly.
             packages: spec
@@ -201,22 +231,6 @@ impl RheoWorld {
                 ..spec
             },
         ))
-    }
-
-    fn init_resources(font_dirs: &[PathBuf]) -> FontStore {
-        if !font_dirs.is_empty() {
-            tracing::info!(dirs = ?font_dirs, "loading fonts from {} additional directories", font_dirs.len());
-        }
-        let include_system_fonts = std::env::var("TYPST_IGNORE_SYSTEM_FONTS").is_err();
-        let mut font_store = FontStore::new();
-        font_store.extend(typst_kit::fonts::embedded());
-        if include_system_fonts {
-            font_store.extend(typst_kit::fonts::system());
-        }
-        for dir in font_dirs {
-            font_store.extend(typst_kit::fonts::scan(dir));
-        }
-        font_store
     }
 
     /// Reset the file cache for incremental compilation.
@@ -394,7 +408,7 @@ impl World for RheoWorld {
     }
 
     fn book(&self) -> &LazyHash<FontBook> {
-        &self.book
+        self.fonts.book()
     }
 
     fn main(&self) -> FileId {
@@ -467,7 +481,7 @@ impl World for RheoWorld {
     }
 
     fn font(&self, index: usize) -> Option<Font> {
-        self.font_store.font(index)
+        self.fonts.font(index)
     }
 
     fn today(&self, offset: Option<Duration>) -> Option<Datetime> {
@@ -557,7 +571,7 @@ mod tests {
             root,
             "#document(\"intro.html\", format: \"html\")[]".to_string(),
             WorldSpec {
-                source_overlay,
+                source_overlay: Arc::new(source_overlay),
                 format_name: Some("html".to_string()),
                 ..Default::default()
             },
@@ -594,8 +608,8 @@ mod tests {
             root,
             "#document(\"intro.html\", format: \"html\")[]".to_string(),
             WorldSpec {
-                source_overlay,
-                rheo_context,
+                source_overlay: Arc::new(source_overlay),
+                rheo_context: Arc::new(rheo_context),
                 format_name: Some("html".to_string()),
                 ..Default::default()
             },
@@ -633,8 +647,8 @@ mod tests {
             root,
             "#document(\"intro.html\", format: \"html\")[]".to_string(),
             WorldSpec {
-                source_overlay,
-                rheo_context,
+                source_overlay: Arc::new(source_overlay),
+                rheo_context: Arc::new(rheo_context),
                 format_name: Some("html".to_string()),
                 ..Default::default()
             },
@@ -832,8 +846,8 @@ mod tests {
             root,
             main,
             WorldSpec {
-                source_overlay,
-                rheo_context,
+                source_overlay: Arc::new(source_overlay),
+                rheo_context: Arc::new(rheo_context),
                 format_name: Some("html".to_string()),
                 ..Default::default()
             },
@@ -957,8 +971,8 @@ mod tests {
             root,
             moulded.main,
             WorldSpec {
-                source_overlay: moulded.sources,
-                rheo_context,
+                source_overlay: Arc::new(moulded.sources),
+                rheo_context: Arc::new(rheo_context),
                 global_context: Some(global_context),
                 format_name: Some("html".to_string()),
                 ..Default::default()
@@ -1014,8 +1028,8 @@ mod tests {
                 root,
                 moulded.main,
                 WorldSpec {
-                    source_overlay: moulded.sources,
-                    rheo_context: spine.vertebra_injections(),
+                    source_overlay: Arc::new(moulded.sources),
+                    rheo_context: Arc::new(spine.vertebra_injections()),
                     global_context: Some(spine.global_context(
                         crate::reticulate::spine::FormatContext {
                             target: Some("html"),
