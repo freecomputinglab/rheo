@@ -49,8 +49,8 @@
 
 use crate::reporter::Reporter;
 use rheo_core::build::resolve_effective_content_dir;
-use rheo_core::config::RETIRED_KEYS;
 use rheo_core::config::manifest_version::ManifestVersion;
+use rheo_core::config::{RETIRED_BINDINGS, RETIRED_KEYS};
 use rheo_core::parser::{SyntaxSite, WalkCtx};
 use rheo_core::project::ProjectConfig;
 use rheo_core::reticulate::SpineScan;
@@ -64,27 +64,6 @@ use tracing::{info, warn};
 use typst_syntax::ast::AstNode;
 use typst_syntax::{Source as TypstSource, SyntaxKind, SyntaxNode, ast};
 use walkdir::WalkDir;
-
-/// `#let rheo-<key>` bindings retired alongside the Rust feed generator, and
-/// what replaces each.
-const REMOVED_VAR_BINDINGS: &[(&str, &str)] = &[
-    (
-        "rheo-feed-title",
-        "moved to @rheo/feeds's Typst configuration",
-    ),
-    (
-        "rheo-feed-updated",
-        "moved to @rheo/feeds's Typst configuration",
-    ),
-    (
-        "rheo-feed-exclude",
-        "moved to @rheo/feeds's Typst configuration",
-    ),
-    (
-        "rheo-author",
-        "use `#set document(author: \"...\")` instead",
-    ),
-];
 
 /// One `.typ` file's source, loaded once per `migrate` run and shared across
 /// every migration that reads or rewrites it — so a project's sources are
@@ -167,6 +146,12 @@ const MIGRATIONS: &[Migration] = &[
         plan: "  - convert retired [spine] vertebrae glob lists to [spine] exclude",
         heading: "\nSpine config:",
         run: migrate_vertebrae_to_exclude,
+    },
+    Migration {
+        since: "0.5.0",
+        plan: "  - drop retired [spine] keys that have no replacement (e.g. merge)",
+        heading: "\nRetired spine keys:",
+        run: drop_retired_spine_keys,
     },
     Migration {
         since: "0.5.1",
@@ -676,7 +661,7 @@ fn run_context_references(
     migrate_context_references(sources, reporter)
 }
 
-/// A `#let <name> = ...` binding whose `<name>` is one of `REMOVED_VAR_BINDINGS`.
+/// A `#let <name> = ...` binding whose `<name>` is one of [`RETIRED_BINDINGS`].
 struct RemovedBindingSite {
     name: &'static str,
     replacement: &'static str,
@@ -697,17 +682,16 @@ impl SyntaxSite for RemovedBindingSite {
         let Some(binding) = node.cast::<ast::LetBinding>() else {
             return;
         };
-        let Some((name, replacement)) = binding.kind().bindings().into_iter().find_map(|ident| {
-            REMOVED_VAR_BINDINGS
+        let Some(retired) = binding.kind().bindings().into_iter().find_map(|ident| {
+            RETIRED_BINDINGS
                 .iter()
-                .find(|(n, _)| *n == ident.as_str())
-                .copied()
+                .find(|binding| binding.name == ident.as_str())
         }) else {
             return;
         };
         out.push(RemovedBindingSite {
-            name,
-            replacement,
+            name: retired.name,
+            replacement: retired.replacement,
             range: offset..offset + node.len(),
         });
     }
@@ -814,6 +798,58 @@ fn expand_vertebrae_patterns(patterns: &[String], content_dir: &Path) -> HashSet
         }
     }
     matched
+}
+
+/// Drop every retired `[spine]`/`[<plugin>.spine]` key that no migration can
+/// convert, reporting each one — `merge` is the case today: PDF combines its
+/// spine and HTML/EPUB paginate, so there is nothing to convert it into, and
+/// left in place it only earns a warning on every build. `vertebrae` is skipped
+/// here because [`migrate_vertebrae_to_exclude`] turns it into an `exclude`.
+fn drop_retired_spine_keys(
+    project: &ProjectConfig,
+    _sources: &mut [Source],
+    doc: &mut toml_edit::DocumentMut,
+    reporter: &mut Reporter,
+) -> Result<()> {
+    let mut sites: Vec<(Option<String>, &Spine)> = Vec::new();
+    if let Some(spine) = &project.config.spine {
+        sites.push((None, spine));
+    }
+    for (name, section) in &project.config.plugin_sections {
+        if let Some(spine) = &section.spine {
+            sites.push((Some(name.clone()), spine));
+        }
+    }
+    // HashMap iteration order varies; report deterministically.
+    sites.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (plugin, spine) in sites {
+        let label = match &plugin {
+            Some(name) => format!("{name}.spine"),
+            None => "spine".to_string(),
+        };
+        for retired in RETIRED_KEYS
+            .iter()
+            .filter(|r| r.table == "[spine]" && r.key != "vertebrae")
+        {
+            if !spine.extra.contains_key(retired.key) {
+                continue;
+            }
+            reporter.retired(
+                &format!("rheo.toml [{label}]"),
+                retired.key,
+                retired.replacement,
+            );
+            let item = match &plugin {
+                Some(name) => &mut doc[name.as_str()]["spine"],
+                None => &mut doc["spine"],
+            };
+            if let Some(table) = item.as_table_like_mut() {
+                table.remove(retired.key);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Convert a retired `vertebrae` inclusion-filter glob list into an equivalent
@@ -1327,6 +1363,45 @@ mod tests {
         // The link-only file reads no binding value, so it is left untouched.
         let link_only = fs::read_to_string(content.join("link_only.typ")).unwrap();
         assert!(!link_only.contains(CONTEXT_SHIM));
+    }
+
+    /// `merge` has no replacement — the migration drops it and says so, so a
+    /// project carrying it stops earning a warning on every build.
+    #[test]
+    fn retired_merge_key_is_reported_and_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let toml_path = root.join("rheo.toml");
+        fs::write(
+            &toml_path,
+            "version = \"0.3.0\"\n\n[spine]\nmerge = false\n\n[pdf.spine]\ntitle = \"Book\"\nmerge = true\n",
+        )
+        .unwrap();
+
+        let config = rheo_core::RheoConfig::load_from_path(&toml_path).unwrap();
+        let project = ProjectConfig {
+            root: root.to_path_buf(),
+            name: "test".into(),
+            config,
+            typ_files: vec![],
+            mode: rheo_core::project::ProjectMode::Directory,
+            config_path: Some(toml_path.clone()),
+        };
+
+        let mut doc = load_toml_doc(&toml_path).unwrap();
+        let (mut reporter, captured) = Reporter::capture();
+        drop_retired_spine_keys(&project, &mut [], &mut doc, &mut reporter).unwrap();
+
+        let report = captured.text();
+        assert!(report.contains("rheo.toml [spine]: `merge`"), "{report}");
+        assert!(
+            report.contains("rheo.toml [pdf.spine]: `merge`"),
+            "{report}"
+        );
+
+        let updated = doc.to_string();
+        assert!(!updated.contains("merge"), "{updated}");
+        assert!(updated.contains("title = \"Book\""), "{updated}");
     }
 
     #[test]

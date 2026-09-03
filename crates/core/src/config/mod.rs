@@ -11,7 +11,7 @@ pub mod retired;
 pub use manifest_version::ManifestVersion;
 pub use packages::{GitRef, NamespaceSource, PathSource, ReleasesSource, RepoSource};
 use retired::warn_on_retired_keys;
-pub use retired::{RETIRED_KEYS, RetiredKey};
+pub use retired::{RETIRED_BINDINGS, RETIRED_KEYS, RetiredBinding, RetiredKey};
 
 /// The one `sys.inputs` key rheo owns. A project may not set it from
 /// `--input`/`[inputs]`: a forged spine or target would be indistinguishable
