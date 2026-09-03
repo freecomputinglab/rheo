@@ -16,8 +16,6 @@ pub mod transclude;
 pub mod util;
 pub mod world;
 
-// Note: Cli is now in rheo crate, not exported here
-
 // === Core types (already exported) ===
 pub use config::ManifestVersion;
 pub use config::RheoConfig;

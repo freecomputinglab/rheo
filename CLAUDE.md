@@ -176,13 +176,17 @@ A package needing only the shared spine can read `sys.inputs.rheo-context.spine`
 
 **`[spine] exclude`:** glob patterns (relative to `content_dir`) for files/folders to omit from the scan.
 
+**`[spine] include`:** an ordered glob list that replaces this spine's scan order outright, dropping any leaf it matches no pattern for.
+
 **`[[spine.section]]`:** groups matched files under a virtual directory without moving them on disk (e.g. `include = ["ch-*.typ"]` under `name = "chapters"` gives those files handles like `<chapters:ch-1>`). Nests via `[[spine.section.section]]`.
 
-**Precedence — field-by-field, not whole-table:** a per-format `[<format>.spine]` table can set `title`/`exclude`/`section` independently; any field it leaves unset falls back to the matching field on the global `[spine]` table (not the whole table at once). For example, `[pdf.spine] title = "My Book"` with no `exclude` of its own still inherits the global `[spine] exclude` — it does *not* silently drop it just because `[pdf.spine]` exists.
+`include` is a flat reorder and `section` nests into virtual directories, so one table sets one or the other: both at once is a parse error, since the two knobs have no combined meaning.
+
+**Precedence — field-by-field, not whole-table:** a per-format `[<format>.spine]` table can set `title`, `exclude` and its layering (`include` or `section`) independently; any field it leaves unset falls back to the matching field on the global `[spine]` table (not the whole table at once). Layering falls back as one unit — a per-format `include` replaces a global `section`, rather than joining it. For example, `[pdf.spine] title = "My Book"` with no `exclude` of its own still inherits the global `[spine] exclude` — it does *not* silently drop it just because `[pdf.spine]` exists.
 
 The retired `vertebrae` glob-list key (pre-0.5.0) is no longer read; `rheo migrate` converts an old inclusion-filter `vertebrae` list into an equivalent `exclude`.
 
-PDF combines its spine into a single document by default; HTML and EPUB always produce per-page outputs. A `merge` key left in an old `rheo.toml` is silently ignored.
+PDF combines its spine into a single document by default; HTML and EPUB always produce per-page outputs. A `merge` key left in an old `rheo.toml` has no effect and warns on every build; `rheo migrate` reports and removes it.
 
 ## Marrow-authored derived artifacts
 
