@@ -112,7 +112,12 @@ serde-xml-rs = "0.8.2"
 # comemo       = { git = "https://github.com/typst/comemo" }
 
 [profile.release]
-opt-level = 1
+# Measured, not assumed (rheo-faqm.16). On a 60-vertebra, ~45k-word project
+# built to HTML+PDF+EPUB, opt-level 3 against opt-level 1: 1.92s vs 2.51s per
+# compile, and a 54MiB vs 63MiB binary, for 3m30s vs 2m16s of release build
+# time. rheo is a CPU-bound Typst compiler distributed as a release binary, so
+# every user's compile pays for a slower one; CI pays the build time once.
+opt-level = 3
 lto = true
 codegen-units = 1
 
