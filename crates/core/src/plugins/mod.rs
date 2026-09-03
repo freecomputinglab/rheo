@@ -1,5 +1,5 @@
 use crate::config::PluginSection;
-use crate::config::project::ProjectConfig;
+use crate::project::ProjectConfig;
 use crate::reticulate::spine::{SpineLayout, VirtualSpine};
 use crate::transclude::ControlAssets;
 use std::collections::HashMap;

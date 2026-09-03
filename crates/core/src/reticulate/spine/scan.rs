@@ -56,6 +56,33 @@ impl SpineScan {
         path.extension().and_then(|e| e.to_str()) == Some(&TYP_EXT[1..])
     }
 
+    /// Every `.typ` file under `dir`, recursively, in the same sorted pre-order
+    /// the spine scan walks. A missing directory yields nothing.
+    ///
+    /// Deliberately unfiltered — no `exclude`, no marrow skip, no sections: it
+    /// answers "what Typst does this project contain" (which packages it
+    /// imports, where its content root is), not "what belongs to the spine".
+    /// One walker for both questions, so they cannot drift apart.
+    pub fn typ_files(dir: &Path) -> Result<Vec<PathBuf>> {
+        let mut files = Vec::new();
+        if dir.is_dir() {
+            Self::collect_typ_files(dir, &mut files)?;
+        }
+        Ok(files)
+    }
+
+    fn collect_typ_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+        for entry in Self::read_sorted_entries(dir)? {
+            let path = entry.path();
+            if path.is_dir() {
+                Self::collect_typ_files(&path, files)?;
+            } else if Self::is_typ_file(&path) {
+                files.push(path);
+            }
+        }
+        Ok(())
+    }
+
     /// Register `path` as the next vertebra in `files` and build its leaf
     /// [`SpineNode`] (segment derived from the file stem, no children).
     fn push_typ_leaf(path: &Path, files: &mut Vec<PathBuf>) -> SpineNode {
@@ -201,6 +228,38 @@ mod tests {
     use super::*;
     use crate::MARROW_FILE;
     use crate::reticulate::spine::{create_test_dir_with_files, find_node};
+
+    /// The project-wide enumeration answers a different question from the spine
+    /// scan: it keeps the marrow file and anything `exclude` would drop, because
+    /// a package imported from one of those still contributes assets.
+    #[test]
+    fn typ_files_are_sorted_and_unfiltered() {
+        let temp = create_test_dir_with_files(&[
+            "intro.typ",
+            "drafts/wip.typ",
+            "guide/a.typ",
+            MARROW_FILE,
+            "notes.md",
+        ]);
+        let root = temp.path();
+
+        let files = SpineScan::typ_files(root).unwrap();
+        let rel: Vec<String> = files
+            .iter()
+            .map(|f| to_forward_slash(f.strip_prefix(root).unwrap()))
+            .collect();
+        assert_eq!(
+            rel,
+            vec![MARROW_FILE, "drafts/wip.typ", "guide/a.typ", "intro.typ"]
+        );
+    }
+
+    #[test]
+    fn typ_files_of_missing_dir_is_empty() {
+        let temp = create_test_dir_with_files(&["a.typ"]);
+        let files = SpineScan::typ_files(&temp.path().join("nope")).unwrap();
+        assert!(files.is_empty());
+    }
 
     #[test]
     fn scan_nested_tree_with_landing_pages() {

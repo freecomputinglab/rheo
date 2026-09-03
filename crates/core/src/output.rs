@@ -1,8 +1,13 @@
+//! Where a build writes, and how it is cleared. Not part of [`crate::config`]:
+//! deciding the output layout from config values is one thing, creating and
+//! removing directories on disk is another, and only this module does the
+//! latter.
+
 use crate::{Result, RheoError};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Output directory configuration for a project
+/// Output directory layout for one build.
 #[derive(Debug)]
 pub struct OutputConfig {
     /// Base build directory (e.g. project_root/build)

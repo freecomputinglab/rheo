@@ -8,11 +8,11 @@
 use crate::assets::AssetResolver;
 use crate::compile::export_bundle;
 use crate::config::PluginSection;
-use crate::config::output::OutputConfig;
-use crate::config::project::{ProjectConfig, ProjectMode};
 use crate::diagnostics::results::CompilationResults;
+use crate::output::OutputConfig;
 use crate::packages::PackageIndex;
 use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, TypstFormat, spine_layout_for};
+use crate::project::{ProjectConfig, ProjectMode};
 use crate::reticulate::document_meta::DocumentMeta;
 use crate::reticulate::handle::Handle;
 use crate::reticulate::spine::{FormatContext, SpineLayout, SpineScan, VirtualSpine};
@@ -1584,7 +1584,7 @@ mod tests {
     /// filename-derived fallback the pre-compile AST scan is stuck with.
     #[test]
     fn test_run_resolves_title_from_imported_template_via_document_info() {
-        use crate::config::project::ProjectConfig;
+        use crate::project::ProjectConfig;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
@@ -1627,7 +1627,7 @@ mod tests {
     /// fragment — the case the old per-format gate skipped entirely.
     #[test]
     fn test_compile_for_watch_hoists_rheo_head_without_assets() {
-        use crate::config::project::ProjectConfig;
+        use crate::project::ProjectConfig;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
@@ -1686,8 +1686,8 @@ mod tests {
     /// gated on whether the package happens to declare an asset block.
     #[test]
     fn test_watch_asset_spec_watches_path_backed_package_without_assets() {
-        use crate::config::project::ProjectConfig;
         use crate::config::{NamespaceSource, PathSource};
+        use crate::project::ProjectConfig;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
@@ -1755,8 +1755,8 @@ mod tests {
     /// injection and hoist both run in the same pass.
     #[test]
     fn test_compile_for_watch_hoists_rheo_head_with_css() {
-        use crate::config::project::ProjectConfig;
         use crate::plugins::{AssetConfig, EmbeddedDefault};
+        use crate::project::ProjectConfig;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();

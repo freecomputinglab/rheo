@@ -179,7 +179,7 @@ mod tests {
     /// to a per-page `<rheo-head>` wrapper.
     #[test]
     fn test_compile_appends_control_head_fragment_to_every_page() {
-        use rheo_core::config::project::{ProjectConfig, ProjectMode};
+        use rheo_core::project::{ProjectConfig, ProjectMode};
         use rheo_core::reticulate::{SpineLayout, SpineScan, VirtualSpine};
         use rheo_core::{ControlAssets, PluginSection, RheoConfig, TypstFormat};
         use std::collections::HashMap;

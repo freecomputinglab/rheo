@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
 pub mod manifest_version;
-pub mod output;
 pub mod packages;
-pub mod project;
 pub mod retired;
 
 pub use manifest_version::ManifestVersion;

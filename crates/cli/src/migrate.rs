@@ -50,8 +50,8 @@
 use rheo_core::build::resolve_effective_content_dir;
 use rheo_core::config::RETIRED_KEYS;
 use rheo_core::config::manifest_version::ManifestVersion;
-use rheo_core::config::project::ProjectConfig;
 use rheo_core::parser::{SyntaxSite, WalkCtx};
+use rheo_core::project::ProjectConfig;
 use rheo_core::reticulate::{SpineLayout, SpineScan, VirtualSpine};
 use rheo_core::util::path::{canonicalize_path, to_forward_slash};
 use rheo_core::{Result, RheoError, Spine};
@@ -1121,7 +1121,7 @@ mod tests {
                 ..Default::default()
             },
             typ_files: vec![content.join("intro.typ"), content.join("about.typ")],
-            mode: rheo_core::config::project::ProjectMode::Directory,
+            mode: rheo_core::project::ProjectMode::Directory,
             config_path: Some(root.join("rheo.toml")),
         };
         fs::write(
@@ -1169,7 +1169,7 @@ mod tests {
                 ..Default::default()
             },
             typ_files: vec![content.join("intro.typ"), content.join("about.typ")],
-            mode: rheo_core::config::project::ProjectMode::Directory,
+            mode: rheo_core::project::ProjectMode::Directory,
             config_path: Some(root.join("rheo.toml")),
         };
         fs::write(
@@ -1339,7 +1339,7 @@ mod tests {
                 content.join("main.typ"),
                 content.join("lib").join("helper.typ"),
             ],
-            mode: rheo_core::config::project::ProjectMode::Directory,
+            mode: rheo_core::project::ProjectMode::Directory,
             config_path: Some(root.join("rheo.toml")),
         };
         let toml_path = root.join("rheo.toml");
@@ -1395,7 +1395,7 @@ mod tests {
                 ..Default::default()
             },
             typ_files: vec![content.join("main.typ")],
-            mode: rheo_core::config::project::ProjectMode::Directory,
+            mode: rheo_core::project::ProjectMode::Directory,
             config_path: Some(root.join("rheo.toml")),
         };
         let toml_path = root.join("rheo.toml");
@@ -1436,7 +1436,7 @@ mod tests {
                 ..Default::default()
             },
             typ_files: vec![content.join("intro.typ"), sub.join("intro.typ")],
-            mode: rheo_core::config::project::ProjectMode::Directory,
+            mode: rheo_core::project::ProjectMode::Directory,
             config_path: Some(root.join("rheo.toml")),
         };
         fs::write(
@@ -1479,7 +1479,7 @@ mod tests {
                 ..Default::default()
             },
             typ_files: vec![content.join("intro.typ"), sub.join("intro.typ")],
-            mode: rheo_core::config::project::ProjectMode::Directory,
+            mode: rheo_core::project::ProjectMode::Directory,
             config_path: Some(root.join("rheo.toml")),
         };
         fs::write(

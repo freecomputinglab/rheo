@@ -1,7 +1,7 @@
 use crate::{
     Result,
     assets::CopyGlobs,
-    config::project::{ProjectConfig, ProjectMode},
+    project::{ProjectConfig, ProjectMode},
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
