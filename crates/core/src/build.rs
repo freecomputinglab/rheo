@@ -936,12 +936,11 @@ impl Build {
             }
 
             let text = String::from_utf8_lossy(&bytes);
-            let page = crate::plugins::ServedPage {
-                path: &path_str,
-                text: &text,
+            let page = crate::plugins::PageAssets {
                 assets: &ctx.resolved,
                 head_fragment: control_head_fragment.as_deref(),
-            };
+            }
+            .page(&path_str, &text);
             match live_reload.rewrite_page(&page)? {
                 Some(rewritten) => injected.insert(
                     vpath,
@@ -1078,13 +1077,17 @@ impl Build {
             let resolver = AssetResolver::new(&self.project.root, &prepared.output_dir);
 
             let ctx = PluginContext {
-                project: &self.project,
                 output_dir: &prepared.output_dir,
-                spine: &prepared.spine,
                 config: prepared.section,
-                assets: &prepared.resolved,
-                bundle_assets: &prepared.asset_files,
-                control: &prepared.control,
+                page: crate::plugins::PageAssets {
+                    assets: &prepared.resolved,
+                    head_fragment: prepared.control.head_fragment.as_deref(),
+                },
+                bundle: crate::plugins::BundleInputs {
+                    project: &self.project,
+                    spine: &prepared.spine,
+                    assets: &prepared.asset_files,
+                },
             };
 
             // Assets are the lowest precedence tier — asset() < spine documents

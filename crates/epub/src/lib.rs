@@ -75,7 +75,7 @@ impl FormatPlugin for EpubPlugin {
         // arrives in whatever order the compiled bundle's file map yields, which
         // happens to be spine order today but is an undocumented property of a
         // dependency — and reading order is not something to leave to that.
-        let ordered = spine_order(ctx.spine, outputs);
+        let ordered = spine_order(ctx.bundle.spine, outputs);
 
         // Language and author describe the publication, so they come from its
         // FIRST spine vertebra rather than from whichever output came first.
@@ -103,21 +103,21 @@ impl FormatPlugin for EpubPlugin {
         let nav_xhtml = generate_nav_xhtml(&mut items, &language)?;
         let package_string = generate_package(
             &items,
-            ctx.bundle_assets,
-            ctx.spine.title.as_deref(),
+            ctx.bundle.assets,
+            ctx.bundle.spine.title.as_deref(),
             identifier.as_deref(),
             date.as_ref(),
             &language,
             author.as_deref(),
         )?;
-        let epub_name = format!("{}.epub", ctx.project.name);
+        let epub_name = format!("{}.epub", ctx.bundle.project.name);
         let epub_path = ctx.output_dir.join(&epub_name);
         zip_epub(
             &epub_path,
             package_string,
             nav_xhtml,
             &items,
-            ctx.bundle_assets,
+            ctx.bundle.assets,
         )?;
 
         info!(output = %epub_path.display(), "successfully generated EPUB");

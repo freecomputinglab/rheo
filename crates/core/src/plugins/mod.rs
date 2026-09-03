@@ -1,7 +1,6 @@
 use crate::config::PluginSection;
 use crate::project::ProjectConfig;
 use crate::reticulate::spine::{SpineLayout, VirtualSpine};
-use crate::transclude::ControlAssets;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::info;
@@ -42,7 +41,7 @@ pub struct EmbeddedDefault {
 /// Declares an additional non-Typst input file needed from the project directory.
 #[derive(Debug, Clone)]
 pub struct AssetConfig {
-    /// Key used to retrieve this input from PluginContext::inputs
+    /// Key this asset is retrieved by from [`PageAssets::assets`]
     pub name: &'static str,
     /// Default path relative to the project root (not the content directory) where the file is
     /// expected.
@@ -170,21 +169,64 @@ pub enum SpineLayoutKind {
     SingleCombined,
 }
 
-/// Context passed to plugin.compile() for each compilation unit.
-pub struct PluginContext<'a> {
+/// What a format needs to finish one of its pages: the assets core resolved for
+/// this build, and the bundle's site-wide `<head>` contribution. A format that
+/// writes plain files (PDF) reads neither.
+#[derive(Clone, Copy)]
+pub struct PageAssets<'a> {
+    /// Resolved assets declared by [`FormatPlugin::assets`], keyed by
+    /// [`AssetConfig::name`]. Paths are relative to the plugin's output
+    /// directory; core has already copied each one there.
+    pub assets: &'a HashMap<&'static str, Vec<Asset>>,
+    /// The `.rheo/head.html` control asset's fragment, when the bundle minted
+    /// one — content for *every* page's `<head>`, as opposed to a single page's
+    /// own `<rheo-head>` wrapper.
+    pub head_fragment: Option<&'a str>,
+}
+
+impl<'a> PageAssets<'a> {
+    /// One compiled page of this build, ready for [`LiveReload::rewrite_page`].
+    pub fn page(&self, path: &'a str, text: &'a str) -> ServedPage<'a> {
+        ServedPage {
+            path,
+            text,
+            assets: self.assets,
+            head_fragment: self.head_fragment,
+        }
+    }
+}
+
+/// What a format needs to assemble the whole bundle into something other than
+/// loose files — an EPUB's package document, its reading order, its embedded
+/// assets. A format that writes each page as it comes (HTML, PDF) reads none of
+/// it.
+pub struct BundleInputs<'a> {
     pub project: &'a ProjectConfig,
-    /// Plugin output directory (e.g., `build/html/`). Write outputs here.
-    pub output_dir: &'a PathBuf,
-    /// The resolved spine — same tree and flat vertebra list as the Typst-side
-    /// `rheo-context` (`spine`/`spine-flat`), available on the Rust side too,
-    /// plus the resolved combined-document title (`spine.title`, distinct
-    /// from any individual vertebra's own title). `compile()`'s
-    /// `outputs: &[CastVertebra]` parameter is a separate, already-cast view of
-    /// each output's title/date; use `spine` for the tree structure,
-    /// cross-vertebra queries, and the resolved title, `outputs` for
-    /// per-output compiled bytes.
+    /// The resolved spine — the same tree and flat vertebra list as the
+    /// Typst-side `rheo-context` (`spine`/`spine-flat`), plus the resolved
+    /// combined-document title (`spine.title`, distinct from any individual
+    /// vertebra's own title). [`FormatPlugin::compile`]'s
+    /// `outputs: &[CastVertebra]` is a separate, already-cast view of each
+    /// output's own title/date: use `spine` for structure and cross-vertebra
+    /// queries, `outputs` for per-output compiled bytes.
     pub spine: &'a VirtualSpine,
-    /// Full parsed plugin section from rheo.toml (or default if not configured).
+    /// Bundle-emitted `asset()` bytes with no matching spine vertebra (e.g. a
+    /// marrow contribution), keyed by their path relative to the plugin output
+    /// directory. Core writes these as loose files unless
+    /// [`FormatPlugin::embeds_bundle_assets`] returns `true`, in which case the
+    /// plugin places them itself (see that method for why).
+    pub assets: &'a [(String, Bytes)],
+}
+
+/// What core hands [`FormatPlugin::compile`]: where to write, this format's own
+/// configuration, and one bundle per capability — page finishing and
+/// whole-bundle assembly — so a signature stops implying every format reads
+/// everything.
+pub struct PluginContext<'a> {
+    /// Plugin output directory (e.g. `build/html/`). Write outputs here.
+    pub output_dir: &'a PathBuf,
+    /// This format's parsed `rheo.toml` section (or the default when the
+    /// project configures none).
     ///
     /// # Reading format-specific configuration
     ///
@@ -201,26 +243,10 @@ pub struct PluginContext<'a> {
     /// let cfg = ctx.config.parse_extra::<EpubConfig>()?;
     /// ```
     ///
-    /// Unknown keys are ignored, so each plugin only declares the fields it reads.
+    /// Unknown keys are ignored, so each plugin only declares what it reads.
     pub config: &'a PluginSection,
-    /// Resolved additional input files declared by the plugin.
-    ///
-    /// Paths are relative to the plugin's output directory (e.g., `build/html/`).
-    /// The CLI copies each declared input from the project root to the output directory
-    /// before calling `compile()`.
-    pub assets: &'a HashMap<&'static str, Vec<Asset>>,
-    /// Bundle-emitted `asset()` bytes with no matching spine vertebra (e.g. a
-    /// marrow contribution), keyed by their path relative to the plugin output
-    /// directory. Core writes these as loose files in the output directory
-    /// unless [`FormatPlugin::embeds_bundle_assets`] returns `true`, in which
-    /// case the plugin takes over placing them itself (see that method for why).
-    pub bundle_assets: &'a [(String, Bytes)],
-    /// Bundle-root control assets (currently just `.rheo/head.html`) already
-    /// extracted out of `bundle_assets` by core — never written, embedded, or
-    /// served. A plugin that renders a `<head>` element reads
-    /// [`ControlAssets::head_fragment`] to append site-wide head content to
-    /// every page; other plugins can ignore this field entirely.
-    pub control: &'a ControlAssets,
+    pub page: PageAssets<'a>,
+    pub bundle: BundleInputs<'a>,
 }
 
 /// One freshly compiled page, with everything a format needs to finish it
@@ -353,7 +379,7 @@ pub trait FormatPlugin: Send + Sync {
     }
 
     /// Whether this plugin takes over placing bundle-emitted `asset()` bytes
-    /// (`PluginContext::bundle_assets`) into its own output, instead of core
+    /// ([`BundleInputs::assets`]) into its own output, instead of core
     /// writing them as loose files in the output directory.
     ///
     /// Default `false` — most plugins produce a directory of files where a

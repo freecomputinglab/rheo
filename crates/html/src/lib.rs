@@ -115,21 +115,11 @@ impl FormatPlugin for HtmlPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
-        // A bundle-root `.rheo/head.html` control asset (see `ControlAssets`),
-        // if present, contributes to every page's `<head>` rather than just one
-        // page's — read it once up front.
-        let head_fragment = ctx.control.head_fragment.as_deref();
-
         for output in outputs {
             let html_string = output.html_string()?;
-            let page = ServedPage {
-                path: &output.output_path,
-                text: &html_string,
-                assets: ctx.assets,
-                head_fragment,
-            };
             // The same finishing the dev server serves, so `rheo watch` and
             // `rheo compile` never disagree about a page's `<head>`.
+            let page = ctx.page.page(&output.output_path, &html_string);
             let html_string = self.rewrite_page(&page)?.unwrap_or(html_string);
 
             let out_path = ctx.output_dir.join(&output.output_path);
@@ -186,7 +176,7 @@ impl LiveReload for HtmlPlugin {
 mod tests {
     use super::*;
 
-    /// `ctx.control.head_fragment` (populated by `ControlAssets::extract` from
+    /// The site-wide head fragment (populated by `ControlAssets::extract` from
     /// a bundle-root `.rheo/head.html` control asset, before the plugin ever
     /// sees it) must land in the `<head>` of *every* compiled page, not just
     /// one — that's the whole point of a site-wide control asset, as opposed
@@ -240,13 +230,17 @@ mod tests {
             head_fragment: Some(r#"<meta name="site-wide" content="yes">"#.to_string()),
         };
         let ctx = PluginContext {
-            project: &project,
             output_dir: &output_dir,
-            spine: &virtual_spine,
             config: &section,
-            assets: &assets,
-            bundle_assets: &bundle_assets,
-            control: &control,
+            page: rheo_core::PageAssets {
+                assets: &assets,
+                head_fragment: control.head_fragment.as_deref(),
+            },
+            bundle: rheo_core::BundleInputs {
+                project: &project,
+                spine: &virtual_spine,
+                assets: &bundle_assets,
+            },
         };
 
         HtmlPlugin.compile(ctx, &outputs).expect("compile");
