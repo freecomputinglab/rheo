@@ -790,9 +790,14 @@ impl Build {
             return Err(RheoError::project_config("no .typ files found in project"));
         }
 
-        let html_plugin = match self.plugins.iter().find(|p| p.name() == "html") {
-            Some(p) => p,
-            None => return Ok(None),
+        // Whichever selected format declares the capability, not whichever is
+        // called "html": a format wanting a dev server implements the trait.
+        let Some((serving_plugin, live_reload)) = self
+            .plugins
+            .iter()
+            .find_map(|p| p.live_reload().map(|lr| (p.as_ref(), lr)))
+        else {
+            return Ok(None);
         };
 
         let default_section = PluginSection::default();
@@ -807,7 +812,7 @@ impl Build {
             .project
             .config
             .plugin_sections
-            .get(html_plugin.name())
+            .get(serving_plugin.name())
             .unwrap_or(&default_section);
         let package_resolver = self.package_resolver();
         let packages = prewarm_and_resolve(
@@ -825,33 +830,12 @@ impl Build {
             ctx,
             spine: compiled,
         } = self.compile_plugin_spine(
-            html_plugin.as_ref(),
+            serving_plugin,
             &packages,
             &default_section,
             &content_dir,
             &package_resolver,
         )?;
-        let asset_paths = |name| {
-            ctx.resolved
-                .get(name)
-                .map(|v: &Vec<crate::plugins::Asset>| {
-                    v.iter().map(|a| a.built_relative_path.clone()).collect()
-                })
-                .unwrap_or_default()
-        };
-        let css_paths: Vec<String> = asset_paths("css_stylesheet");
-        let js_scripts: Vec<crate::html_dom::ScriptRef> = ctx
-            .resolved
-            .get("js_scripts")
-            .map(|v: &Vec<crate::plugins::Asset>| {
-                v.iter()
-                    .map(|a| crate::html_dom::ScriptRef {
-                        src: a.built_relative_path.clone(),
-                        module: a.module,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
 
         let CompiledSpine {
             files: virtual_fs,
@@ -925,24 +909,20 @@ impl Build {
                 continue;
             }
 
-            if path_str.ends_with(".html") {
-                let html = String::from_utf8_lossy(&bytes);
-                let css = crate::html_dom::depth_relative_refs(&css_paths, &path_str);
-                let js = crate::html_dom::depth_relative_scripts(&js_scripts, &path_str);
-                let modified = crate::html_dom::HtmlDom::apply_head_mutations(
-                    &html,
-                    &css,
-                    &js,
-                    control_head_fragment.as_deref(),
-                )?;
-                match modified {
-                    Some(modified) => injected
-                        .insert(vpath, typst::foundations::Bytes::new(modified.into_bytes())),
-                    None => injected.insert(vpath, bytes),
-                };
-            } else {
-                injected.insert(vpath, bytes);
-            }
+            let text = String::from_utf8_lossy(&bytes);
+            let page = crate::plugins::ServedPage {
+                path: &path_str,
+                text: &text,
+                assets: &ctx.resolved,
+                head_fragment: control_head_fragment.as_deref(),
+            };
+            match live_reload.rewrite_page(&page)? {
+                Some(rewritten) => injected.insert(
+                    vpath,
+                    typst::foundations::Bytes::new(rewritten.into_bytes()),
+                ),
+                None => injected.insert(vpath, bytes),
+            };
         }
         Ok(Some(injected))
     }
@@ -1622,11 +1602,12 @@ mod tests {
         );
     }
 
-    /// The dev-server in-memory path must hoist `<rheo-head>` exactly like the
-    /// on-disk path, even with no CSS/JS asset and no `.rheo/head.html`
-    /// fragment — the case the old per-format gate skipped entirely.
+    /// The dev-server in-memory path hands every compiled page to the serving
+    /// format's [`LiveReload`], with no CSS/JS asset and no `.rheo/head.html`
+    /// fragment in play — so a format that only hoists still gets its hoist.
     #[test]
     fn test_compile_for_watch_hoists_rheo_head_without_assets() {
+        use crate::plugins::{LiveReload, ServedPage};
         use crate::project::ProjectConfig;
 
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1651,23 +1632,31 @@ mod tests {
             config_path: None,
         };
 
-        struct HtmlNoAssets;
-        impl FormatPlugin for HtmlNoAssets {
+        struct HoistOnly;
+        impl FormatPlugin for HoistOnly {
             fn name(&self) -> &'static str {
                 "html"
+            }
+            fn live_reload(&self) -> Option<&dyn LiveReload> {
+                Some(self)
             }
             fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[CastVertebra]) -> Result<()> {
                 Ok(())
             }
         }
+        impl LiveReload for HoistOnly {
+            fn rewrite_page(&self, page: &ServedPage<'_>) -> Result<Option<String>> {
+                crate::html_dom::HtmlDom::apply_head_mutations(page.text, &[], &[], None)
+            }
+        }
 
-        let plugin: Box<dyn FormatPlugin> = Box::new(HtmlNoAssets);
+        let plugin: Box<dyn FormatPlugin> = Box::new(HoistOnly);
         let build =
             Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
         let vfs = build
             .compile_for_watch()
             .expect("compile_for_watch")
-            .expect("html plugin selected");
+            .expect("a live-reload format was selected");
 
         let (_, bytes) = vfs
             .iter()
@@ -1678,6 +1667,52 @@ mod tests {
         let head_end = html.find("</head>").expect("has head");
         let meta_pos = html.find("name=\"x\"").expect("meta present");
         assert!(meta_pos < head_end, "meta not hoisted into head:\n{html}");
+    }
+
+    /// A format with no live-reload capability is never compiled for the dev
+    /// server, whatever it is called.
+    #[test]
+    fn test_compile_for_watch_skips_formats_without_the_capability() {
+        use crate::project::ProjectConfig;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("content")).expect("create content dir");
+        std::fs::write(root.join("content/a.typ"), "= Page A\n").expect("write content/a.typ");
+
+        let project = ProjectConfig {
+            name: "test".to_string(),
+            root: root.to_path_buf(),
+            config: crate::RheoConfig {
+                content_dir: Some("content".to_string()),
+                formats: vec!["html".to_string()],
+                ..Default::default()
+            },
+            typ_files: vec![root.join("content/a.typ")],
+            mode: ProjectMode::Directory,
+            config_path: None,
+        };
+
+        struct NamedHtmlNoCapability;
+        impl FormatPlugin for NamedHtmlNoCapability {
+            fn name(&self) -> &'static str {
+                "html"
+            }
+            fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[CastVertebra]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let plugin: Box<dyn FormatPlugin> = Box::new(NamedHtmlNoCapability);
+        let build =
+            Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
+        assert!(
+            build
+                .compile_for_watch()
+                .expect("compile_for_watch")
+                .is_none(),
+            "the plugin's name must not select it for the dev server"
+        );
     }
 
     /// A `path`-backed package with no `[tool.rheo.*]` assets at all still gets
@@ -1749,79 +1784,6 @@ mod tests {
             "expected {expected:?} in package_roots, got {:?}",
             spec.package_roots()
         );
-    }
-
-    /// Same as above, but with a CSS asset present, so the shared step's
-    /// injection and hoist both run in the same pass.
-    #[test]
-    fn test_compile_for_watch_hoists_rheo_head_with_css() {
-        use crate::plugins::{AssetConfig, EmbeddedDefault};
-        use crate::project::ProjectConfig;
-
-        let dir = tempfile::tempdir().expect("tempdir");
-        let root = dir.path();
-        std::fs::create_dir_all(root.join("content")).expect("create content dir");
-        std::fs::write(
-            root.join("content/a.typ"),
-            "= Page A\n#html.elem(\"rheo-head\", html.elem(\"meta\", attrs: (name: \"x\", content: \"y\")))\n",
-        )
-        .expect("write content/a.typ");
-
-        let project = ProjectConfig {
-            name: "test".to_string(),
-            root: root.to_path_buf(),
-            config: crate::RheoConfig {
-                content_dir: Some("content".to_string()),
-                formats: vec!["html".to_string()],
-                ..Default::default()
-            },
-            typ_files: vec![root.join("content/a.typ")],
-            mode: ProjectMode::Directory,
-            config_path: None,
-        };
-
-        struct HtmlWithCss;
-        impl FormatPlugin for HtmlWithCss {
-            fn name(&self) -> &'static str {
-                "html"
-            }
-            fn assets(&self) -> Vec<AssetConfig> {
-                vec![AssetConfig {
-                    name: "css_stylesheet",
-                    default_path: "style.css",
-                    required: false,
-                    default_content: Some(EmbeddedDefault {
-                        name: "test-default.css",
-                        content: "body{color:red}",
-                    }),
-                }]
-            }
-            fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[CastVertebra]) -> Result<()> {
-                Ok(())
-            }
-        }
-
-        let plugin: Box<dyn FormatPlugin> = Box::new(HtmlWithCss);
-        let build =
-            Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
-        let vfs = build
-            .compile_for_watch()
-            .expect("compile_for_watch")
-            .expect("html plugin selected");
-
-        let (_, bytes) = vfs
-            .iter()
-            .find(|(p, _)| p.get_with_slash().ends_with("a.html"))
-            .expect("a.html present");
-        let html = String::from_utf8_lossy(bytes.as_slice());
-        assert!(!html.contains("rheo-head"), "wrapper not removed:\n{html}");
-        assert!(
-            html.contains("test-default.css"),
-            "css link missing:\n{html}"
-        );
-        let head_end = html.find("</head>").expect("has head");
-        let meta_pos = html.find("name=\"x\"").expect("meta present");
-        assert!(meta_pos < head_end, "meta not hoisted into head:\n{html}");
     }
 
     /// A one-vertebra project with a `*bold text*` paragraph and a marrow

@@ -223,6 +223,32 @@ pub struct PluginContext<'a> {
     pub control: &'a ControlAssets,
 }
 
+/// One freshly compiled page, with everything a format needs to finish it
+/// before it is served or written.
+pub struct ServedPage<'a> {
+    /// Output path relative to the plugin's output directory
+    /// (e.g. `chapters/intro.html`), which fixes the page's link depth.
+    pub path: &'a str,
+    /// The compiled page, decoded.
+    pub text: &'a str,
+    /// Assets core resolved for this build, keyed by [`AssetConfig::name`].
+    pub assets: &'a HashMap<&'static str, Vec<Asset>>,
+    /// Site-wide `<head>` contribution from a `.rheo/head.html` control asset.
+    pub head_fragment: Option<&'a str>,
+}
+
+/// Serving a format's pages from memory, for `rheo watch`'s dev server.
+///
+/// A format opting in ([`FormatPlugin::live_reload`]) gets each page of every
+/// watch rebuild handed back for the same finishing it would do when writing to
+/// disk, so the served bytes match the compiled ones. Core owns the compile,
+/// the transclusion and the control assets; only this last per-format step is
+/// dispatched here.
+pub trait LiveReload: Send + Sync {
+    /// Finish `page`, or return `None` to serve it exactly as compiled.
+    fn rewrite_page(&self, page: &ServedPage<'_>) -> crate::Result<Option<String>>;
+}
+
 /// Parse `@namespace/name:version` into its components. Returns None on malformed input.
 pub fn parse_package_spec(spec: &str) -> Option<(&str, &str, &str)> {
     let without_at = spec.strip_prefix('@')?;
@@ -281,6 +307,11 @@ pub struct ResolvedPackage {
 /// 3. **Resolve inputs**: Files declared by `inputs()` are copied to output directory
 /// 4. **Compile**: rheo core runs a single Typst bundle compile and passes the outputs to `compile()`
 /// 5. **Open**: `open()` is called if `--open` flag was passed
+///
+/// Under `rheo watch`, a format that returns [`Self::live_reload`] also has each
+/// rebuilt page passed through [`LiveReload::rewrite_page`] before the dev
+/// server serves it from memory. That is the whole of the dev-server contract:
+/// core picks the serving format by this capability, never by plugin name.
 pub trait FormatPlugin: Send + Sync {
     /// Plugin identifier, CLI flag, and output subdirectory name.
     ///
@@ -350,6 +381,15 @@ pub trait FormatPlugin: Send + Sync {
 
     /// Set plugin-specific smart defaults when no rheo.toml section exists.
     fn apply_defaults(&self, _section: &mut PluginSection, _project_name: &str) {}
+
+    /// This format's live-reload capability, when it has one.
+    ///
+    /// `Some` means `rheo watch` compiles this format into memory on every
+    /// rebuild and serves it through the handle [`Self::open`] returns; the
+    /// default `None` means the format is only ever written to disk.
+    fn live_reload(&self) -> Option<&dyn LiveReload> {
+        None
+    }
 
     /// Open the output for this format in the appropriate viewer.
     fn open(&self, output_dir: &Path, _format_name: &str) -> crate::Result<OpenHandle> {

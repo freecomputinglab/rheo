@@ -37,8 +37,9 @@ pub use config::{AssetsField, PluginAssets, PluginSection, Spine};
 
 // Plugin trait and context
 pub use plugins::{
-    AssetConfig, CastVertebra, EmbeddedDefault, FormatInitTemplate, FormatPlugin, OpenHandle,
-    PackageAssets, PluginContext, ResolvedPackage, ServerHandle, SpineLayoutKind, TypstFormat,
+    Asset, AssetConfig, CastVertebra, EmbeddedDefault, FormatInitTemplate, FormatPlugin,
+    LiveReload, OpenHandle, PackageAssets, PluginContext, ResolvedPackage, ServedPage,
+    ServerHandle, SpineLayoutKind, TypstFormat,
 };
 pub use transclude::ControlAssets;
 
