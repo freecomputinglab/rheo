@@ -47,6 +47,7 @@
 //! affected key and binding, with its location, pointing at `@rheo/feeds`
 //! or (for `rheo-author`) the `#set document(...)` replacement.
 
+use crate::reporter::Reporter;
 use rheo_core::build::resolve_effective_content_dir;
 use rheo_core::config::RETIRED_KEYS;
 use rheo_core::config::manifest_version::ManifestVersion;
@@ -129,7 +130,8 @@ struct Migration {
     since: &'static str,
     plan: &'static str,
     heading: &'static str,
-    run: fn(&ProjectConfig, &mut [Source], &mut toml_edit::DocumentMut) -> Result<()>,
+    run:
+        fn(&ProjectConfig, &mut [Source], &mut toml_edit::DocumentMut, &mut Reporter) -> Result<()>,
 }
 
 impl Migration {
@@ -188,7 +190,7 @@ const MIGRATIONS: &[Migration] = &[
 /// in-memory sources/document unconditionally; `apply` is consulted in
 /// exactly one place, below, which decides whether that in-memory state is
 /// flushed to disk.
-pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
+pub fn migrate_project(path: &Path, apply: bool, reporter: &mut Reporter) -> Result<()> {
     info!(path = %path.display(), "loading project for migration");
     let project = ProjectConfig::from_path(path, None)?;
 
@@ -200,21 +202,21 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     let to = ManifestVersion::current();
 
     info!(from = %from, to = %to, "migration target");
-    println!("Project version: {from}");
-    println!("Target version:  {to}");
+    reporter.line(format_args!("Project version: {from}"));
+    reporter.line(format_args!("Target version:  {to}"));
 
     if from >= to {
-        println!("Project is already up to date; nothing to migrate.");
+        reporter.line("Project is already up to date; nothing to migrate.");
         return Ok(());
     }
 
     let due: Vec<&Migration> = MIGRATIONS.iter().filter(|m| m.needed(&from)).collect();
 
-    println!("\nMigrations:");
+    reporter.line("\nMigrations:");
     for m in &due {
-        println!("{}", m.plan);
+        reporter.line(m.plan);
     }
-    println!("  - bump rheo.toml version to {to}");
+    reporter.line(format_args!("  - bump rheo.toml version to {to}"));
 
     // Loaded once regardless of how many due migrations read/rewrite sources
     // (empty when `due` needs none, e.g. a version bump with no pending migration).
@@ -230,8 +232,8 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
     let mut doc = load_toml_doc(config_path)?;
 
     for m in &due {
-        println!("{}", m.heading);
-        (m.run)(&project, &mut sources, &mut doc)?;
+        reporter.line(m.heading);
+        (m.run)(&project, &mut sources, &mut doc, reporter)?;
     }
 
     // Last, so the file ends up with both any migration's edits and the bump.
@@ -246,9 +248,9 @@ pub fn migrate_project(path: &Path, apply: bool) -> Result<()> {
         }
         fs::write(config_path, doc.to_string())
             .map_err(|e| RheoError::io(e, format!("writing {}", config_path.display())))?;
-        println!("\nBumped rheo.toml version to {to}.");
+        reporter.line(format_args!("\nBumped rheo.toml version to {to}."));
     } else {
-        println!("\nDry run; no changes made. Re-run with --apply to write them.");
+        reporter.line("\nDry run; no changes made. Re-run with --apply to write them.");
     }
     Ok(())
 }
@@ -314,7 +316,11 @@ impl SyntaxSite for LinkTarget {
 /// when the stem is unique, and path-qualified with `:` separator (`<chapters:intro>`)
 /// for nested files. The `<stem.typ>` escape alias is ambiguous when stems collide,
 /// so it is never used as a rewrite target.
-fn migrate_link_syntax(project: &ProjectConfig, sources: &mut [Source]) -> Result<()> {
+fn migrate_link_syntax(
+    project: &ProjectConfig,
+    sources: &mut [Source],
+    reporter: &mut Reporter,
+) -> Result<()> {
     if sources.is_empty() {
         return Ok(());
     }
@@ -361,13 +367,11 @@ fn migrate_link_syntax(project: &ProjectConfig, sources: &mut [Source]) -> Resul
             match resolved {
                 Some(target) => {
                     let line = line_number(&source.text, link.call_start);
-                    info!(file = %source.path.display(), line, old = %link.href, new = %target, "rewrite link");
-                    println!(
-                        "{}:{}: #link(\"{}\")  ->  #link(<{}>)",
-                        source.path.display(),
+                    reporter.rewrite(
+                        &source.path,
                         line,
-                        link.href,
-                        target
+                        format_args!("#link(\"{}\")", link.href),
+                        format_args!("#link(<{target}>)"),
                     );
                     edits.push((link.range, format!("<{target}>")));
                 }
@@ -391,8 +395,9 @@ fn run_link_syntax(
     project: &ProjectConfig,
     sources: &mut [Source],
     _doc: &mut toml_edit::DocumentMut,
+    reporter: &mut Reporter,
 ) -> Result<()> {
-    migrate_link_syntax(project, sources)
+    migrate_link_syntax(project, sources, reporter)
 }
 
 /// One rewritable occurrence of the removed `rheo-target` surface.
@@ -552,7 +557,7 @@ impl SyntaxSite for TargetSite {
 /// the output format. Any file still containing the literal `rheo-target`
 /// afterwards (e.g. an `at(...)` call with an unsupported second argument) is
 /// reported with a `warn!` for manual fixing.
-fn migrate_target_references(sources: &mut [Source]) -> Result<()> {
+fn migrate_target_references(sources: &mut [Source], reporter: &mut Reporter) -> Result<()> {
     if sources.is_empty() {
         return Ok(());
     }
@@ -569,14 +574,7 @@ fn migrate_target_references(sources: &mut [Source]) -> Result<()> {
         let mut edits: Vec<(Range<usize>, String)> = Vec::new();
         for site in &sites {
             let line = line_number(&source.text, site.range.start);
-            info!(file = %source.path.display(), line, old = %site.old, new = %site.new, "rewrite target reference");
-            println!(
-                "{}:{}: {}  ->  {}",
-                source.path.display(),
-                line,
-                site.old,
-                site.new
-            );
+            reporter.rewrite(&source.path, line, &site.old, &site.new);
             edits.push((site.range.clone(), site.new.clone()));
         }
         let changed = !edits.is_empty();
@@ -606,8 +604,9 @@ fn run_target_references(
     _project: &ProjectConfig,
     sources: &mut [Source],
     _doc: &mut toml_edit::DocumentMut,
+    reporter: &mut Reporter,
 ) -> Result<()> {
-    migrate_target_references(sources)
+    migrate_target_references(sources, reporter)
 }
 
 /// The compatibility shim prepended to files that read the per-vertebra
@@ -653,7 +652,7 @@ fn references_context_binding(node: &SyntaxNode) -> bool {
 /// `rheo-context.field` / `ctx: rheo-context` code keeps working untouched.
 ///
 /// [`references_context_binding`] only decides *whether* a file needs the shim.
-fn migrate_context_references(sources: &mut [Source]) -> Result<()> {
+fn migrate_context_references(sources: &mut [Source], reporter: &mut Reporter) -> Result<()> {
     if sources.is_empty() {
         return Ok(());
     }
@@ -668,9 +667,10 @@ fn migrate_context_references(sources: &mut [Source]) -> Result<()> {
             continue;
         }
 
-        let label = "prepend `#let rheo-context = rheo-context()` compatibility shim";
-        info!(file = %source.path.display(), rewrite = label, "shim context binding");
-        println!("{}: {}", source.path.display(), label);
+        reporter.note(
+            &source.path,
+            "prepend `#let rheo-context = rheo-context()` compatibility shim",
+        );
 
         source.text = format!("{CONTEXT_SHIM}\n{}", source.text);
         source.dirty = true;
@@ -684,8 +684,9 @@ fn run_context_references(
     _project: &ProjectConfig,
     sources: &mut [Source],
     _doc: &mut toml_edit::DocumentMut,
+    reporter: &mut Reporter,
 ) -> Result<()> {
-    migrate_context_references(sources)
+    migrate_context_references(sources, reporter)
 }
 
 /// A `#let <name> = ...` binding whose `<name>` is one of `REMOVED_VAR_BINDINGS`.
@@ -730,11 +731,15 @@ impl SyntaxSite for RemovedBindingSite {
 /// to its replacement. A feed's title/author/base-url/inclusion rules do not
 /// map one-to-one onto `@rheo/feeds`'s Typst configuration, so a mechanical
 /// rewrite would produce something subtly wrong — this stays report-only.
-fn report_removed_feed_surface(project: &ProjectConfig, sources: &[Source]) {
+fn report_removed_feed_surface(
+    project: &ProjectConfig,
+    sources: &[Source],
+    reporter: &mut Reporter,
+) {
     if let Some(html) = project.config.plugin_sections.get("html") {
         for retired in RETIRED_KEYS.iter().filter(|r| r.table == "[html]") {
             if html.extra.contains_key(retired.key) {
-                report_removed("rheo.toml [html]", retired.key, retired.replacement);
+                reporter.retired("rheo.toml [html]", retired.key, retired.replacement);
             }
         }
     }
@@ -743,7 +748,7 @@ fn report_removed_feed_surface(project: &ProjectConfig, sources: &[Source]) {
         let typ_source = TypstSource::detached(source.text.as_str());
         for site in RemovedBindingSite::collect(&typ_source) {
             let line = line_number(&source.text, site.range.start);
-            report_removed(
+            reporter.retired(
                 &format!("{}:{}", source.path.display(), line),
                 site.name,
                 site.replacement,
@@ -757,16 +762,10 @@ fn run_removed_feed_surface(
     project: &ProjectConfig,
     sources: &mut [Source],
     _doc: &mut toml_edit::DocumentMut,
+    reporter: &mut Reporter,
 ) -> Result<()> {
-    report_removed_feed_surface(project, sources);
+    report_removed_feed_surface(project, sources, reporter);
     Ok(())
-}
-
-/// One location's finding: `<location>: \`<name>\` — <replacement>`. The one
-/// print format both the rheo.toml key scan and the `.typ` binding scan
-/// above share.
-fn report_removed(location: &str, name: &str, replacement: &str) {
-    println!("{location}: `{name}` — {replacement}");
 }
 
 /// One `[spine]`/`[<plugin>.spine]` table that still sets the retired
@@ -840,6 +839,7 @@ fn migrate_vertebrae_to_exclude(
     project: &ProjectConfig,
     _sources: &mut [Source],
     doc: &mut toml_edit::DocumentMut,
+    reporter: &mut Reporter,
 ) -> Result<()> {
     let mut sites = Vec::new();
     if let Some(spine) = &project.config.spine
@@ -895,16 +895,16 @@ fn migrate_vertebrae_to_exclude(
         };
 
         if newly_included.is_empty() {
-            println!(
+            reporter.line(format_args!(
                 "  - [{}]: vertebrae matched the full scan; removing (no exclude needed)",
                 site.label()
-            );
+            ));
         } else {
-            println!(
+            reporter.line(format_args!(
                 "  - [{}]: vertebrae -> exclude = {:?}",
                 site.label(),
                 newly_included
-            );
+            ));
         }
 
         let item = match &site.plugin {
@@ -1097,6 +1097,49 @@ mod tests {
         assert_eq!(root, PathBuf::from("/proj/content/intro.typ"));
     }
 
+    /// A dry run's whole user-facing report is assertable, which is the point
+    /// of routing it through the reporter: the version gap, the plan, each
+    /// rewrite, and the closing dry-run notice.
+    #[test]
+    fn dry_run_reports_the_plan_the_rewrites_and_that_nothing_was_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        fs::write(content.join("about.typ"), "= About\n").unwrap();
+        fs::write(content.join("intro.typ"), "#link(\"./about.typ\")[About]\n").unwrap();
+        fs::write(
+            root.join("rheo.toml"),
+            "version = \"0.3.0\"\ncontent_dir = \"content\"\n",
+        )
+        .unwrap();
+
+        let (mut reporter, captured) = Reporter::capture();
+        migrate_project(root, false, &mut reporter).unwrap();
+        let report = captured.text();
+
+        assert!(report.contains("Project version: 0.3.0"), "{report}");
+        assert!(
+            report.contains("  - rewrite #link(\"./file.typ\") syntax to #link(<handle>)"),
+            "{report}"
+        );
+        assert!(
+            report.contains(": #link(\"./about.typ\")  ->  #link(<about>)"),
+            "{report}"
+        );
+        assert!(
+            report.contains("Dry run; no changes made. Re-run with --apply to write them."),
+            "{report}"
+        );
+        // A dry run writes nothing, whatever it reported.
+        assert!(
+            fs::read_to_string(content.join("intro.typ"))
+                .unwrap()
+                .contains("#link(\"./about.typ\")"),
+            "dry run must not rewrite the file"
+        );
+    }
+
     #[test]
     fn rewrite_replaces_old_link_syntax() {
         let dir = tempfile::tempdir().unwrap();
@@ -1131,7 +1174,7 @@ mod tests {
         .unwrap();
 
         let mut sources = load_sources(&content);
-        migrate_link_syntax(&project, &mut sources).unwrap();
+        migrate_link_syntax(&project, &mut sources, &mut Reporter::capture().0).unwrap();
         flush_sources(&sources);
 
         let rewritten = fs::read_to_string(content.join("intro.typ")).unwrap();
@@ -1179,7 +1222,7 @@ mod tests {
         .unwrap();
 
         let mut sources = load_sources(&content);
-        migrate_link_syntax(&project, &mut sources).unwrap();
+        migrate_link_syntax(&project, &mut sources, &mut Reporter::capture().0).unwrap();
         flush_sources(&sources);
 
         let rewritten = fs::read_to_string(content.join("intro.typ")).unwrap();
@@ -1224,7 +1267,7 @@ mod tests {
         .unwrap();
 
         let mut sources = load_sources(&content);
-        migrate_target_references(&mut sources).unwrap();
+        migrate_target_references(&mut sources, &mut Reporter::capture().0).unwrap();
         flush_sources(&sources);
 
         let out = fs::read_to_string(content.join("page.typ")).unwrap();
@@ -1276,7 +1319,7 @@ mod tests {
         .unwrap();
 
         let mut sources = load_sources(&content);
-        migrate_context_references(&mut sources).unwrap();
+        migrate_context_references(&mut sources, &mut Reporter::capture().0).unwrap();
         flush_sources(&sources);
 
         let out = fs::read_to_string(content.join("page.typ")).unwrap();
@@ -1350,7 +1393,8 @@ mod tests {
         .unwrap();
 
         let mut doc = load_toml_doc(&toml_path).unwrap();
-        migrate_vertebrae_to_exclude(&project, &mut [], &mut doc).unwrap();
+        migrate_vertebrae_to_exclude(&project, &mut [], &mut doc, &mut Reporter::capture().0)
+            .unwrap();
         let updated = doc.to_string();
         assert!(!updated.contains("vertebrae"), "{updated}");
         assert!(updated.contains("exclude"), "{updated}");
@@ -1406,7 +1450,8 @@ mod tests {
         .unwrap();
 
         let mut doc = load_toml_doc(&toml_path).unwrap();
-        migrate_vertebrae_to_exclude(&project, &mut [], &mut doc).unwrap();
+        migrate_vertebrae_to_exclude(&project, &mut [], &mut doc, &mut Reporter::capture().0)
+            .unwrap();
         let updated = doc.to_string();
         assert!(!updated.contains("vertebrae"), "{updated}");
         assert!(!updated.contains("exclude"), "{updated}");
@@ -1446,7 +1491,7 @@ mod tests {
         .unwrap();
 
         let mut sources = load_sources(&content);
-        migrate_link_syntax(&project, &mut sources).unwrap();
+        migrate_link_syntax(&project, &mut sources, &mut Reporter::capture().0).unwrap();
         flush_sources(&sources);
 
         let rewritten = fs::read_to_string(sub.join("intro.typ")).unwrap();
@@ -1489,7 +1534,7 @@ mod tests {
         .unwrap();
 
         let mut sources = load_sources(&content);
-        migrate_link_syntax(&project, &mut sources).unwrap();
+        migrate_link_syntax(&project, &mut sources, &mut Reporter::capture().0).unwrap();
         flush_sources(&sources);
 
         let rewritten = fs::read_to_string(content.join("intro.typ")).unwrap();

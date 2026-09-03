@@ -15,6 +15,7 @@ use tracing::{debug, info, warn};
 pub use rheo_core::diagnostics::logging;
 
 mod migrate;
+mod reporter;
 
 /// Clap argument ids shared between the builder functions that declare an
 /// `Arg` and the runner functions that later read it back out of
@@ -723,7 +724,7 @@ fn run_migrate(sub: &ArgMatches) -> Result<()> {
     );
     let apply = sub.get_flag(arg::APPLY);
     info!(path = %path.display(), apply, "migrating project");
-    migrate::migrate_project(&path, apply)
+    migrate::migrate_project(&path, apply, &mut reporter::Reporter::stdout())
 }
 
 #[cfg(test)]
