@@ -6,8 +6,8 @@ use std::sync::Arc;
 use crate::config::RESERVED_INPUT_KEY;
 use crate::packages::PackageResolver;
 use crate::reticulate::VertebraInjection;
+use crate::synth::source_injector::SourceInjector;
 use crate::synth::typst_literal::TypstLiteral;
-use crate::synth::typst_source::TypstStmt;
 use crate::util::constants::METADATA_MODULE_PATH;
 use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
@@ -418,79 +418,31 @@ impl World for RheoWorld {
 
         // Serve the synthesized virtual main, then any moulded vertebra overlay,
         // from memory — falling back to disk for everything else.
-        let mut text = if id == self.main
+        let rel = id
+            .vpath()
+            .get_with_slash()
+            .trim_start_matches('/')
+            .to_string();
+        let text = if id == self.main
             && let Some(ref vm) = self.virtual_main_source
         {
             vm.clone()
-        } else if let Some(body) = self
-            .source_overlay
-            .get(id.vpath().get_with_slash().trim_start_matches('/'))
-        {
+        } else if let Some(body) = self.source_overlay.get(&rel) {
             body.clone()
         } else {
             let path = self.path_for_id(id)?;
             fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?
         };
 
-        // Inject target() polyfill for all plugin formats.
-        let target_polyfill = if self.format_name.is_some() {
-            "// Polyfill target() to return rheo's output format from sys.inputs\n\
-             #let target() = if \"rheo-context\" in sys.inputs and \"target\" in sys.inputs.rheo-context { sys.inputs.rheo-context.target } else { std.target() }\n\n"
-        } else {
-            ""
+        let injector = SourceInjector::new(
+            self.format_name.is_some(),
+            self.plugin_library.as_deref(),
+            &self.rheo_context,
+        );
+        let text = match id == self.main {
+            true => injector.main(&text),
+            false => injector.vertebra(&rel, &text),
         };
-
-        // For the main file, also inject the rheo.typ template and plugin library code.
-        if id == self.main {
-            let rheo_content = include_str!("typ/rheo.typ");
-            let plugin_lib_content = self.plugin_library.as_deref().unwrap_or("");
-            // `rheo-metadata`/`rheo-metadata-all`/`rheo-handle-title` at
-            // bundle-root (marrow) scope. `rheo-metadata` reuses
-            // `MetadataHelper`'s `Display` — the same import the per-vertebra
-            // prelude uses — so the two sites can't drift apart.
-            // `MetadataAllHelper`/`HandleTitleHelper` are marrow-only: a
-            // single vertebra never needs "every vertebra's metadata at once"
-            // or a handle anchor's title lookup (anchors only ever appear in
-            // bundle-root `#document(...)` bodies, per `bundle_source.rs`).
-            // No extra format gate is needed: `MetadataBeacon` (and marrow
-            // itself) are only ever assembled for per-page (HTML/EPUB)
-            // targets, since combined PDF hard-errors on
-            // `document()`/`asset()` — the two already agree.
-            let metadata_helper = TypstStmt::MetadataHelper;
-            let metadata_all_helper = TypstStmt::MetadataAllHelper;
-            let handle_title_helper = TypstStmt::HandleTitleHelper;
-            let template_inject = format!(
-                "{}{}\n\n{}\n\n{}\n\n{}\n\n{}\n#show: rheo_template\n\n",
-                target_polyfill,
-                rheo_content,
-                metadata_helper,
-                metadata_all_helper,
-                handle_title_helper,
-                plugin_lib_content
-            );
-            text = format!("{}{}", template_inject, text);
-        } else {
-            // Non-main files (vertebrae/partials): the target() polyfill, then any
-            // per-vertebra `rheo-context` prelude, then the file's own source,
-            // then any per-vertebra epilogue (the metadata beacon).
-            let rel = id
-                .vpath()
-                .get_with_slash()
-                .trim_start_matches('/')
-                .to_string();
-            let injection = self.rheo_context.get(&rel);
-            let context_prelude = injection.map(|inj| inj.prelude.as_str()).unwrap_or("");
-            let context_epilogue = injection.map(|inj| inj.epilogue.as_str()).unwrap_or("");
-            if !target_polyfill.is_empty()
-                || !context_prelude.is_empty()
-                || !context_epilogue.is_empty()
-            {
-                text = format!(
-                    "{}{}{}{}",
-                    target_polyfill, context_prelude, text, context_epilogue
-                );
-            }
-        }
 
         Ok(self.cache_source(id, text))
     }
@@ -586,6 +538,7 @@ impl<'a> Files<'a> for RheoWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::synth::typst_source::TypstStmt;
     use tempfile::TempDir;
 
     #[test]

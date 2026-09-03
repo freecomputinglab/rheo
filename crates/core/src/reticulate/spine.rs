@@ -10,7 +10,7 @@ use crate::parser;
 use crate::reticulate::bundle_source::BundleSource;
 use crate::reticulate::document_meta::DocumentTitle;
 use crate::reticulate::handle::Handle;
-use crate::synth::typst_source::TypstStmt;
+use crate::synth::typst_source::{TypstBlock, TypstStmt};
 use crate::util::path::to_forward_slash;
 use crate::{MARROW_FILE, RESERVED_META_LABEL_PREFIX, Result, RheoError};
 use std::collections::{HashMap, HashSet};
@@ -443,11 +443,15 @@ impl VirtualSpine {
         self.vertebrae
             .iter()
             .map(|v| {
-                let helper = TypstStmt::MetadataHelper;
-                let binding = TypstStmt::ContextBinding {
-                    handle: v.handle.clone(),
-                };
-                let prelude = format!("{helper}\n\n{binding}\n\n");
+                let prelude = format!(
+                    "{}\n\n",
+                    TypstBlock(vec![
+                        TypstStmt::MetadataHelper,
+                        TypstStmt::ContextBinding {
+                            handle: v.handle.clone(),
+                        },
+                    ])
+                );
                 let epilogue = if emit_beacon {
                     let beacon = TypstStmt::MetadataBeacon {
                         handle: v.handle.clone(),

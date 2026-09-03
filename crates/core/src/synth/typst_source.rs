@@ -135,10 +135,36 @@ pub enum TypstStmt {
     },
 }
 
+/// A run of statements rendered as one block: each statement separated by a
+/// blank line, with empty [`TypstStmt::Raw`] entries dropped so an absent
+/// optional injection (no plugin library, no polyfill) leaves no gap behind.
+pub struct TypstBlock(pub Vec<TypstStmt>);
+
+impl fmt::Display for TypstBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for stmt in self.0.iter().filter(|s| !s.is_empty()) {
+            if !first {
+                f.write_str("\n\n")?;
+            }
+            write!(f, "{stmt}")?;
+            first = false;
+        }
+        Ok(())
+    }
+}
+
 /// Quote `s` as a Typst string literal (escaped), for splicing a handle or
 /// key into a statement's rendered source.
 fn quote(s: impl AsRef<str>) -> String {
     TypstLiteral::str(s.as_ref()).serialize()
+}
+
+impl TypstStmt {
+    /// Whether this statement renders to nothing — only an empty `Raw` can.
+    fn is_empty(&self) -> bool {
+        matches!(self, TypstStmt::Raw(s) if s.is_empty())
+    }
 }
 
 impl fmt::Display for TypstStmt {
