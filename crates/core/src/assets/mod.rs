@@ -19,8 +19,8 @@ use walkdir::WalkDir;
 /// that used to live only in a comment are now properties of the variant:
 /// [`Self::root`] sends `Package` to its own directory rather than the
 /// project root, so it can never collide with — or stand in for — a project
-/// source; [`Self::warns_on_missing`] is false only for `Package`, since a
-/// package-declared file going missing is routine, not misconfiguration.
+/// source; [`Self::warns_on_missing`] is true only for `User`, since rheo
+/// proposes the other paths itself and their absence is routine.
 enum AssetSource<'b> {
     /// A project-authored `[[plugin.assets]]` override.
     User,
@@ -44,10 +44,12 @@ impl<'b> AssetSource<'b> {
         matches!(self, AssetSource::Package { module: true, .. })
     }
 
-    /// A package-declared file that's missing stays silent; only a
-    /// project-owned entry (user override or the root convention) warns.
+    /// Only a path the project wrote down in a `[[<plugin>.assets]]` block
+    /// warns when it's missing. A package file and the root convention are
+    /// paths rheo proposed itself, so their absence is routine rather than
+    /// misconfiguration.
     fn warns_on_missing(&self) -> bool {
-        !matches!(self, AssetSource::Package { .. })
+        matches!(self, AssetSource::User)
     }
 }
 
@@ -229,7 +231,7 @@ impl<'a> AssetResolver<'a> {
 
     /// Copy every on-disk source in `group`, registering each result's
     /// build-relative path and erroring on a collision. A missing source is
-    /// skipped; only a project-owned entry warns (see
+    /// skipped; only a user-written override warns (see
     /// [`AssetSource::warns_on_missing`]).
     fn copy_group(
         &self,
@@ -671,6 +673,19 @@ mod tests {
         assert!(
             !resolved.contains_key("optional_asset"),
             "optional missing asset should not be in resolved map"
+        );
+    }
+
+    #[test]
+    fn test_warns_on_missing_only_for_user() {
+        assert!(AssetSource::User.warns_on_missing());
+        assert!(!AssetSource::ProjectDefault.warns_on_missing());
+        assert!(
+            !AssetSource::Package {
+                source_root: Path::new("/tmp"),
+                module: false,
+            }
+            .warns_on_missing()
         );
     }
 
