@@ -3,11 +3,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::config::RESERVED_INPUT_KEY;
+use crate::diagnostics::DiagnosticReport;
 use crate::packages::PackageResolver;
 use crate::reticulate::VertebraInjection;
+use crate::synth::source_injector::SourceInjector;
+use crate::synth::typst_literal::TypstLiteral;
 use crate::util::constants::METADATA_MODULE_PATH;
-use crate::util::typst_literal::TypstLiteral;
-use crate::util::typst_source::TypstStmt;
 use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
@@ -21,11 +23,6 @@ use typst::{Library, LibraryExt, World};
 use typst_kit::fonts::FontStore;
 use typst_library::Feature;
 use typst_library::foundations::Duration;
-
-/// The one `sys.inputs` key rheo owns. A project may not set it from
-/// `--input`/`[inputs]`: a forged spine or target would be indistinguishable
-/// from the real one to every package reading it.
-pub const RESERVED_INPUT_KEY: &str = "rheo-context";
 
 /// Build sys.inputs Dict for Typst compilation.
 ///
@@ -62,6 +59,27 @@ fn build_inputs(
     dict
 }
 
+/// Scan the fonts a compile can use: Typst's embedded faces, the system's
+/// (unless `TYPST_IGNORE_SYSTEM_FONTS` is set), then each configured directory.
+///
+/// The system scan is slow enough to be worth doing once per build rather than
+/// once per world — hence [`WorldSpec::fonts`].
+pub fn scan_fonts(font_dirs: &[PathBuf]) -> FontStore {
+    if !font_dirs.is_empty() {
+        tracing::info!(dirs = ?font_dirs, "loading fonts from {} additional directories", font_dirs.len());
+    }
+    let include_system_fonts = std::env::var("TYPST_IGNORE_SYSTEM_FONTS").is_err();
+    let mut fonts = FontStore::new();
+    fonts.extend(typst_kit::fonts::embedded());
+    if include_system_fonts {
+        fonts.extend(typst_kit::fonts::system());
+    }
+    for dir in font_dirs {
+        fonts.extend(typst_kit::fonts::scan(dir));
+    }
+    fonts
+}
+
 /// Everything a [`RheoWorld`] needs beyond its root and its main file.
 ///
 /// Every field defaults to "unset", so a caller sets only what it means and
@@ -76,18 +94,24 @@ pub struct WorldSpec {
     /// In-memory source served for the main file instead of reading from disk.
     pub virtual_main_source: Option<String>,
     /// Per-vertebra rewritten sources from the Mould stage, keyed by
-    /// project-relative include path.
-    pub source_overlay: HashMap<String, String>,
-    /// Per-vertebra prelude/epilogue injections, keyed the same way.
-    pub rheo_context: HashMap<String, VertebraInjection>,
+    /// project-relative include path. Shared rather than copied: one build
+    /// compiles the same overlay once per format, and again on a second pass.
+    pub source_overlay: Arc<HashMap<String, String>>,
+    /// Per-vertebra prelude/epilogue injections, keyed the same way and shared
+    /// for the same reason.
+    pub rheo_context: Arc<HashMap<String, VertebraInjection>>,
     /// The file-independent context seeded onto `sys.inputs.rheo-context`.
     pub global_context: Option<TypstLiteral>,
     /// Project-supplied `sys.inputs` keys, from `rheo.toml [inputs]` and
     /// `--input KEY=VALUE`. Values are always strings. A key equal to
     /// [`RESERVED_INPUT_KEY`] is ignored rather than honoured.
     pub user_inputs: HashMap<String, String>,
-    /// Extra font directories to scan.
+    /// Extra font directories to scan. Ignored when `fonts` is set — that store
+    /// was scanned with these directories already.
     pub font_dirs: Vec<PathBuf>,
+    /// A font store scanned once and shared across a build's worlds. `None`
+    /// scans one for this world alone.
+    pub fonts: Option<Arc<FontStore>>,
     /// The per-build package resolver. `None` builds a default one, which routes
     /// exactly as rheo did before namespaces were configurable.
     pub packages: Option<Arc<PackageResolver>>,
@@ -98,8 +122,10 @@ pub struct RheoWorld {
     root: PathBuf,
     main: FileId,
     library: LazyHash<Library>,
-    book: LazyHash<FontBook>,
-    font_store: FontStore,
+    /// Shared with every other world of the same build: scanning the system's
+    /// fonts is the expensive part of building one, and the result is identical
+    /// across a build's plugins and passes.
+    fonts: Arc<FontStore>,
     packages: Arc<PackageResolver>,
     slots: Mutex<HashMap<FileId, FileSlot>>,
     /// Output format name for polyfill injection.
@@ -113,13 +139,17 @@ pub struct RheoWorld {
     /// Per-vertebra source overlay from the Mould stage, keyed by project-relative
     /// include path (e.g. `content/intro.typ`). When an included file matches, the
     /// world serves the rewritten source instead of reading it from disk.
-    source_overlay: HashMap<String, String>,
+    source_overlay: Arc<HashMap<String, String>>,
     /// Per-vertebra Typst injections (prelude + epilogue), keyed by
     /// project-relative include path. The prelude is prepended to each
     /// matching vertebra's served source so authored Typst can read
     /// `rheo-context` (its handle and the spine); the epilogue (a metadata
     /// beacon, when emitted for the layout) is appended after it.
-    rheo_context: HashMap<String, VertebraInjection>,
+    rheo_context: Arc<HashMap<String, VertebraInjection>>,
+    /// Everything this world's compiles have reported, resolved against it and
+    /// waiting to be rendered. Errors also travel out through `RheoError`, but
+    /// warnings have no other way out, and core renders neither.
+    diagnostics: Mutex<DiagnosticReport>,
 }
 
 struct FileSlot {
@@ -139,14 +169,15 @@ impl RheoWorld {
             ))
             .build();
 
-        let font_store = Self::init_resources(&spec.font_dirs);
-
         Self {
             root,
             main,
-            book: font_store.book().clone(),
             library: LazyHash::new(library),
-            font_store,
+            // A build that compiles several formats scans once and passes the
+            // store in; a lone world scans for itself.
+            fonts: spec
+                .fonts
+                .unwrap_or_else(|| Arc::new(scan_fonts(&spec.font_dirs))),
             // A caller that built one per build passes it in; otherwise a
             // default resolver reproduces today's routing exactly.
             packages: spec
@@ -158,6 +189,7 @@ impl RheoWorld {
             virtual_main_source: spec.virtual_main_source,
             source_overlay: spec.source_overlay,
             rheo_context: spec.rheo_context,
+            diagnostics: Mutex::new(DiagnosticReport::default()),
         }
     }
 
@@ -205,22 +237,6 @@ impl RheoWorld {
                 ..spec
             },
         ))
-    }
-
-    fn init_resources(font_dirs: &[PathBuf]) -> FontStore {
-        if !font_dirs.is_empty() {
-            tracing::info!(dirs = ?font_dirs, "loading fonts from {} additional directories", font_dirs.len());
-        }
-        let include_system_fonts = std::env::var("TYPST_IGNORE_SYSTEM_FONTS").is_err();
-        let mut font_store = FontStore::new();
-        font_store.extend(typst_kit::fonts::embedded());
-        if include_system_fonts {
-            font_store.extend(typst_kit::fonts::system());
-        }
-        for dir in font_dirs {
-            font_store.extend(typst_kit::fonts::scan(dir));
-        }
-        font_store
     }
 
     /// Reset the file cache for incremental compilation.
@@ -311,7 +327,6 @@ impl RheoWorld {
 
     /// Compile the current main file to an HTML document.
     pub fn compile_html(&self) -> crate::Result<typst_html::HtmlDocument> {
-        use crate::diagnostics::unwrap_compilation_result;
         use typst::diag::SourceDiagnostic;
 
         tracing::info!("compiling to HTML");
@@ -320,16 +335,14 @@ impl RheoWorld {
             !w.message
                 .contains("html export is under active development and incomplete")
         };
-        unwrap_compilation_result(Some(self), result, Some(filter))
+        self.finish(result, Some(filter))
     }
 
     /// Compile the current main file to a paged (PDF) document.
     pub fn compile_pdf(&self) -> crate::Result<typst_layout::PagedDocument> {
-        use crate::diagnostics::unwrap_compilation_result;
-
         tracing::info!("compiling to PDF");
         let result = typst::compile::<typst_layout::PagedDocument>(self);
-        unwrap_compilation_result(Some(self), result, None::<fn(&_) -> bool>)
+        self.finish(result, None::<fn(&_) -> bool>)
     }
 
     /// Compile the spine to its per-file outputs.
@@ -337,14 +350,58 @@ impl RheoWorld {
     /// Internally this drives Typst's multi-file bundle target, but that is an
     /// implementation detail: nothing user-facing references "bundle".
     pub fn compile_bundle(&self) -> crate::Result<typst_bundle::Bundle> {
-        use crate::diagnostics::unwrap_compilation_result;
         use typst::diag::SourceDiagnostic;
 
         tracing::debug!("compiling spine via bundle target");
         let result = typst::compile::<typst_bundle::Bundle>(self);
         // Suppress Typst's experimental-feature notice; bundle is internal-only.
         let filter = |w: &SourceDiagnostic| !w.message.contains("bundle export is experimental");
-        unwrap_compilation_result(Some(self), result, Some(filter))
+        self.finish(result, Some(filter))
+    }
+
+    /// Record a compile's diagnostics against this world and unwrap its output.
+    ///
+    /// `filter` keeps the warnings it returns `true` for (Typst's own
+    /// experimental-feature notices are rheo's business, not the author's).
+    /// Errors are recorded too, so a failed compile's diagnostics are as
+    /// renderable as a successful one's — the returned [`crate::RheoError`]
+    /// carries only their messages.
+    fn finish<T, F>(
+        &self,
+        result: typst::diag::Warned<typst::diag::SourceResult<T>>,
+        filter: Option<F>,
+    ) -> crate::Result<T>
+    where
+        F: Fn(&typst::diag::SourceDiagnostic) -> bool,
+    {
+        let warnings: Vec<_> = match filter {
+            Some(keep) => result
+                .warnings
+                .iter()
+                .filter(|w| keep(w))
+                .cloned()
+                .collect(),
+            None => result.warnings.to_vec(),
+        };
+        self.record(&warnings);
+        result.output.map_err(|errors| {
+            self.record(&errors);
+            crate::diagnostics::compilation_error(&errors)
+        })
+    }
+
+    /// Resolve `diagnostics` against this world and add them to its log.
+    fn record(&self, diagnostics: &[typst::diag::SourceDiagnostic]) {
+        if diagnostics.is_empty() {
+            return;
+        }
+        let detached = DiagnosticReport::detach(self, diagnostics);
+        self.diagnostics.lock().extend(detached);
+    }
+
+    /// Take every diagnostic recorded so far, leaving the log empty.
+    pub fn take_diagnostics(&self) -> DiagnosticReport {
+        std::mem::take(&mut self.diagnostics.lock())
     }
 
     /// Create a new world and compile the given file to an HTML document.
@@ -398,7 +455,7 @@ impl World for RheoWorld {
     }
 
     fn book(&self) -> &LazyHash<FontBook> {
-        &self.book
+        self.fonts.book()
     }
 
     fn main(&self) -> FileId {
@@ -422,79 +479,31 @@ impl World for RheoWorld {
 
         // Serve the synthesized virtual main, then any moulded vertebra overlay,
         // from memory — falling back to disk for everything else.
-        let mut text = if id == self.main
+        let rel = id
+            .vpath()
+            .get_with_slash()
+            .trim_start_matches('/')
+            .to_string();
+        let text = if id == self.main
             && let Some(ref vm) = self.virtual_main_source
         {
             vm.clone()
-        } else if let Some(body) = self
-            .source_overlay
-            .get(id.vpath().get_with_slash().trim_start_matches('/'))
-        {
+        } else if let Some(body) = self.source_overlay.get(&rel) {
             body.clone()
         } else {
             let path = self.path_for_id(id)?;
             fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?
         };
 
-        // Inject target() polyfill for all plugin formats.
-        let target_polyfill = if self.format_name.is_some() {
-            "// Polyfill target() to return rheo's output format from sys.inputs\n\
-             #let target() = if \"rheo-context\" in sys.inputs and \"target\" in sys.inputs.rheo-context { sys.inputs.rheo-context.target } else { std.target() }\n\n"
-        } else {
-            ""
+        let injector = SourceInjector::new(
+            self.format_name.is_some(),
+            self.plugin_library.as_deref(),
+            &self.rheo_context,
+        );
+        let text = match id == self.main {
+            true => injector.main(&text),
+            false => injector.vertebra(&rel, &text),
         };
-
-        // For the main file, also inject the rheo.typ template and plugin library code.
-        if id == self.main {
-            let rheo_content = include_str!("typ/rheo.typ");
-            let plugin_lib_content = self.plugin_library.as_deref().unwrap_or("");
-            // `rheo-metadata`/`rheo-metadata-all`/`rheo-handle-title` at
-            // bundle-root (marrow) scope. `rheo-metadata` reuses
-            // `MetadataHelper`'s `Display` — the same import the per-vertebra
-            // prelude uses — so the two sites can't drift apart.
-            // `MetadataAllHelper`/`HandleTitleHelper` are marrow-only: a
-            // single vertebra never needs "every vertebra's metadata at once"
-            // or a handle anchor's title lookup (anchors only ever appear in
-            // bundle-root `#document(...)` bodies, per `bundle_source.rs`).
-            // No extra format gate is needed: `MetadataBeacon` (and marrow
-            // itself) are only ever assembled for per-page (HTML/EPUB)
-            // targets, since combined PDF hard-errors on
-            // `document()`/`asset()` — the two already agree.
-            let metadata_helper = TypstStmt::MetadataHelper;
-            let metadata_all_helper = TypstStmt::MetadataAllHelper;
-            let handle_title_helper = TypstStmt::HandleTitleHelper;
-            let template_inject = format!(
-                "{}{}\n\n{}\n\n{}\n\n{}\n\n{}\n#show: rheo_template\n\n",
-                target_polyfill,
-                rheo_content,
-                metadata_helper,
-                metadata_all_helper,
-                handle_title_helper,
-                plugin_lib_content
-            );
-            text = format!("{}{}", template_inject, text);
-        } else {
-            // Non-main files (vertebrae/partials): the target() polyfill, then any
-            // per-vertebra `rheo-context` prelude, then the file's own source,
-            // then any per-vertebra epilogue (the metadata beacon).
-            let rel = id
-                .vpath()
-                .get_with_slash()
-                .trim_start_matches('/')
-                .to_string();
-            let injection = self.rheo_context.get(&rel);
-            let context_prelude = injection.map(|inj| inj.prelude.as_str()).unwrap_or("");
-            let context_epilogue = injection.map(|inj| inj.epilogue.as_str()).unwrap_or("");
-            if !target_polyfill.is_empty()
-                || !context_prelude.is_empty()
-                || !context_epilogue.is_empty()
-            {
-                text = format!(
-                    "{}{}{}{}",
-                    target_polyfill, context_prelude, text, context_epilogue
-                );
-            }
-        }
 
         Ok(self.cache_source(id, text))
     }
@@ -519,7 +528,7 @@ impl World for RheoWorld {
     }
 
     fn font(&self, index: usize) -> Option<Font> {
-        self.font_store.font(index)
+        self.fonts.font(index)
     }
 
     fn today(&self, offset: Option<Duration>) -> Option<Datetime> {
@@ -590,6 +599,7 @@ impl<'a> Files<'a> for RheoWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::synth::typst_source::TypstStmt;
     use tempfile::TempDir;
 
     #[test]
@@ -608,7 +618,7 @@ mod tests {
             root,
             "#document(\"intro.html\", format: \"html\")[]".to_string(),
             WorldSpec {
-                source_overlay,
+                source_overlay: Arc::new(source_overlay),
                 format_name: Some("html".to_string()),
                 ..Default::default()
             },
@@ -645,8 +655,8 @@ mod tests {
             root,
             "#document(\"intro.html\", format: \"html\")[]".to_string(),
             WorldSpec {
-                source_overlay,
-                rheo_context,
+                source_overlay: Arc::new(source_overlay),
+                rheo_context: Arc::new(rheo_context),
                 format_name: Some("html".to_string()),
                 ..Default::default()
             },
@@ -684,8 +694,8 @@ mod tests {
             root,
             "#document(\"intro.html\", format: \"html\")[]".to_string(),
             WorldSpec {
-                source_overlay,
-                rheo_context,
+                source_overlay: Arc::new(source_overlay),
+                rheo_context: Arc::new(rheo_context),
                 format_name: Some("html".to_string()),
                 ..Default::default()
             },
@@ -856,13 +866,13 @@ mod tests {
                     "{}\n\n{}\n\n",
                     TypstStmt::MetadataHelper,
                     TypstStmt::ContextBinding {
-                        handle: "intro".to_string()
+                        handle: "intro".into()
                     }
                 ),
                 epilogue: format!(
                     "\n{}\n",
                     TypstStmt::MetadataBeacon {
-                        handle: "intro".to_string()
+                        handle: "intro".into()
                     }
                 ),
             },
@@ -883,8 +893,8 @@ mod tests {
             root,
             main,
             WorldSpec {
-                source_overlay,
-                rheo_context,
+                source_overlay: Arc::new(source_overlay),
+                rheo_context: Arc::new(rheo_context),
                 format_name: Some("html".to_string()),
                 ..Default::default()
             },
@@ -1008,8 +1018,8 @@ mod tests {
             root,
             moulded.main,
             WorldSpec {
-                source_overlay: moulded.sources,
-                rheo_context,
+                source_overlay: Arc::new(moulded.sources),
+                rheo_context: Arc::new(rheo_context),
                 global_context: Some(global_context),
                 format_name: Some("html".to_string()),
                 ..Default::default()
@@ -1065,8 +1075,8 @@ mod tests {
                 root,
                 moulded.main,
                 WorldSpec {
-                    source_overlay: moulded.sources,
-                    rheo_context: spine.vertebra_injections(),
+                    source_overlay: Arc::new(moulded.sources),
+                    rheo_context: Arc::new(spine.vertebra_injections()),
                     global_context: Some(spine.global_context(
                         crate::reticulate::spine::FormatContext {
                             target: Some("html"),

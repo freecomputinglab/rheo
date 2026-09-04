@@ -1,4 +1,5 @@
-use crate::util::typst_source::TypstStmt;
+use crate::reticulate::handle::Handle;
+use crate::synth::typst_source::TypstStmt;
 use std::fmt;
 
 /// A handle anchor emitted into a `BundleDocument` body so that `@label` cross-references
@@ -9,7 +10,7 @@ pub struct BundleAnchor {
     /// `rheo-meta:<handle>` beacon at render time. Shared by every anchor
     /// belonging to the same vertebra (the canonical-handle anchor and any
     /// `<handle.typ>` escape-alias anchors alike), regardless of `label`.
-    pub handle: String,
+    pub handle: Handle,
     /// The path-derived fallback title, used only when no beacon is found for
     /// `handle` (combined PDF layouts, which emit no beacons at all).
     pub title: String,
@@ -31,7 +32,7 @@ pub struct BundleDocument {
     /// The `:`-joined handle of this document's page, published per-document via
     /// Typst `state` so `typ/rheo.typ`'s cross-vertebra link rule can read the
     /// current page's handle (empty for the combined PDF, which has no rule).
-    pub handle: String,
+    pub handle: Handle,
     /// Vertebra segments, in order. Each segment's anchors are emitted immediately
     /// before its include so cross-references resolve to the right location.
     pub segments: Vec<BundleSegment>,

@@ -1,6 +1,11 @@
+//! Names rheo has retired: `rheo.toml` keys and authored `#let rheo-*`
+//! bindings. Different domains, one file — a retirement is recorded once, so
+//! adding a future removal is a single edit, and the build-time warning and
+//! `rheo migrate`'s report read the same list.
+//!
 //! Keys retired from `rheo.toml` in a past version, still parsed harmlessly
 //! into an `extra` flatten map (see [`super::Spine::extra`]) but otherwise
-//! inert. One shared table so the build-time warning ([`super::validation`])
+//! inert. One shared table so the parse-time warning ([`warn_on_retired_keys`])
 //! and `rheo migrate`'s reporting read the same list instead of keeping two
 //! in step.
 
@@ -52,6 +57,36 @@ pub const RETIRED_KEYS: &[RetiredKey] = &[
         key: "feed_include",
         replacement: "a marrow that builds its own entry list knows what it put in — this \
             concept does not survive the move to @rheo/feeds",
+    },
+];
+
+/// A `#let rheo-<name>` binding retired from authored Typst, and what to do
+/// instead. The other half of the retirement record: a key lives in a config
+/// table, a binding in a `.typ` file, and neither has any effect any more.
+pub struct RetiredBinding {
+    /// Binding name as it appears after `#let`.
+    pub name: &'static str,
+    /// What changed, or what to do instead.
+    pub replacement: &'static str,
+}
+
+/// Every binding retired so far.
+pub const RETIRED_BINDINGS: &[RetiredBinding] = &[
+    RetiredBinding {
+        name: "rheo-feed-title",
+        replacement: "moved to @rheo/feeds's Typst configuration",
+    },
+    RetiredBinding {
+        name: "rheo-feed-updated",
+        replacement: "moved to @rheo/feeds's Typst configuration",
+    },
+    RetiredBinding {
+        name: "rheo-feed-exclude",
+        replacement: "moved to @rheo/feeds's Typst configuration",
+    },
+    RetiredBinding {
+        name: "rheo-author",
+        replacement: "use `#set document(author: \"...\")` instead",
     },
 ];
 

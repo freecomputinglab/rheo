@@ -2,10 +2,14 @@
 name = "rheo"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 description.workspace = true
 license.workspace = true
 repository.workspace = true
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "rheo"
@@ -18,47 +22,25 @@ rheo-html = { workspace = true }
 rheo-pdf = { workspace = true }
 rheo-epub = { workspace = true }
 
+# Typst syntax tree, for migrating authored source by span rather than by regex
+typst-syntax = { workspace = true }
+
 # CLI and utilities
 clap = { workspace = true }
+codespan-reporting = { workspace = true }
 walkdir = { workspace = true }
-opener = { workspace = true }
-parking_lot = { workspace = true }
-atty = { workspace = true }
-pathdiff = { workspace = true }
-notify = { workspace = true }
-mime_guess = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-
-# Date/time
-chrono = { workspace = true }
+atty = { workspace = true }
 
 # Serialization
-serde = { workspace = true }
-toml = { workspace = true }
 toml_edit = { workspace = true }
-semver = { workspace = true }
-
-# Development server
-tokio = { workspace = true }
-axum = { workspace = true }
-tower = { workspace = true }
-tower-http = { workspace = true }
-webbrowser = { workspace = true }
-tokio-stream = { workspace = true }
-
-# Error handling
-thiserror = { workspace = true }
 
 # Patterns
-globset = { workspace = true }
 glob = { workspace = true }
-regex = { workspace = true }
-
-# System paths
-dirs = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+toml = { workspace = true }

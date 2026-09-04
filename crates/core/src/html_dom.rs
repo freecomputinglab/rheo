@@ -18,7 +18,10 @@ use std::fmt::Write as _;
 pub enum SerializeMode {
     /// Standard HTML: void elements emit `<tag>`.
     Html,
-    /// XHTML: void elements self-close `<tag/>`, attribute values fully escaped.
+    /// Portable XHTML for EPUB: an `<?xml?>` declaration and a trailing
+    /// newline after the doctype, void elements self-closing (`<tag/>`), the
+    /// XHTML namespace stamped onto `<html>`, and `<body>`'s children wrapped
+    /// in `<article>`.
     Xhtml,
 }
 
@@ -27,12 +30,12 @@ pub enum SerializeMode {
 /// Raw-text elements (`style`, `script`) must have their text content serialized
 /// verbatim — no entity escaping. CSS selectors like `p > span` would otherwise
 /// become `p &gt; span`.
-pub fn is_raw_text_element(tag: &str) -> bool {
+pub(crate) fn is_raw_text_element(tag: &str) -> bool {
     matches!(tag, "style" | "script")
 }
 
 /// Returns true if the given tag name is an HTML void element.
-pub fn is_void_element(tag_name: &str) -> bool {
+pub(crate) fn is_void_element(tag_name: &str) -> bool {
     matches!(
         tag_name,
         "area"
@@ -53,36 +56,10 @@ pub fn is_void_element(tag_name: &str) -> bool {
 }
 
 /// Escape text content for HTML/XHTML output.
-pub fn escape_text(text: &str) -> String {
+pub(crate) fn escape_text(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-}
-
-/// Escape `text` as the BODY of a JSON string — no surrounding quotes, which
-/// the asset author writes themselves.
-///
-/// Per RFC 8259 §7 that means `"` and `\`, plus every C0 control character;
-/// the five with short forms get them and the rest go to `\u00XX`. Notably it
-/// does NOT touch `<`, `>` or `&`: the consumer is a JSON string, not markup,
-/// so a JSON Feed's `content_html` member holds real HTML rather than
-/// entity-escaped HTML.
-pub fn escape_json_string(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 16);
-    for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
 }
 
 /// Escape an attribute value for HTML/XHTML output.
@@ -91,7 +68,7 @@ pub fn escape_json_string(text: &str) -> String {
 /// double quotes, and html5ever DECODES entities while parsing, so a value that
 /// arrived as `&quot;` is a bare `"` in memory and would close the attribute
 /// early on the way back out.
-pub fn escape_attr(value: &str) -> String {
+pub(crate) fn escape_attr(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -112,10 +89,7 @@ impl HtmlDom {
         let dom = html5ever::parse_document(RcDom::default(), ParseOpts::default())
             .from_utf8()
             .read_from(&mut html.as_bytes())
-            .map_err(|e| RheoError::HtmlGeneration {
-                count: 1,
-                errors: format!("failed to parse HTML: {}", e),
-            })?;
+            .map_err(|e| RheoError::export("HTML", format!("failed to parse HTML: {e}")))?;
         Ok(Self { dom })
     }
 
@@ -126,9 +100,34 @@ impl HtmlDom {
         Ok(output)
     }
 
+    /// Serialize the DOM tree as portable XHTML (see [`SerializeMode::Xhtml`]),
+    /// for EPUB packaging.
+    pub fn serialize_xhtml(&self) -> Result<String> {
+        let mut output = String::new();
+        serialize_node(&self.dom.document, &mut output, &SerializeMode::Xhtml)?;
+        Ok(output)
+    }
+
     /// Find an element by tag name (depth-first search).
     pub fn find_element(&self, tag_name: &str) -> Option<Element> {
         find_element_by_tag(&self.dom.document, tag_name).map(|handle| Element { handle })
+    }
+
+    /// The document's `<html lang="...">` attribute, if set.
+    pub fn html_lang(&self) -> Option<String> {
+        self.find_element("html")?.attr("lang")
+    }
+
+    /// Finds every `h2`–`h6` heading, in document order, deriving a slug `id`
+    /// from each one's text and stamping it onto the element so a later
+    /// [`Self::serialize`]/[`Self::serialize_xhtml`] emits it — a caller
+    /// building a table of contents needs that same id to link to it. Calling
+    /// this more than once re-stamps (and duplicates) the `id` attribute, so
+    /// call it exactly once per parse.
+    pub fn collect_headings(&mut self) -> Vec<Heading> {
+        let mut out = Vec::new();
+        collect_headings(&self.dom.document, &mut out);
+        out
     }
 
     /// Hoists every `<rheo-head>` wrapper element's children into `<head>`,
@@ -163,12 +162,9 @@ impl HtmlDom {
             return Ok(());
         }
 
-        let head = self
-            .find_element("head")
-            .ok_or_else(|| RheoError::HtmlGeneration {
-                count: 1,
-                errors: "HTML document does not contain a <head> element".to_string(),
-            })?;
+        let head = self.find_element("head").ok_or_else(|| {
+            RheoError::export("HTML", "HTML document does not contain a <head> element")
+        })?;
 
         for handle in collected {
             head.append_child(Element { handle });
@@ -201,19 +197,16 @@ impl HtmlDom {
     pub fn append_head_fragment(&mut self, fragment_html: &str) -> Result<()> {
         let stub = format!("<!DOCTYPE html><html><head>{fragment_html}</head><body></body></html>");
         let stub_dom = Self::parse(&stub)?;
-        let stub_head = stub_dom
-            .find_element("head")
-            .ok_or_else(|| RheoError::HtmlGeneration {
-                count: 1,
-                errors: "failed to parse head fragment: stub document has no <head>".to_string(),
-            })?;
+        let stub_head = stub_dom.find_element("head").ok_or_else(|| {
+            RheoError::export(
+                "HTML",
+                "failed to parse head fragment: stub document has no <head>",
+            )
+        })?;
 
-        let head = self
-            .find_element("head")
-            .ok_or_else(|| RheoError::HtmlGeneration {
-                count: 1,
-                errors: "HTML document does not contain a <head> element".to_string(),
-            })?;
+        let head = self.find_element("head").ok_or_else(|| {
+            RheoError::export("HTML", "HTML document does not contain a <head> element")
+        })?;
 
         for child in stub_head.take_children() {
             head.append_child(child);
@@ -236,12 +229,9 @@ impl HtmlDom {
         stylesheets: &[&str],
         scripts: &[ScriptRef],
     ) -> Result<()> {
-        let head = self
-            .find_element("head")
-            .ok_or_else(|| RheoError::HtmlGeneration {
-                count: 1,
-                errors: "HTML document does not contain a <head> element".to_string(),
-            })?;
+        let head = self.find_element("head").ok_or_else(|| {
+            RheoError::export("HTML", "HTML document does not contain a <head> element")
+        })?;
 
         let insert_pos = head.last_meta_index().map(|i| i + 1).unwrap_or(0);
 
@@ -307,10 +297,7 @@ impl HtmlDom {
     /// the body before or after injecting head links.
     pub fn body_inner_html(&self) -> Result<String> {
         let body = find_element_by_tag(&self.dom.document, "body").ok_or_else(|| {
-            RheoError::HtmlGeneration {
-                count: 1,
-                errors: "HTML document does not contain a <body> element".to_string(),
-            }
+            RheoError::export("HTML", "HTML document does not contain a <body> element")
         })?;
         inner_html(&body)
     }
@@ -360,28 +347,17 @@ impl HtmlDom {
             Some(sel) => {
                 if let Some(class) = sel.strip_prefix('.') {
                     let el = find_element_by_class(&self.dom.document, class).ok_or_else(|| {
-                        RheoError::HtmlGeneration {
-                            count: 1,
-                            errors: format!("no element with class '{}' found", class),
-                        }
+                        RheoError::export("HTML", format!("no element with class '{class}' found"))
                     })?;
                     inner_html(&el)
                 } else {
                     let el = find_element_by_tag(&self.dom.document, sel).ok_or_else(|| {
-                        RheoError::HtmlGeneration {
-                            count: 1,
-                            errors: format!("no <{}> element found", sel),
-                        }
+                        RheoError::export("HTML", format!("no <{sel}> element found"))
                     })?;
                     inner_html(&el)
                 }
             }
         }
-    }
-
-    /// Returns a reference to the underlying DOM document root node.
-    pub fn document_root(&self) -> &Handle {
-        &self.dom.document
     }
 }
 
@@ -456,6 +432,18 @@ impl Element {
             .into_iter()
             .map(|handle| Element { handle })
             .collect()
+    }
+
+    /// The value of attribute `name` on this element, if present.
+    pub fn attr(&self, name: &str) -> Option<String> {
+        let NodeData::Element { attrs, .. } = &self.handle.data else {
+            return None;
+        };
+        attrs
+            .borrow()
+            .iter()
+            .find(|a| a.name.local.as_ref() == name)
+            .map(|a| a.value.to_string())
     }
 
     /// Returns the index of the last `<meta>` child in this element's children, if any.
@@ -547,6 +535,67 @@ fn find_element_where(
         .find_map(|child| find_element_where(child, matches))
 }
 
+/// A heading (`h2`–`h6`) found by [`HtmlDom::collect_headings`], in document order.
+pub struct Heading {
+    /// Slug id derived from `text`, also stamped onto the heading element.
+    pub id: String,
+    /// Heading level, 2–6.
+    pub level: u8,
+    /// The heading's text content.
+    pub text: String,
+}
+
+/// Returns the heading level (2–6) for tag names `h2`..`h6`, or `None` for
+/// any other tag (including `h1`, reserved for the document/page title).
+fn heading_level(tag: &str) -> Option<u8> {
+    let mut chars = tag.chars();
+    if chars.next()? != 'h' {
+        return None;
+    }
+    let digit = chars.next()?;
+    if !digit.is_ascii_digit() || digit == '1' || chars.next().is_some() {
+        return None;
+    }
+    digit.to_digit(10).map(|d| d as u8)
+}
+
+fn collect_headings(handle: &Handle, out: &mut Vec<Heading>) {
+    if let NodeData::Element { name, attrs, .. } = &handle.data
+        && let Some(level) = heading_level(&name.local)
+    {
+        let text = text_content(handle);
+        let id = text_to_id(&text);
+        attrs.borrow_mut().push(Attribute {
+            name: QualName::new(None, ns!(), LocalName::from("id")),
+            value: StrTendril::from(id.as_str()),
+        });
+        out.push(Heading { id, level, text });
+    }
+    for child in handle.children.borrow().iter() {
+        collect_headings(child, out);
+    }
+}
+
+fn text_to_id(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_whitespace() {
+                '-'
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
+        .collect()
+}
+
+/// Recursively collect all text content from a DOM node.
+fn text_content(handle: &Handle) -> String {
+    match &handle.data {
+        NodeData::Text { contents } => contents.borrow().to_string(),
+        _ => handle.children.borrow().iter().map(text_content).collect(),
+    }
+}
+
 /// Serialize the inner HTML of an element: its children without the surrounding
 /// tag.
 fn inner_html(handle: &Handle) -> Result<String> {
@@ -560,12 +609,21 @@ fn inner_html(handle: &Handle) -> Result<String> {
 fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) -> Result<()> {
     match &handle.data {
         NodeData::Document => {
+            if matches!(mode, SerializeMode::Xhtml) {
+                write_html(
+                    output,
+                    format_args!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"),
+                )?;
+            }
             for child in handle.children.borrow().iter() {
                 serialize_node(child, output, mode)?;
             }
         }
         NodeData::Doctype { name, .. } => {
             write_html(output, format_args!("<!DOCTYPE {}>", name))?;
+            if matches!(mode, SerializeMode::Xhtml) {
+                output.push('\n');
+            }
         }
         NodeData::Text { contents } => {
             let text = contents.borrow();
@@ -582,6 +640,12 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
         } => {
             write_html(output, format_args!("<{}", name.local))?;
 
+            // XHTML EPUB pages need the XHTML namespace on the root element;
+            // Typst's own HTML output never carries one.
+            if matches!(mode, SerializeMode::Xhtml) && &*name.local == "html" {
+                output.push_str(" xmlns=\"http://www.w3.org/1999/xhtml\"");
+            }
+
             for attr in attrs.borrow().iter() {
                 let escaped_value = escape_attr(&attr.value);
                 write_html(
@@ -597,6 +661,12 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
                 }
             } else {
                 output.push('>');
+                // EPUB readers expect a page's flow content under a landmark
+                // element; Typst emits bare children directly under `<body>`.
+                let wrap_article = matches!(mode, SerializeMode::Xhtml) && &*name.local == "body";
+                if wrap_article {
+                    output.push_str("<article>");
+                }
                 let is_raw =
                     matches!(mode, SerializeMode::Html) && is_raw_text_element(name.local.as_ref());
                 // A `<template>`'s children live in `template_contents`, a
@@ -609,6 +679,9 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
                     } else {
                         serialize_node(child, output, mode)?;
                     }
+                }
+                if wrap_article {
+                    output.push_str("</article>");
                 }
                 write_html(output, format_args!("</{}>", name.local))?;
             }
@@ -627,17 +700,14 @@ fn serialize_node(handle: &Handle, output: &mut String, mode: &SerializeMode) ->
 fn write_html(output: &mut String, args: std::fmt::Arguments) -> Result<()> {
     output
         .write_fmt(args)
-        .map_err(|e| RheoError::HtmlGeneration {
-            count: 1,
-            errors: format!("failed to serialize HTML: {e}"),
-        })
+        .map_err(|e| RheoError::export("HTML", format!("failed to serialize HTML: {e}")))
 }
 
 /// The `../` prefix that makes a build-root asset ref resolve from a page at the
 /// given output path. `index.html` → `""`; `chapters/ch1.html` → `"../"`;
 /// `a/b/c.html` → `"../../"`. Assets are written relative to the plugin output
 /// root, so a page one directory deep must climb one level to reach them.
-pub fn depth_prefix(output_rel_path: &str) -> String {
+pub(crate) fn depth_prefix(output_rel_path: &str) -> String {
     "../".repeat(output_rel_path.matches('/').count())
 }
 
@@ -683,7 +753,7 @@ mod tests {
     fn test_parse_html() {
         let html = "<html><head><title>Test</title></head><body></body></html>";
         let dom = HtmlDom::parse(html).unwrap();
-        assert!(!dom.document_root().children.borrow().is_empty());
+        assert!(dom.find_element("title").is_some());
     }
 
     #[test]

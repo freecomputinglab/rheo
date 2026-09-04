@@ -7,6 +7,7 @@ use xhtml::HtmlInfo;
 use chrono::{DateTime, Utc};
 use iref::{IriRef, IriRefBuf, iri::Fragment};
 use itertools::Itertools;
+use rheo_core::html_dom::{Heading, HtmlDom};
 use rheo_core::{
     CastVertebra, FormatInitTemplate, FormatPlugin, PluginContext, PluginSection, Result,
     RheoError, Spine, SpineLayoutKind, eco_format, eco_vec,
@@ -74,7 +75,7 @@ impl FormatPlugin for EpubPlugin {
         // arrives in whatever order the compiled bundle's file map yields, which
         // happens to be spine order today but is an undocumented property of a
         // dependency — and reading order is not something to leave to that.
-        let ordered = spine_order(ctx.spine, outputs);
+        let ordered = spine_order(ctx.bundle.spine, outputs);
 
         // Language and author describe the publication, so they come from its
         // FIRST spine vertebra rather than from whichever output came first.
@@ -102,21 +103,21 @@ impl FormatPlugin for EpubPlugin {
         let nav_xhtml = generate_nav_xhtml(&mut items, &language)?;
         let package_string = generate_package(
             &items,
-            ctx.bundle_assets,
-            ctx.spine.title.as_deref(),
+            ctx.bundle.assets,
+            ctx.bundle.spine.title.as_deref(),
             identifier.as_deref(),
             date.as_ref(),
             &language,
             author.as_deref(),
         )?;
-        let epub_name = format!("{}.epub", ctx.project.name);
+        let epub_name = format!("{}.epub", ctx.bundle.project.name);
         let epub_path = ctx.output_dir.join(&epub_name);
         zip_epub(
             &epub_path,
             package_string,
             nav_xhtml,
             &items,
-            ctx.bundle_assets,
+            ctx.bundle.assets,
         )?;
 
         info!(output = %epub_path.display(), "successfully generated EPUB");
@@ -330,11 +331,11 @@ pub fn generate_package(
 
     let package = builder
         .build()
-        .map_err(|e| RheoError::epub_generation(format!("Package validation failed: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("Package validation failed: {}", e)))?;
 
     let xml = package
         .to_xml()
-        .map_err(|e| RheoError::epub_generation(format!("Package XML generation failed: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("Package XML generation failed: {}", e)))?;
 
     Ok(xml)
 }
@@ -357,35 +358,35 @@ pub fn zip_epub(
         "mimetype",
         opts.compression_method(zip::CompressionMethod::Stored),
     )
-    .map_err(|e| RheoError::epub_generation(format!("failed to start mimetype file: {}", e)))?;
+    .map_err(|e| RheoError::export("EPUB", format!("failed to start mimetype file: {}", e)))?;
     zip.write_all(EPUB_MEDIATYPE.as_bytes())
         .map_err(|e| RheoError::io(e, "writing mimetype"))?;
 
     zip.add_directory("META-INF", opts).map_err(|e| {
-        RheoError::epub_generation(format!("failed to add META-INF directory: {}", e))
+        RheoError::export("EPUB", format!("failed to add META-INF directory: {}", e))
     })?;
     zip.start_file("META-INF/container.xml", opts)
-        .map_err(|e| RheoError::epub_generation(format!("failed to start container.xml: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("failed to start container.xml: {}", e)))?;
     zip.write_all(CONTAINER_XML.as_bytes())
         .map_err(|e| RheoError::io(e, "writing container.xml"))?;
 
     zip.add_directory("EPUB", opts)
-        .map_err(|e| RheoError::epub_generation(format!("failed to add EPUB directory: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("failed to add EPUB directory: {}", e)))?;
 
     zip.start_file("EPUB/package.opf", opts)
-        .map_err(|e| RheoError::epub_generation(format!("failed to start package.opf: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("failed to start package.opf: {}", e)))?;
     zip.write_all(package_string.as_bytes())
         .map_err(|e| RheoError::io(e, "writing package.opf"))?;
 
     zip.start_file("EPUB/nav.xhtml", opts)
-        .map_err(|e| RheoError::epub_generation(format!("failed to start nav.xhtml: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("failed to start nav.xhtml: {}", e)))?;
     zip.write_all(nav_xhtml.as_bytes())
         .map_err(|e| RheoError::io(e, "writing nav.xhtml"))?;
 
     for item in items {
         let filename = format!("EPUB/{}", item.href);
         zip.start_file(&filename, opts).map_err(|e| {
-            RheoError::epub_generation(format!("failed to start file {}: {}", filename, e))
+            RheoError::export("EPUB", format!("failed to start file {}: {}", filename, e))
         })?;
         zip.write_all(item.xhtml.as_bytes())
             .map_err(|e| RheoError::io(e, format!("writing {}", filename)))?;
@@ -394,14 +395,14 @@ pub fn zip_epub(
     for (path, bytes) in bundle_assets {
         let filename = format!("EPUB/{}", path);
         zip.start_file(&filename, opts).map_err(|e| {
-            RheoError::epub_generation(format!("failed to start file {}: {}", filename, e))
+            RheoError::export("EPUB", format!("failed to start file {}: {}", filename, e))
         })?;
         zip.write_all(bytes.as_slice())
             .map_err(|e| RheoError::io(e, format!("writing {}", filename)))?;
     }
 
     zip.finish()
-        .map_err(|e| RheoError::epub_generation(format!("failed to finish EPUB zip: {}", e)))?;
+        .map_err(|e| RheoError::export("EPUB", format!("failed to finish EPUB zip: {}", e)))?;
     Ok(())
 }
 
@@ -430,41 +431,9 @@ impl EpubConfig {
 ///
 /// Returns `None` if no lang attribute is found or if parsing fails.
 fn extract_language(html_string: &str) -> Option<String> {
-    use markup5ever_rcdom::NodeData;
-    use rheo_core::util::html::HtmlDom;
-
-    let dom = HtmlDom::parse(html_string).ok()?;
-
-    // Walk DOM to find <html> element and extract lang attribute.
-    fn find_html_lang(handle: &markup5ever_rcdom::Handle) -> Option<String> {
-        match &handle.data {
-            NodeData::Element { name, attrs, .. } => {
-                if name.local.as_ref() == "html" {
-                    for attr in attrs.borrow().iter() {
-                        if attr.name.local.as_ref() == "lang" {
-                            return Some(attr.value.to_string());
-                        }
-                    }
-                }
-                for child in handle.children.borrow().iter() {
-                    if let Some(lang) = find_html_lang(child) {
-                        return Some(lang);
-                    }
-                }
-            }
-            NodeData::Document => {
-                for child in handle.children.borrow().iter() {
-                    if let Some(lang) = find_html_lang(child) {
-                        return Some(lang);
-                    }
-                }
-            }
-            _ => {}
-        }
-        None
-    }
-
-    find_html_lang(dom.document_root())
+    rheo_core::html_dom::HtmlDom::parse(html_string)
+        .ok()?
+        .html_lang()
 }
 
 pub struct EpubItem {
@@ -485,33 +454,6 @@ fn asset_item_id(path: &str) -> EcoString {
     format!("asset-{}", path.replace(['/', '.'], "-")).into()
 }
 
-fn text_to_id(s: &str) -> EcoString {
-    s.chars()
-        .map(|c| {
-            if c.is_whitespace() {
-                '-'
-            } else {
-                c.to_ascii_lowercase()
-            }
-        })
-        .collect()
-}
-
-/// Recursively collect all text content from a DOM node.
-fn text_content(handle: &markup5ever_rcdom::Handle) -> EcoString {
-    use markup5ever_rcdom::NodeData;
-    let mut out = EcoString::new();
-    match &handle.data {
-        NodeData::Text { contents } => out.push_str(&contents.borrow()),
-        _ => {
-            for child in handle.children.borrow().iter() {
-                out.push_str(&text_content(child));
-            }
-        }
-    }
-    out
-}
-
 impl EpubItem {
     /// Build an EPUB item from HTML bytes produced by the bundle compiler.
     ///
@@ -529,12 +471,12 @@ impl EpubItem {
             .with_extension("xhtml")
             .display()
             .to_string();
-        let href = IriRefBuf::new(xhtml_name).map_err(|e| {
-            RheoError::epub_generation(format!("invalid href for EPUB item: {}", e))
-        })?;
+        let href = IriRefBuf::new(xhtml_name)
+            .map_err(|e| RheoError::export("EPUB", format!("invalid href for EPUB item: {}", e)))?;
 
-        let (heading_ids, outline) = Self::outline_from_html(&html_string, &href)?;
-        let (xhtml, info) = xhtml::html_to_portable_xhtml(&html_string, &heading_ids)?;
+        let mut dom = HtmlDom::parse(&html_string)?;
+        let outline = Self::outline_from_headings(dom.collect_headings(), &href);
+        let (xhtml, info) = xhtml::html_to_portable_xhtml(&dom)?;
 
         Ok(EpubItem {
             href,
@@ -545,68 +487,20 @@ impl EpubItem {
         })
     }
 
-    /// Parse `html_string` to extract heading IDs and build the nav outline.
-    ///
-    /// Walks the DOM to find h2–h6 elements, derives an ID from their text content,
-    /// and builds the nav tree. Returns `(heading_ids, outline)` in DOM order so that
-    /// `html_to_portable_xhtml` can stamp the same IDs onto the XHTML output.
-    fn outline_from_html(
-        html_string: &str,
-        href: &IriRef,
-    ) -> Result<(Vec<EcoString>, Vec<OutlineNode<EcoString>>)> {
-        use markup5ever_rcdom::{Handle, NodeData};
-        use rheo_core::util::html::HtmlDom;
-
-        let dom = HtmlDom::parse(html_string)?;
-
-        // Recursive walk to collect (id, level, link_html) for h2–h6.
-        fn collect_headings(
-            handle: &Handle,
-            href: &IriRef,
-            out: &mut Vec<(EcoString, u8, EcoString)>,
-        ) {
-            match &handle.data {
-                NodeData::Element { name, .. } => {
-                    let tag = name.local.as_ref();
-                    let mut chars = tag.chars();
-                    if let Some('h') = chars.next()
-                        && let Some(c) = chars.next()
-                        && c.is_ascii_digit()
-                        && c != '1'
-                        && chars.next().is_none()
-                    {
-                        let level = c.to_digit(10).unwrap_or(2) as u8;
-                        let text: EcoString = text_content(handle);
-                        let id = text_to_id(&text);
-                        let mut anchored = href.to_owned();
-                        anchored.set_fragment(Fragment::new(id.as_bytes()).ok());
-                        let link = eco_format!(r#"<a href="{anchored}">{text}</a>"#);
-                        out.push((id, level, link));
-                    }
-                    for child in handle.children.borrow().iter() {
-                        collect_headings(child, href, out);
-                    }
-                }
-                NodeData::Document => {
-                    for child in handle.children.borrow().iter() {
-                        collect_headings(child, href, out);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let mut raw: Vec<(EcoString, u8, EcoString)> = Vec::new();
-        collect_headings(dom.document_root(), href, &mut raw);
-
-        let heading_ids: Vec<EcoString> = raw.iter().map(|(id, _, _)| id.clone()).collect();
-        let nodes: Vec<(EcoString, NonZero<usize>, bool)> = raw
+    /// Builds the nav outline tree from headings already stamped by
+    /// [`HtmlDom::collect_headings`], anchoring each entry at this item's own
+    /// `href#id`.
+    fn outline_from_headings(headings: Vec<Heading>, href: &IriRef) -> Vec<OutlineNode<EcoString>> {
+        let nodes: Vec<(EcoString, NonZero<usize>, bool)> = headings
             .into_iter()
-            .map(|(_, level, link)| (link, NonZero::new(level as usize).unwrap(), true))
+            .map(|h| {
+                let mut anchored = href.to_owned();
+                anchored.set_fragment(Fragment::new(h.id.as_bytes()).ok());
+                let link = eco_format!(r#"<a href="{anchored}">{}</a>"#, h.text);
+                (link, NonZero::new(h.level as usize).unwrap(), true)
+            })
             .collect();
-        let outline = OutlineNode::build_tree(nodes);
-
-        Ok((heading_ids, outline))
+        OutlineNode::build_tree(nodes)
     }
 
     fn title(&self) -> EcoString {

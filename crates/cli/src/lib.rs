@@ -3,18 +3,44 @@ use rheo_core::OpenHandle;
 use rheo_core::assets::watch::{WatchEvent, watch_project};
 use rheo_core::build::{Build, BuildOptions, resolve_build_dir};
 use rheo_core::config::manifest_version;
-use rheo_core::config::output::OutputConfig;
-use rheo_core::config::project::ProjectConfig;
-use rheo_core::{FormatPlugin, Result, RheoError};
+use rheo_core::output::OutputConfig;
+use rheo_core::project::ProjectConfig;
+use rheo_core::{FormatPlugin, Result, RheoError, ServerHandle};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 // Re-export logging functionality
-pub use rheo_core::diagnostics::logging;
+pub mod logging;
 
+mod diagnostics;
 mod migrate;
+mod reporter;
+
+/// Clap argument ids shared between the builder functions that declare an
+/// `Arg` and the runner functions that later read it back out of
+/// `ArgMatches`. clap only checks an id at runtime, so a typo in either half
+/// of the pair is a panic ("Mismatch between definition and access of
+/// ...") rather than a compile error; defining each id once here turns that
+/// typo into an ordinary Rust name-resolution error instead.
+///
+/// Per-plugin format flags (`--html`, `--pdf`, ...) are NOT here: their ids
+/// come from `plugin.name()` and stay dynamic, one per [`all_plugins`] entry.
+mod arg {
+    pub const PATH: &str = "path";
+    pub const CONFIG: &str = "config";
+    pub const BUILD_DIR: &str = "build-dir";
+    pub const FONT_DIR: &str = "font-dir";
+    pub const INPUT: &str = "input";
+    pub const EMIT_BUNDLE_SOURCE: &str = "emit-bundle-source";
+    pub const METADATA_TWO_PASS: &str = "metadata-two-pass";
+    pub const OPEN: &str = "open";
+    pub const PACKAGES: &str = "packages";
+    pub const QUIET: &str = "quiet";
+    pub const VERBOSE: &str = "verbose";
+    pub const APPLY: &str = "apply";
+}
 
 /// Initialize logging with specified verbosity
 pub fn init_logging(verbose: bool, quiet: bool) -> Result<()> {
@@ -40,31 +66,30 @@ fn all_plugins() -> Vec<Box<dyn FormatPlugin>> {
 
 /// Build the top-level clap `Command`, adding per-plugin `--<name>` flags
 /// dynamically to `compile` and `watch` subcommands.
-fn build_cli() -> Command {
-    let plugins = all_plugins();
+fn build_cli(plugins: &[Box<dyn FormatPlugin>]) -> Command {
     Command::new("rheo")
         .about("A tool for flowing Typst documents into publishable outputs")
         .version(env!("CARGO_PKG_VERSION"))
         .arg(
-            Arg::new("quiet")
+            Arg::new(arg::QUIET)
                 .short('q')
-                .long("quiet")
+                .long(arg::QUIET)
                 .action(ArgAction::SetTrue)
-                .conflicts_with("verbose")
+                .conflicts_with(arg::VERBOSE)
                 .global(true)
                 .help("Decrease output verbosity (errors only)"),
         )
         .arg(
-            Arg::new("verbose")
+            Arg::new(arg::VERBOSE)
                 .short('v')
-                .long("verbose")
+                .long(arg::VERBOSE)
                 .action(ArgAction::SetTrue)
-                .conflicts_with("quiet")
+                .conflicts_with(arg::QUIET)
                 .global(true)
                 .help("Increase output verbosity (show debug information)"),
         )
-        .subcommand(build_compile_command(&plugins))
-        .subcommand(build_watch_command(&plugins))
+        .subcommand(build_compile_command(plugins))
+        .subcommand(build_watch_command(plugins))
         .subcommand(build_clean_command())
         .subcommand(build_init_command())
         .subcommand(build_migrate_command())
@@ -90,20 +115,20 @@ fn add_format_flags(mut cmd: Command, plugins: &[Box<dyn FormatPlugin>]) -> Comm
 /// `--help` order unchanged.
 fn add_common_flags(cmd: Command) -> Command {
     cmd.arg(
-        Arg::new("path")
+        Arg::new(arg::PATH)
             .required(true)
             .index(1)
             .help("Path to project directory or single .typ file"),
     )
     .arg(
-        Arg::new("config")
-            .long("config")
+        Arg::new(arg::CONFIG)
+            .long(arg::CONFIG)
             .value_name("PATH")
             .help("Path to custom rheo.toml config file"),
     )
     .arg(
-        Arg::new("build-dir")
-            .long("build-dir")
+        Arg::new(arg::BUILD_DIR)
+            .long(arg::BUILD_DIR)
             .help("Build output directory (overrides rheo.toml if set)"),
     )
 }
@@ -111,21 +136,21 @@ fn add_common_flags(cmd: Command) -> Command {
 /// The build flags both `compile` and `watch` declare last.
 fn add_build_flags(cmd: Command) -> Command {
     cmd.arg(
-        Arg::new("font-dir")
-            .long("font-dir")
+        Arg::new(arg::FONT_DIR)
+            .long(arg::FONT_DIR)
             .value_name("DIR")
             .action(ArgAction::Append)
             .help("Additional font directory (can be repeated; appended to autoscan/config)"),
     )
     .arg(
-        Arg::new("emit-bundle-source")
-            .long("emit-bundle-source")
+        Arg::new(arg::EMIT_BUNDLE_SOURCE)
+            .long(arg::EMIT_BUNDLE_SOURCE)
             .action(ArgAction::SetTrue)
             .help("Write each plugin's synthesized bundle source to <build_dir>/<plugin>/.rheo-bundle.typ (debug artifact, not an input)"),
     )
     .arg(
-        Arg::new("metadata-two-pass")
-            .long("metadata-two-pass")
+        Arg::new(arg::METADATA_TWO_PASS)
+            .long(arg::METADATA_TWO_PASS)
             .action(ArgAction::SetTrue)
             .help("Recompile once more (only if needed) to resolve a #set document(title:) set inside a bounded code block for cross-vertebra metadata-of/@handle reads"),
     )
@@ -133,8 +158,8 @@ fn add_build_flags(cmd: Command) -> Command {
     // get it from one definition and cannot drift. Repeatable, like `--font-dir`
     // just above.
     .arg(
-        Arg::new("input")
-            .long("input")
+        Arg::new(arg::INPUT)
+            .long(arg::INPUT)
             .value_name("KEY=VALUE")
             .action(ArgAction::Append)
             .help("Set a sys.inputs key for the Typst compile (repeatable; values are always strings)"),
@@ -160,7 +185,7 @@ fn add_build_flags(cmd: Command) -> Command {
 /// forged spine.
 fn parse_inputs(sub: &ArgMatches) -> Result<HashMap<String, String>> {
     let mut map = HashMap::new();
-    for raw in sub.get_many::<String>("input").into_iter().flatten() {
+    for raw in sub.get_many::<String>(arg::INPUT).into_iter().flatten() {
         let Some((key, value)) = raw.split_once('=') else {
             return Err(RheoError::ProjectConfig {
                 message: format!(
@@ -174,7 +199,7 @@ fn parse_inputs(sub: &ArgMatches) -> Result<HashMap<String, String>> {
                 message: format!("--input expects a non-empty key, got `{raw}`"),
             });
         }
-        if key == rheo_core::world::RESERVED_INPUT_KEY {
+        if key == rheo_core::config::RESERVED_INPUT_KEY {
             return Err(RheoError::ProjectConfig {
                 message: format!(
                     "--input {key}=... is reserved: rheo owns the `{key}` key, which \
@@ -201,8 +226,8 @@ fn build_watch_command(plugins: &[Box<dyn FormatPlugin>]) -> Command {
         Command::new("watch").about("Watch Typst documents and recompile on changes"),
     )
     .arg(
-        Arg::new("open")
-            .long("open")
+        Arg::new(arg::OPEN)
+            .long(arg::OPEN)
             .action(ArgAction::SetTrue)
             .help("Open output in appropriate viewer (HTML opens in browser with live reload)"),
     );
@@ -213,25 +238,25 @@ fn build_clean_command() -> Command {
     Command::new("clean")
         .about("Clean build artifacts for a project")
         .arg(
-            Arg::new("path")
+            Arg::new(arg::PATH)
                 .index(1)
                 .default_value(".")
                 .help("Path to project directory or single .typ file"),
         )
         .arg(
-            Arg::new("config")
-                .long("config")
+            Arg::new(arg::CONFIG)
+                .long(arg::CONFIG)
                 .value_name("PATH")
                 .help("Path to custom rheo.toml config file"),
         )
         .arg(
-            Arg::new("build-dir")
-                .long("build-dir")
+            Arg::new(arg::BUILD_DIR)
+                .long(arg::BUILD_DIR)
                 .help("Build output directory to clean (overrides rheo.toml if set)"),
         )
         .arg(
-            Arg::new("packages")
-                .long("packages")
+            Arg::new(arg::PACKAGES)
+                .long(arg::PACKAGES)
                 .action(ArgAction::SetTrue)
                 .help(
                     "Also delete cached repository checkouts for this project's \
@@ -244,7 +269,7 @@ fn build_init_command() -> Command {
     Command::new("init")
         .about("Initialize a new Rheo project")
         .arg(
-            Arg::new("path")
+            Arg::new(arg::PATH)
                 .required(true)
                 .index(1)
                 .help("Path to the new project directory"),
@@ -255,14 +280,14 @@ fn build_migrate_command() -> Command {
     Command::new("migrate")
         .about("Migrate an older Rheo project to the latest version (experimental)")
         .arg(
-            Arg::new("path")
+            Arg::new(arg::PATH)
                 .required(true)
                 .index(1)
                 .help("Path to project directory"),
         )
         .arg(
-            Arg::new("apply")
-                .long("apply")
+            Arg::new(arg::APPLY)
+                .long(arg::APPLY)
                 .action(ArgAction::SetTrue)
                 .help("Apply migrations (default is a dry run that writes nothing)"),
         )
@@ -280,49 +305,74 @@ fn enabled_formats_from_matches(
         .collect()
 }
 
-/// Rewrites TOML section headers to be nested under a given prefix.
+/// Nests a plugin's `options_toml` init-template snippet under `[<name>.*]` and
+/// merges it into the generated `rheo.toml` document.
 ///
-/// `[spine]` becomes `[prefix.spine]` and `[[items]]` becomes `[[prefix.items]]`.
-/// Only matches bare headers (no leading whitespace, no inline comments).
-/// Non-header lines and already-prefixed headers are returned unchanged.
-fn prefix_toml_headers(content: &str, prefix: &str) -> String {
-    content
-        .lines()
-        .map(|line| {
-            let trimmed = line.trim();
-            // Skip already-prefixed headers (idempotent)
-            if trimmed.starts_with(&format!("[{prefix}."))
-                || trimmed.starts_with(&format!("[[{prefix}."))
-            {
-                return line.to_string();
+/// Parses the snippet with `toml_edit` rather than rewriting header lines as
+/// text, so a header's exact source form (leading whitespace, a trailing
+/// inline comment) never matters — the snippet's own comments and layout
+/// still round-trip because `toml_edit` preserves them. `[spine]` becoming
+/// `[<name>.spine]` and `[[items]]` becoming `[[<name>.items]]` need no
+/// separate handling: both are just an `Item` (a `Table` or an
+/// `ArrayOfTables`) relocated one level down, and `toml_edit` renders either
+/// with the right header form on its own.
+fn merge_plugin_toml(doc: &mut toml_edit::DocumentMut, name: &str, snippet: &str) -> Result<()> {
+    let snippet_doc: toml_edit::DocumentMut = snippet.parse().map_err(|e| {
+        RheoError::project_config(format!(
+            "failed to parse `{name}` plugin's init template snippet: {e}"
+        ))
+    })?;
+
+    match doc.as_table_mut().entry(name) {
+        toml_edit::Entry::Occupied(mut existing) => {
+            let table = existing.get_mut().as_table_mut().ok_or_else(|| {
+                RheoError::project_config(format!(
+                    "`{name}` is already a non-table key in the generated rheo.toml"
+                ))
+            })?;
+            for (key, item) in snippet_doc.as_table().iter() {
+                let mut item = item.clone();
+                add_blank_line_before(&mut item);
+                table.insert(key, item);
             }
-            if let Some(inner) = trimmed
-                .strip_prefix("[[")
-                .and_then(|s| s.strip_suffix("]]"))
-            {
-                let inner = inner.trim();
-                if !inner.is_empty()
-                    && inner
-                        .chars()
-                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
-                {
-                    return line.replace(trimmed, &format!("[[{prefix}.{inner}]]"));
-                }
-            } else if let Some(inner) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']'))
-            {
-                let inner = inner.trim();
-                if !inner.is_empty()
-                    && inner
-                        .chars()
-                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
-                {
-                    return line.replace(trimmed, &format!("[{prefix}.{inner}]"));
-                }
+        }
+        toml_edit::Entry::Vacant(slot) => {
+            // Implicit: this table exists only to carry the `<name>.` path
+            // segment. The plugin never declares a bare `[<name>]` section of
+            // its own, so one must not be printed either.
+            let mut nested = toml_edit::Table::new();
+            nested.set_implicit(true);
+            for (key, item) in snippet_doc.as_table().iter() {
+                let mut item = item.clone();
+                add_blank_line_before(&mut item);
+                nested.insert(key, item);
             }
-            line.to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+            slot.insert(toml_edit::Item::Table(nested));
+        }
+    }
+    Ok(())
+}
+
+/// Prepends a blank separating line to a relocated item's own header decor
+/// (any comment already attached is kept, just pushed down a line), so a
+/// plugin's appended `[<name>.*]` section doesn't run straight into whatever
+/// precedes it. For `[[array.of.tables]]`, only the first entry carries the
+/// header the reader sees first, so only it is touched.
+fn add_blank_line_before(item: &mut toml_edit::Item) {
+    let table = match item {
+        toml_edit::Item::Table(t) => Some(t),
+        toml_edit::Item::ArrayOfTables(a) => a.get_mut(0),
+        _ => None,
+    };
+    if let Some(table) = table {
+        let existing = table
+            .decor()
+            .prefix()
+            .and_then(|p| p.as_str())
+            .unwrap_or("")
+            .to_string();
+        table.decor_mut().set_prefix(format!("\n{existing}"));
+    }
 }
 
 fn init_project(target_dir: &Path) -> Result<()> {
@@ -335,17 +385,19 @@ fn init_project(target_dir: &Path) -> Result<()> {
 
     fs::create_dir_all(target_dir).map_err(|e| RheoError::io(e, "creating target directory"))?;
 
-    let mut toml_content =
+    let template =
         rheo_core::templates::RHEO_TOML.replace("{{VERSION}}", manifest_version::CURRENT);
-    for plugin in all_plugins() {
+    let mut toml_doc: toml_edit::DocumentMut = template.parse().map_err(|e| {
+        RheoError::project_config(format!("failed to parse built-in rheo.toml template: {e}"))
+    })?;
+    let plugins = all_plugins();
+    for plugin in &plugins {
         let tmpl = plugin.format_init_template();
         if let Some(section) = tmpl.options_toml {
-            toml_content.push('\n');
-            toml_content.push_str(&prefix_toml_headers(section, plugin.name()));
-            toml_content.push('\n');
+            merge_plugin_toml(&mut toml_doc, plugin.name(), section)?;
         }
     }
-    fs::write(target_dir.join("rheo.toml"), &toml_content)
+    fs::write(target_dir.join("rheo.toml"), toml_doc.to_string())
         .map_err(|e| RheoError::io(e, "writing rheo.toml"))?;
 
     let content_dir = target_dir.join("content");
@@ -378,7 +430,7 @@ fn init_project(target_dir: &Path) -> Result<()> {
     // Collect template contributions from all plugins
     let mut plugin_templates: std::collections::HashMap<&str, (&str, &str)> =
         std::collections::HashMap::new();
-    for plugin in all_plugins() {
+    for plugin in &plugins {
         let tmpl = plugin.format_init_template();
         for (path, content) in tmpl.files {
             if let Some((existing_plugin, _)) = plugin_templates.get(path) {
@@ -412,8 +464,15 @@ fn init_project(target_dir: &Path) -> Result<()> {
 /// Load the project, log a summary, and prepare a runnable [`Build`].
 ///
 /// The CLI owns project loading and arg mapping; all orchestration lives in
-/// [`rheo_core::Build`].
-fn prepare_build(path: &Path, config_path: Option<&Path>, opts: BuildOptions) -> Result<Build> {
+/// [`rheo_core::Build`]. Takes `plugins` rather than calling [`all_plugins`]
+/// itself, so a caller that already built the set for `BuildArgs` (which
+/// every caller does) hands over that same one instead of a second instance.
+fn prepare_build(
+    path: &Path,
+    config_path: Option<&Path>,
+    opts: BuildOptions,
+    plugins: Vec<Box<dyn FormatPlugin>>,
+) -> Result<Build> {
     info!(path = %path.display(), "loading project");
     let project = ProjectConfig::from_path(path, config_path)?;
     let file_word = if project.typ_files.len() == 1 {
@@ -429,72 +488,144 @@ fn prepare_build(path: &Path, config_path: Option<&Path>, opts: BuildOptions) ->
         file_word
     );
 
-    Build::prepare(project, all_plugins(), opts)
+    Build::prepare(project, plugins, opts)
+}
+
+/// The positional path, optional config override, and derived [`BuildOptions`]
+/// shared by `compile` and `watch`. `BuildOptions` doesn't derive `Clone` (it's
+/// defined in `rheo_core`, not touched here), so a config-change rebuild
+/// re-derives it via [`Self::build_options`] from these already-clonable
+/// fields rather than re-parsing `ArgMatches` a second time.
+struct BuildArgs {
+    path: PathBuf,
+    config: Option<PathBuf>,
+    formats: Vec<String>,
+    build_dir: Option<PathBuf>,
+    font_dirs: Vec<PathBuf>,
+    inputs: HashMap<String, String>,
+    emit_bundle_source: bool,
+    metadata_two_pass: bool,
+}
+
+impl BuildArgs {
+    fn from_matches(sub: &ArgMatches, plugins: &[Box<dyn FormatPlugin>]) -> Result<Self> {
+        Ok(Self {
+            path: PathBuf::from(
+                sub.get_one::<String>(arg::PATH)
+                    .expect("clap enforces `path` is present (required or defaulted)"),
+            ),
+            config: sub.get_one::<String>(arg::CONFIG).map(PathBuf::from),
+            formats: enabled_formats_from_matches(sub, plugins),
+            build_dir: sub.get_one::<String>(arg::BUILD_DIR).map(PathBuf::from),
+            font_dirs: sub
+                .get_many::<String>(arg::FONT_DIR)
+                .map(|vals| vals.map(PathBuf::from).collect())
+                .unwrap_or_default(),
+            inputs: parse_inputs(sub)?,
+            emit_bundle_source: sub.get_flag(arg::EMIT_BUNDLE_SOURCE),
+            metadata_two_pass: sub.get_flag(arg::METADATA_TWO_PASS),
+        })
+    }
+
+    fn build_options(&self) -> BuildOptions {
+        BuildOptions {
+            formats: self.formats.clone(),
+            build_dir: self.build_dir.clone(),
+            font_dirs: self.font_dirs.clone(),
+            inputs: self.inputs.clone(),
+            emit_bundle_source: self.emit_bundle_source,
+            metadata_two_pass: self.metadata_two_pass,
+        }
+    }
 }
 
 /// Main entry point using the builder-based dynamic CLI.
 pub fn run() -> Result<()> {
-    let cli = build_cli();
+    // Built once per invocation: `build_cli` reads it for the per-plugin
+    // `--<name>` flags, and whichever subcommand actually runs takes
+    // ownership of this same set below rather than building its own.
+    let plugins = all_plugins();
+    let cli = build_cli(&plugins);
     let matches = cli.get_matches();
 
-    let quiet = matches.get_flag("quiet");
-    let verbose = matches.get_flag("verbose");
+    let quiet = matches.get_flag(arg::QUIET);
+    let verbose = matches.get_flag(arg::VERBOSE);
     init_logging(verbose, quiet)?;
 
     match matches.subcommand() {
-        Some(("compile", sub)) => run_compile(sub),
-        Some(("watch", sub)) => run_watch(sub),
+        Some(("compile", sub)) => run_compile(sub, plugins),
+        Some(("watch", sub)) => run_watch(sub, plugins),
         Some(("clean", sub)) => run_clean(sub),
         Some(("migrate", sub)) => run_migrate(sub),
         Some(("init", sub)) => {
-            let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
+            let path = PathBuf::from(
+                sub.get_one::<String>(arg::PATH)
+                    .expect("clap enforces `path` is present (required or defaulted)"),
+            );
             init_project(&path)
         }
         _ => unreachable!("subcommand_required enforced by clap"),
     }
 }
 
-fn run_watch(sub: &ArgMatches) -> Result<()> {
-    let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
-    let config_path = sub.get_one::<String>("config").map(PathBuf::from);
-    let build_dir = sub.get_one::<String>("build-dir").map(PathBuf::from);
-    let cli_font_dirs: Vec<PathBuf> = sub
-        .get_many::<String>("font-dir")
-        .map(|vals| vals.map(PathBuf::from).collect())
-        .unwrap_or_default();
-    let cli_inputs = parse_inputs(sub)?;
-    let open = sub.get_flag("open");
-    let emit_bundle_source = sub.get_flag("emit-bundle-source");
-    let metadata_two_pass = sub.get_flag("metadata-two-pass");
+/// Compile a fresh VirtualFs for the dev server and push it, then optionally
+/// reload connected browsers. The initial `--open` push has nothing to reload
+/// yet (the browser is only just being launched), so it passes `reload: false`;
+/// both watch-loop arms want a reload after every successful push.
+/// Run a build and render whatever it reported — the pairing every command
+/// that compiles wants, since core collects diagnostics rather than printing
+/// them.
+fn compile_and_report(build: &Build) -> Result<rheo_core::CompilationResults> {
+    let results = build.run();
+    diagnostics::render(&build.take_diagnostics());
+    results
+}
 
-    let all = all_plugins();
-    let enabled = enabled_formats_from_matches(sub, &all);
+fn update_dev_server(build: &mut Build, server: &dyn ServerHandle, reload: bool) {
+    let compiled = build.compile_for_watch();
+    diagnostics::render(&build.take_diagnostics());
+    match compiled {
+        Ok(Some(vfs)) => {
+            let t = std::time::Instant::now();
+            server.update_virtual_fs(vfs);
+            debug!(
+                ms = t.elapsed().as_millis(),
+                "VirtualFs pushed to dev server"
+            );
+        }
+        Ok(None) => {}
+        Err(e) => warn!(error = %e, "VirtualFs compile failed, reload will serve stale content"),
+    }
+    if reload {
+        server.reload();
+    }
+}
+
+fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()> {
+    let args = BuildArgs::from_matches(sub, &plugins)?;
+    let open = sub.get_flag(arg::OPEN);
 
     let mut build = prepare_build(
-        &path,
-        config_path.as_deref(),
-        BuildOptions {
-            formats: enabled.clone(),
-            build_dir: build_dir.clone(),
-            font_dirs: cli_font_dirs.clone(),
-            inputs: cli_inputs.clone(),
-            emit_bundle_source,
-            metadata_two_pass,
-        },
+        &args.path,
+        args.config.as_deref(),
+        args.build_options(),
+        plugins,
     )?;
 
     // Initial compilation (best-effort; watch continues on failure)
-    if let Err(e) = build.run() {
+    if let Err(e) = compile_and_report(&build) {
         warn!(error = %e, "initial compilation failed");
     }
 
-    // Open outputs if --open requested; collect server handles for live reload
-    let mut open_handles: Vec<OpenHandle> = Vec::new();
+    // Open outputs if --open requested; resolve at most one server handle for
+    // live reload (only the HTML plugin ever returns OpenHandle::Server).
+    let mut server: Option<Box<dyn ServerHandle>> = None;
     if open {
         for plugin in build.plugins() {
             let out_dir = build.output_config().dir_for_plugin(plugin.name());
             match plugin.open(&out_dir, plugin.name()) {
-                Ok(handle) => open_handles.push(handle),
+                Ok(OpenHandle::Server(handle)) if server.is_none() => server = Some(handle),
+                Ok(_) => {}
                 Err(e) => warn!(error = %e, plugin = plugin.name(), "failed to open"),
             }
         }
@@ -502,18 +633,8 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
         // HTML from memory rather than re-reading disk on each request.
         // compile_for_watch() reuses comemo-cached Typst state from build.run(),
         // so this second compile is near-instant.
-        if let Some(OpenHandle::Server(server)) = open_handles
-            .iter()
-            .find(|h| matches!(h, OpenHandle::Server(_)))
-        {
-            match build.compile_for_watch() {
-                Ok(Some(vfs)) => {
-                    server.update_virtual_fs(vfs);
-                    debug!("initial VirtualFs pushed to dev server");
-                }
-                Ok(None) => {}
-                Err(e) => warn!(error = %e, "initial VirtualFs compile failed, serving from disk"),
-            }
+        if let Some(server) = &server {
+            update_dev_server(&mut build, server.as_ref(), false);
         }
     }
 
@@ -535,57 +656,26 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
             match event {
                 WatchEvent::FilesChanged => {
                     info!("files changed, recompiling");
-                    if build.run().is_ok() {
-                        // Update HTML dev server VirtualFs before triggering browser reload.
-                        for handle in &open_handles {
-                            if let OpenHandle::Server(server) = handle {
-                                match build.compile_for_watch() {
-                                    Ok(Some(vfs)) => {
-                                        let t = std::time::Instant::now();
-                                        server.update_virtual_fs(vfs);
-                                        debug!(ms = t.elapsed().as_millis(), "VirtualFs updated");
-                                    }
-                                    Ok(None) => {}
-                                    Err(e) => {
-                                        warn!(error = %e, "VirtualFs compile failed, reload will serve stale content")
-                                    }
-                                }
-                                server.reload();
-                                break; // only one server handle expected
-                            }
-                        }
+                    if compile_and_report(&build).is_ok()
+                        && let Some(server) = &server
+                    {
+                        update_dev_server(&mut build, server.as_ref(), true);
                     }
                 }
                 WatchEvent::ConfigChanged => {
                     info!("config changed, reloading");
                     match prepare_build(
-                        &path,
-                        config_path.as_deref(),
-                        BuildOptions {
-                            formats: enabled.clone(),
-                            build_dir: build_dir.clone(),
-                            font_dirs: cli_font_dirs.clone(),
-                            inputs: cli_inputs.clone(),
-                            emit_bundle_source,
-                            metadata_two_pass,
-                        },
+                        &args.path,
+                        args.config.as_deref(),
+                        args.build_options(),
+                        all_plugins(),
                     ) {
                         Ok(new_build) => {
                             build = new_build;
-                            if build.run().is_ok() {
-                                for handle in &open_handles {
-                                    if let OpenHandle::Server(server) = handle {
-                                        match build.compile_for_watch() {
-                                            Ok(Some(vfs)) => server.update_virtual_fs(vfs),
-                                            Ok(None) => {}
-                                            Err(e) => {
-                                                warn!(error = %e, "VirtualFs compile failed after config reload")
-                                            }
-                                        }
-                                        server.reload();
-                                        break;
-                                    }
-                                }
+                            if compile_and_report(&build).is_ok()
+                                && let Some(server) = &server
+                            {
+                                update_dev_server(&mut build, server.as_ref(), true);
                             }
                         }
                         Err(e) => warn!(error = %e, "failed to reload config"),
@@ -597,40 +687,24 @@ fn run_watch(sub: &ArgMatches) -> Result<()> {
     )
 }
 
-fn run_compile(sub: &ArgMatches) -> Result<()> {
-    let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
-    let config = sub.get_one::<String>("config").map(PathBuf::from);
-    let build_dir = sub.get_one::<String>("build-dir").map(PathBuf::from);
-    let cli_font_dirs: Vec<PathBuf> = sub
-        .get_many::<String>("font-dir")
-        .map(|vals| vals.map(PathBuf::from).collect())
-        .unwrap_or_default();
-    let cli_inputs = parse_inputs(sub)?;
-    let emit_bundle_source = sub.get_flag("emit-bundle-source");
-    let metadata_two_pass = sub.get_flag("metadata-two-pass");
-
-    let all = all_plugins();
-    let enabled = enabled_formats_from_matches(sub, &all);
-
-    let mut build = prepare_build(
-        &path,
-        config.as_deref(),
-        BuildOptions {
-            formats: enabled,
-            build_dir,
-            font_dirs: cli_font_dirs,
-            inputs: cli_inputs,
-            emit_bundle_source,
-            metadata_two_pass,
-        },
+fn run_compile(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()> {
+    let args = BuildArgs::from_matches(sub, &plugins)?;
+    let build = prepare_build(
+        &args.path,
+        args.config.as_deref(),
+        args.build_options(),
+        plugins,
     )?;
-    build.run().map(|_| ())
+    compile_and_report(&build).map(|_| ())
 }
 
 fn run_clean(sub: &ArgMatches) -> Result<()> {
-    let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
-    let config = sub.get_one::<String>("config").map(PathBuf::from);
-    let build_dir = sub.get_one::<String>("build-dir").map(PathBuf::from);
+    let path = PathBuf::from(
+        sub.get_one::<String>(arg::PATH)
+            .expect("clap enforces `path` is present (required or defaulted)"),
+    );
+    let config = sub.get_one::<String>(arg::CONFIG).map(PathBuf::from);
+    let build_dir = sub.get_one::<String>(arg::BUILD_DIR).map(PathBuf::from);
 
     info!(path = %path.display(), "loading project");
     let project = ProjectConfig::from_path(&path, config.as_deref())?;
@@ -642,7 +716,7 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
 
     // Opt-in, and never on the build path: a checkout is cheap to re-clone, but
     // deleting one out from under a running build is not recoverable.
-    if sub.get_flag("packages") {
+    if sub.get_flag(arg::PACKAGES) {
         let resolver = rheo_core::packages::PackageResolver::new(&project.config.packages);
         for (namespace, result) in resolver.prune_checkouts() {
             match result {
@@ -656,10 +730,13 @@ fn run_clean(sub: &ArgMatches) -> Result<()> {
 }
 
 fn run_migrate(sub: &ArgMatches) -> Result<()> {
-    let path = PathBuf::from(sub.get_one::<String>("path").unwrap());
-    let apply = sub.get_flag("apply");
+    let path = PathBuf::from(
+        sub.get_one::<String>(arg::PATH)
+            .expect("clap enforces `path` is present (required or defaulted)"),
+    );
+    let apply = sub.get_flag(arg::APPLY);
     info!(path = %path.display(), apply, "migrating project");
-    migrate::migrate_project(&path, apply)
+    migrate::migrate_project(&path, apply, &mut reporter::Reporter::stdout())
 }
 
 #[cfg(test)]
@@ -678,5 +755,53 @@ mod tests {
             "Expected at least 3 plugins, got {}",
             names.len()
         );
+    }
+
+    // The old line-based `prefix_toml_headers` mishandled a header with
+    // leading whitespace or a trailing inline comment (see its doc comment,
+    // now gone) since it only matched a bare `[header]` line. Parsing with
+    // `toml_edit` has no such restriction; these two pin the forms that used
+    // to be left un-nested.
+
+    #[test]
+    fn merge_plugin_toml_nests_header_with_leading_whitespace() {
+        let mut doc: toml_edit::DocumentMut = "version = \"0.1.0\"\n".parse().unwrap();
+        merge_plugin_toml(&mut doc, "pdf", "  [spine]\n  title = \"rheo_project\"\n").unwrap();
+        assert_eq!(doc["pdf"]["spine"]["title"].as_str(), Some("rheo_project"));
+        assert!(doc.to_string().contains("[pdf.spine]"));
+    }
+
+    #[test]
+    fn merge_plugin_toml_nests_header_with_trailing_comment() {
+        let mut doc: toml_edit::DocumentMut = "version = \"0.1.0\"\n".parse().unwrap();
+        merge_plugin_toml(
+            &mut doc,
+            "epub",
+            "[spine] # per-plugin override\ntitle = \"rheo_project\"\n",
+        )
+        .unwrap();
+        assert_eq!(doc["epub"]["spine"]["title"].as_str(), Some("rheo_project"));
+        assert!(doc.to_string().contains("[epub.spine]"));
+    }
+
+    #[test]
+    fn merge_plugin_toml_preserves_surrounding_comments() {
+        let mut doc: toml_edit::DocumentMut = "# keep me\nversion = \"0.1.0\"\n".parse().unwrap();
+        merge_plugin_toml(&mut doc, "pdf", "[spine]\ntitle = \"rheo_project\"\n").unwrap();
+        assert!(doc.to_string().starts_with("# keep me"));
+    }
+
+    /// Nesting now happens structurally (a fresh `[<name>]` table keyed by
+    /// the plugin's own name), not by text-matching an already-prefixed
+    /// header, so a repeat merge can't double-nest — it's a no-op rewrite of
+    /// the same values rather than needing a dedicated idempotence check.
+    #[test]
+    fn merge_plugin_toml_repeat_call_is_a_no_op() {
+        let mut doc: toml_edit::DocumentMut = "version = \"0.1.0\"\n".parse().unwrap();
+        let snippet = "[spine]\ntitle = \"rheo_project\"\n";
+        merge_plugin_toml(&mut doc, "pdf", snippet).unwrap();
+        merge_plugin_toml(&mut doc, "pdf", snippet).unwrap();
+        assert_eq!(doc["pdf"]["spine"]["title"].as_str(), Some("rheo_project"));
+        assert_eq!(doc.to_string().matches("[pdf.spine]").count(), 1);
     }
 }

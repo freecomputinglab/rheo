@@ -100,6 +100,15 @@ fn serialize_string(s: &str) -> String {
     out
 }
 
+/// Escape text for use inside Typst square-bracket content `[…]`.
+/// Escapes `\`, `[`, `]`, `#`.
+pub fn escape_typst_content(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+        .replace('#', "\\#")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -7,11 +7,144 @@
 pub mod watch;
 
 use crate::config::PluginSection;
-use crate::plugins::{Asset, FormatPlugin, PackageAssets};
+use crate::plugins::{Asset, AssetConfig, FormatPlugin, PackageAssets};
 use crate::{Result, RheoError};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
+use walkdir::WalkDir;
+
+/// Where an asset override candidate came from. The two precedence rules
+/// that used to live only in a comment are now properties of the variant:
+/// [`Self::root`] sends `Package` to its own directory rather than the
+/// project root, so it can never collide with — or stand in for — a project
+/// source; [`Self::warns_on_missing`] is true only for `User`, since rheo
+/// proposes the other paths itself and their absence is routine.
+enum AssetSource<'b> {
+    /// A project-authored `[[plugin.assets]]` override.
+    User,
+    /// Contributed by an `[packages.<ns>]` block, resolved against the
+    /// package's own directory.
+    Package { source_root: &'b Path, module: bool },
+    /// The project-root filename convention, pushed by [`gather_entries`]
+    /// only when the project declared no `User` entry of its own.
+    ProjectDefault,
+}
+
+impl<'b> AssetSource<'b> {
+    fn root(&self, project_root: &'b Path) -> &'b Path {
+        match self {
+            AssetSource::Package { source_root, .. } => source_root,
+            AssetSource::User | AssetSource::ProjectDefault => project_root,
+        }
+    }
+
+    fn module(&self) -> bool {
+        matches!(self, AssetSource::Package { module: true, .. })
+    }
+
+    /// Only a path the project wrote down in a `[[<plugin>.assets]]` block
+    /// warns when it's missing. A package file and the root convention are
+    /// paths rheo proposed itself, so their absence is routine rather than
+    /// misconfiguration.
+    fn warns_on_missing(&self) -> bool {
+        matches!(self, AssetSource::User)
+    }
+}
+
+/// One candidate source for a declared asset, gathered from user overrides,
+/// package blocks, or the project-root convention.
+struct AssetEntry<'b> {
+    dest: Option<&'b str>,
+    path: &'b str,
+    source: AssetSource<'b>,
+}
+
+/// Entries sharing an output directory and resolution root, copied together.
+struct AssetGroup<'b> {
+    dest: Option<&'b str>,
+    root: &'b Path,
+    entries: Vec<AssetEntry<'b>>,
+}
+
+/// Gather every candidate source for `asset_config`: the project's own
+/// override blocks, each package's contribution, and — only when the
+/// project declared no `AssetSource::User` entry — the project-root
+/// convention. A package entry is additive and must never satisfy that
+/// last test, which is why it checks the gathered `entries` themselves
+/// rather than a separately-tracked "user pairs" list.
+fn gather_entries<'b>(
+    asset_config: &AssetConfig,
+    section: &'b PluginSection,
+    package_blocks: &'b [PackageAssets],
+) -> Vec<AssetEntry<'b>> {
+    let mut entries: Vec<AssetEntry<'b>> = section
+        .get_strings_with_block(asset_config.name)
+        .into_iter()
+        .map(|(block, path)| AssetEntry {
+            dest: block.dest.as_deref(),
+            path,
+            source: AssetSource::User,
+        })
+        .collect();
+
+    for pkg in package_blocks {
+        // A list as well as a bare string: source mode names every
+        // unbundled script, where a release names one bundle.
+        let paths: Vec<&str> = match pkg.assets.extra.get(asset_config.name) {
+            Some(toml::Value::String(s)) => vec![s.as_str()],
+            Some(toml::Value::Array(items)) => items.iter().filter_map(|v| v.as_str()).collect(),
+            _ => Vec::new(),
+        };
+        entries.extend(paths.into_iter().map(|path| AssetEntry {
+            dest: pkg.assets.dest.as_deref(),
+            path,
+            source: AssetSource::Package {
+                source_root: &pkg.source_root,
+                module: pkg.js_module,
+            },
+        }));
+    }
+
+    if !entries
+        .iter()
+        .any(|e| matches!(e.source, AssetSource::User))
+    {
+        entries.push(AssetEntry {
+            dest: None,
+            path: asset_config.default_path,
+            source: AssetSource::ProjectDefault,
+        });
+    }
+
+    entries
+}
+
+/// Group entries by (dest, resolution root), preserving first-seen order.
+/// An index `HashMap` gives each key's position in `groups` in O(1), so
+/// grouping stays linear despite the ordered output — `indexmap` would do
+/// this directly, but it isn't a dependency of rheo-core and this task's
+/// edits are scoped to this file, so it's a plain `Vec` plus an index map
+/// instead of a new external dependency.
+fn group_entries<'b>(entries: Vec<AssetEntry<'b>>, project_root: &'b Path) -> Vec<AssetGroup<'b>> {
+    let mut index: HashMap<(Option<&'b str>, &'b Path), usize> = HashMap::new();
+    let mut groups: Vec<AssetGroup<'b>> = Vec::new();
+    for entry in entries {
+        let root = entry.source.root(project_root);
+        let key = (entry.dest, root);
+        let idx = *index.entry(key).or_insert_with(|| {
+            groups.push(AssetGroup {
+                dest: entry.dest,
+                root,
+                entries: Vec::new(),
+            });
+            groups.len() - 1
+        });
+        groups[idx].entries.push(entry);
+    }
+    groups
+}
 
 /// Resolves plugin assets and copies source files into the build output directory.
 ///
@@ -46,215 +179,164 @@ impl<'a> AssetResolver<'a> {
         let mut resolved = HashMap::new();
         let mut seen_relative_paths: HashMap<String, PathBuf> = HashMap::new();
         for asset_config in plugin.assets() {
-            // Gather pairs from user-declared asset blocks and package blocks.
-            struct AssetEntry<'b> {
-                dest: Option<&'b str>,
-                root: &'b Path,
-                path: &'b str,
-                is_pkg: bool,
-                /// Load this script as an ES module (source-mode package block).
-                module: bool,
+            if let Some(assets) = self.resolve_asset_config(
+                plugin,
+                &asset_config,
+                section,
+                package_blocks,
+                &mut seen_relative_paths,
+            )? {
+                resolved.insert(asset_config.name, assets);
             }
-
-            let mut all_pairs: Vec<AssetEntry<'_>> = Vec::new();
-
-            // User-declared pairs resolve against project_root.
-            let user_pairs = section.get_strings_with_block(asset_config.name);
-            for (block, path) in &user_pairs {
-                all_pairs.push(AssetEntry {
-                    dest: block.dest.as_deref(),
-                    root: self.project_root,
-                    path,
-                    is_pkg: false,
-                    module: false,
-                });
-            }
-
-            // Package-derived pairs resolve against their own source_root. These
-            // are additive to the project's own configuration: a package asset
-            // lives in a different scope and must never stand in for it.
-            for pkg in package_blocks {
-                // A list as well as a bare string: source mode names every
-                // unbundled script, where a release names one bundle.
-                let paths: Vec<&str> = match pkg.assets.extra.get(asset_config.name) {
-                    Some(toml::Value::String(s)) => vec![s.as_str()],
-                    Some(toml::Value::Array(items)) => {
-                        items.iter().filter_map(|v| v.as_str()).collect()
-                    }
-                    _ => Vec::new(),
-                };
-                for path in paths {
-                    all_pairs.push(AssetEntry {
-                        dest: pkg.assets.dest.as_deref(),
-                        root: &pkg.source_root,
-                        path,
-                        is_pkg: true,
-                        module: pkg.js_module,
-                    });
-                }
-            }
-
-            // The project-root convention fires whenever the project itself has
-            // no override, independent of what packages contribute — package
-            // pairs must not satisfy the project's own emptiness test.
-            if user_pairs.is_empty() {
-                all_pairs.push(AssetEntry {
-                    dest: None,
-                    root: self.project_root,
-                    path: asset_config.default_path,
-                    is_pkg: false,
-                    module: false,
-                });
-            }
-
-            // Group sources by (dest, resolution_root), preserving insertion order.
-            struct AssetGroup<'b> {
-                dest: Option<&'b str>,
-                root: &'b Path,
-                entries: Vec<(&'b str, bool, bool)>,
-            }
-            let mut groups: Vec<AssetGroup<'_>> = Vec::new();
-            for entry in &all_pairs {
-                if let Some(group) = groups
-                    .iter_mut()
-                    .find(|g| g.dest == entry.dest && g.root.as_os_str() == entry.root.as_os_str())
-                {
-                    group.entries.push((entry.path, entry.is_pkg, entry.module));
-                } else {
-                    groups.push(AssetGroup {
-                        dest: entry.dest,
-                        root: entry.root,
-                        entries: vec![(entry.path, entry.is_pkg, entry.module)],
-                    });
-                }
-            }
-
-            let mut all_assets: Vec<Asset> = Vec::new();
-            let mut any_source_found = false;
-
-            for group in &groups {
-                let out_dir = match group.dest {
-                    Some(d) => self.plugin_output_dir.join(d),
-                    None => self.plugin_output_dir.to_path_buf(),
-                };
-
-                let mut sources: Vec<PathBuf> = Vec::new();
-                let mut modules: Vec<bool> = Vec::new();
-                let mut missing: Vec<(&str, bool)> = Vec::new();
-                for (path, is_pkg, module) in &group.entries {
-                    let abs = group.root.join(path);
-                    if abs.is_file() {
-                        sources.push(abs);
-                        modules.push(*module);
-                    } else {
-                        missing.push((*path, *is_pkg));
-                    }
-                }
-
-                if sources.is_empty() {
-                    continue;
-                }
-                any_source_found = true;
-
-                for (m, is_pkg) in &missing {
-                    if !is_pkg {
-                        warn!(
-                            plugin = plugin.name(),
-                            asset = asset_config.name,
-                            path = %m,
-                            "asset override path not found, skipping"
-                        );
-                    }
-                }
-
-                let outputs: Vec<PathBuf> =
-                    copy_each(&sources, group.root, &out_dir, group.dest.is_some())?;
-
-                let assets: Vec<Asset> = outputs
-                    .into_iter()
-                    .zip(sources.iter())
-                    .zip(modules.iter())
-                    .map(|((abs, src), module)| {
-                        let rel = abs
-                            .strip_prefix(self.plugin_output_dir)
-                            .expect("copy_each output is always under plugin_output_dir")
-                            .to_string_lossy()
-                            .into_owned();
-                        if let Some(prev) = seen_relative_paths.get(&rel) {
-                            return Err(RheoError::project_config(format!(
-                                "asset path collision: output '{}' would be written by both '{}' and '{}'",
-                                rel,
-                                prev.display(),
-                                src.display()
-                            )));
-                        }
-                        seen_relative_paths.insert(rel.clone(), src.clone());
-                        Ok(Asset {
-                            config: asset_config.clone(),
-                            module: *module,
-                            source_path: src.clone(),
-                            resolved_path: abs,
-                            built_relative_path: rel,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-
-                all_assets.extend(assets);
-            }
-
-            if !any_source_found {
-                if asset_config.required {
-                    let paths: Vec<&str> = all_pairs.iter().map(|e| e.path).collect();
-                    return Err(RheoError::project_config(format!(
-                        "plugin '{}' requires input '{}' but no source was found (tried: {})",
-                        plugin.name(),
-                        asset_config.name,
-                        paths.join(", ")
-                    )));
-                }
-                // No on-disk source: fall back to the plugin's embedded default
-                // (if any), written as a real file so it is copied + linked like
-                // any other asset instead of being inlined.
-                if let Some(embedded) = asset_config.default_content {
-                    let rel = embedded.name.to_string();
-                    if let Some(prev) = seen_relative_paths.get(&rel) {
-                        return Err(RheoError::project_config(format!(
-                            "asset path collision: output '{}' would be written by both '{}' and the embedded default for '{}'",
-                            rel,
-                            prev.display(),
-                            asset_config.name
-                        )));
-                    }
-                    let dest = self.plugin_output_dir.join(&rel);
-                    if let Some(parent) = dest.parent() {
-                        std::fs::create_dir_all(parent).map_err(|e| {
-                            RheoError::io(
-                                e,
-                                format!("creating directory for embedded default '{}'", rel),
-                            )
-                        })?;
-                    }
-                    std::fs::write(&dest, embedded.content).map_err(|e| {
-                        RheoError::io(e, format!("writing embedded default asset to {:?}", dest))
-                    })?;
-                    seen_relative_paths.insert(rel.clone(), dest.clone());
-                    resolved.insert(
-                        asset_config.name,
-                        vec![Asset {
-                            config: asset_config.clone(),
-                            module: false,
-                            source_path: dest.clone(),
-                            resolved_path: dest.clone(),
-                            built_relative_path: rel,
-                        }],
-                    );
-                }
-                continue;
-            }
-
-            resolved.insert(asset_config.name, all_assets);
         }
         Ok(resolved)
+    }
+
+    /// Resolve one declared asset: gather its candidates, copy each group,
+    /// and — when nothing on disk resolved — fall back to the plugin's
+    /// embedded default. `Ok(None)` means an optional asset with no source
+    /// at all.
+    fn resolve_asset_config(
+        &self,
+        plugin: &dyn FormatPlugin,
+        asset_config: &AssetConfig,
+        section: &PluginSection,
+        package_blocks: &[PackageAssets],
+        seen_relative_paths: &mut HashMap<String, PathBuf>,
+    ) -> Result<Option<Vec<Asset>>> {
+        let entries = gather_entries(asset_config, section, package_blocks);
+        let tried_paths: Vec<&str> = entries.iter().map(|e| e.path).collect();
+
+        let mut all_assets = Vec::new();
+        for group in group_entries(entries, self.project_root) {
+            all_assets.extend(self.copy_group(group, asset_config, plugin, seen_relative_paths)?);
+        }
+        if !all_assets.is_empty() {
+            return Ok(Some(all_assets));
+        }
+
+        if asset_config.required {
+            return Err(RheoError::project_config(format!(
+                "plugin '{}' requires input '{}' but no source was found (tried: {})",
+                plugin.name(),
+                asset_config.name,
+                tried_paths.join(", ")
+            )));
+        }
+
+        Ok(self
+            .embedded_fallback(asset_config, seen_relative_paths)?
+            .map(|asset| vec![asset]))
+    }
+
+    /// Copy every on-disk source in `group`, registering each result's
+    /// build-relative path and erroring on a collision. A missing source is
+    /// skipped; only a user-written override warns (see
+    /// [`AssetSource::warns_on_missing`]).
+    fn copy_group(
+        &self,
+        group: AssetGroup<'_>,
+        asset_config: &AssetConfig,
+        plugin: &dyn FormatPlugin,
+        seen_relative_paths: &mut HashMap<String, PathBuf>,
+    ) -> Result<Vec<Asset>> {
+        let out_dir = match group.dest {
+            Some(d) => self.plugin_output_dir.join(d),
+            None => self.plugin_output_dir.to_path_buf(),
+        };
+
+        let mut sources: Vec<PathBuf> = Vec::new();
+        let mut modules: Vec<bool> = Vec::new();
+        for entry in &group.entries {
+            let abs = group.root.join(entry.path);
+            if abs.is_file() {
+                sources.push(abs);
+                modules.push(entry.source.module());
+            } else if entry.source.warns_on_missing() {
+                warn!(
+                    plugin = plugin.name(),
+                    asset = asset_config.name,
+                    path = %entry.path,
+                    "asset override path not found, skipping"
+                );
+            }
+        }
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let outputs = copy_each(&sources, group.root, &out_dir, group.dest.is_some())?;
+        outputs
+            .into_iter()
+            .zip(sources.iter())
+            .zip(modules.iter())
+            .map(|((abs, src), module)| {
+                let rel = abs
+                    .strip_prefix(self.plugin_output_dir)
+                    .expect("copy_each output is always under plugin_output_dir")
+                    .to_string_lossy()
+                    .into_owned();
+                if let Some(prev) = seen_relative_paths.get(&rel) {
+                    return Err(RheoError::project_config(format!(
+                        "asset path collision: output '{}' would be written by both '{}' and '{}'",
+                        rel,
+                        prev.display(),
+                        src.display()
+                    )));
+                }
+                seen_relative_paths.insert(rel.clone(), src.clone());
+                Ok(Asset {
+                    config: asset_config.clone(),
+                    module: *module,
+                    source_path: src.clone(),
+                    resolved_path: abs,
+                    built_relative_path: rel,
+                })
+            })
+            .collect()
+    }
+
+    /// Write the plugin's embedded default asset when an optional asset had
+    /// no on-disk source at all. `Ok(None)` when the asset config declares
+    /// no fallback. Written as a real file so it is copied and linked like
+    /// any other asset instead of being inlined.
+    fn embedded_fallback(
+        &self,
+        asset_config: &AssetConfig,
+        seen_relative_paths: &mut HashMap<String, PathBuf>,
+    ) -> Result<Option<Asset>> {
+        let Some(embedded) = asset_config.default_content else {
+            return Ok(None);
+        };
+        let rel = embedded.name.to_string();
+        if let Some(prev) = seen_relative_paths.get(&rel) {
+            return Err(RheoError::project_config(format!(
+                "asset path collision: output '{}' would be written by both '{}' and the embedded default for '{}'",
+                rel,
+                prev.display(),
+                asset_config.name
+            )));
+        }
+        let dest = self.plugin_output_dir.join(&rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                RheoError::io(
+                    e,
+                    format!("creating directory for embedded default '{}'", rel),
+                )
+            })?;
+        }
+        std::fs::write(&dest, embedded.content).map_err(|e| {
+            RheoError::io(e, format!("writing embedded default asset to {:?}", dest))
+        })?;
+        seen_relative_paths.insert(rel.clone(), dest.clone());
+        Ok(Some(Asset {
+            config: asset_config.clone(),
+            module: false,
+            source_path: dest.clone(),
+            resolved_path: dest,
+            built_relative_path: rel,
+        }))
     }
 
     /// Expand glob patterns against `source_root` and copy matching files into
@@ -319,11 +401,67 @@ fn copy_each(
     Ok(out)
 }
 
-/// Expand glob patterns against `source_root` and copy matching files into
+/// A `copy` pattern list compiled once against a base directory, shared by the
+/// copy step ([`copy_glob_patterns`]) and [`crate::assets::watch::WatchAssetSpec`]
+/// so both agree on exactly the same file set — unifying what used to be two
+/// drifting engines (the `glob` crate here, `globset` in the watcher), where
+/// only the latter understood brace alternation (`*.{png,jpg}`).
+///
+/// `literal_separator` is enabled so `*` does not cross `/` while `**` still
+/// descends, matching both the old `glob`-crate copy behaviour and the
+/// exclude/include globs in [`crate::reticulate::spine`].
+#[derive(Debug)]
+pub struct CopyGlobs {
+    set: GlobSet,
+    /// Successfully compiled patterns, in the same order as `set`'s indices —
+    /// used only to report a pattern that matched nothing.
+    patterns: Vec<String>,
+}
+
+impl CopyGlobs {
+    /// Compile `patterns` (relative to `base`) into an absolute-path glob set.
+    /// A pattern that fails to compile is warned about and skipped rather than
+    /// failing the whole build. Returns `None` when nothing compiled.
+    pub fn compile(base: &Path, patterns: &[String]) -> Option<Self> {
+        let mut builder = GlobSetBuilder::new();
+        let mut compiled = Vec::new();
+        for pattern in patterns {
+            let abs = base.join(pattern).display().to_string();
+            match GlobBuilder::new(&abs).literal_separator(true).build() {
+                Ok(glob) => {
+                    builder.add(glob);
+                    compiled.push(pattern.clone());
+                }
+                Err(e) => warn!(pattern = %pattern, error = %e, "invalid copy pattern, skipping"),
+            }
+        }
+        if compiled.is_empty() {
+            return None;
+        }
+        builder.build().ok().map(|set| Self {
+            set,
+            patterns: compiled,
+        })
+    }
+
+    /// True if `path` matches any compiled pattern.
+    pub fn is_match(&self, path: &Path) -> bool {
+        self.set.is_match(path)
+    }
+
+    /// Indices into `self.patterns` that match `path`.
+    fn matches(&self, path: &Path) -> Vec<usize> {
+        self.set.matches(path)
+    }
+}
+
+/// Walk `source_root` and copy every file matching a compiled copy-glob into
 /// `plugin_output_dir` (optionally under `dest_prefix`).
 ///
 /// When `warn_on_overwrite` is true, logs a warning for each destination file
-/// that already exists before it is overwritten.
+/// that already exists before it is overwritten. A directory-walk error (e.g.
+/// a permission-denied subdirectory) is warned about and skipped rather than
+/// silently dropped.
 fn copy_glob_patterns(
     patterns: &[String],
     source_root: &Path,
@@ -331,42 +469,58 @@ fn copy_glob_patterns(
     dest_prefix: Option<&str>,
     warn_on_overwrite: bool,
 ) -> Result<()> {
-    for pattern in patterns {
-        let abs_pattern = source_root.join(pattern).display().to_string();
-        let entries = glob::glob(&abs_pattern).map_err(|e| {
-            RheoError::project_config(format!("invalid copy pattern '{}': {}", pattern, e))
-        })?;
-        let mut matched = false;
-        for entry in entries.filter_map(|e| e.ok()).filter(|p| p.is_file()) {
-            matched = true;
-            let rel = entry.strip_prefix(source_root).unwrap_or(entry.as_path());
-            let dest = match dest_prefix {
-                Some(d) => plugin_output_dir.join(d).join(rel),
-                None => plugin_output_dir.join(rel),
-            };
-            if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    RheoError::io(
-                        e,
-                        format!("creating directory for copy of {}", rel.display()),
-                    )
-                })?;
+    let Some(globs) = CopyGlobs::compile(source_root, patterns) else {
+        return Ok(());
+    };
+    let mut matched = vec![false; globs.patterns.len()];
+    for entry in WalkDir::new(source_root) {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                warn!(error = %e, "error walking source tree for copy globs");
+                continue;
             }
-            if warn_on_overwrite && dest.exists() {
-                warn!(
-                    src = %entry.display(),
-                    dest = %dest.display(),
-                    "copy glob overwrites existing bundle output"
-                );
-            }
-            std::fs::copy(&entry, &dest).map_err(|e| RheoError::AssetCopy {
-                source: entry.clone(),
-                dest: dest.clone(),
-                error: e,
-            })?;
-            debug!(src = %entry.display(), dest = %dest.display(), "copied file");
+        };
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
         }
-        if !matched {
+        let idxs = globs.matches(path);
+        if idxs.is_empty() {
+            continue;
+        }
+        for i in idxs {
+            matched[i] = true;
+        }
+        let rel = path.strip_prefix(source_root).unwrap_or(path);
+        let dest = match dest_prefix {
+            Some(d) => plugin_output_dir.join(d).join(rel),
+            None => plugin_output_dir.join(rel),
+        };
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                RheoError::io(
+                    e,
+                    format!("creating directory for copy of {}", rel.display()),
+                )
+            })?;
+        }
+        if warn_on_overwrite && dest.exists() {
+            warn!(
+                src = %path.display(),
+                dest = %dest.display(),
+                "copy glob overwrites existing bundle output"
+            );
+        }
+        std::fs::copy(path, &dest).map_err(|e| RheoError::AssetCopy {
+            source: path.to_path_buf(),
+            dest: dest.clone(),
+            error: e,
+        })?;
+        debug!(src = %path.display(), dest = %dest.display(), "copied file");
+    }
+    for (pattern, was_matched) in globs.patterns.iter().zip(matched.iter()) {
+        if !was_matched {
             debug!(pattern = %pattern, "copy pattern matched no files");
         }
     }
@@ -519,6 +673,19 @@ mod tests {
         assert!(
             !resolved.contains_key("optional_asset"),
             "optional missing asset should not be in resolved map"
+        );
+    }
+
+    #[test]
+    fn test_warns_on_missing_only_for_user() {
+        assert!(AssetSource::User.warns_on_missing());
+        assert!(!AssetSource::ProjectDefault.warns_on_missing());
+        assert!(
+            !AssetSource::Package {
+                source_root: Path::new("/tmp"),
+                module: false,
+            }
+            .warns_on_missing()
         );
     }
 

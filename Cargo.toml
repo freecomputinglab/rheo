@@ -1,15 +1,25 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["crates/core", "crates/html", "crates/pdf", "crates/epub", "crates/cli"]
 
 [workspace.package]
 version = "0.6.2"
 edition = "2024"
+rust-version = "1.88"
 authors = ["Lachlan Kermode <lachie@ohrg.org>"]
 description = "A typesetting and static site engine based on Typst"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/freecomputinglab/rheo"
 readme = "README.md"
+
+[workspace.lints.rust]
+unexpected_cfgs = "warn"
+
+[workspace.lints.clippy]
+correctness = "deny"
+suspicious = "warn"
+complexity = "warn"
+perf = "warn"
 
 [workspace.dependencies]
 # Internal crates (for convenience in workspace)
@@ -102,7 +112,12 @@ serde-xml-rs = "0.8.2"
 # comemo       = { git = "https://github.com/typst/comemo" }
 
 [profile.release]
-opt-level = 1
+# Measured, not assumed (rheo-faqm.16). On a 60-vertebra, ~45k-word project
+# built to HTML+PDF+EPUB, opt-level 3 against opt-level 1: 1.92s vs 2.51s per
+# compile, and a 54MiB vs 63MiB binary, for 3m30s vs 2m16s of release build
+# time. rheo is a CPU-bound Typst compiler distributed as a release binary, so
+# every user's compile pays for a slower one; CI pays the build time once.
+opt-level = 3
 lto = true
 codegen-units = 1
 

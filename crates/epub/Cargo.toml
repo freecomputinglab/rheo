@@ -2,10 +2,14 @@
 name = "rheo-epub"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 description.workspace = true
 license.workspace = true
 repository.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
 # Core
@@ -25,7 +29,6 @@ chrono = { workspace = true }
 
 # EPUB-specific
 zip = { workspace = true }
-markup5ever_rcdom = { workspace = true }
 iref = { workspace = true }
 uuid = { workspace = true }
 itertools = { workspace = true }

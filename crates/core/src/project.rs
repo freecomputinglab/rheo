@@ -1,7 +1,16 @@
+//! Project discovery: which directory (or single file) is being compiled, which
+//! `rheo.toml` governs it, and what Typst it contains. Reading the filesystem to
+//! answer those is this module's job — [`crate::config`] only parses.
+
+use crate::reticulate::SpineScan;
 use crate::{Result, RheoConfig, RheoError};
 use std::path::{Path, PathBuf};
 use tracing::debug;
-use walkdir::WalkDir;
+
+/// How far up from a single file's directory to look for the `rheo.toml` that
+/// governs it. Deep enough for any real project layout, bounded so a file
+/// outside a project cannot walk to the filesystem root.
+const CONFIG_SEARCH_DEPTH: usize = 10;
 
 /// Mode for project compilation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,12 +89,7 @@ impl ProjectConfig {
             .unwrap_or_else(|| root.clone());
         debug!(search_dir = %search_dir.display(), "searching for .typ files");
 
-        let typ_files: Vec<PathBuf> = WalkDir::new(&search_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("typ"))
-            .map(|e| e.path().to_path_buf())
-            .collect();
+        let typ_files = SpineScan::typ_files(&search_dir)?;
 
         Ok(ProjectConfig {
             name,
@@ -124,36 +128,23 @@ impl ProjectConfig {
                 .to_path_buf();
             (config, Some(custom_path.to_path_buf()), config_root)
         } else {
-            // Walk up from file's parent directory looking for rheo.toml
-            let mut current_dir = Some(file_parent);
-            let mut found_config = None;
-
-            // Walk up the directory tree (max 10 levels to avoid infinite loops)
-            for _ in 0..10 {
-                if let Some(dir) = current_dir {
-                    let config_candidate = dir.join("rheo.toml");
-                    if config_candidate.exists() {
-                        debug!(
-                            config = %config_candidate.display(),
-                            "discovered rheo.toml in single-file mode"
-                        );
-                        let config = RheoConfig::load_from_path(&config_candidate)?;
-                        found_config = Some((config, config_candidate.clone(), dir.to_path_buf()));
-                        break;
-                    }
-                    // Move to parent directory
-                    current_dir = dir.parent();
-                } else {
-                    break;
+            match Self::search_upwards_for_config(file_parent) {
+                Some(config_path) => {
+                    debug!(
+                        config = %config_path.display(),
+                        "discovered rheo.toml in single-file mode"
+                    );
+                    let root = config_path.parent().unwrap_or(file_parent).to_path_buf();
+                    (
+                        RheoConfig::load_from_path(&config_path)?,
+                        Some(config_path),
+                        root,
+                    )
                 }
-            }
-
-            if let Some((config, path, config_root)) = found_config {
-                (config, Some(path), config_root)
-            } else {
-                // No config found - use file's parent as root with defaults
-                debug!("no rheo.toml found in single-file mode, using defaults");
-                (RheoConfig::default(), None, file_parent.to_path_buf())
+                None => {
+                    debug!("no rheo.toml found in single-file mode, using defaults");
+                    (RheoConfig::default(), None, file_parent.to_path_buf())
+                }
             }
         };
 
@@ -167,6 +158,15 @@ impl ProjectConfig {
             mode: ProjectMode::SingleFile,
             config_path: loaded_config_path,
         })
+    }
+
+    /// The nearest `rheo.toml` at or above `dir`, within
+    /// [`CONFIG_SEARCH_DEPTH`] levels.
+    fn search_upwards_for_config(dir: &Path) -> Option<PathBuf> {
+        dir.ancestors()
+            .take(CONFIG_SEARCH_DEPTH)
+            .map(|dir| dir.join("rheo.toml"))
+            .find(|candidate| candidate.exists())
     }
 }
 

@@ -18,7 +18,7 @@
 //! - `select` (optional) — a bare tag name (`main`) or a leading-dot class
 //!   (`.rheo-content`); absent uses the default cascade `<main>` ->
 //!   `.rheo-content` -> `.rheo-feed-content` -> whole `<body>` (see
-//!   [`crate::util::html::HtmlDom::select_inner_html`], which records why
+//!   [`crate::html_dom::HtmlDom::select_inner_html`], which records why
 //!   `.rheo-feed-content` is matched as a compatibility alias, and what leaked
 //!   into every feed entry while it was not).
 //! - `as` (optional) — `escaped` (default; `&`/`<`/`>` entity-escaped, for
@@ -39,8 +39,8 @@
 //! page's `../foo.html` links are wrong in an absolute-URL context; an
 //! absolutising `base` attribute is a separate, later concern.
 
+use crate::html_dom::{HtmlDom, escape_text};
 use crate::plugins::CastVertebra;
-use crate::util::html::{HtmlDom, escape_json_string, escape_text};
 use crate::{CONTROL_ASSET_PREFIX, Result, RheoError};
 use regex::Regex;
 use std::collections::HashMap;
@@ -83,6 +83,32 @@ static ATTR_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 /// written in the plain `"`-delimited form either.
 fn unescape_attr_quotes(attrs: &str) -> String {
     attrs.replace("\\\"", "\"")
+}
+
+/// Escape `text` as the BODY of a JSON string — no surrounding quotes, which
+/// the asset author writes themselves.
+///
+/// Per RFC 8259 §7 that means `"` and `\`, plus every C0 control character;
+/// the five with short forms get them and the rest go to `\u00XX`. Notably it
+/// does NOT touch `<`, `>` or `&`: the consumer is a JSON string, not markup,
+/// so a JSON Feed's `content_html` member holds real HTML rather than
+/// entity-escaped HTML.
+fn escape_json_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// How a transcluded region's HTML is inserted into the asset text.
@@ -420,7 +446,6 @@ mod tests {
 
     #[test]
     fn test_escape_json_string_escapes_what_rfc8259_requires() {
-        use crate::util::html::escape_json_string;
         assert_eq!(escape_json_string("a\"b"), r#"a\"b"#);
         assert_eq!(escape_json_string("a\\b"), r"a\\b");
         assert_eq!(escape_json_string("a\tb"), r"a\tb");

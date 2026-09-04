@@ -1,7 +1,4 @@
 /// File extension constants and shared regex patterns used throughout rheo
-use regex::Regex;
-use std::sync::LazyLock;
-
 // File extensions
 pub const TYP_EXT: &str = ".typ";
 
@@ -25,20 +22,16 @@ pub const MARROW_PROLOGUE_FILE: &str = ".marrow-prologue.typ";
 pub const CONTROL_ASSET_PREFIX: &str = ".rheo/";
 
 /// Prefix reserved for the per-vertebra metadata beacon label rendered by
-/// [`crate::util::typst_source::TypstStmt::MetadataBeacon`] (`<rheo-meta:<handle>>`).
+/// [`crate::synth::typst_source::TypstStmt::MetadataBeacon`] (`<rheo-meta:<handle>>`).
 /// An author-authored label starting with this prefix is a hard build error —
 /// see [`crate::reticulate::spine::VirtualSpine::build`].
 pub const RESERVED_META_LABEL_PREFIX: &str = "rheo-meta:";
 
 /// Project-root-relative path `RheoWorld` serves `typ/metadata.typ` under, for
 /// the `#import "/<METADATA_MODULE_PATH>": ...` statements
-/// [`crate::util::typst_source::TypstStmt`]'s metadata-helper variants render.
+/// [`crate::synth::typst_source::TypstStmt`]'s metadata-helper variants render.
 pub const METADATA_MODULE_PATH: &str = "typ/metadata.typ";
 pub const PDF_EXT: &str = ".pdf";
 pub const HTML_EXT: &str = ".html";
 pub const XHTML_EXT: &str = ".xhtml";
 pub const EPUB_EXT: &str = ".epub";
-
-/// Pattern for Typst label references: #label[text]
-pub static TYPST_LABEL_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"#\w+\[([^\]]+)\]").expect("invalid TYPST_LABEL_PATTERN"));

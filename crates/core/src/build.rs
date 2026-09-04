@@ -8,23 +8,26 @@
 use crate::assets::AssetResolver;
 use crate::compile::export_bundle;
 use crate::config::PluginSection;
-use crate::config::output::OutputConfig;
-use crate::config::project::{ProjectConfig, ProjectMode};
+use crate::diagnostics::DiagnosticReport;
 use crate::diagnostics::results::CompilationResults;
-use crate::plugins::{
-    CastVertebra, DocumentMeta, FormatPlugin, PackageIndex, PluginContext, TypstFormat,
-    spine_layout_for,
-};
-use crate::reticulate::spine::{FormatContext, SpineScan, VirtualSpine};
+use crate::output::OutputConfig;
+use crate::packages::PackageIndex;
+use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, TypstFormat, spine_layout_for};
+use crate::project::{ProjectConfig, ProjectMode};
+use crate::reticulate::document_meta::DocumentMeta;
+use crate::reticulate::handle::Handle;
+use crate::reticulate::spine::{FormatContext, SpineLayout, SpineScan, VirtualSpine};
 use crate::transclude::{ContentTransclusion, ControlAssetKind, ControlAssets};
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
+use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tracing::{debug, error, info};
 use typst::introspection::Introspector as _;
 use typst::model::Document as _;
+use typst_kit::fonts::FontStore;
 
 /// Inputs for preparing a [`Build`], typically mapped from CLI flags and config.
 ///
@@ -46,7 +49,7 @@ pub struct BuildOptions {
     /// `--input KEY=VALUE` pairs, seeded onto `sys.inputs` for the Typst compile.
     /// Typst has no environment access, so this is the only way a build script can
     /// parameterise a compile. Values are strings, always. A key equal to
-    /// `world::RESERVED_INPUT_KEY` (`rheo-context`) is rejected by the CLI and
+    /// `config::RESERVED_INPUT_KEY` (`rheo-context`) is rejected by the CLI and
     /// ignored here.
     pub inputs: HashMap<String, String>,
     /// `--emit-bundle-source`: write each plugin's synthesized bundle main to
@@ -74,6 +77,14 @@ pub struct Build {
     plugins: Vec<Box<dyn FormatPlugin>>,
     output: OutputConfig,
     font_dirs: Vec<PathBuf>,
+    /// Every diagnostic this build's compiles have reported, waiting for a
+    /// caller to render (see [`Build::take_diagnostics`]). Core writes none of
+    /// them anywhere itself.
+    diagnostics: Mutex<DiagnosticReport>,
+    /// Scanned on the first compile and shared by every plugin and pass after
+    /// it: the system font scan is slow and identical across them. Lazy, so a
+    /// `Build` that is only inspected (the watcher's asset spec) never pays it.
+    fonts: OnceLock<Arc<FontStore>>,
     inputs: HashMap<String, String>,
     emit_bundle_source: bool,
     metadata_two_pass: bool,
@@ -109,6 +120,40 @@ struct CompiledBundlePass {
     bundle: typst_bundle::Bundle,
 }
 
+/// The result of [`Build::resolve_spine_scan`]: the merged spine config's
+/// directory-scan output, the per-plugin spine layout, and the resolved
+/// spine title — everything [`Build::build_virtual_spine`] needs alongside
+/// the marrow gathered by [`Build::resolve_marrow`].
+struct SpineScanResult {
+    scan: SpineScan,
+    layout: SpineLayout,
+    title: Option<String>,
+}
+
+/// The result of [`Build::resolve_marrow`]: the per-plugin output target and
+/// extension, and the marrow contributions gathered for it.
+struct MarrowContext {
+    target: Option<&'static str>,
+    ext: Option<&'static str>,
+    marrow: Vec<String>,
+    marrow_prologue: Vec<String>,
+}
+
+/// The result of [`Build::mould_bundle`]: the synthesized bundle main and
+/// source overlay, the per-vertebra `rheo-context` injections, the optional
+/// debug bundle source, and the resolved footnote-reset toggle — everything
+/// [`Build::compile_bundle_once`] needs beyond the spine itself.
+///
+/// `sources`/`rheo_context` are shared rather than copied into each world: the
+/// gated second pass compiles the same ones again, as does the next format.
+struct MouldedBundle {
+    main: String,
+    sources: Arc<HashMap<String, String>>,
+    rheo_context: Arc<HashMap<String, crate::reticulate::VertebraInjection>>,
+    bundle_source: Option<String>,
+    reset_footnotes: bool,
+}
+
 /// One plugin's resolved asset context — its output directory, its config
 /// section, the auto-detected package asset blocks, and its resolved assets.
 ///
@@ -121,6 +166,31 @@ struct PluginAssetContext<'a> {
     section: &'a PluginSection,
     manifest_blocks: Vec<crate::plugins::PackageAssets>,
     resolved: HashMap<&'static str, Vec<crate::plugins::Asset>>,
+}
+
+/// The result of [`Build::compile_plugin_spine`]: one plugin's resolved asset
+/// context alongside its compiled spine — the "compile a spine for one
+/// plugin" shape [`Build::run`] and [`Build::compile_for_watch`] share, up to
+/// the point where their post-processing diverges (`run` flattens into pages
+/// for the format plugin; `compile_for_watch` injects CSS/JS and
+/// transclusion for the dev server's in-memory VirtualFs).
+struct PluginCompile<'a> {
+    ctx: PluginAssetContext<'a>,
+    spine: CompiledSpine,
+}
+
+/// The result of [`Build::prepare_plugin_run`]: one plugin's compiled,
+/// flattened, transclusion-resolved outputs, ready to build a
+/// [`PluginContext`] and hand to [`FormatPlugin::compile`].
+struct PluginRunInputs<'a> {
+    output_dir: PathBuf,
+    spine: VirtualSpine,
+    section: &'a PluginSection,
+    resolved: HashMap<&'static str, Vec<crate::plugins::Asset>>,
+    manifest_blocks: Vec<crate::plugins::PackageAssets>,
+    outputs: Vec<CastVertebra>,
+    asset_files: Vec<(String, typst::foundations::Bytes)>,
+    control: ControlAssets,
 }
 
 impl Build {
@@ -157,7 +227,7 @@ impl Build {
         // specific statement of intent. Keys the config sets and the CLI does not
         // survive untouched, so overriding one input does not clear the rest.
         //
-        // Both sources reject `world::RESERVED_INPUT_KEY` before reaching here
+        // Both sources reject `config::RESERVED_INPUT_KEY` before reaching here
         // (the CLI in `parse_inputs`, the config in its `TryFrom`), and
         // `build_inputs` refuses it a third time — a library caller can construct
         // `WorldSpec` directly, so the last line of defence lives there.
@@ -169,6 +239,8 @@ impl Build {
             plugins,
             output,
             font_dirs,
+            fonts: OnceLock::new(),
+            diagnostics: Mutex::new(DiagnosticReport::default()),
             inputs,
             emit_bundle_source: opts.emit_bundle_source,
             metadata_two_pass: opts.metadata_two_pass,
@@ -209,12 +281,15 @@ impl Build {
         let default_section = PluginSection::default();
         let resolver = self.package_resolver();
         let packages = PackageIndex::resolved(
-            &crate::plugins::scan_project_package_imports(&self.project.typ_files),
+            &crate::packages::scan_project_package_imports(&self.project.typ_files),
             &resolver,
         );
 
         let mut asset_paths: Vec<PathBuf> = Vec::new();
-        let mut copy_globs: Vec<(PathBuf, Vec<String>)> = Vec::new();
+        let mut copy_globs: Vec<crate::assets::CopyGlobs> = Vec::new();
+        // Canonicalized so a compiled pattern's base compares equal to the
+        // (canonicalized) paths the filesystem watcher reports.
+        let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
         let mut package_roots: Vec<PathBuf> = packages
             .source_roots()
             .filter(|(namespace, _)| resolver.is_path_backed(namespace))
@@ -249,18 +324,31 @@ impl Build {
             }
 
             // Copy globs: project-level, per-package, and per-plugin asset blocks.
-            if !self.project.config.copy.is_empty() {
-                copy_globs.push((self.project.root.clone(), self.project.config.copy.clone()));
+            if !self.project.config.copy.is_empty()
+                && let Some(g) = crate::assets::CopyGlobs::compile(
+                    &canon(&self.project.root),
+                    &self.project.config.copy,
+                )
+            {
+                copy_globs.push(g);
             }
             for block in &ctx.manifest_blocks {
-                if !block.assets.copy.is_empty() {
-                    copy_globs.push((block.source_root.clone(), block.assets.copy.clone()));
+                if !block.assets.copy.is_empty()
+                    && let Some(g) = crate::assets::CopyGlobs::compile(
+                        &canon(&block.source_root),
+                        &block.assets.copy,
+                    )
+                {
+                    copy_globs.push(g);
                 }
                 package_roots.push(block.source_root.clone());
             }
             for block in ctx.section.asset_blocks() {
-                if !block.copy.is_empty() {
-                    copy_globs.push((self.project.root.clone(), block.copy.clone()));
+                if !block.copy.is_empty()
+                    && let Some(g) =
+                        crate::assets::CopyGlobs::compile(&canon(&self.project.root), &block.copy)
+                {
+                    copy_globs.push(g);
                 }
             }
         }
@@ -280,6 +368,23 @@ impl Build {
     ///
     /// Built per build rather than cached on `Build`, so a `watch` session that
     /// keeps one `Build` alive still re-resolves a branch as it advances.
+    /// Take every diagnostic this build has collected so far, leaving it empty.
+    ///
+    /// Warnings reach a caller no other way — only errors travel out through
+    /// [`crate::RheoError`] — and rendering belongs to whoever owns the
+    /// terminal, so a CLI drains this after each run and prints what it finds.
+    pub fn take_diagnostics(&self) -> DiagnosticReport {
+        std::mem::take(&mut self.diagnostics.lock())
+    }
+
+    /// This build's font store, scanned on first use and shared thereafter.
+    fn fonts(&self) -> Arc<FontStore> {
+        Arc::clone(
+            self.fonts
+                .get_or_init(|| Arc::new(crate::world::scan_fonts(&self.font_dirs))),
+        )
+    }
+
     fn package_resolver(&self) -> Arc<crate::packages::PackageResolver> {
         Arc::new(crate::packages::PackageResolver::new(
             &self.project.config.packages,
@@ -294,7 +399,8 @@ impl Build {
                 .plugin_sections
                 .get(plugin.name())
                 .unwrap_or(&default_section)
-                .auto_detect_packages_enabled()
+                .auto_detect_packages
+                .get()
         })
     }
 
@@ -352,117 +458,33 @@ impl Build {
         plugin: &dyn FormatPlugin,
         plugin_section: &PluginSection,
         content_dir: &Path,
+        packages: &PackageIndex,
         resolver: &Arc<crate::packages::PackageResolver>,
     ) -> Result<CompiledSpine> {
-        let spine = crate::config::Spine::merged_over(
-            plugin_section.spine.as_ref(),
-            self.project.config.spine.as_ref(),
-        );
+        let SpineScanResult {
+            scan,
+            layout,
+            title,
+        } = self.resolve_spine_scan(plugin, plugin_section, content_dir)?;
+        let marrow_ctx = self.resolve_marrow(plugin, plugin_section, content_dir, packages)?;
 
-        let layout = spine_layout_for(plugin.spine_layout_kind(), plugin, &self.project.name);
+        let virtual_spine = self.build_virtual_spine(
+            scan,
+            layout,
+            title,
+            marrow_ctx.marrow,
+            marrow_ctx.marrow_prologue,
+        )?;
 
-        // Base spine = directory scan under content_dir, customized by the
-        // three knobs (exclude, then section layering, then flat reorder). A
-        // single-file project is a one-node flat spine.
-        let scan = match self.project.mode {
-            ProjectMode::SingleFile => {
-                SpineScan::flat(&[self.project.typ_files[0].clone()], content_dir)
-            }
-            ProjectMode::Directory => SpineScan::run_with_marrow(
-                content_dir,
-                &spine.exclude,
-                self.project.config.marrow_file(),
-            )?
-            .apply_sections(content_dir, &spine.section)?
-            .apply_include(content_dir, &spine.include)?,
-        };
-
-        debug!(
-            plugin = plugin.name(),
-            files = scan.files.len(),
-            "building virtual spine"
-        );
-
-        // `ext` rides on rheo-context alongside `target` (present for per-page
-        // plugin formats, omitted for the combined PDF) so typ/rheo.typ can build
-        // cross-vertebra hrefs without hardcoding the extension.
-        let target = plugin.rheo_target();
-        let ext = target.map(|_| plugin.extension());
-
-        // Marrow only makes sense for per-page targets: `document()` and
-        // `asset()` both hard-error under the combined PDF target ("setting the
-        // document format is only supported in the bundle target"), so the same
-        // `ext` gate that marks a per-page format decides whether to emit it.
-        // Position (prologue, spliced before every document, vs. epilogue,
-        // spliced after) is per-contribution: a package picks its own by
-        // filename (`.marrow-prologue.typ` vs `.marrow.typ`); the project picks
-        // its own via `rheo.toml`'s `marrow_prologue` key, defaulting to
-        // epilogue so an unconfigured project compiles byte-identically.
-        // Within each position, packages contribute first in import order, then
-        // the project's own file, so it can build on what they registered.
-        let mut marrow = Vec::new();
-        let mut marrow_prologue = Vec::new();
-        if ext.is_some() {
-            // Behind the same opt-out that governs every other package-driven
-            // behaviour.
-            if plugin_section.auto_detect_packages_enabled() {
-                // Through the resolver, not a directory probe: a package from a
-                // repository ref lives at a sha-keyed path no probe matches, so
-                // probing finds no `.marrow.typ` and the package mints none of
-                // the pages it exists to mint — silently, on a green build.
-                let packages = PackageIndex::resolved(
-                    &crate::plugins::scan_project_package_imports(&self.project.typ_files),
-                    resolver,
-                );
-                marrow.extend(packages.marrow());
-                marrow_prologue.extend(packages.marrow_prologue());
-            }
-
-            let marrow_path = content_dir.join(self.project.config.marrow_file());
-            match std::fs::read_to_string(&marrow_path) {
-                Ok(text) => {
-                    if self.project.config.marrow_prologue() {
-                        marrow_prologue.push(text);
-                    } else {
-                        marrow.push(text);
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => {
-                    return Err(RheoError::io(
-                        e,
-                        format!("reading marrow file '{}'", marrow_path.display()),
-                    ));
-                }
-            }
-        }
-
-        let virtual_spine = VirtualSpine::build(scan, &self.project.root, layout)?
-            .with_title(spine.title)
-            .with_marrow(marrow)
-            .with_marrow_prologue(marrow_prologue);
-        virtual_spine.check_output_collisions()?;
-
-        let moulded = virtual_spine.mould();
-        let bundle_source = self.emit_bundle_source.then(|| moulded.main.clone());
-        let rheo_context = virtual_spine.vertebra_injections();
-        // Per-format footnote-reset toggle (default true); only takes effect for
-        // per-page formats, since rheo.typ ANDs it with the `ext` gate.
-        let reset_footnotes = self
-            .project
-            .config
-            .plugin_section(plugin.name())
-            .reset_footnotes();
+        let moulded = self.mould_bundle(&virtual_spine, plugin);
 
         let mut pass = self.compile_bundle_once(
             plugin,
-            moulded.main.clone(),
-            moulded.sources.clone(),
-            rheo_context.clone(),
+            &moulded,
             virtual_spine.global_context(FormatContext {
-                target,
-                ext,
-                reset_footnotes,
+                target: marrow_ctx.target,
+                ext: marrow_ctx.ext,
+                reset_footnotes: moulded.reset_footnotes,
                 title_overrides: &HashMap::new(),
             }),
             resolver,
@@ -482,29 +504,15 @@ impl Build {
         // rich content — for every vertebra whose beacon already resolves
         // correctly (see `docs/limitations.md`).
         if self.metadata_two_pass {
-            let title_overrides: HashMap<String, String> = virtual_spine
-                .vertebrae
-                .iter()
-                .filter_map(|v| {
-                    let resolved = pass
-                        .meta
-                        .get(&v.output_path)
-                        .and_then(DocumentMeta::title)?;
-                    let beacon = Self::beacon_title_plain_text(&pass.bundle, &v.handle);
-                    (beacon.as_deref() != Some(resolved))
-                        .then(|| (v.handle.clone(), resolved.to_string()))
-                })
-                .collect();
+            let title_overrides = Self::title_overrides_for_mismatch(&virtual_spine, &pass);
             if !title_overrides.is_empty() {
                 pass = self.compile_bundle_once(
                     plugin,
-                    moulded.main,
-                    moulded.sources,
-                    rheo_context,
+                    &moulded,
                     virtual_spine.global_context(FormatContext {
-                        target,
-                        ext,
-                        reset_footnotes,
+                        target: marrow_ctx.target,
+                        ext: marrow_ctx.ext,
+                        reset_footnotes: moulded.reset_footnotes,
                         title_overrides: &title_overrides,
                     }),
                     resolver,
@@ -516,9 +524,189 @@ impl Build {
             spine: virtual_spine,
             files: pass.files,
             assets: pass.assets,
-            bundle_source,
+            bundle_source: moulded.bundle_source,
             meta: pass.meta,
         })
+    }
+
+    /// Merge the spine config and scan `content_dir` for `plugin`'s spine —
+    /// the base spine (directory scan, or a one-node flat spine for a
+    /// single-file project), customized by the three config knobs (exclude,
+    /// then section layering, then flat reorder).
+    fn resolve_spine_scan(
+        &self,
+        plugin: &dyn FormatPlugin,
+        plugin_section: &PluginSection,
+        content_dir: &Path,
+    ) -> Result<SpineScanResult> {
+        let spine = crate::config::Spine::merged_over(
+            plugin_section.spine.as_ref(),
+            self.project.config.spine.as_ref(),
+        );
+
+        let layout = spine_layout_for(plugin.spine_layout_kind(), plugin, &self.project.name);
+
+        let scan = match self.project.mode {
+            ProjectMode::SingleFile => {
+                SpineScan::flat(&[self.project.typ_files[0].clone()], content_dir)
+            }
+            ProjectMode::Directory => SpineScan::run_with_marrow(
+                content_dir,
+                &spine.exclude,
+                self.project.config.marrow_file(),
+            )?
+            .apply_layering(content_dir, spine.layering.as_ref())?,
+        };
+
+        debug!(
+            plugin = plugin.name(),
+            files = scan.files.len(),
+            "building virtual spine"
+        );
+
+        Ok(SpineScanResult {
+            scan,
+            layout,
+            title: spine.title,
+        })
+    }
+
+    /// Resolve the per-plugin rheo target/extension and gather marrow for it.
+    ///
+    /// `ext` rides on rheo-context alongside `target` (present for per-page
+    /// plugin formats, omitted for the combined PDF) so typ/rheo.typ can build
+    /// cross-vertebra hrefs without hardcoding the extension.
+    ///
+    /// Marrow only makes sense for per-page targets: `document()` and
+    /// `asset()` both hard-error under the combined PDF target ("setting the
+    /// document format is only supported in the bundle target"), so the same
+    /// `ext` gate that marks a per-page format decides whether to gather it at
+    /// all. Position (prologue, spliced before every document, vs. epilogue,
+    /// spliced after) is per-contribution: a package picks its own by
+    /// filename (`.marrow-prologue.typ` vs `.marrow.typ`); the project picks
+    /// its own via `rheo.toml`'s `marrow_prologue` key, defaulting to
+    /// epilogue so an unconfigured project compiles byte-identically. Within
+    /// each position, packages contribute first in import order, then the
+    /// project's own file, so it can build on what they registered.
+    fn resolve_marrow(
+        &self,
+        plugin: &dyn FormatPlugin,
+        plugin_section: &PluginSection,
+        content_dir: &Path,
+        packages: &PackageIndex,
+    ) -> Result<MarrowContext> {
+        let target = plugin.rheo_target();
+        let ext = target.map(|_| plugin.extension());
+
+        let mut marrow = Vec::new();
+        let mut marrow_prologue = Vec::new();
+        if ext.is_some() {
+            // Behind the same opt-out that governs every other package-driven
+            // behaviour.
+            if plugin_section.auto_detect_packages.get() {
+                // The index this build already resolved (through the resolver,
+                // not a directory probe: a package from a repository ref lives
+                // at a sha-keyed path no probe matches, so probing finds no
+                // `.marrow.typ` and the package mints none of the pages it
+                // exists to mint — silently, on a green build).
+                marrow.extend(packages.marrow());
+                marrow_prologue.extend(packages.marrow_prologue());
+            }
+
+            let marrow_path = content_dir.join(self.project.config.marrow_file());
+            match std::fs::read_to_string(&marrow_path) {
+                Ok(text) => {
+                    if self.project.config.marrow_prologue.get() {
+                        marrow_prologue.push(text);
+                    } else {
+                        marrow.push(text);
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(RheoError::io(
+                        e,
+                        format!("reading marrow file '{}'", marrow_path.display()),
+                    ));
+                }
+            }
+        }
+
+        Ok(MarrowContext {
+            target,
+            ext,
+            marrow,
+            marrow_prologue,
+        })
+    }
+
+    /// Build and collision-check the `VirtualSpine` from a resolved scan,
+    /// layout, title, and marrow.
+    fn build_virtual_spine(
+        &self,
+        scan: SpineScan,
+        layout: SpineLayout,
+        title: Option<String>,
+        marrow: Vec<String>,
+        marrow_prologue: Vec<String>,
+    ) -> Result<VirtualSpine> {
+        let virtual_spine = VirtualSpine::build(scan, &self.project.root, layout)?
+            .with_title(title)
+            .with_marrow(marrow)
+            .with_marrow_prologue(marrow_prologue);
+        virtual_spine.check_output_collisions()?;
+        Ok(virtual_spine)
+    }
+
+    /// Mould the spine into a bundle main + source overlay, and resolve the
+    /// per-vertebra injections, debug source, and footnote-reset toggle that
+    /// ride alongside it into [`Build::compile_bundle_once`].
+    fn mould_bundle(
+        &self,
+        virtual_spine: &VirtualSpine,
+        plugin: &dyn FormatPlugin,
+    ) -> MouldedBundle {
+        let moulded = virtual_spine.mould();
+        let bundle_source = self.emit_bundle_source.then(|| moulded.main.clone());
+        let rheo_context = virtual_spine.vertebra_injections();
+        // Per-format footnote-reset toggle (default true); only takes effect for
+        // per-page formats, since rheo.typ ANDs it with the `ext` gate.
+        let reset_footnotes = self
+            .project
+            .config
+            .plugin_section(plugin.name())
+            .reset_footnotes
+            .get();
+
+        MouldedBundle {
+            main: moulded.main,
+            sources: Arc::new(moulded.sources),
+            rheo_context: Arc::new(rheo_context),
+            bundle_source,
+            reset_footnotes,
+        }
+    }
+
+    /// Vertebrae whose beacon-reported title disagrees with the
+    /// Typst-resolved `DocumentMeta` title from `pass` — the gap
+    /// `compile_spine`'s gated second pass exists to close.
+    fn title_overrides_for_mismatch(
+        virtual_spine: &VirtualSpine,
+        pass: &CompiledBundlePass,
+    ) -> HashMap<String, String> {
+        virtual_spine
+            .vertebrae
+            .iter()
+            .filter_map(|v| {
+                let resolved = pass
+                    .meta
+                    .get(&v.output_path)
+                    .and_then(DocumentMeta::title)?;
+                let beacon = Self::beacon_title_plain_text(&pass.bundle, &v.handle);
+                (beacon.as_deref() != Some(resolved))
+                    .then(|| (v.handle.to_string(), resolved.to_string()))
+            })
+            .collect()
     }
 
     /// Compile the moulded bundle main once — the shared step behind both the
@@ -526,27 +714,29 @@ impl Build {
     fn compile_bundle_once(
         &self,
         plugin: &dyn FormatPlugin,
-        main: String,
-        sources: HashMap<String, String>,
-        rheo_context: HashMap<String, crate::reticulate::VertebraInjection>,
-        global_context: crate::util::typst_literal::TypstLiteral,
+        moulded: &MouldedBundle,
+        global_context: crate::synth::typst_literal::TypstLiteral,
         resolver: &Arc<crate::packages::PackageResolver>,
     ) -> Result<CompiledBundlePass> {
         let world = RheoWorld::new_for_bundle(
             &self.project.root,
-            main,
+            moulded.main.clone(),
             crate::world::WorldSpec {
-                source_overlay: sources,
-                rheo_context,
+                source_overlay: Arc::clone(&moulded.sources),
+                rheo_context: Arc::clone(&moulded.rheo_context),
                 global_context: Some(global_context),
                 format_name: plugin.rheo_target().map(str::to_string),
-                font_dirs: self.font_dirs.clone(),
+                fonts: Some(self.fonts()),
                 user_inputs: self.inputs.clone(),
                 packages: Some(Arc::clone(resolver)),
                 ..Default::default()
             },
         )?;
-        let bundle = world.compile_bundle()?;
+        // Drained whether or not the compile succeeded: a failed pass's
+        // diagnostics are exactly the ones worth rendering.
+        let compiled = world.compile_bundle();
+        self.diagnostics.lock().extend(world.take_diagnostics());
+        let bundle = compiled?;
         let mut assets: HashSet<String> = HashSet::new();
         let mut meta: HashMap<String, DocumentMeta> = HashMap::new();
         for (path, file) in bundle.files.iter() {
@@ -575,11 +765,10 @@ impl Build {
     /// `None` when there's no beacon, no `title` field, or it's `none`.
     fn beacon_title_plain_text(
         bundle: &typst_bundle::Bundle,
-        handle: &str,
+        handle: &Handle,
     ) -> Option<ecow::EcoString> {
-        let label = typst::foundations::Label::new(typst::utils::PicoStr::intern(&format!(
-            "rheo-meta:{handle}"
-        )))?;
+        let label =
+            typst::foundations::Label::new(typst::utils::PicoStr::intern(&handle.meta_label()))?;
         let found = bundle
             .introspector
             .query(&typst::foundations::Selector::Label(label));
@@ -595,6 +784,24 @@ impl Build {
         }
     }
 
+    /// Resolve `plugin`'s asset context and compile its spine — the "compile
+    /// a spine for one plugin" shape shared by [`Build::run`] (via
+    /// [`Build::prepare_plugin_run`]) and [`Build::compile_for_watch`], up to
+    /// the point where their post-processing diverges.
+    fn compile_plugin_spine<'a>(
+        &'a self,
+        plugin: &dyn FormatPlugin,
+        packages: &PackageIndex,
+        default_section: &'a PluginSection,
+        content_dir: &Path,
+        package_resolver: &Arc<crate::packages::PackageResolver>,
+    ) -> Result<PluginCompile<'a>> {
+        let ctx = self.plugin_asset_context(plugin, packages, default_section, true)?;
+        let spine =
+            self.compile_spine(plugin, ctx.section, content_dir, packages, package_resolver)?;
+        Ok(PluginCompile { ctx, spine })
+    }
+
     /// Compile HTML to an in-memory VirtualFs for the dev server.
     ///
     /// Resolves assets (CSS/JS), copies them to the plugin output dir so the
@@ -604,14 +811,19 @@ impl Build {
     /// this second compile after `run()` is near-instant on unchanged content.
     ///
     /// Returns `None` when the HTML plugin is not selected.
-    pub fn compile_for_watch(&mut self) -> Result<Option<typst_bundle::VirtualFs>> {
+    pub fn compile_for_watch(&self) -> Result<Option<typst_bundle::VirtualFs>> {
         if self.project.typ_files.is_empty() {
             return Err(RheoError::project_config("no .typ files found in project"));
         }
 
-        let html_plugin = match self.plugins.iter().find(|p| p.name() == "html") {
-            Some(p) => p,
-            None => return Ok(None),
+        // Whichever selected format declares the capability, not whichever is
+        // called "html": a format wanting a dev server implements the trait.
+        let Some((serving_plugin, live_reload)) = self
+            .plugins
+            .iter()
+            .find_map(|p| p.live_reload().map(|lr| (p.as_ref(), lr)))
+        else {
+            return Ok(None);
         };
 
         let default_section = PluginSection::default();
@@ -620,17 +832,18 @@ impl Build {
         // Scanned per rebuild rather than once per `Build`: a `.typ` file
         // gaining an `@rheo/...` import mid-session must be picked up, and the
         // `Build` is only rebuilt when `rheo.toml` itself changes.
-        let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
+        let package_imports =
+            crate::packages::scan_project_package_imports(&self.project.typ_files);
         let plugin_section: &PluginSection = self
             .project
             .config
             .plugin_sections
-            .get(html_plugin.name())
+            .get(serving_plugin.name())
             .unwrap_or(&default_section);
         let package_resolver = self.package_resolver();
         let packages = prewarm_and_resolve(
             &package_imports,
-            plugin_section.auto_detect_packages_enabled(),
+            plugin_section.auto_detect_packages.get(),
             &package_resolver,
         )?;
 
@@ -639,40 +852,22 @@ impl Build {
         // here is propagated rather than swallowed: the CLI's watch loop turns
         // it into a warning, whereas an empty asset map would silently serve
         // every page unstyled.
-        let ctx =
-            self.plugin_asset_context(html_plugin.as_ref(), &packages, &default_section, true)?;
-        let asset_paths = |name| {
-            ctx.resolved
-                .get(name)
-                .map(|v: &Vec<crate::plugins::Asset>| {
-                    v.iter().map(|a| a.built_relative_path.clone()).collect()
-                })
-                .unwrap_or_default()
-        };
-        let css_paths: Vec<String> = asset_paths("css_stylesheet");
-        let js_scripts: Vec<crate::util::html::ScriptRef> = ctx
-            .resolved
-            .get("js_scripts")
-            .map(|v: &Vec<crate::plugins::Asset>| {
-                v.iter()
-                    .map(|a| crate::util::html::ScriptRef {
-                        src: a.built_relative_path.clone(),
-                        module: a.module,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let PluginCompile {
+            ctx,
+            spine: compiled,
+        } = self.compile_plugin_spine(
+            serving_plugin,
+            &packages,
+            &default_section,
+            &content_dir,
+            &package_resolver,
+        )?;
 
         let CompiledSpine {
             files: virtual_fs,
             assets,
             ..
-        } = self.compile_spine(
-            html_plugin.as_ref(),
-            ctx.section,
-            &content_dir,
-            &package_resolver,
-        )?;
+        } = compiled;
 
         // Build a page-path -> HTML string map from the non-asset (compiled
         // document) entries of this same virtual_fs, for `<rheo-content>`
@@ -740,26 +935,108 @@ impl Build {
                 continue;
             }
 
-            if path_str.ends_with(".html") {
-                let html = String::from_utf8_lossy(&bytes);
-                let css = crate::util::html::depth_relative_refs(&css_paths, &path_str);
-                let js = crate::util::html::depth_relative_scripts(&js_scripts, &path_str);
-                let modified = crate::util::html::HtmlDom::apply_head_mutations(
-                    &html,
-                    &css,
-                    &js,
-                    control_head_fragment.as_deref(),
-                )?;
-                match modified {
-                    Some(modified) => injected
-                        .insert(vpath, typst::foundations::Bytes::new(modified.into_bytes())),
-                    None => injected.insert(vpath, bytes),
-                };
-            } else {
-                injected.insert(vpath, bytes);
+            let text = String::from_utf8_lossy(&bytes);
+            let page = crate::plugins::PageAssets {
+                assets: &ctx.resolved,
+                head_fragment: control_head_fragment.as_deref(),
             }
+            .page(&path_str, &text);
+            match live_reload.rewrite_page(&page)? {
+                Some(rewritten) => injected.insert(
+                    vpath,
+                    typst::foundations::Bytes::new(rewritten.into_bytes()),
+                ),
+                None => injected.insert(vpath, bytes),
+            };
         }
         Ok(Some(injected))
+    }
+
+    /// Compile `plugin`'s spine and reduce it to disk-ready outputs: a
+    /// flattened `(pages, assets)` split, `<rheo-content>` transclusion
+    /// resolved, and `.rheo/*` control assets pulled out — everything a
+    /// [`PluginContext`] and [`FormatPlugin::compile`] need, short of the
+    /// compile call itself (kept in [`Build::run`] so only the plugin's own
+    /// error is recorded-and-continued rather than propagated).
+    fn prepare_plugin_run<'a>(
+        &'a self,
+        plugin: &dyn FormatPlugin,
+        packages: &PackageIndex,
+        default_section: &'a PluginSection,
+        content_dir: &Path,
+        package_resolver: &Arc<crate::packages::PackageResolver>,
+    ) -> Result<PluginRunInputs<'a>> {
+        let PluginCompile {
+            ctx: plugin_assets,
+            spine:
+                CompiledSpine {
+                    spine: virtual_spine,
+                    files: virtual_fs,
+                    assets,
+                    bundle_source,
+                    meta,
+                },
+        } = self.compile_plugin_spine(
+            plugin,
+            packages,
+            default_section,
+            content_dir,
+            package_resolver,
+        )?;
+
+        // Read-only debug artifact — never read back as an input. Written
+        // under the plugin's build-dir output, which the watcher already
+        // excludes wholesale, so this cannot self-trigger a rebuild loop.
+        if let Some(source) = bundle_source {
+            let debug_path = plugin_assets.output_dir.join(".rheo-bundle.typ");
+            std::fs::write(&debug_path, source).map_err(|e| {
+                RheoError::io(
+                    e,
+                    format!("writing bundle debug source to {}", debug_path.display()),
+                )
+            })?;
+        }
+
+        let (outputs, mut asset_files) = flatten_bundle_outputs(
+            virtual_fs,
+            &assets,
+            &virtual_spine,
+            plugin.typst_format(),
+            &meta,
+        );
+
+        // Resolve any `<rheo-content>` placeholders bundle-emitted assets
+        // (e.g. a marrow-minted Atom feed) contain, embedding the compiled
+        // inner HTML of the pages they name. Runs before the
+        // `embeds_bundle_assets` branch below so both loose-file HTML
+        // assets and EPUB-embedded assets (built from this same
+        // `asset_files`) get transcluded bytes. A no-op (byte-identical)
+        // for an asset with no placeholder or non-UTF-8 bytes.
+        ContentTransclusion::rewrite_assets(&outputs, &mut asset_files)?;
+
+        // Pull bundle-root control assets (`.rheo/*`) out of the plugin
+        // asset list before the plugin — or the EPUB embedding path,
+        // which embeds straight from this same `asset_files` — ever sees
+        // them. A no-op when the project has no `.rheo/*` assets.
+        let (asset_files, control) = ControlAssets::extract(asset_files)?;
+
+        debug!(
+            plugin = plugin.name(),
+            outputs = outputs.len(),
+            assets = asset_files.len(),
+            "spine compile produced outputs"
+        );
+
+        Ok(PluginRunInputs {
+            output_dir: plugin_assets.output_dir,
+            spine: virtual_spine,
+            section: plugin_assets.section,
+            resolved: plugin_assets.resolved,
+            manifest_blocks: plugin_assets.manifest_blocks,
+            outputs,
+            asset_files,
+            control,
+        })
     }
 
     /// Compile the project across all selected plugins.
@@ -767,7 +1044,7 @@ impl Build {
     /// Returns the per-format [`CompilationResults`] on full success. If any
     /// format fails, the failure is logged and an error is returned (the CLI maps
     /// this to a non-zero exit).
-    pub fn run(&mut self) -> Result<CompilationResults> {
+    pub fn run(&self) -> Result<CompilationResults> {
         if self.project.typ_files.is_empty() {
             return Err(RheoError::project_config("no .typ files found in project"));
         }
@@ -778,7 +1055,8 @@ impl Build {
         // Scan .typ files for package imports once, and resolve each imported
         // package (a directory probe plus a `typst.toml` parse) once — both
         // shared across every plugin in this build.
-        let package_imports = crate::plugins::scan_project_package_imports(&self.project.typ_files);
+        let package_imports =
+            crate::packages::scan_project_package_imports(&self.project.typ_files);
         let package_resolver = self.package_resolver();
         let packages = prewarm_and_resolve(
             &package_imports,
@@ -789,83 +1067,27 @@ impl Build {
         let content_dir = resolve_effective_content_dir(&self.project);
 
         for plugin in &self.plugins {
-            let plugin_section: &PluginSection = self
-                .project
-                .config
-                .plugin_sections
-                .get(plugin.name())
-                .unwrap_or(&default_section);
-
-            let plugin_assets =
-                self.plugin_asset_context(plugin.as_ref(), &packages, &default_section, true)?;
-            let plugin_output_dir = &plugin_assets.output_dir;
-            let resolver = AssetResolver::new(&self.project.root, plugin_output_dir);
-
-            let CompiledSpine {
-                spine: virtual_spine,
-                files: virtual_fs,
-                assets,
-                bundle_source,
-                meta,
-            } = self.compile_spine(
+            let prepared = self.prepare_plugin_run(
                 plugin.as_ref(),
-                plugin_section,
+                &packages,
+                &default_section,
                 &content_dir,
                 &package_resolver,
             )?;
-
-            // Read-only debug artifact — never read back as an input. Written
-            // under the plugin's build-dir output, which the watcher already
-            // excludes wholesale, so this cannot self-trigger a rebuild loop.
-            if let Some(source) = bundle_source {
-                let debug_path = plugin_output_dir.join(".rheo-bundle.typ");
-                std::fs::write(&debug_path, source).map_err(|e| {
-                    RheoError::io(
-                        e,
-                        format!("writing bundle debug source to {}", debug_path.display()),
-                    )
-                })?;
-            }
-
-            let (outputs, mut asset_files) = flatten_bundle_outputs(
-                virtual_fs,
-                &assets,
-                &virtual_spine,
-                plugin.typst_format(),
-                &meta,
-            );
-
-            // Resolve any `<rheo-content>` placeholders bundle-emitted assets
-            // (e.g. a marrow-minted Atom feed) contain, embedding the compiled
-            // inner HTML of the pages they name. Runs before the
-            // `embeds_bundle_assets` branch below so both loose-file HTML
-            // assets and EPUB-embedded assets (built from this same
-            // `asset_files`) get transcluded bytes. A no-op (byte-identical)
-            // for an asset with no placeholder or non-UTF-8 bytes.
-            ContentTransclusion::rewrite_assets(&outputs, &mut asset_files)?;
-
-            // Pull bundle-root control assets (`.rheo/*`) out of the plugin
-            // asset list before the plugin — or the EPUB embedding path,
-            // which embeds straight from this same `asset_files` — ever sees
-            // them. A no-op when the project has no `.rheo/*` assets.
-            let (asset_files, control) = ControlAssets::extract(asset_files)?;
-
-            debug!(
-                plugin = plugin.name(),
-                outputs = outputs.len(),
-                assets = asset_files.len(),
-                "spine compile produced outputs"
-            );
+            let resolver = AssetResolver::new(&self.project.root, &prepared.output_dir);
 
             let ctx = PluginContext {
-                project: &self.project,
-                output_dir: plugin_output_dir,
-                spine: &virtual_spine,
-                config: plugin_section,
-                assets: &plugin_assets.resolved,
-                font_dirs: &self.font_dirs,
-                bundle_assets: &asset_files,
-                control: &control,
+                output_dir: &prepared.output_dir,
+                config: prepared.section,
+                page: crate::plugins::PageAssets {
+                    assets: &prepared.resolved,
+                    head_fragment: prepared.control.head_fragment.as_deref(),
+                },
+                bundle: crate::plugins::BundleInputs {
+                    project: &self.project,
+                    spine: &prepared.spine,
+                    assets: &prepared.asset_files,
+                },
             };
 
             // Assets are the lowest precedence tier — asset() < spine documents
@@ -875,8 +1097,8 @@ impl Build {
             // placing them instead — a loose file next to a packaged container
             // would be unreachable from inside it.
             if !plugin.embeds_bundle_assets() {
-                for (path, bytes) in &asset_files {
-                    let dest = plugin_output_dir.join(path);
+                for (path, bytes) in &prepared.asset_files {
+                    let dest = prepared.output_dir.join(path);
                     if let Some(parent) = dest.parent() {
                         std::fs::create_dir_all(parent).map_err(|e| {
                             RheoError::io(e, format!("creating directory for asset {path}"))
@@ -887,7 +1109,7 @@ impl Build {
                 }
             }
 
-            match plugin.compile(ctx, &outputs) {
+            match plugin.compile(ctx, &prepared.outputs) {
                 Ok(_) => {
                     // Apply copy globs after bundle output is written so that
                     // explicit copy patterns win over any colliding bundle output.
@@ -897,7 +1119,7 @@ impl Build {
                         None,
                         true,
                     )?;
-                    for block in &plugin_assets.manifest_blocks {
+                    for block in &prepared.manifest_blocks {
                         resolver.copy_globs(
                             &block.assets.copy,
                             &block.source_root,
@@ -905,7 +1127,7 @@ impl Build {
                             true,
                         )?;
                     }
-                    for block in plugin_section.asset_blocks() {
+                    for block in prepared.section.asset_blocks() {
                         resolver.copy_globs(
                             &block.copy,
                             &self.project.root,
@@ -1061,7 +1283,7 @@ fn prewarm_and_resolve(
     resolver: &crate::packages::PackageResolver,
 ) -> Result<PackageIndex> {
     if auto_detect {
-        crate::plugins::prewarm_packages(package_imports, resolver);
+        crate::packages::prewarm_packages(package_imports, resolver);
     }
     let packages = PackageIndex::resolved(package_imports, resolver);
     packages.check_min_versions()?;
@@ -1076,7 +1298,7 @@ fn manifest_blocks_for(
     plugin_section: &PluginSection,
     format_name: &str,
 ) -> Vec<crate::plugins::PackageAssets> {
-    if plugin_section.auto_detect_packages_enabled() {
+    if plugin_section.auto_detect_packages.get() {
         packages.manifest_assets(format_name)
     } else {
         vec![]
@@ -1371,7 +1593,7 @@ mod tests {
     /// filename-derived fallback the pre-compile AST scan is stuck with.
     #[test]
     fn test_run_resolves_title_from_imported_template_via_document_info() {
-        use crate::config::project::ProjectConfig;
+        use crate::project::ProjectConfig;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
@@ -1409,12 +1631,13 @@ mod tests {
         );
     }
 
-    /// The dev-server in-memory path must hoist `<rheo-head>` exactly like the
-    /// on-disk path, even with no CSS/JS asset and no `.rheo/head.html`
-    /// fragment — the case the old per-format gate skipped entirely.
+    /// The dev-server in-memory path hands every compiled page to the serving
+    /// format's [`LiveReload`], with no CSS/JS asset and no `.rheo/head.html`
+    /// fragment in play — so a format that only hoists still gets its hoist.
     #[test]
     fn test_compile_for_watch_hoists_rheo_head_without_assets() {
-        use crate::config::project::ProjectConfig;
+        use crate::plugins::{LiveReload, ServedPage};
+        use crate::project::ProjectConfig;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
@@ -1438,23 +1661,31 @@ mod tests {
             config_path: None,
         };
 
-        struct HtmlNoAssets;
-        impl FormatPlugin for HtmlNoAssets {
+        struct HoistOnly;
+        impl FormatPlugin for HoistOnly {
             fn name(&self) -> &'static str {
                 "html"
+            }
+            fn live_reload(&self) -> Option<&dyn LiveReload> {
+                Some(self)
             }
             fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[CastVertebra]) -> Result<()> {
                 Ok(())
             }
         }
+        impl LiveReload for HoistOnly {
+            fn rewrite_page(&self, page: &ServedPage<'_>) -> Result<Option<String>> {
+                crate::html_dom::HtmlDom::apply_head_mutations(page.text, &[], &[], None)
+            }
+        }
 
-        let plugin: Box<dyn FormatPlugin> = Box::new(HtmlNoAssets);
-        let mut build =
+        let plugin: Box<dyn FormatPlugin> = Box::new(HoistOnly);
+        let build =
             Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
         let vfs = build
             .compile_for_watch()
             .expect("compile_for_watch")
-            .expect("html plugin selected");
+            .expect("a live-reload format was selected");
 
         let (_, bytes) = vfs
             .iter()
@@ -1467,14 +1698,60 @@ mod tests {
         assert!(meta_pos < head_end, "meta not hoisted into head:\n{html}");
     }
 
+    /// A format with no live-reload capability is never compiled for the dev
+    /// server, whatever it is called.
+    #[test]
+    fn test_compile_for_watch_skips_formats_without_the_capability() {
+        use crate::project::ProjectConfig;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("content")).expect("create content dir");
+        std::fs::write(root.join("content/a.typ"), "= Page A\n").expect("write content/a.typ");
+
+        let project = ProjectConfig {
+            name: "test".to_string(),
+            root: root.to_path_buf(),
+            config: crate::RheoConfig {
+                content_dir: Some("content".to_string()),
+                formats: vec!["html".to_string()],
+                ..Default::default()
+            },
+            typ_files: vec![root.join("content/a.typ")],
+            mode: ProjectMode::Directory,
+            config_path: None,
+        };
+
+        struct NamedHtmlNoCapability;
+        impl FormatPlugin for NamedHtmlNoCapability {
+            fn name(&self) -> &'static str {
+                "html"
+            }
+            fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[CastVertebra]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let plugin: Box<dyn FormatPlugin> = Box::new(NamedHtmlNoCapability);
+        let build =
+            Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
+        assert!(
+            build
+                .compile_for_watch()
+                .expect("compile_for_watch")
+                .is_none(),
+            "the plugin's name must not select it for the dev server"
+        );
+    }
+
     /// A `path`-backed package with no `[tool.rheo.*]` assets at all still gets
     /// its directory watched — unlike a repository ref or a release, its tree
     /// can change while the watch is running, so watch coverage cannot be
     /// gated on whether the package happens to declare an asset block.
     #[test]
     fn test_watch_asset_spec_watches_path_backed_package_without_assets() {
-        use crate::config::project::ProjectConfig;
         use crate::config::{NamespaceSource, PathSource};
+        use crate::project::ProjectConfig;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
@@ -1538,79 +1815,6 @@ mod tests {
         );
     }
 
-    /// Same as above, but with a CSS asset present, so the shared step's
-    /// injection and hoist both run in the same pass.
-    #[test]
-    fn test_compile_for_watch_hoists_rheo_head_with_css() {
-        use crate::config::project::ProjectConfig;
-        use crate::plugins::{AssetConfig, EmbeddedDefault};
-
-        let dir = tempfile::tempdir().expect("tempdir");
-        let root = dir.path();
-        std::fs::create_dir_all(root.join("content")).expect("create content dir");
-        std::fs::write(
-            root.join("content/a.typ"),
-            "= Page A\n#html.elem(\"rheo-head\", html.elem(\"meta\", attrs: (name: \"x\", content: \"y\")))\n",
-        )
-        .expect("write content/a.typ");
-
-        let project = ProjectConfig {
-            name: "test".to_string(),
-            root: root.to_path_buf(),
-            config: crate::RheoConfig {
-                content_dir: Some("content".to_string()),
-                formats: vec!["html".to_string()],
-                ..Default::default()
-            },
-            typ_files: vec![root.join("content/a.typ")],
-            mode: ProjectMode::Directory,
-            config_path: None,
-        };
-
-        struct HtmlWithCss;
-        impl FormatPlugin for HtmlWithCss {
-            fn name(&self) -> &'static str {
-                "html"
-            }
-            fn assets(&self) -> Vec<AssetConfig> {
-                vec![AssetConfig {
-                    name: "css_stylesheet",
-                    default_path: "style.css",
-                    required: false,
-                    default_content: Some(EmbeddedDefault {
-                        name: "test-default.css",
-                        content: "body{color:red}",
-                    }),
-                }]
-            }
-            fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[CastVertebra]) -> Result<()> {
-                Ok(())
-            }
-        }
-
-        let plugin: Box<dyn FormatPlugin> = Box::new(HtmlWithCss);
-        let mut build =
-            Build::prepare(project, vec![plugin], BuildOptions::default()).expect("prepare build");
-        let vfs = build
-            .compile_for_watch()
-            .expect("compile_for_watch")
-            .expect("html plugin selected");
-
-        let (_, bytes) = vfs
-            .iter()
-            .find(|(p, _)| p.get_with_slash().ends_with("a.html"))
-            .expect("a.html present");
-        let html = String::from_utf8_lossy(bytes.as_slice());
-        assert!(!html.contains("rheo-head"), "wrapper not removed:\n{html}");
-        assert!(
-            html.contains("test-default.css"),
-            "css link missing:\n{html}"
-        );
-        let head_end = html.find("</head>").expect("has head");
-        let meta_pos = html.find("name=\"x\"").expect("meta present");
-        assert!(meta_pos < head_end, "meta not hoisted into head:\n{html}");
-    }
-
     /// A one-vertebra project with a `*bold text*` paragraph and a marrow
     /// `#show strong` rule, shared by the epilogue/prologue end-to-end tests
     /// below. Only `marrow_prologue` differs between them.
@@ -1633,7 +1837,7 @@ mod tests {
             config: crate::RheoConfig {
                 content_dir: Some("content".to_string()),
                 formats: vec!["html".to_string()],
-                marrow_prologue: Some(marrow_prologue),
+                marrow_prologue: marrow_prologue.into(),
                 ..Default::default()
             },
             typ_files: vec![root.join("content/index.typ")],
