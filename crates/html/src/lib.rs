@@ -155,7 +155,6 @@ impl LiveReload for HtmlPlugin {
         };
         let css_paths: Vec<String> = built_paths(STYLESHEETS)
             .iter()
-            .inspect(|a| info!("Found CSS stylesheet: {}", a.resolved_path.display()))
             .map(|a| a.built_relative_path.clone())
             .collect();
         let js_scripts: Vec<rheo_core::html_dom::ScriptRef> = built_paths(SCRIPTS)
@@ -256,6 +255,50 @@ mod tests {
             assert!(
                 frag_pos < head_end,
                 "fragment must land inside <head> for {path}"
+            );
+        }
+    }
+
+    /// A build resolves its stylesheets once and every page links all of them,
+    /// so `rewrite_page` must emit one `<link>` per resolved stylesheet rather
+    /// than stopping at the first.
+    #[test]
+    fn test_rewrite_page_links_every_stylesheet() {
+        use std::collections::HashMap;
+
+        let stylesheet = |name: &str| rheo_core::Asset {
+            config: AssetConfig {
+                name: STYLESHEETS,
+                default_path: "style.css",
+                required: false,
+                default_content: None,
+            },
+            module: false,
+            source_path: Path::new("/project").join(name),
+            resolved_path: Path::new("/build/html").join(name),
+            built_relative_path: name.to_string(),
+        };
+        let assets: HashMap<&'static str, Vec<rheo_core::Asset>> = HashMap::from([(
+            STYLESHEETS,
+            vec![stylesheet("one.css"), stylesheet("two.css")],
+        )]);
+
+        let page = ServedPage {
+            path: "index.html",
+            text: "<html><head><title>t</title></head><body><p>hi</p></body></html>",
+            assets: &assets,
+            head_fragment: None,
+        };
+
+        let rewritten = HtmlPlugin
+            .rewrite_page(&page)
+            .expect("rewrite succeeds")
+            .expect("an .html page is rewritten");
+        for name in ["one.css", "two.css"] {
+            let link = format!(r#"<link rel="stylesheet" href="{name}">"#);
+            assert!(
+                rewritten.contains(&link),
+                "page missing {link}:\n{rewritten}"
             );
         }
     }
