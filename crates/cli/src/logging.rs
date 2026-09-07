@@ -41,12 +41,19 @@ pub fn init(verbosity: Verbosity) -> Result<()> {
         EnvFilter::new(format!("rheo={level},rheo_html={level}"))
     });
 
-    // Build the formatter with appropriate styling
+    // Build the formatter with appropriate styling.
+    //
+    // TIMESTAMPS ARE ON, and a `watch` session is why: its log is a timeline —
+    // this save, that rebuild, the next — and without them the only way to
+    // learn what a rebuild cost was to pipe stderr through `date` a line at a
+    // time. `uptime()` rather than a wall clock: what a reader of these lines
+    // wants is the interval between two of them, and seconds-since-start
+    // subtracts by eye where `14:32:07.918` does not.
     let fmt_layer = fmt::layer()
         .with_target(false) // Don't show target (module path) in normal output
         .with_level(true) // Show log level
         .with_ansi(is_tty) // Only use colors if outputting to a TTY
-        .without_time() // Don't show timestamps for cleaner output
+        .with_timer(fmt::time::uptime())
         .compact() // Use compact format similar to cargo
         .with_writer(std::io::stderr); // Diagnostics are not compiled output
 

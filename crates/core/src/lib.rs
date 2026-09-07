@@ -21,6 +21,7 @@ pub use config::ManifestVersion;
 pub use config::RheoConfig;
 pub use diagnostics::error::RheoError;
 pub use diagnostics::results::{CompilationResults, FormatResult};
+pub use diagnostics::timing::BuildTiming;
 pub use globset::{Glob, GlobSet, GlobSetBuilder};
 pub use util::constants::*;
 

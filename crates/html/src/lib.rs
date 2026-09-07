@@ -13,7 +13,7 @@ use rheo_core::{
     OpenHandle, PluginContext, Result, RheoError, ServedPage, ServerHandle,
 };
 use std::path::Path;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// Reload callback type - called by watch loop after successful compilation.
 pub type ReloadCallback = Box<dyn Fn() + Send + Sync>;
@@ -131,7 +131,11 @@ impl FormatPlugin for HtmlPlugin {
             }
             std::fs::write(&out_path, &html_string)
                 .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", out_path)))?;
-            info!(output = %out_path.display(), "successfully compiled to HTML");
+            // DEBUG, not info: this fires once per page, and a project emitting
+            // 360 of them buried every line that mattered under 360 that did
+            // not. The build's own one-line summary — page count, total bytes,
+            // slowest phases — is what INFO carries instead.
+            debug!(output = %out_path.display(), "wrote HTML page");
         }
 
         Ok(())

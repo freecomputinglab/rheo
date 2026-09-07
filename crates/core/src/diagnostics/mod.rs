@@ -9,6 +9,7 @@
 pub mod error;
 pub mod report;
 pub mod results;
+pub mod timing;
 
 use crate::diagnostics::error::RheoError;
 pub use report::{Diagnostic, DiagnosticReport, Severity, SourceFile, Span, TracePoint};

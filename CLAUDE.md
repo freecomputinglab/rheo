@@ -28,6 +28,7 @@ cargo run -- watch <project-path> --open     # dev server at localhost:3000
 cargo run -- clean <project-path>
 cargo run -- clean <path> --packages            # also drop cached repo checkouts for [packages] namespaces
 RUST_LOG=rheo=trace cargo run -- compile ... # debug logging
+RUST_LOG=rheo=debug cargo run -- compile ... 2>&1 | grep 'phase='  # per-phase build timings
 
 # Tests
 cargo test                                    # run unit tests only
