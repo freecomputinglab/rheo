@@ -169,6 +169,7 @@ mod tests {
         assert_eq!(rewrites.apply("unchanged"), "unchanged");
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "must not overlap")]
     fn overlapping_rewrites_panic_in_debug() {
