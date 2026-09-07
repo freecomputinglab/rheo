@@ -83,6 +83,32 @@ impl WatchAssetSpec {
     }
 }
 
+/// How long the watcher waits for the filesystem to go quiet before it
+/// recompiles.
+///
+/// ONE SAVE IS SEVERAL EVENTS — an editor writing a temp file and renaming it,
+/// a formatter rewriting a handful of files — and coalescing them into one
+/// rebuild is what this exists for. It is not a place to be generous: this
+/// interval is added to EVERY rebuild, so on a project that compiles quickly it
+/// IS the rebuild. MEASURED on a project whose compile costs ~0.8s, the old
+/// 1-second window made the edit-to-output latency 1.8s.
+const DEBOUNCE_QUIET: Duration = Duration::from_millis(150);
+
+/// The ceiling on how long a batch of changes may postpone its own rebuild.
+///
+/// [`DEBOUNCE_QUIET`] restarts on every event, so a process writing steadily —
+/// a formatter walking a tree, a script generating content, a long `git
+/// checkout` — can defer a rebuild indefinitely. Measured from the FIRST change
+/// of a batch rather than the last, so a rebuild always happens within this of
+/// something having changed.
+const DEBOUNCE_MAX: Duration = Duration::from_millis(750);
+
+/// How often the watch loop wakes to re-check its two debounce deadlines.
+///
+/// Has to be well under [`DEBOUNCE_QUIET`], or the quiet window is really this
+/// interval rounded up.
+const DEBOUNCE_POLL: Duration = Duration::from_millis(50);
+
 /// Event indicating files have changed and compilation should be triggered
 #[derive(Debug)]
 pub enum WatchEvent {
@@ -100,7 +126,12 @@ pub enum WatchEvent {
 ///   any subdirectory, any extension — see [`WatchAssetSpec`])
 /// - Project configuration (rheo.toml)
 ///
-/// Changes are debounced with a 1-second delay to avoid rapid rebuilds during editing.
+/// Changes are debounced on TWO deadlines, and both are needed: a rebuild fires
+/// once the filesystem has been quiet for [`DEBOUNCE_QUIET`], or once
+/// [`DEBOUNCE_MAX`] has passed since the first change of the batch, whichever
+/// comes first. The quiet window coalesces the several events one editor save
+/// produces; the ceiling keeps a steady stream of writes from postponing the
+/// rebuild forever.
 ///
 /// The asset spec is captured once at startup. A `rheo.toml` change triggers a
 /// full reload but does not re-derive the spec, so a project that adds a brand
@@ -189,30 +220,28 @@ where
         }
     }
 
-    // Debounce logic: collect events for 1 second before triggering recompilation
-    // This prevents excessive recompilation when editors save multiple files rapidly
-    // or when a single edit triggers multiple filesystem events
-    let debounce_duration = Duration::from_secs(1);
+    // True if `rheo.toml` changed, which needs a full project reload rather than
+    // a recompile. There is no companion flag for ordinary files:
+    // `first_event_time` below is already set by ANY relevant change, so it is
+    // the gate, and this only picks WHICH event to send.
+    let mut config_changed = false;
     let mut last_event_time = std::time::Instant::now();
-    let mut pending_changes = false; // True if any .typ files changed
-    let mut config_changed = false; // True if rheo.toml changed (requires full reload)
+    // Set on the FIRST change of a batch and cleared when that batch fires, so
+    // `DEBOUNCE_MAX` has something to measure from. `None` means nothing is
+    // pending, and is therefore the "anything to do?" test.
+    let mut first_event_time: Option<std::time::Instant> = None;
 
     info!("watching for changes (press Ctrl+C to stop)");
 
     loop {
-        // Poll for filesystem events with 100ms timeout
-        // Short timeout allows us to check debounce timer regularly
-        match rx.recv_timeout(Duration::from_millis(100)) {
+        match rx.recv_timeout(DEBOUNCE_POLL) {
             Ok(result) => {
                 match result {
-                    Ok(event) => {
-                        // Ignore Access events (file opens/reads) - only care about modifications
-                        // The Typst compiler opens source files during compilation, which would
-                        // trigger infinite recompilation loops if we treated Access as a change
-                        if matches!(event.kind, notify::EventKind::Access(_)) {
-                            continue;
-                        }
-
+                    // Ignore Access events (file opens/reads) - only care about
+                    // modifications. The Typst compiler opens source files during
+                    // compilation, which would trigger infinite recompilation loops
+                    // if we treated Access as a change.
+                    Ok(event) if !matches!(event.kind, notify::EventKind::Access(_)) => {
                         // Filter events to only relevant files (.typ files, rheo.toml, assets)
                         let paths: Vec<PathBuf> = event
                             .paths
@@ -222,51 +251,56 @@ where
 
                         if !paths.is_empty() {
                             debug!(?paths, "detected file changes");
-                            // Reset debounce timer - we'll wait for more events
                             last_event_time = std::time::Instant::now();
+                            first_event_time.get_or_insert(last_event_time);
 
-                            // Distinguish config changes from regular file changes
-                            // Config changes require reloading project configuration
+                            // Config changes require reloading project
+                            // configuration, so they are worth distinguishing;
+                            // any other relevant path just needs a recompile,
+                            // which `first_event_time` above already records.
                             if paths.iter().any(|p| is_config_path(p, project)) {
                                 config_changed = true;
-                            } else {
-                                pending_changes = true;
                             }
                         }
                     }
+                    Ok(_) => {}
                     Err(e) => {
                         warn!(error = %e, "file watcher error");
                     }
                 }
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                // No new events received in last 100ms
-                // Check if we have pending changes and debounce period has elapsed
-                if pending_changes || config_changed {
-                    let elapsed = last_event_time.elapsed();
-                    if elapsed >= debounce_duration {
-                        // Debounce period elapsed - trigger recompilation
-                        let event = if config_changed {
-                            WatchEvent::ConfigChanged
-                        } else {
-                            WatchEvent::FilesChanged
-                        };
-
-                        if let Err(e) = callback(event) {
-                            warn!(error = %e, "compilation failed, continuing to watch");
-                        }
-
-                        // Reset flags for next batch of changes
-                        pending_changes = false;
-                        config_changed = false;
-                    }
-                }
-            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 // Watcher channel closed - exit cleanly
                 info!("file watcher stopped");
                 break;
             }
+        }
+
+        // ONCE PER ITERATION, whichever arm above ran, and that placement is the
+        // point of it: checked only on the timeout arm, the `DEBOUNCE_MAX`
+        // ceiling could never fire during exactly the situation it exists for —
+        // a stream of events arriving faster than the poll, which never reaches
+        // a timeout at all.
+        if let Some(first) = first_event_time
+            && (last_event_time.elapsed() >= DEBOUNCE_QUIET || first.elapsed() >= DEBOUNCE_MAX)
+        {
+            // A config change subsumes a file change — reloading the project
+            // recompiles it anyway — so one batch is one event whatever else
+            // changed alongside `rheo.toml`.
+            let event = if config_changed {
+                WatchEvent::ConfigChanged
+            } else {
+                WatchEvent::FilesChanged
+            };
+
+            if let Err(e) = callback(event) {
+                warn!(error = %e, "compilation failed, continuing to watch");
+            }
+
+            // Reset for the next batch of changes.
+            config_changed = false;
+            first_event_time = None;
         }
     }
 
