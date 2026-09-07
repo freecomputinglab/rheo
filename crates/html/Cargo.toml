@@ -16,6 +16,9 @@ workspace = true
 rheo-core = { workspace = true }
 globset = { workspace = true }
 
+# Writing the pages of a build in parallel
+rayon = { workspace = true }
+
 # Error handling
 thiserror = { workspace = true }
 
