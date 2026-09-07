@@ -1164,6 +1164,46 @@ impl Build {
     }
 }
 
+/// Age Typst's memo cache by one and drop whatever has gone ten rebuilds
+/// without a hit.
+///
+/// A LONG-RUNNING PROCESS MUST CALL THIS BETWEEN COMPILES; a one-shot one must
+/// not. Typst memoizes through `comemo`, whose cache is global and never shrinks
+/// on its own, so every generation of every memoized value is retained until
+/// something evicts it. MEASURED on a project emitting 360 pages and 43 MB of
+/// HTML, `rheo watch` grew by about 2.6 GB per rebuild with no ceiling —
+/// 20.9 GB after six edits, 31.5 GB after ten — while rebuild latency crept
+/// from 15.0s to 17.6s. The growth tracks how much DISTINCT OUTPUT a rebuild
+/// produces rather than the rebuild count, so the same session against a
+/// version of that project emitting 4.9 MB stayed flat at 41 MB: a small
+/// project never notices this and a large one dies of it.
+///
+/// `max_age` of 10 is typst-cli's own figure. An entry's age grows by one per
+/// eviction and resets to zero on a hit, so a value survives ten rebuilds after
+/// it was last useful, and the cache therefore holds up to ten generations of
+/// whatever a rebuild produces. LOWER trades rebuild speed for memory, HIGHER
+/// the reverse; zero would clear the cache outright, which is what makes an
+/// unchanged-file rebuild cost a full compile instead of a fraction of one.
+///
+/// TEN IS KEPT DELIBERATELY, and the measurement is here so it need not be
+/// taken again. On the 43 MB project above both values BOUND the session and
+/// differ only in where: `10` plateaus at 23.6 GB by the eleventh rebuild and
+/// holds (about +50 MB a rebuild after that, allocator noise), `4` plateaus at
+/// 14.9 GB by the fourteenth. An unchanged-bytes rebuild cost 2.1-2.3s under
+/// both, so the cheap signal cannot separate them — and what a low `max_age`
+/// really costs is a workflow that RETURNS to an earlier state (an undo, a
+/// branch switch, edits alternating between two files), which that signal does
+/// not exercise at all. So the upstream default stands rather than a number
+/// tuned against one project's pathological case: a project emitting 43 MB a
+/// build is one emitting per-page data it should emit once, and fixing THAT
+/// took the same session's steady state from 23.6 GB to 41 MB.
+///
+/// A one-shot `rheo compile` exits straight after its build, so calling this
+/// there is pure cost for a cache nothing will read again.
+pub fn evict_compile_cache() {
+    comemo::evict(10);
+}
+
 /// Split a compiled bundle's flat path→bytes map into plugin-facing documents
 /// and raw assets.
 ///

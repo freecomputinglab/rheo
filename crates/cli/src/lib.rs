@@ -1,7 +1,7 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use rheo_core::OpenHandle;
 use rheo_core::assets::watch::{WatchEvent, watch_project};
-use rheo_core::build::{Build, BuildOptions, resolve_build_dir};
+use rheo_core::build::{Build, BuildOptions, evict_compile_cache, resolve_build_dir};
 use rheo_core::config::manifest_version;
 use rheo_core::output::OutputConfig;
 use rheo_core::project::ProjectConfig;
@@ -682,6 +682,13 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
                     }
                 }
             }
+            // AFTER the rebuild, not before, and for both arms — this is the
+            // only thing that bounds a watch session's memory. Typst's memo
+            // cache is global and never shrinks by itself, so without this a
+            // long session grows until the machine gives out; see
+            // `evict_compile_cache`, which carries the measurements and the
+            // reason a one-shot `rheo compile` must NOT call it.
+            evict_compile_cache();
             Ok(())
         },
     )
