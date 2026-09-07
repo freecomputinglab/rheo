@@ -55,6 +55,7 @@
             pkg-config
             perl
             rustToolchain
+            git
           ];
         };
 
