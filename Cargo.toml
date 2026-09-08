@@ -12,6 +12,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/freecomputinglab/rheo"
 readme = "README.md"
 
+[workspace.metadata.crane]
+name = "rheo"
+
 [workspace.lints.rust]
 unexpected_cfgs = "warn"
 
