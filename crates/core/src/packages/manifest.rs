@@ -451,20 +451,33 @@ impl PackageIndex {
         Err(RheoError::invalid_data(lines.join("\n")))
     }
 
-    /// Every package's epilogue marrow (`.marrow.typ`), in import order.
+    /// Every package's epilogue marrow, in import order.
     pub fn marrow(&self) -> Vec<String> {
-        self.read_marrow(crate::MARROW_FILE)
+        self.read_marrow(crate::MARROW_EPILOGUE_FILE, true)
     }
 
-    /// Every package's prologue marrow (`.marrow-prologue.typ`), in import order.
+    /// Every package's prelude marrow, in import order.
     pub fn marrow_prologue(&self) -> Vec<String> {
-        self.read_marrow(crate::MARROW_PROLOGUE_FILE)
+        self.read_marrow(crate::MARROW_PRELUDE_FILE, false)
     }
 
-    fn read_marrow(&self, filename: &str) -> Vec<String> {
+    /// A package's bare `.marrow.typ` is the epilogue's fallback, and only when
+    /// the package ships neither explicit name — `dot_marrow_is_epilogue` is the
+    /// project's own knob and does not reach a dependency.
+    fn read_marrow(&self, explicit: &str, bare_falls_back: bool) -> Vec<String> {
         self.resolved
             .iter()
-            .filter_map(|entry| package_marrow_file(&entry.pkg, filename))
+            .filter_map(|entry| {
+                package_marrow_file(&entry.pkg, explicit).or_else(|| {
+                    let bare_is_free = bare_falls_back
+                        && crate::MARROW_RESERVED_FILES
+                            .iter()
+                            .all(|f| !entry.pkg.source_root.join(f).is_file());
+                    bare_is_free
+                        .then(|| package_marrow_file(&entry.pkg, crate::MARROW_FILE))
+                        .flatten()
+                })
+            })
             .collect()
     }
 }
@@ -475,8 +488,9 @@ impl PackageIndex {
 /// by shipping a marrow file whose text is inlined verbatim — so there is one
 /// concept to learn rather than a separate package-only mechanism. Position
 /// (before vs. after the documents) is chosen by which filename it ships:
-/// [`crate::MARROW_FILE`] (epilogue, default) or
-/// [`crate::MARROW_PROLOGUE_FILE`] (prologue). A package may ship either or both.
+/// [`crate::MARROW_PRELUDE_FILE`] or [`crate::MARROW_EPILOGUE_FILE`], either or
+/// both, with a bare [`crate::MARROW_FILE`] standing in for the epilogue when it
+/// ships neither.
 ///
 /// The text is spliced into the synthesized main, so paths inside it resolve
 /// against the project root, not the package directory: a package's marrow must
@@ -1038,7 +1052,7 @@ css_stylesheet = "style.css"
         let tmp = tempfile::tempdir().unwrap();
         let pkg_dir = make_pkg_dir(tmp.path(), "testns", "testpkg", "0.1.0");
         std::fs::write(
-            pkg_dir.join(crate::MARROW_PROLOGUE_FILE),
+            pkg_dir.join(crate::MARROW_PRELUDE_FILE),
             "#show strong: it => it",
         )
         .unwrap();
@@ -1055,21 +1069,57 @@ css_stylesheet = "style.css"
     fn package_may_ship_both_marrow_positions() {
         let tmp = tempfile::tempdir().unwrap();
         let pkg_dir = make_pkg_dir(tmp.path(), "testns", "testpkg", "0.1.0");
-        std::fs::write(pkg_dir.join(crate::MARROW_FILE), "epilogue").unwrap();
-        std::fs::write(pkg_dir.join(crate::MARROW_PROLOGUE_FILE), "prologue").unwrap();
+        std::fs::write(pkg_dir.join(crate::MARROW_EPILOGUE_FILE), "epilogue").unwrap();
+        std::fs::write(pkg_dir.join(crate::MARROW_PRELUDE_FILE), "prelude").unwrap();
 
         let index = index_for(tmp.path());
         assert_eq!(index.marrow(), vec!["epilogue".to_string()]);
-        assert_eq!(index.marrow_prologue(), vec!["prologue".to_string()]);
+        assert_eq!(index.marrow_prologue(), vec!["prelude".to_string()]);
+    }
+
+    /// A bare `.marrow.typ` is the epilogue's fallback, and either explicit
+    /// name outranks it — including the prelude one, which leaves the package
+    /// contributing no epilogue at all.
+    #[test]
+    fn explicit_marrow_names_outrank_a_bare_one() {
+        /// One `testns/testpkg` shipping exactly these marrow files.
+        fn pkg(files: &[(&str, &str)]) -> (tempfile::TempDir, PackageIndex) {
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = make_pkg_dir(tmp.path(), "testns", "testpkg", "0.1.0");
+            for (name, text) in files {
+                std::fs::write(dir.join(name), text).unwrap();
+            }
+            let index = index_for(tmp.path());
+            (tmp, index)
+        }
+
+        // A bare marrow alone is the epilogue.
+        let (_t, index) = pkg(&[(crate::MARROW_FILE, "bare")]);
+        assert_eq!(index.marrow(), vec!["bare".to_string()]);
+
+        // The explicit epilogue name replaces it.
+        let (_t, index) = pkg(&[
+            (crate::MARROW_FILE, "bare"),
+            (crate::MARROW_EPILOGUE_FILE, "explicit"),
+        ]);
+        assert_eq!(index.marrow(), vec!["explicit".to_string()]);
+
+        // So does the prelude one, which leaves no epilogue at all.
+        let (_t, index) = pkg(&[
+            (crate::MARROW_FILE, "bare"),
+            (crate::MARROW_PRELUDE_FILE, "explicit"),
+        ]);
+        assert!(index.marrow().is_empty());
+        assert_eq!(index.marrow_prologue(), vec!["explicit".to_string()]);
     }
 
     #[test]
     fn detect_package_marrow_prologue_in_dirs_collects_in_import_order() {
         let dir = tempfile::tempdir().unwrap();
         let a = make_pkg_dir(dir.path(), "ns", "a", "1.0");
-        std::fs::write(a.join(crate::MARROW_PROLOGUE_FILE), "a-prologue").unwrap();
+        std::fs::write(a.join(crate::MARROW_PRELUDE_FILE), "a-prologue").unwrap();
         let b = make_pkg_dir(dir.path(), "ns", "b", "1.0");
-        std::fs::write(b.join(crate::MARROW_PROLOGUE_FILE), "b-prologue").unwrap();
+        std::fs::write(b.join(crate::MARROW_PRELUDE_FILE), "b-prologue").unwrap();
 
         let result = PackageIndex::new(
             &["@ns/a:1.0".to_string(), "@ns/b:1.0".to_string()],

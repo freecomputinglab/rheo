@@ -1,5 +1,71 @@
 # Unreleased — user-visible changes
 
+## Marrow position is a filename: `.marrow.prelude.typ` / `.marrow.epilogue.typ`
+
+Two reserved names now say where a marrow contribution splices, rather than one
+name plus a boolean:
+
+| File | Position |
+| --- | --- |
+| `.marrow.prelude.typ` | before every `#document(...)`, so a `#show`/`#set` in it reaches pre-existing vertebrae |
+| `.marrow.epilogue.typ` | after every `#document(...)` |
+| `.marrow.typ` | falls back to one of the above |
+
+**Either explicit name outranks a bare `.marrow.typ`, which is then not read at
+all.** The bare name is a fallback, never a third contribution — so a package
+adding `.marrow.prelude.typ` beside an existing `.marrow.typ` moves its marrow
+rather than running it twice.
+
+A project's bare `.marrow.typ` takes the position the new
+`dot_marrow_is_epilogue` key names, default `true` — so an unconfigured project
+compiles exactly as before. It replaces `marrow_prologue`, whose sense it
+inverts: `marrow_prologue = true` is now `dot_marrow_is_epilogue = false`. The
+key governs the project's own marrow only; a package's bare `.marrow.typ` is
+always the epilogue, since one project's setting has no business repositioning a
+dependency's splice.
+
+`.marrow-prologue.typ` is renamed to `.marrow.prelude.typ` and the old name is
+no longer read. Nothing in the package ecosystem shipped one.
+
+## A project can inject Typst into every vertebra with `[spine] prelude`
+
+`[spine]` gained a `prelude` key: a path (relative to `content_dir`) to a Typst
+file whose text is prepended *inside* every vertebra, after rheo's own
+`rheo-context()` binding and before the vertebra's own source.
+
+```toml
+[spine]
+prelude = "_lib/prelude.typ"
+```
+
+The point is lexical scope, which marrow cannot give: marrow sits at the bundle
+root and a vertebra is `#include`d, so Typst scopes an included file's bindings
+to itself and only `#show`/`#set` rules reach through. A prelude is part of the
+vertebra's own source, so a `#let` in it binds a name every page can use — and
+because it lands after the context binding it can call `rheo-context()`, so a
+project derives per-page facts once instead of restating them per file. What
+used to be a preamble in every vertebra —
+
+```typst
+#import "/_lib/template.typ": constructors
+#let (page, note) = constructors(ctx: rheo-context())
+#show: page
+```
+
+— becomes `#show: page`, with the first two lines living in the prelude. A new
+file in a new subdirectory then inherits whatever its own path implies with
+nothing declared in it at all.
+
+Imports in the prelude must be **root-absolute** (`/_lib/x.typ`): the same text
+is spliced into vertebrae at every depth. The splice is keyed per vertebra, so
+it reaches neither a partial pulled in by `#include` nor the library file the
+prelude itself imports, which would otherwise recurse.
+
+An unreadable `prelude` path is fatal and names the path, unlike a missing
+marrow file (silent, its filename having a default) — this key exists only
+because someone wrote a path. It falls back field-by-field like every other
+spine key, so `[pdf.spine] prelude` overrides the global one for that format.
+
 ## A package namespace can resolve straight from a directory on disk
 
 `[packages.<ns>]` gained a third source alongside `repo` and `releases`: `path

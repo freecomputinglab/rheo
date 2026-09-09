@@ -25,6 +25,12 @@ pub struct RetiredKey {
 /// Every key retired so far.
 pub const RETIRED_KEYS: &[RetiredKey] = &[
     RetiredKey {
+        table: "the top level",
+        key: "marrow_prologue",
+        replacement: "replaced by `dot_marrow_is_epilogue`, whose sense is inverted: \
+            `marrow_prologue = true` is now `dot_marrow_is_epilogue = false`",
+    },
+    RetiredKey {
         table: "[spine]",
         key: "vertebrae",
         replacement: "spine membership and order now come from a directory scan plus \

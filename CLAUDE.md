@@ -65,6 +65,7 @@ js_scripts     = "two.js"
 
 [spine]
 exclude = ["drafts/**"]  # optional; glob patterns (relative to content_dir) omitted from every format's scan
+prelude = "_lib/prelude.typ"  # optional; Typst prepended INSIDE every vertebra, after its rheo-context()
 
 [[spine.section]]
 name = "chapters"        # optional; virtual-directory regrouping without moving files on disk
@@ -183,7 +184,21 @@ A package needing only the shared spine can read `sys.inputs.rheo-context.spine`
 
 `include` is a flat reorder and `section` nests into virtual directories, so one table sets one or the other: both at once is a parse error, since the two knobs have no combined meaning.
 
-**Precedence — field-by-field, not whole-table:** a per-format `[<format>.spine]` table can set `title`, `exclude` and its layering (`include` or `section`) independently; any field it leaves unset falls back to the matching field on the global `[spine]` table (not the whole table at once). Layering falls back as one unit — a per-format `include` replaces a global `section`, rather than joining it. For example, `[pdf.spine] title = "My Book"` with no `exclude` of its own still inherits the global `[spine] exclude` — it does *not* silently drop it just because `[pdf.spine]` exists.
+**`[spine] prelude`:** a path (relative to `content_dir`) to a Typst file prepended **inside every vertebra**, after its `rheo-context()` binding. Unlike marrow it is part of the vertebra's own source, so a `#let` in it binds a name the page can use — a vertebra is `#include`d, and Typst scopes an included file's bindings to itself, which is why marrow can only reach pages through `#show`/`#set`. Because it follows the context binding it can call `rheo-context()`, so a project derives per-page facts once instead of restating them per file:
+
+```toml
+[spine]
+prelude = "_lib/prelude.typ"
+```
+```typst
+// _lib/prelude.typ
+#import "/_lib/template.typ": constructors
+#let (page, note) = constructors(ctx: rheo-context())
+```
+
+Imports in it must be **root-absolute** — the same text lands in vertebrae at every depth. The splice is keyed per vertebra, so it reaches neither a partial pulled in by `#include` nor the library file it imports (which would recurse). An unreadable path is fatal.
+
+**Precedence — field-by-field, not whole-table:** a per-format `[<format>.spine]` table can set `title`, `exclude`, `prelude` and its layering (`include` or `section`) independently; any field it leaves unset falls back to the matching field on the global `[spine]` table (not the whole table at once). Layering falls back as one unit — a per-format `include` replaces a global `section`, rather than joining it. For example, `[pdf.spine] title = "My Book"` with no `exclude` of its own still inherits the global `[spine] exclude` — it does *not* silently drop it just because `[pdf.spine]` exists.
 
 The retired `vertebrae` glob-list key (pre-0.5.0) is no longer read; `rheo migrate` converts an old inclusion-filter `vertebrae` list into an equivalent `exclude`.
 
@@ -198,6 +213,8 @@ A `.marrow.typ` at the bundle root (a project's own, or one shipped by a package
 **Head contributions.** A `<rheo-head>` wrapper anywhere in a page's body has its children hoisted into that page's own `<head>`. A `.rheo/head.html` control asset minted from marrow instead appends to *every* page's `<head>`, after each page's own hoisted content. Both exist because Typst builds `<head>` solely from the compiled `DocumentInfo` — there is no other author hook into it.
 
 **Control assets.** The `.rheo/` bundle-output prefix is reserved: an asset minted under it (e.g. `.rheo/head.html`) is a message from the bundle to rheo, consumed during compilation and never written to the actual build output.
+
+**Marrow filenames.** `.marrow.prelude.typ` splices before every `#document(...)` (so a `#show`/`#set` in it reaches pre-existing vertebrae) and `.marrow.epilogue.typ` after. A bare `.marrow.typ` is a fallback for whichever position the other two leave open: **either explicit name outranks it and it is then not read at all**. A project's bare marrow takes the position `dot_marrow_is_epilogue` names (default `true`); a package's is always epilogue, since one project's key has no business moving a dependency's splice.
 
 `@rheo/feeds` (in `../rheo-packages`) is where Atom feed generation now lives, built on these three primitives plus `rheo-metadata-all()` (see `rheo-context` above) — no Rust code, no plugin, no `rheo.toml` keys.
 

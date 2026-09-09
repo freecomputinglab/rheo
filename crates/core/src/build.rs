@@ -136,6 +136,8 @@ struct SpineScanResult {
     scan: SpineScan,
     layout: SpineLayout,
     title: Option<String>,
+    /// The merged spine's `prelude` file, already read; `None` when unset.
+    prelude: Option<String>,
 }
 
 /// The result of [`Build::resolve_marrow`]: the per-plugin output target and
@@ -512,6 +514,7 @@ impl Build {
             scan,
             layout,
             title,
+            prelude,
         } = self.timed(phase::SPINE_SCAN, Some(plugin.name()), || {
             self.resolve_spine_scan(plugin, plugin_section, content_dir)
         })?;
@@ -523,6 +526,7 @@ impl Build {
             scan,
             layout,
             title,
+            prelude,
             marrow_ctx.marrow,
             marrow_ctx.marrow_prologue,
         )?;
@@ -617,10 +621,24 @@ impl Build {
             "building virtual spine"
         );
 
+        // Unreadable is fatal, unlike a missing marrow file: marrow's filename
+        // has a default, so absence means "ships none", where this key exists
+        // only because someone wrote a path.
+        let prelude = match &spine.prelude {
+            None => None,
+            Some(rel) => {
+                let path = content_dir.join(rel);
+                Some(std::fs::read_to_string(&path).map_err(|e| {
+                    RheoError::io(e, format!("reading spine prelude '{}'", path.display()))
+                })?)
+            }
+        };
+
         Ok(SpineScanResult {
             scan,
             layout,
             title: spine.title,
+            prelude,
         })
     }
 
@@ -637,7 +655,7 @@ impl Build {
     /// all. Position (prologue, spliced before every document, vs. epilogue,
     /// spliced after) is per-contribution: a package picks its own by
     /// filename (`.marrow-prologue.typ` vs `.marrow.typ`); the project picks
-    /// its own via `rheo.toml`'s `marrow_prologue` key, defaulting to
+    /// its own via `rheo.toml`'s `dot_marrow_is_epilogue` key, defaulting to
     /// epilogue so an unconfigured project compiles byte-identically. Within
     /// each position, packages contribute first in import order, then the
     /// project's own file, so it can build on what they registered.
@@ -666,21 +684,25 @@ impl Build {
                 marrow_prologue.extend(packages.marrow_prologue());
             }
 
-            let marrow_path = content_dir.join(self.project.config.marrow_file());
-            match std::fs::read_to_string(&marrow_path) {
-                Ok(text) => {
-                    if self.project.config.marrow_prologue.get() {
-                        marrow_prologue.push(text);
-                    } else {
-                        marrow.push(text);
-                    }
+            // The explicit names first; a bare `.marrow.typ` is read only when
+            // neither is present, and then takes the position the flag names.
+            let mut explicit = false;
+            for (name, into) in [
+                (crate::MARROW_PRELUDE_FILE, &mut marrow_prologue),
+                (crate::MARROW_EPILOGUE_FILE, &mut marrow),
+            ] {
+                if let Some(text) = read_marrow_at(&content_dir.join(name))? {
+                    into.push(text);
+                    explicit = true;
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => {
-                    return Err(RheoError::io(
-                        e,
-                        format!("reading marrow file '{}'", marrow_path.display()),
-                    ));
+            }
+            if !explicit {
+                let bare = content_dir.join(self.project.config.marrow_file());
+                if let Some(text) = read_marrow_at(&bare)? {
+                    match self.project.config.dot_marrow_is_epilogue.get() {
+                        true => marrow.push(text),
+                        false => marrow_prologue.push(text),
+                    }
                 }
             }
         }
@@ -700,11 +722,13 @@ impl Build {
         scan: SpineScan,
         layout: SpineLayout,
         title: Option<String>,
+        prelude: Option<String>,
         marrow: Vec<String>,
         marrow_prologue: Vec<String>,
     ) -> Result<VirtualSpine> {
         let virtual_spine = VirtualSpine::build(scan, &self.project.root, layout)?
             .with_title(title)
+            .with_vertebra_prelude(prelude)
             .with_marrow(marrow)
             .with_marrow_prologue(marrow_prologue);
         virtual_spine.check_output_collisions()?;
@@ -1402,6 +1426,20 @@ fn ensure_output_dir(dir: &Path, plugin_name: &str) -> Result<()> {
         .map_err(|e| RheoError::io(e, format!("creating output directory for {plugin_name}")))
 }
 
+/// A project marrow file's text; `None` when it does not exist. Any other read
+/// error is fatal — a marrow present but unreadable would otherwise mint none
+/// of the pages it exists to mint, on a green build.
+fn read_marrow_at(path: &Path) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(RheoError::io(
+            e,
+            format!("reading marrow file '{}'", path.display()),
+        )),
+    }
+}
+
 /// Pre-warms `package_imports` (when `auto_detect` is on), resolves them into a
 /// [`PackageIndex`], and rejects any package whose declared
 /// `[tool.rheo] min_version` exceeds this build.
@@ -1625,6 +1663,7 @@ mod tests {
             },
             tree: vec![],
             title: None,
+            vertebra_prelude: None,
             marrow: Vec::new(),
             marrow_prologue: Vec::new(),
         };
@@ -1684,6 +1723,7 @@ mod tests {
             },
             tree: vec![],
             title: None,
+            vertebra_prelude: None,
             marrow: Vec::new(),
             marrow_prologue: Vec::new(),
         };
@@ -1949,8 +1989,8 @@ mod tests {
 
     /// A one-vertebra project with a `*bold text*` paragraph and a marrow
     /// `#show strong` rule, shared by the epilogue/prologue end-to-end tests
-    /// below. Only `marrow_prologue` differs between them.
-    fn build_show_rule_project(root: &Path, marrow_prologue: bool) -> ProjectConfig {
+    /// below. Only the bare marrow's position differs between them.
+    fn build_show_rule_project(root: &Path, dot_marrow_is_epilogue: bool) -> ProjectConfig {
         std::fs::create_dir_all(root.join("content")).expect("create content dir");
         std::fs::write(
             root.join("content/index.typ"),
@@ -1969,7 +2009,7 @@ mod tests {
             config: crate::RheoConfig {
                 content_dir: Some("content".to_string()),
                 formats: vec!["html".to_string()],
-                marrow_prologue: marrow_prologue.into(),
+                dot_marrow_is_epilogue: dot_marrow_is_epilogue.into(),
                 ..Default::default()
             },
             typ_files: vec![root.join("content/index.typ")],
@@ -1986,7 +2026,7 @@ mod tests {
     #[test]
     fn test_run_default_marrow_epilogue_does_not_reach_pre_existing_vertebra() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let project = build_show_rule_project(dir.path(), false);
+        let project = build_show_rule_project(dir.path(), true);
 
         let html = run_capturing(project).html("index.html");
         assert!(
@@ -1995,18 +2035,36 @@ mod tests {
         );
     }
 
-    /// End-to-end: with `marrow_prologue = true`, the same `#show` rule is
-    /// spliced BEFORE every document, so it reaches the pre-existing vertebra.
+    /// End-to-end: with `dot_marrow_is_epilogue = false`, the same `#show` rule
+    /// is spliced BEFORE every document, so it reaches the pre-existing vertebra.
     #[test]
-    fn test_run_marrow_prologue_reaches_pre_existing_vertebra() {
+    fn test_run_dot_marrow_as_prelude_reaches_pre_existing_vertebra() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let project = build_show_rule_project(dir.path(), true);
+        let project = build_show_rule_project(dir.path(), false);
 
         let html = run_capturing(project).html("index.html");
         assert!(
             html.contains("TOUCHED"),
-            "marrow_prologue = true should let #show reach the pre-existing vertebra, got:\n{html}"
+            "dot_marrow_is_epilogue = false should let #show reach the pre-existing vertebra, got:\n{html}"
         );
+        assert!(!html.contains("bold text"));
+    }
+
+    /// `.marrow.prelude.typ` takes the prelude position on its own merits, and
+    /// its presence sends the bare `.marrow.typ` to neither position — even with
+    /// `dot_marrow_is_epilogue` left at its default.
+    #[test]
+    fn test_run_explicit_marrow_prelude_outranks_bare_marrow() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let project = build_show_rule_project(dir.path(), true);
+        std::fs::write(
+            dir.path().join("content").join(crate::MARROW_PRELUDE_FILE),
+            "#show strong: it => [TOUCHED]\n",
+        )
+        .expect("write prelude marrow");
+
+        let html = run_capturing(project).html("index.html");
+        assert!(html.contains("TOUCHED"), "got:\n{html}");
         assert!(!html.contains("bold text"));
     }
 
