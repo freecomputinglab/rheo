@@ -209,22 +209,23 @@ filename it ships (`crates/core/src/plugins/typst_manifest.rs:227-263`):
 
 | File | Position | Constant |
 | --- | --- | --- |
-| `.marrow.typ` | epilogue — spliced after every `#document(...)` | `MARROW_FILE` (`crates/core/src/util/constants.rs:10`) |
-| `.marrow-prologue.typ` | prologue — spliced before every `#document(...)`, so a `#show`/`#set` rule in it reaches pre-existing vertebrae | `MARROW_PROLOGUE_FILE` (`crates/core/src/util/constants.rs:16`) |
+| `.marrow.prelude.typ` | prelude — spliced before every `#document(...)`, so a `#show`/`#set` rule in it reaches pre-existing vertebrae | `MARROW_PRELUDE_FILE` |
+| `.marrow.epilogue.typ` | epilogue — spliced after every `#document(...)` | `MARROW_EPILOGUE_FILE` |
+| `.marrow.typ` | whichever position the bare name falls back to | `MARROW_FILE` |
 
-A package may ship either or both (`crates/core/src/plugins/typst_manifest.rs`
-tests: `package_marrow_prologue_source_reads_sibling_file`,
-`package_may_ship_both_marrow_positions`). Within each position, **packages
-contribute first in import order, then the project's own marrow**, so a
-project's marrow can build on what a package registered
-(`crates/core/src/build.rs:289-296`).
+**Either explicit name outranks a bare `.marrow.typ`**, which is then not read
+at all: the bare name is a fallback, never a third contribution
+(`explicit_marrow_names_outrank_a_bare_one`). A package may ship either or both
+explicit names (`package_may_ship_both_marrow_positions`), and its bare
+`.marrow.typ` always falls back to the epilogue. Within each position,
+**packages contribute first in import order, then the project's own marrow**, so
+a project's marrow can build on what a package registered.
 
-A project has no per-position filename choice — it always writes
-`.marrow.typ` (or whatever `rheo.toml`'s `marrow` key renames it to,
-`crates/core/src/config/mod.rs:192-195`) and opts into the prologue position
-with `rheo.toml`'s `marrow_prologue = true` (default `false`, i.e. epilogue —
-today's byte-identical-on-upgrade behaviour;
-`crates/core/src/config/mod.rs:197-203,326-329`). Paths inside any marrow file
+A project's bare `.marrow.typ` (or whatever `rheo.toml`'s `marrow` key renames
+it to) falls back to the position `dot_marrow_is_epilogue` names — default
+`true`, i.e. epilogue, today's byte-identical-on-upgrade behaviour. That key is
+the project's own and never repositions a package's bare marrow. Paths inside
+any marrow file
 resolve against the *project* root, not the package's own directory — a
 package's marrow must reach its own code through its package spec
 (`@ns/name:version`), never a relative import.
