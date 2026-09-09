@@ -6,7 +6,7 @@ priority: 3
 labels:
 - fix-retired-keys
 deps: []
-closed: false
+closed: true
 ---
 `marrow_prologue` was replaced by `dot_marrow_is_epilogue` (whose sense it
 inverts: `marrow_prologue = true` is now `dot_marrow_is_epilogue = false`). A

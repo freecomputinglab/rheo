@@ -321,6 +321,11 @@ pub struct RheoConfig {
     /// entry for `rheo` overrides the built-in, which is how a project tests a
     /// branch of rheo-packages.
     pub packages: HashMap<String, NamespaceSource>,
+
+    /// Unrecognized top-level scalar keys (e.g. a retired `marrow_prologue`),
+    /// captured so [`warn_on_retired_keys`] can warn on one still set in an
+    /// older `rheo.toml`, the same way [`Spine::extra`] does for `[spine]`.
+    pub extra: toml::Table,
 }
 
 impl Spine {
@@ -363,6 +368,7 @@ impl Default for RheoConfig {
             dot_marrow_is_epilogue: Flag::default(),
             inputs: HashMap::new(),
             packages: HashMap::new(),
+            extra: toml::Table::new(),
         }
     }
 }
@@ -425,12 +431,14 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             None => HashMap::new(),
         };
         let mut plugin_sections = HashMap::new();
+        let mut extra = toml::Table::new();
         for (key, value) in raw.extra {
             if let toml::Value::Table(_) = &value {
                 let section: PluginSection = value.try_into()?;
                 plugin_sections.insert(key, section);
+            } else {
+                extra.insert(key, value);
             }
-            // Non-table entries (unknown scalar fields) are silently ignored.
         }
 
         let current = ManifestVersion::current();
@@ -441,6 +449,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
                 raw.version, current
             );
         }
+        warn_on_retired_keys("the top level", &extra);
         // Naming the table each key was authored in, so a per-format table's
         // retired key does not send the reader to the global one.
         if let Some(spine) = &spine {
@@ -466,6 +475,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             dot_marrow_is_epilogue: raw.dot_marrow_is_epilogue,
             inputs,
             packages,
+            extra,
         })
     }
 }
@@ -751,6 +761,19 @@ mod tests {
 
         let config = parse(&versioned_toml("dot_marrow_is_epilogue = false"));
         assert!(!config.dot_marrow_is_epilogue.get());
+    }
+
+    /// The retired top-level `marrow_prologue` no longer has any effect: it
+    /// lands in `extra` for the retired-key warning, and `dot_marrow_is_epilogue`
+    /// still defaults as if it were absent.
+    #[test]
+    fn test_retired_marrow_prologue_does_not_affect_dot_marrow_is_epilogue() {
+        let config = parse(&versioned_toml("marrow_prologue = true"));
+        assert!(config.dot_marrow_is_epilogue.get());
+        assert_eq!(
+            config.extra.get("marrow_prologue"),
+            Some(&toml::Value::Boolean(true))
+        );
     }
 
     #[test]
