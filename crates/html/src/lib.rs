@@ -8,10 +8,12 @@ pub const DEFAULT_STYLESHEET: &str = include_str!("templates/style.css");
 /// Distinct from `style.css` so it never clashes with a user's own stylesheet.
 pub const DEFAULT_STYLESHEET_NAME: &str = "rheo-default.css";
 
+use rayon::prelude::*;
 use rheo_core::{
     AssetConfig, CastVertebra, EmbeddedDefault, FormatInitTemplate, FormatPlugin, LiveReload,
     OpenHandle, PluginContext, Result, RheoError, ServedPage, ServerHandle,
 };
+use std::collections::HashSet;
 use std::path::Path;
 use tracing::{debug, info, warn};
 
@@ -115,25 +117,90 @@ impl FormatPlugin for HtmlPlugin {
     }
 
     fn compile(&self, ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
+        // EVERY DIRECTORY FIRST, distinct, then the files. Per page this was one
+        // `create_dir_all` syscall for a directory that already existed — 360 of
+        // them on a project with 11 output directories — and hoisting it is also
+        // what lets the writes below run in any order.
+        let mut dirs: HashSet<&Path> = HashSet::new();
         for output in outputs {
-            let html_string = output.html_string()?;
-            // The same finishing the dev server serves, so `rheo watch` and
-            // `rheo compile` never disagree about a page's `<head>`.
-            let page = ctx.page.page(&output.output_path, &html_string);
-            let html_string = self.rewrite_page(&page)?.unwrap_or(html_string);
-
-            let out_path = ctx.output_dir.join(&output.output_path);
-            debug!(size = html_string.len(), "writing HTML file");
-            if let Some(parent) = out_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    RheoError::io(e, format!("creating output directory {:?}", parent))
-                })?;
+            if let Some(parent) = Path::new(&output.output_path).parent()
+                && !parent.as_os_str().is_empty()
+            {
+                dirs.insert(parent);
             }
-            std::fs::write(&out_path, &html_string)
-                .map_err(|e| RheoError::io(e, format!("writing HTML file to {:?}", out_path)))?;
-            info!(output = %out_path.display(), "successfully compiled to HTML");
         }
+        for dir in dirs {
+            let dest = ctx.output_dir.join(dir);
+            std::fs::create_dir_all(&dest)
+                .map_err(|e| RheoError::io(e, format!("creating output directory {:?}", dest)))?;
+        }
+        // The output root itself, for the pages that sit directly in it.
+        std::fs::create_dir_all(ctx.output_dir).map_err(|e| {
+            RheoError::io(e, format!("creating output directory {:?}", ctx.output_dir))
+        })?;
 
+        // IN PARALLEL, one page per task. The measurable cost of this phase is
+        // NOT the write syscall — it is `html_string`, the `<head>` injection
+        // and `rewrite_page` running once per page, all of them pure functions
+        // of one page — so the pages are independent and the phase scales with
+        // cores. The directories above are the only ordering requirement, which
+        // is why they are a separate pass.
+        //
+        // `try_fold`/`try_reduce` rather than `for_each`: a write error must
+        // still be returned, and the first one is enough.
+        let (written, unchanged) = outputs
+            .par_iter()
+            .map(|output| -> Result<(usize, usize)> {
+                let html_string = output.html_string()?;
+                // The same finishing the dev server serves, so `rheo watch` and
+                // `rheo compile` never disagree about a page's `<head>`.
+                let page = ctx.page.page(&output.output_path, &html_string);
+                let html_string = self.rewrite_page(&page)?.unwrap_or(html_string);
+
+                let out_path = ctx.output_dir.join(&output.output_path);
+
+                // COMPARE AGAINST THE FILE ALREADY THERE, and skip an identical
+                // write. Typst's memo means most pages of a rebuild come out
+                // byte-identical, and rewriting them buys nothing while costing
+                // their mtimes — so every downstream watcher (a browser
+                // livereload, an rsync deploy, a second rheo watching the
+                // output) treats the whole site as changed. MEASURED, the skip
+                // does not make the phase faster: reading a page back costs
+                // about what writing it does. It is here for the mtimes and for
+                // the `written`/`unchanged` counts below, which say whether an
+                // edit reached the pages it was meant to.
+                //
+                // No manifest and no content-hash sidecar: the file already on
+                // disk IS the record, and a second copy of it is a second thing
+                // to keep true. A read failure — no file yet, or unreadable —
+                // simply means "write it".
+                if std::fs::read(&out_path)
+                    .map(|old| old == html_string.as_bytes())
+                    .unwrap_or(false)
+                {
+                    debug!(output = %out_path.display(), "unchanged, not rewritten");
+                    return Ok((0, 1));
+                }
+
+                std::fs::write(&out_path, &html_string).map_err(|e| {
+                    RheoError::io(e, format!("writing HTML file to {:?}", out_path))
+                })?;
+                // DEBUG, not info: this fires once per page, and a project
+                // emitting 360 of them buried every line that mattered under
+                // 360 that did not. The counts below are what INFO carries.
+                debug!(
+                    output = %out_path.display(),
+                    size = html_string.len(),
+                    "wrote HTML page"
+                );
+                Ok((1, 0))
+            })
+            .try_reduce(|| (0, 0), |a, b| Ok((a.0 + b.0, a.1 + b.1)))?;
+
+        // ONE LINE, and on a watch rebuild it is the most useful one there is:
+        // "written=3 unchanged=357" says immediately whether an edit reached the
+        // pages it was supposed to reach.
+        info!(written, unchanged, "wrote HTML output");
         Ok(())
     }
 }

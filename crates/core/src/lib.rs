@@ -21,6 +21,7 @@ pub use config::ManifestVersion;
 pub use config::RheoConfig;
 pub use diagnostics::error::RheoError;
 pub use diagnostics::results::{CompilationResults, FormatResult};
+pub use diagnostics::timing::BuildTiming;
 pub use globset::{Glob, GlobSet, GlobSetBuilder};
 pub use util::constants::*;
 
@@ -28,7 +29,7 @@ pub use util::constants::*;
 
 // Asset resolution
 pub use assets::AssetResolver;
-pub use build::{Build, BuildOptions};
+pub use build::{Build, BuildOptions, evict_compile_cache};
 
 // Configuration types
 pub use config::{AssetsField, PluginAssets, PluginSection, Spine};

@@ -10,6 +10,7 @@ use crate::compile::export_bundle;
 use crate::config::PluginSection;
 use crate::diagnostics::DiagnosticReport;
 use crate::diagnostics::results::CompilationResults;
+use crate::diagnostics::timing::{BuildTiming, phase};
 use crate::output::OutputConfig;
 use crate::packages::PackageIndex;
 use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, TypstFormat, spine_layout_for};
@@ -24,6 +25,7 @@ use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 use tracing::{debug, error, info};
 use typst::introspection::Introspector as _;
 use typst::model::Document as _;
@@ -81,6 +83,12 @@ pub struct Build {
     /// caller to render (see [`Build::take_diagnostics`]). Core writes none of
     /// them anywhere itself.
     diagnostics: Mutex<DiagnosticReport>,
+    /// Where this build's wall clock went, and how much output it produced.
+    /// Accumulated through [`Build::timed`] and drained by
+    /// [`Build::take_timing`]; a `watch` session's `Build` outlives one rebuild,
+    /// so the summary is taken and reset per [`Build::run`] rather than
+    /// accumulating across every rebuild of the session.
+    timing: Mutex<BuildTiming>,
     /// Scanned on the first compile and shared by every plugin and pass after
     /// it: the system font scan is slow and identical across them. Lazy, so a
     /// `Build` that is only inspected (the watcher's asset spec) never pays it.
@@ -241,6 +249,7 @@ impl Build {
             font_dirs,
             fonts: OnceLock::new(),
             diagnostics: Mutex::new(DiagnosticReport::default()),
+            timing: Mutex::new(BuildTiming::default()),
             inputs,
             emit_bundle_source: opts.emit_bundle_source,
             metadata_two_pass: opts.metadata_two_pass,
@@ -377,12 +386,50 @@ impl Build {
         std::mem::take(&mut self.diagnostics.lock())
     }
 
+    /// Take this build's phase timings, leaving them empty.
+    ///
+    /// A `watch` session keeps one `Build` across every rebuild, so these are
+    /// reset per [`Build::run`] — otherwise the summary would report the
+    /// session's running total rather than the rebuild the reader just waited
+    /// for.
+    pub fn take_timing(&self) -> BuildTiming {
+        std::mem::take(&mut self.timing.lock())
+    }
+
+    /// Run `f`, logging and accumulating how long it took under `phase`.
+    ///
+    /// ONE FIELD NAME AND ONE UNIT, everywhere: `phase=<name> ms=<n>`, so
+    /// `RUST_LOG=rheo=debug ... | grep 'phase='` is a breakdown a reader can sum
+    /// without parsing prose. `plugin` is separate rather than folded into the
+    /// name because most phases run once per format and the per-format split is
+    /// what tells a slow PDF from a slow HTML.
+    fn timed<T>(&self, phase: &'static str, plugin: Option<&str>, f: impl FnOnce() -> T) -> T {
+        let started = Instant::now();
+        let out = f();
+        let elapsed = started.elapsed();
+        match plugin {
+            Some(name) => debug!(
+                phase,
+                plugin = name,
+                ms = elapsed.as_millis(),
+                "phase complete"
+            ),
+            None => debug!(phase, ms = elapsed.as_millis(), "phase complete"),
+        }
+        self.timing.lock().record(phase, elapsed);
+        out
+    }
+
     /// This build's font store, scanned on first use and shared thereafter.
     fn fonts(&self) -> Arc<FontStore> {
-        Arc::clone(
-            self.fonts
-                .get_or_init(|| Arc::new(crate::world::scan_fonts(&self.font_dirs))),
-        )
+        // Timed INSIDE `get_or_init`, so the phase is recorded for the one call
+        // that actually scans rather than for each of the many that then find
+        // the store already there.
+        Arc::clone(self.fonts.get_or_init(|| {
+            self.timed(phase::FONTS, None, || {
+                Arc::new(crate::world::scan_fonts(&self.font_dirs))
+            })
+        }))
     }
 
     fn package_resolver(&self) -> Arc<crate::packages::PackageResolver> {
@@ -465,8 +512,12 @@ impl Build {
             scan,
             layout,
             title,
-        } = self.resolve_spine_scan(plugin, plugin_section, content_dir)?;
-        let marrow_ctx = self.resolve_marrow(plugin, plugin_section, content_dir, packages)?;
+        } = self.timed(phase::SPINE_SCAN, Some(plugin.name()), || {
+            self.resolve_spine_scan(plugin, plugin_section, content_dir)
+        })?;
+        let marrow_ctx = self.timed(phase::MARROW, Some(plugin.name()), || {
+            self.resolve_marrow(plugin, plugin_section, content_dir, packages)
+        })?;
 
         let virtual_spine = self.build_virtual_spine(
             scan,
@@ -476,7 +527,9 @@ impl Build {
             marrow_ctx.marrow_prologue,
         )?;
 
-        let moulded = self.mould_bundle(&virtual_spine, plugin);
+        let moulded = self.timed(phase::MOULD, Some(plugin.name()), || {
+            self.mould_bundle(&virtual_spine, plugin)
+        });
 
         let mut pass = self.compile_bundle_once(
             plugin,
@@ -734,7 +787,9 @@ impl Build {
         )?;
         // Drained whether or not the compile succeeded: a failed pass's
         // diagnostics are exactly the ones worth rendering.
-        let compiled = world.compile_bundle();
+        let compiled = self.timed(phase::TYPST_COMPILE, Some(plugin.name()), || {
+            world.compile_bundle()
+        });
         self.diagnostics.lock().extend(world.take_diagnostics());
         let bundle = compiled?;
         let mut assets: HashSet<String> = HashSet::new();
@@ -750,7 +805,9 @@ impl Build {
                 }
             }
         }
-        let files = export_bundle(&bundle)?;
+        let files = self.timed(phase::EXPORT, Some(plugin.name()), || {
+            export_bundle(&bundle)
+        })?;
         Ok(CompiledBundlePass {
             assets,
             meta,
@@ -832,20 +889,23 @@ impl Build {
         // Scanned per rebuild rather than once per `Build`: a `.typ` file
         // gaining an `@rheo/...` import mid-session must be picked up, and the
         // `Build` is only rebuilt when `rheo.toml` itself changes.
-        let package_imports =
-            crate::packages::scan_project_package_imports(&self.project.typ_files);
         let plugin_section: &PluginSection = self
             .project
             .config
             .plugin_sections
             .get(serving_plugin.name())
             .unwrap_or(&default_section);
-        let package_resolver = self.package_resolver();
-        let packages = prewarm_and_resolve(
-            &package_imports,
-            plugin_section.auto_detect_packages.get(),
-            &package_resolver,
-        )?;
+        let (packages, package_resolver) = self.timed(phase::PACKAGES, None, || {
+            let package_imports =
+                crate::packages::scan_project_package_imports(&self.project.typ_files);
+            let resolver = self.package_resolver();
+            let packages = prewarm_and_resolve(
+                &package_imports,
+                plugin_section.auto_detect_packages.get(),
+                &resolver,
+            )?;
+            Ok::<_, RheoError>((packages, resolver))
+        })?;
 
         // Resolving copies CSS/JS to disk too, so the dev server can serve them
         // as a fallback for requests the VirtualFs does not satisfy. A failure
@@ -997,12 +1057,25 @@ impl Build {
             })?;
         }
 
-        let (outputs, mut asset_files) = flatten_bundle_outputs(
-            virtual_fs,
-            &assets,
-            &virtual_spine,
-            plugin.typst_format(),
-            &meta,
+        let (outputs, mut asset_files) = self.timed(phase::FLATTEN, Some(plugin.name()), || {
+            flatten_bundle_outputs(
+                virtual_fs,
+                &assets,
+                &virtual_spine,
+                plugin.typst_format(),
+                &meta,
+            )
+        });
+
+        // THE TALLY, recorded here rather than after the plugin writes, because
+        // this is where documents and raw assets are still distinguishable and
+        // where both still carry their bytes. It is the pair of numbers that
+        // identifies a project emitting per-page data it should emit once.
+        self.timing.lock().record_outputs(
+            outputs.len(),
+            asset_files.len(),
+            outputs.iter().map(|o| o.bytes.len()).sum::<usize>()
+                + asset_files.iter().map(|(_, b)| b.len()).sum::<usize>(),
         );
 
         // Resolve any `<rheo-content>` placeholders bundle-emitted assets
@@ -1052,17 +1125,24 @@ impl Build {
         let mut results = CompilationResults::new();
         let default_section = PluginSection::default();
 
+        // CLEARED FIRST, so a `watch` session's summary describes the rebuild
+        // the reader just waited for rather than the session's running total.
+        // Fonts are the one phase this loses: they are scanned once per `Build`
+        // and every rebuild after the first therefore reports none.
+        let _ = self.take_timing();
+
         // Scan .typ files for package imports once, and resolve each imported
         // package (a directory probe plus a `typst.toml` parse) once — both
         // shared across every plugin in this build.
-        let package_imports =
-            crate::packages::scan_project_package_imports(&self.project.typ_files);
-        let package_resolver = self.package_resolver();
-        let packages = prewarm_and_resolve(
-            &package_imports,
-            self.auto_detects_packages(),
-            &package_resolver,
-        )?;
+        let packages = self.timed(phase::PACKAGES, None, || {
+            let package_imports =
+                crate::packages::scan_project_package_imports(&self.project.typ_files);
+            let resolver = self.package_resolver();
+            let packages =
+                prewarm_and_resolve(&package_imports, self.auto_detects_packages(), &resolver)?;
+            Ok::<_, RheoError>((packages, resolver))
+        })?;
+        let (packages, package_resolver) = packages;
 
         let content_dir = resolve_effective_content_dir(&self.project);
 
@@ -1109,32 +1189,38 @@ impl Build {
                 }
             }
 
-            match plugin.compile(ctx, &prepared.outputs) {
+            let written = self.timed(phase::PLUGIN_WRITE, Some(plugin.name()), || {
+                plugin.compile(ctx, &prepared.outputs)
+            });
+            match written {
                 Ok(_) => {
                     // Apply copy globs after bundle output is written so that
                     // explicit copy patterns win over any colliding bundle output.
-                    resolver.copy_globs(
-                        &self.project.config.copy,
-                        &self.project.root,
-                        None,
-                        true,
-                    )?;
-                    for block in &prepared.manifest_blocks {
+                    self.timed(phase::COPY_GLOBS, Some(plugin.name()), || {
                         resolver.copy_globs(
-                            &block.assets.copy,
-                            &block.source_root,
-                            block.assets.dest.as_deref(),
-                            true,
-                        )?;
-                    }
-                    for block in prepared.section.asset_blocks() {
-                        resolver.copy_globs(
-                            &block.copy,
+                            &self.project.config.copy,
                             &self.project.root,
-                            block.dest.as_deref(),
+                            None,
                             true,
                         )?;
-                    }
+                        for block in &prepared.manifest_blocks {
+                            resolver.copy_globs(
+                                &block.assets.copy,
+                                &block.source_root,
+                                block.assets.dest.as_deref(),
+                                true,
+                            )?;
+                        }
+                        for block in prepared.section.asset_blocks() {
+                            resolver.copy_globs(
+                                &block.copy,
+                                &self.project.root,
+                                block.dest.as_deref(),
+                                true,
+                            )?;
+                        }
+                        Ok::<(), RheoError>(())
+                    })?;
                     results.record_success(plugin.name());
                     info!(plugin = plugin.name(), "compilation succeeded");
                 }
@@ -1147,6 +1233,12 @@ impl Build {
 
         let names: Vec<&str> = self.plugins.iter().map(|p| p.name()).collect();
         results.log_summary(&names);
+
+        // ONE LINE, AT INFO, EVERY BUILD. The page count and total bytes in it
+        // are what identify a project emitting per-page data it should emit
+        // once, and nobody has to have thought to ask for them; the full
+        // per-phase breakdown is in the `debug!` stream beside it.
+        info!("{}", self.timing.lock().summary());
 
         if results.has_failures() {
             if names.iter().any(|name| results.get(name).succeeded > 0) {
@@ -1162,6 +1254,46 @@ impl Build {
         info!("compilation complete");
         Ok(results)
     }
+}
+
+/// Age Typst's memo cache by one and drop whatever has gone ten rebuilds
+/// without a hit.
+///
+/// A LONG-RUNNING PROCESS MUST CALL THIS BETWEEN COMPILES; a one-shot one must
+/// not. Typst memoizes through `comemo`, whose cache is global and never shrinks
+/// on its own, so every generation of every memoized value is retained until
+/// something evicts it. MEASURED on a project emitting 360 pages and 43 MB of
+/// HTML, `rheo watch` grew by about 2.6 GB per rebuild with no ceiling —
+/// 20.9 GB after six edits, 31.5 GB after ten — while rebuild latency crept
+/// from 15.0s to 17.6s. The growth tracks how much DISTINCT OUTPUT a rebuild
+/// produces rather than the rebuild count, so the same session against a
+/// version of that project emitting 4.9 MB stayed flat at 41 MB: a small
+/// project never notices this and a large one dies of it.
+///
+/// `max_age` of 10 is typst-cli's own figure. An entry's age grows by one per
+/// eviction and resets to zero on a hit, so a value survives ten rebuilds after
+/// it was last useful, and the cache therefore holds up to ten generations of
+/// whatever a rebuild produces. LOWER trades rebuild speed for memory, HIGHER
+/// the reverse; zero would clear the cache outright, which is what makes an
+/// unchanged-file rebuild cost a full compile instead of a fraction of one.
+///
+/// TEN IS KEPT DELIBERATELY, and the measurement is here so it need not be
+/// taken again. On the 43 MB project above both values BOUND the session and
+/// differ only in where: `10` plateaus at 23.6 GB by the eleventh rebuild and
+/// holds (about +50 MB a rebuild after that, allocator noise), `4` plateaus at
+/// 14.9 GB by the fourteenth. An unchanged-bytes rebuild cost 2.1-2.3s under
+/// both, so the cheap signal cannot separate them — and what a low `max_age`
+/// really costs is a workflow that RETURNS to an earlier state (an undo, a
+/// branch switch, edits alternating between two files), which that signal does
+/// not exercise at all. So the upstream default stands rather than a number
+/// tuned against one project's pathological case: a project emitting 43 MB a
+/// build is one emitting per-page data it should emit once, and fixing THAT
+/// took the same session's steady state from 23.6 GB to 41 MB.
+///
+/// A one-shot `rheo compile` exits straight after its build, so calling this
+/// there is pure cost for a cache nothing will read again.
+pub fn evict_compile_cache() {
+    comemo::evict(10);
 }
 
 /// Split a compiled bundle's flat path→bytes map into plugin-facing documents
