@@ -15,7 +15,7 @@
 
 use crate::reticulate::handle::Handle;
 use crate::synth::typst_literal::{TypstLiteral, escape_typst_content};
-use crate::util::constants::METADATA_MODULE_PATH;
+use crate::util::constants::{METADATA_MODULE_PATH, RHEO_TEMPLATE_MODULE_PATH};
 use std::fmt;
 
 /// A synthesized top-level Typst statement, rendered via [`fmt::Display`].
@@ -67,6 +67,18 @@ pub enum TypstStmt {
     /// per-vertebra prelude — a vertebra itself has no need to enumerate
     /// every vertebra's metadata, only marrow-authored code does.
     MetadataAllHelper,
+    /// Brings `rheo-index` into scope once per vertebra, immediately after
+    /// [`TypstStmt::ContextBinding`]: an `#import` of the default (and
+    /// overridable) directory-index renderer from the synthetic
+    /// `typ/rheo.typ` module `RheoWorld` serves at
+    /// [`crate::util::constants::RHEO_TEMPLATE_MODULE_PATH`] — the same file
+    /// spliced wholesale into the bundle main, served here instead as an
+    /// importable module so a vertebra's own `rheo-index()` can reuse
+    /// `rheo.typ`'s private `_rheo-href` without duplicating it. A
+    /// synthesized directory-index vertebra's whole body is a call to it.
+    /// Positioned so a project's own `#let rheo-index() = ...` (from `[spine]
+    /// prelude`, spliced after it) shadows this default.
+    IndexHelper,
     /// Brings `rheo-handle-title` into scope at the bundle root, alongside
     /// [`TypstStmt::MetadataAllHelper`], for every [`TypstStmt::HandleAnchor`]
     /// in the same compile to call. Looks up the owning vertebra's live
@@ -187,6 +199,9 @@ impl fmt::Display for TypstStmt {
             TypstStmt::MetadataAllHelper => {
                 write!(f, "#import \"/{METADATA_MODULE_PATH}\": rheo-metadata-all")
             }
+            TypstStmt::IndexHelper => {
+                write!(f, "#import \"/{RHEO_TEMPLATE_MODULE_PATH}\": rheo-index")
+            }
             TypstStmt::HandleTitleHelper => {
                 write!(f, "#import \"/{METADATA_MODULE_PATH}\": rheo-handle-title")
             }
@@ -268,6 +283,12 @@ mod tests {
             "#import \"/typ/metadata.typ\": rheo-metadata-impl\n\
              #let rheo-metadata(handle) = rheo-metadata-impl(handle)"
         );
+    }
+
+    #[test]
+    fn index_helper_imports_rheo_index_from_rheo_typ() {
+        let stmt = TypstStmt::IndexHelper;
+        assert_eq!(stmt.to_string(), "#import \"/typ/rheo.typ\": rheo-index");
     }
 
     #[test]

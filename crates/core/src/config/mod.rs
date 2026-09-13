@@ -50,6 +50,9 @@ pub struct MergedSpine {
     pub layering: Option<SpineLayering>,
     pub title: Option<String>,
     pub prelude: Option<String>,
+    /// Whether a directory with no landing file gets a synthesized one.
+    /// Defaults to `true` when unset on every table in the fallback chain.
+    pub auto_index: bool,
 }
 
 /// How a spine lays out its leaves beyond the plain directory scan.
@@ -98,6 +101,12 @@ pub struct Spine {
     /// The text lands at every depth, so its own imports must be root-absolute.
     pub prelude: Option<String>,
 
+    /// Whether a directory with no landing file (`index.typ`/`<dirname>.typ`)
+    /// gets a synthesized one instead of becoming a non-clickable group node.
+    /// `None` when unset in this table, for the same per-field fallback reason
+    /// as `exclude`; [`Spine::merged_over`] applies the `true` default.
+    pub auto_index: Option<bool>,
+
     /// Unrecognized keys, captured so [`warn_on_retired_keys`] can warn when a
     /// field retired from `Spine` in a past version (e.g. the removed
     /// `vertebrae` glob list) is still set in an older `rheo.toml`, rather than
@@ -117,6 +126,8 @@ pub struct SpineRaw {
     include: Option<Vec<String>>,
     #[serde(default)]
     prelude: Option<String>,
+    #[serde(default)]
+    auto_index: Option<bool>,
     #[serde(flatten, default)]
     extra: toml::Table,
 }
@@ -141,6 +152,7 @@ impl TryFrom<SpineRaw> for Spine {
             exclude: raw.exclude,
             layering,
             prelude: raw.prelude,
+            auto_index: raw.auto_index,
             extra: raw.extra,
         })
     }
@@ -349,6 +361,7 @@ impl Spine {
             layering: pick(this, global, |s| s.layering.as_ref()),
             title: pick(this, global, |s| s.title.as_ref()),
             prelude: pick(this, global, |s| s.prelude.as_ref()),
+            auto_index: pick(this, global, |s| s.auto_index.as_ref()).unwrap_or(true),
         }
     }
 }

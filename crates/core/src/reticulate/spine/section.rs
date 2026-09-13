@@ -97,6 +97,18 @@ impl SpineScan {
         }
         Self::validate_sections(sections)?;
 
+        // Paths of the scan's own synthesized landing pages (see
+        // `SpineScan::synthesized`), so re-indexing below can recognize them
+        // by path identity once their old indices no longer apply. A
+        // synthesized path is never a real, movable leaf a section can claim
+        // (only a directory with children gets one), so it always survives
+        // untouched through to the rebuilt `files`.
+        let synthesized_paths: HashSet<PathBuf> = self
+            .synthesized
+            .iter()
+            .map(|&i| self.files[i].clone())
+            .collect();
+
         let mut roots = Self::to_path_nodes(&self.tree, &self.files);
 
         // All movable (leaf) file paths currently in the tree.
@@ -125,7 +137,12 @@ impl SpineScan {
                 "spine is empty after applying sections",
             ));
         }
-        Ok(SpineScan { files, tree })
+        let synthesized = Self::reindex_synthesized(&files, &synthesized_paths);
+        Ok(SpineScan {
+            files,
+            tree,
+            synthesized,
+        })
     }
 
     /// Validate section names recursively: each `name` must be a non-empty slug
@@ -234,6 +251,12 @@ impl SpineScan {
             return Ok(self);
         }
 
+        let synthesized_paths: HashSet<PathBuf> = self
+            .synthesized
+            .iter()
+            .map(|&i| self.files[i].clone())
+            .collect();
+
         let roots = Self::to_path_nodes(&self.tree, &self.files);
         let leaf_nodes = Self::collect_leaf_nodes(&roots);
         let mut by_path: HashMap<PathBuf, PathNode> = leaf_nodes
@@ -264,7 +287,12 @@ impl SpineScan {
                 "spine is empty after applying include",
             ));
         }
-        Ok(SpineScan { files, tree })
+        let synthesized = Self::reindex_synthesized(&files, &synthesized_paths);
+        Ok(SpineScan {
+            files,
+            tree,
+            synthesized,
+        })
     }
 
     /// Extract every genuine leaf (childless landing) node, discarding
@@ -299,6 +327,24 @@ impl SpineScan {
             })
             .collect()
     }
+
+    /// Recompute a synthesized-index set for a freshly [`Self::reindex`]ed
+    /// `files`, by path identity against `synthesized_paths` (the pre-reindex
+    /// synthesized paths) — the old indices they were recorded at no longer
+    /// apply once `reindex` assigns fresh ones. A synthesized path is unique
+    /// (nothing else can share the notional `<dir>/index.typ` a real landing
+    /// file would have occupied instead), so this identity is exact.
+    fn reindex_synthesized(
+        files: &[PathBuf],
+        synthesized_paths: &HashSet<PathBuf>,
+    ) -> HashSet<usize> {
+        files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| synthesized_paths.contains(*f))
+            .map(|(i, _)| i)
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -318,7 +364,7 @@ mod tests {
     #[test]
     fn apply_sections_groups_flat_files() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ", "c.typ"]);
-        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let scan = SpineScan::run(temp.path(), &[], true).unwrap();
         let out = scan
             .apply_sections(temp.path(), &[section("guide", &["a.typ", "b.typ"])])
             .unwrap();
@@ -345,7 +391,7 @@ mod tests {
     #[test]
     fn apply_sections_nests_subsections() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ", "c.typ"]);
-        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let scan = SpineScan::run(temp.path(), &[], true).unwrap();
         let mut guide = section("guide", &["a.typ"]);
         guide.section = vec![section("advanced", &["c.typ"])];
         let out = scan.apply_sections(temp.path(), &[guide]).unwrap();
@@ -366,7 +412,7 @@ mod tests {
     #[test]
     fn apply_sections_title_derived_strips_numeric_prefix() {
         let temp = create_test_dir_with_files(&["a.typ"]);
-        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let scan = SpineScan::run(temp.path(), &[], true).unwrap();
         let out = scan
             .apply_sections(temp.path(), &[section("01-guide", &["a.typ"])])
             .unwrap();
@@ -377,7 +423,7 @@ mod tests {
     #[test]
     fn apply_sections_include_no_match_errors() {
         let temp = create_test_dir_with_files(&["a.typ"]);
-        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let scan = SpineScan::run(temp.path(), &[], true).unwrap();
         let err = scan
             .apply_sections(temp.path(), &[section("guide", &["nope.typ"])])
             .unwrap_err();
@@ -387,7 +433,7 @@ mod tests {
     #[test]
     fn apply_sections_duplicate_sibling_name_errors() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
-        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let scan = SpineScan::run(temp.path(), &[], true).unwrap();
         let err = scan
             .apply_sections(
                 temp.path(),
@@ -400,7 +446,7 @@ mod tests {
     #[test]
     fn apply_sections_empty_is_noop() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
-        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let scan = SpineScan::run(temp.path(), &[], true).unwrap();
         let before = scan.files.len();
         let out = scan.apply_sections(temp.path(), &[]).unwrap();
         assert_eq!(out.files.len(), before);
@@ -409,7 +455,7 @@ mod tests {
     #[test]
     fn apply_include_reorders_flat_and_drops_unmatched() {
         let temp = create_test_dir_with_files(&["b.typ", "a.typ", "c.typ", "d.typ"]);
-        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let scan = SpineScan::run(temp.path(), &[], true).unwrap();
         let out = scan
             .apply_include(
                 temp.path(),
@@ -442,7 +488,7 @@ mod tests {
     #[test]
     fn apply_include_pattern_no_match_errors() {
         let temp = create_test_dir_with_files(&["a.typ"]);
-        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let scan = SpineScan::run(temp.path(), &[], true).unwrap();
         let err = scan
             .apply_include(temp.path(), &["nope.typ".to_string()])
             .unwrap_err();
@@ -452,7 +498,7 @@ mod tests {
     #[test]
     fn apply_include_empty_is_noop() {
         let temp = create_test_dir_with_files(&["a.typ", "b.typ"]);
-        let scan = SpineScan::run(temp.path(), &[]).unwrap();
+        let scan = SpineScan::run(temp.path(), &[], true).unwrap();
         let before = scan.files.len();
         let out = scan.apply_include(temp.path(), &[]).unwrap();
         assert_eq!(out.files.len(), before);

@@ -66,6 +66,7 @@ js_scripts     = "two.js"
 [spine]
 exclude = ["drafts/**"]  # optional; glob patterns (relative to content_dir) omitted from every format's scan
 prelude = "_lib/prelude.typ"  # optional; Typst prepended INSIDE every vertebra, after its rheo-context()
+auto_index = false  # optional; default true — false restores pre-auto_index behavior (no synthesized directory-index pages)
 
 [[spine.section]]
 name = "chapters"        # optional; virtual-directory regrouping without moving files on disk
@@ -174,7 +175,9 @@ A package needing only the shared spine can read `sys.inputs.rheo-context.spine`
 
 ## Spine configuration
 
-**Directory-scan default:** with no `[spine]`/`[<format>.spine]` at all, the spine is every `.typ` file under `content_dir`, recursively, ordered alphabetically per directory level. A directory whose landing file is `index.typ` or `<dirname>.typ` gets that directory's own handle (e.g. `chapters/chapters.typ` → `<chapters>`, not `<chapters:chapters>`); a directory with no landing file becomes a non-clickable group node with a prettified title (`01-intro/` → "Intro").
+**Directory-scan default:** with no `[spine]`/`[<format>.spine]` at all, the spine is every `.typ` file under `content_dir`, recursively, ordered alphabetically per directory level. A directory whose landing file is `index.typ` or `<dirname>.typ` gets that directory's own handle (e.g. `chapters/chapters.typ` → `<chapters>`, not `<chapters:chapters>`); a directory with no landing file and no children is dropped entirely, and one with children gets a synthesized landing page (see `[spine] auto_index` below) instead of becoming a non-clickable group node.
+
+**`[spine] auto_index`:** `true` by default. A directory with children and no landing file (`index.typ`/`<dirname>.typ`) gets a synthesized one instead of becoming a non-clickable group node: an empty page whose whole body is a call to `rheo-index()` (`docs/contract.md`'s "Directory-index helper"), the default renderer for a plain list of links to that directory's own children. A project styles its own directory indexes once by binding `#let rheo-index() = ...` in `[spine] prelude`, which — spliced after the default — shadows it for every vertebra, rather than hand-writing an `index.typ` per directory. Set `false` to restore the pre-`auto_index` behavior exactly: such a directory becomes a non-clickable group node with a prettified title (`01-intro/` → "Intro"), with no page of its own.
 
 **`[spine] exclude`:** glob patterns (relative to `content_dir`) for files/folders to omit from the scan.
 
@@ -198,7 +201,7 @@ prelude = "_lib/prelude.typ"
 
 Imports in it must be **root-absolute** — the same text lands in vertebrae at every depth. The splice is keyed per vertebra, so it reaches neither a partial pulled in by `#include` nor the library file it imports (which would recurse). An unreadable path is fatal.
 
-**Precedence — field-by-field, not whole-table:** a per-format `[<format>.spine]` table can set `title`, `exclude`, `prelude` and its layering (`include` or `section`) independently; any field it leaves unset falls back to the matching field on the global `[spine]` table (not the whole table at once). Layering falls back as one unit — a per-format `include` replaces a global `section`, rather than joining it. For example, `[pdf.spine] title = "My Book"` with no `exclude` of its own still inherits the global `[spine] exclude` — it does *not* silently drop it just because `[pdf.spine]` exists.
+**Precedence — field-by-field, not whole-table:** a per-format `[<format>.spine]` table can set `title`, `exclude`, `prelude`, `auto_index` and its layering (`include` or `section`) independently; any field it leaves unset falls back to the matching field on the global `[spine]` table (not the whole table at once). Layering falls back as one unit — a per-format `include` replaces a global `section`, rather than joining it. For example, `[pdf.spine] title = "My Book"` with no `exclude` of its own still inherits the global `[spine] exclude` — it does *not* silently drop it just because `[pdf.spine]` exists.
 
 The retired `vertebrae` glob-list key (pre-0.5.0) is no longer read; `rheo migrate` converts an old inclusion-filter `vertebrae` list into an equivalent `exclude`.
 

@@ -39,6 +39,17 @@ pub const RESERVED_META_LABEL_PREFIX: &str = "rheo-meta:";
 /// the `#import "/<METADATA_MODULE_PATH>": ...` statements
 /// [`crate::synth::typst_source::TypstStmt`]'s metadata-helper variants render.
 pub const METADATA_MODULE_PATH: &str = "typ/metadata.typ";
+
+/// Project-root-relative path `RheoWorld` serves `typ/rheo.typ` under, for the
+/// `#import "/<RHEO_TEMPLATE_MODULE_PATH>": rheo-index` statement
+/// [`crate::synth::typst_source::TypstStmt::IndexHelper`] renders. The same
+/// file is also spliced wholesale into the bundle main
+/// (`crate::synth::source_injector::SourceInjector::main`); serving it here
+/// too, as an independently importable module, is what lets a vertebra's own
+/// default `rheo-index()` reuse `rheo.typ`'s private `_rheo-href` instead of
+/// duplicating it, the same way `METADATA_MODULE_PATH` does for the metadata
+/// helpers.
+pub const RHEO_TEMPLATE_MODULE_PATH: &str = "typ/rheo.typ";
 pub const PDF_EXT: &str = ".pdf";
 pub const HTML_EXT: &str = ".html";
 pub const XHTML_EXT: &str = ".xhtml";

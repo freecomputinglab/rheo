@@ -49,6 +49,12 @@ Everything in this table not marked Internal is safe to read straight off
 `sys.inputs.rheo-context` with no `#context` — only `metadata-of`/`rheo-metadata`
 need it (they call `query(...)`).
 
+## Directory-index helper — `rheo-index()` (`crates/core/src/typ/rheo.typ`)
+
+| Helper | Signature | Scope | Notes |
+| --- | --- | --- | --- |
+| `rheo-index` | `() => content` | every vertebra (its own prelude), imported alongside `rheo-context()` | A synthesized directory-index vertebra's whole body is a call to this (`rheo.toml` `[spine] auto_index`, default `true`): a plain list of links to the current page's own children, read from `spine` — the full tree, groups included, unlike `spine-flat` — and this page's own handle from `state("rheo-handle")` (published by `rheo-page-init`). A project overrides the default by binding its own `#let rheo-index() = ...` in `[spine] prelude`, spliced after this import, so it shadows it for every vertebra. |
+
 ## Project-supplied `sys.inputs`
 
 Besides `rheo-context`, a project may seed arbitrary keys onto `sys.inputs`, and a

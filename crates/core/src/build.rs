@@ -611,6 +611,7 @@ impl Build {
                 content_dir,
                 &spine.exclude,
                 self.project.config.marrow_file(),
+                spine.auto_index,
             )?
             .apply_layering(content_dir, spine.layering.as_ref())?,
         };
@@ -1656,6 +1657,7 @@ mod tests {
                 emit_handle: true,
                 title: "Index".into(),
                 source: String::new(),
+                synthesized: false,
             }],
             layout: SpineLayout::OnePerVertebra {
                 ext: "html".into(),
@@ -1716,6 +1718,7 @@ mod tests {
                 emit_handle: true,
                 title: "Fallback Title".into(),
                 source: String::new(),
+                synthesized: false,
             }],
             layout: SpineLayout::OnePerVertebra {
                 ext: "html".into(),

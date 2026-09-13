@@ -170,7 +170,8 @@ mod tests {
         fs::write(content.join("intro.typ"), "= Intro\n").unwrap();
         fs::write(chapters.join("one.typ"), "= One\n").unwrap();
 
-        let scan = SpineScan::run(&content, &[]).unwrap();
+        // auto_index off: this test pins the group-node serialization shape.
+        let scan = SpineScan::run(&content, &[], false).unwrap();
         let layout = SpineLayout::OnePerVertebra {
             ext: "html".into(),
             format: "html".into(),
@@ -216,7 +217,7 @@ mod tests {
         // A page with no `#set document(...)`.
         fs::write(content.join("bare.typ"), "= Bare\n").unwrap();
 
-        let scan = SpineScan::run(&content, &[]).unwrap();
+        let scan = SpineScan::run(&content, &[], true).unwrap();
         let layout = SpineLayout::OnePerVertebra {
             ext: "html".into(),
             format: "html".into(),

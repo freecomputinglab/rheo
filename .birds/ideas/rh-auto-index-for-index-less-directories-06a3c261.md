@@ -6,7 +6,7 @@ priority: 3
 labels:
 - feat-auto-index
 deps: []
-closed: false
+closed: true
 ---
 A content directory with no landing file gets NO PAGE today. `scan_subdir`
 (`crates/core/src/reticulate/spine/scan.rs:152`) looks for `index.typ` and then

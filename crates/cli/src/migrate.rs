@@ -891,8 +891,11 @@ fn migrate_vertebrae_to_exclude(
 
     let content_dir = resolve_effective_content_dir(project);
     // Full directory-scan file set the new zero-config model would include.
-    // No `.typ` files under content_dir means nothing to reconcile.
-    let Ok(scan) = SpineScan::run(&content_dir, &[]) else {
+    // No `.typ` files under content_dir means nothing to reconcile. auto_index
+    // is off here: this reconciles real on-disk files against old `vertebrae`
+    // glob patterns, and a synthesized notional index.typ is not a real file
+    // an old pattern could ever have matched.
+    let Ok(scan) = SpineScan::run(&content_dir, &[], false) else {
         return Ok(());
     };
     let scanned: HashSet<PathBuf> = scan
