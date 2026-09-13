@@ -6,7 +6,7 @@ priority: 1
 labels:
 - chore-naming
 deps: []
-closed: false
+closed: true
 ---
 The marrow position that splices BEFORE every document is now spelled
 `prelude` in every name a user sees, and `prologue` in every name the code

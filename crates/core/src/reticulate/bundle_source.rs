@@ -47,7 +47,7 @@ pub struct BundleSource {
     /// `#show`/`#set` rule here is global-by-default and reaches every
     /// pre-existing vertebra (Typst introspection is bundle-wide, not
     /// sequential).
-    pub marrow_prologue: Vec<TypstStmt>,
+    pub marrow_prelude: Vec<TypstStmt>,
     /// Raw Typst emitted at bundle root AFTER all documents, outside any
     /// `#document` block, so it may itself mint `document()` and `asset()`
     /// elements. Typst has no nested bundles — those elements are legal only as
@@ -59,7 +59,7 @@ pub struct BundleSource {
 
 impl fmt::Display for BundleSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for stmt in &self.marrow_prologue {
+        for stmt in &self.marrow_prelude {
             writeln!(f, "{stmt}")?;
         }
         for doc in &self.documents {

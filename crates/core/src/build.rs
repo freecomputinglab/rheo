@@ -146,7 +146,7 @@ struct MarrowContext {
     target: Option<&'static str>,
     ext: Option<&'static str>,
     marrow: Vec<String>,
-    marrow_prologue: Vec<String>,
+    marrow_prelude: Vec<String>,
 }
 
 /// The result of [`Build::mould_bundle`]: the synthesized bundle main and
@@ -528,7 +528,7 @@ impl Build {
             title,
             prelude,
             marrow_ctx.marrow,
-            marrow_ctx.marrow_prologue,
+            marrow_ctx.marrow_prelude,
         )?;
 
         let moulded = self.timed(phase::MOULD, Some(plugin.name()), || {
@@ -652,9 +652,9 @@ impl Build {
     /// `asset()` both hard-error under the combined PDF target ("setting the
     /// document format is only supported in the bundle target"), so the same
     /// `ext` gate that marks a per-page format decides whether to gather it at
-    /// all. Position (prologue, spliced before every document, vs. epilogue,
+    /// all. Position (prelude, spliced before every document, vs. epilogue,
     /// spliced after) is per-contribution: a package picks its own by
-    /// filename (`.marrow-prologue.typ` vs `.marrow.typ`); the project picks
+    /// filename (`.marrow.prelude.typ` vs `.marrow.typ`); the project picks
     /// its own via `rheo.toml`'s `dot_marrow_is_epilogue` key, defaulting to
     /// epilogue so an unconfigured project compiles byte-identically. Within
     /// each position, packages contribute first in import order, then the
@@ -670,7 +670,7 @@ impl Build {
         let ext = target.map(|_| plugin.extension());
 
         let mut marrow = Vec::new();
-        let mut marrow_prologue = Vec::new();
+        let mut marrow_prelude = Vec::new();
         if ext.is_some() {
             // Behind the same opt-out that governs every other package-driven
             // behaviour.
@@ -681,14 +681,14 @@ impl Build {
                 // `.marrow.typ` and the package mints none of the pages it
                 // exists to mint — silently, on a green build).
                 marrow.extend(packages.marrow());
-                marrow_prologue.extend(packages.marrow_prologue());
+                marrow_prelude.extend(packages.marrow_prelude());
             }
 
             // The explicit names first; a bare `.marrow.typ` is read only when
             // neither is present, and then takes the position the flag names.
             let mut explicit = false;
             for (name, into) in [
-                (crate::MARROW_PRELUDE_FILE, &mut marrow_prologue),
+                (crate::MARROW_PRELUDE_FILE, &mut marrow_prelude),
                 (crate::MARROW_EPILOGUE_FILE, &mut marrow),
             ] {
                 if let Some(text) = read_marrow_at(&content_dir.join(name))? {
@@ -701,7 +701,7 @@ impl Build {
                 if let Some(text) = read_marrow_at(&bare)? {
                     match self.project.config.dot_marrow_is_epilogue.get() {
                         true => marrow.push(text),
-                        false => marrow_prologue.push(text),
+                        false => marrow_prelude.push(text),
                     }
                 }
             }
@@ -711,7 +711,7 @@ impl Build {
             target,
             ext,
             marrow,
-            marrow_prologue,
+            marrow_prelude,
         })
     }
 
@@ -724,13 +724,13 @@ impl Build {
         title: Option<String>,
         prelude: Option<String>,
         marrow: Vec<String>,
-        marrow_prologue: Vec<String>,
+        marrow_prelude: Vec<String>,
     ) -> Result<VirtualSpine> {
         let virtual_spine = VirtualSpine::build(scan, &self.project.root, layout)?
             .with_title(title)
             .with_vertebra_prelude(prelude)
             .with_marrow(marrow)
-            .with_marrow_prologue(marrow_prologue);
+            .with_marrow_prelude(marrow_prelude);
         virtual_spine.check_output_collisions()?;
         Ok(virtual_spine)
     }
@@ -1665,7 +1665,7 @@ mod tests {
             title: None,
             vertebra_prelude: None,
             marrow: Vec::new(),
-            marrow_prologue: Vec::new(),
+            marrow_prelude: Vec::new(),
         };
 
         let mut virtual_fs = typst_bundle::VirtualFs::default();
@@ -1725,7 +1725,7 @@ mod tests {
             title: None,
             vertebra_prelude: None,
             marrow: Vec::new(),
-            marrow_prologue: Vec::new(),
+            marrow_prelude: Vec::new(),
         };
 
         let mut virtual_fs = typst_bundle::VirtualFs::default();
@@ -1988,7 +1988,7 @@ mod tests {
     }
 
     /// A one-vertebra project with a `*bold text*` paragraph and a marrow
-    /// `#show strong` rule, shared by the epilogue/prologue end-to-end tests
+    /// `#show strong` rule, shared by the epilogue/prelude end-to-end tests
     /// below. Only the bare marrow's position differs between them.
     fn build_show_rule_project(root: &Path, dot_marrow_is_epilogue: bool) -> ProjectConfig {
         std::fs::create_dir_all(root.join("content")).expect("create content dir");

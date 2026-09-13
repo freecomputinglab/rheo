@@ -457,7 +457,7 @@ impl PackageIndex {
     }
 
     /// Every package's prelude marrow, in import order.
-    pub fn marrow_prologue(&self) -> Vec<String> {
+    pub fn marrow_prelude(&self) -> Vec<String> {
         self.read_marrow(crate::MARROW_PRELUDE_FILE, false)
     }
 
@@ -1048,7 +1048,7 @@ css_stylesheet = "style.css"
     }
 
     #[test]
-    fn package_prologue_marrow_is_read_from_its_own_filename() {
+    fn package_prelude_marrow_is_read_from_its_own_filename() {
         let tmp = tempfile::tempdir().unwrap();
         let pkg_dir = make_pkg_dir(tmp.path(), "testns", "testpkg", "0.1.0");
         std::fs::write(
@@ -1059,7 +1059,7 @@ css_stylesheet = "style.css"
 
         let index = index_for(tmp.path());
         assert_eq!(
-            index.marrow_prologue(),
+            index.marrow_prelude(),
             vec!["#show strong: it => it".to_string()]
         );
         assert!(index.marrow().is_empty(), "no .marrow.typ shipped");
@@ -1074,7 +1074,7 @@ css_stylesheet = "style.css"
 
         let index = index_for(tmp.path());
         assert_eq!(index.marrow(), vec!["epilogue".to_string()]);
-        assert_eq!(index.marrow_prologue(), vec!["prelude".to_string()]);
+        assert_eq!(index.marrow_prelude(), vec!["prelude".to_string()]);
     }
 
     /// A bare `.marrow.typ` is the epilogue's fallback, and either explicit
@@ -1110,25 +1110,25 @@ css_stylesheet = "style.css"
             (crate::MARROW_PRELUDE_FILE, "explicit"),
         ]);
         assert!(index.marrow().is_empty());
-        assert_eq!(index.marrow_prologue(), vec!["explicit".to_string()]);
+        assert_eq!(index.marrow_prelude(), vec!["explicit".to_string()]);
     }
 
     #[test]
-    fn detect_package_marrow_prologue_in_dirs_collects_in_import_order() {
+    fn detect_package_marrow_prelude_in_dirs_collects_in_import_order() {
         let dir = tempfile::tempdir().unwrap();
         let a = make_pkg_dir(dir.path(), "ns", "a", "1.0");
-        std::fs::write(a.join(crate::MARROW_PRELUDE_FILE), "a-prologue").unwrap();
+        std::fs::write(a.join(crate::MARROW_PRELUDE_FILE), "a-prelude").unwrap();
         let b = make_pkg_dir(dir.path(), "ns", "b", "1.0");
-        std::fs::write(b.join(crate::MARROW_PRELUDE_FILE), "b-prologue").unwrap();
+        std::fs::write(b.join(crate::MARROW_PRELUDE_FILE), "b-prelude").unwrap();
 
         let result = PackageIndex::new(
             &["@ns/a:1.0".to_string(), "@ns/b:1.0".to_string()],
             &[dir.path().to_path_buf()],
         )
-        .marrow_prologue();
+        .marrow_prelude();
         assert_eq!(
             result,
-            vec!["a-prologue".to_string(), "b-prologue".to_string()]
+            vec!["a-prelude".to_string(), "b-prelude".to_string()]
         );
     }
 }
