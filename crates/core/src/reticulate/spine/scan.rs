@@ -4,6 +4,7 @@ use crate::reticulate::handle::Handle;
 use crate::util::path::to_forward_slash;
 use crate::{Result, RheoError, TYP_EXT};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -97,11 +98,15 @@ impl SpineScan {
 
     /// Scan one directory, recursing into subdirectories. Returns the child
     /// node list for `dir`; pushes discovered files into `files` in pre-order.
+    /// `synthesized` collects the `files` index of every landing page this
+    /// scan synthesized (see [`Self::scan_subdir`]) rather than found on disk.
     pub(super) fn scan_dir(
         content_dir: &Path,
         dir: &Path,
         exclude: &GlobSet,
+        auto_index: bool,
         files: &mut Vec<PathBuf>,
+        synthesized: &mut HashSet<usize>,
     ) -> Result<Vec<SpineNode>> {
         let mut nodes = Vec::new();
 
@@ -113,7 +118,9 @@ impl SpineScan {
             }
 
             if path.is_dir() {
-                if let Some(node) = Self::scan_subdir(content_dir, &path, exclude, files)? {
+                if let Some(node) =
+                    Self::scan_subdir(content_dir, &path, exclude, auto_index, files, synthesized)?
+                {
                     nodes.push(node);
                 }
             } else if Self::is_typ_file(&path) {
@@ -128,12 +135,17 @@ impl SpineScan {
 
     /// Scan a subdirectory, deciding whether it has a landing page (clickable
     /// node) or not (group node). Returns `None` if the subtree contains no
-    /// `.typ` files after exclusion (pruned).
+    /// `.typ` files after exclusion (pruned). With no real landing file and
+    /// `auto_index` on, a directory that still has children after exclusion
+    /// gets a synthesized one instead of becoming a group — see
+    /// [`Self::scan_dir`]'s `synthesized` parameter.
     fn scan_subdir(
         content_dir: &Path,
         dir: &Path,
         exclude: &GlobSet,
+        auto_index: bool,
         files: &mut Vec<PathBuf>,
+        synthesized: &mut HashSet<usize>,
     ) -> Result<Option<SpineNode>> {
         let dirname = dir
             .file_name()
@@ -141,24 +153,34 @@ impl SpineScan {
             .unwrap_or_default()
             .to_string();
 
-        // Excluded once, up front — both the landing-file search and the
-        // children loop below read this same pre-filtered list.
-        let entries: Vec<PathBuf> = Self::read_sorted_entries(dir)?
+        // Excluded once, up front — the children loop below reads this same
+        // pre-filtered list. `unfiltered_entries` is kept alongside it only to
+        // tell an excluded landing file apart from a genuinely absent one.
+        let unfiltered_entries: Vec<PathBuf> = Self::read_sorted_entries(dir)?
             .into_iter()
             .map(|e| e.path())
+            .collect();
+        let entries: Vec<PathBuf> = unfiltered_entries
+            .iter()
             .filter(|p| !Self::is_excluded(content_dir, p, exclude))
+            .cloned()
             .collect();
 
         // Find the landing file: prefer index.typ, else <dirname>.typ.
         let index_name = format!("index{}", TYP_EXT);
         let named_name = format!("{}{}", dirname, TYP_EXT);
-        let named = |name: &str| {
-            entries
+        let named = |haystack: &[PathBuf], name: &str| {
+            haystack
                 .iter()
                 .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(name))
                 .cloned()
         };
-        let landing_path = named(&index_name).or_else(|| named(&named_name));
+        let landing_path = named(&entries, &index_name).or_else(|| named(&entries, &named_name));
+        // True when a landing file exists but exclude filtered it out, so
+        // auto_index below fills only an absence, never an exclusion.
+        let landing_excluded = landing_path.is_none()
+            && (named(&unfiltered_entries, &index_name).is_some()
+                || named(&unfiltered_entries, &named_name).is_some());
 
         let landing_idx = landing_path.as_ref().map(|landing| {
             let idx = files.len();
@@ -174,7 +196,9 @@ impl SpineScan {
             }
 
             if path.is_dir() {
-                if let Some(node) = Self::scan_subdir(content_dir, path, exclude, files)? {
+                if let Some(node) =
+                    Self::scan_subdir(content_dir, path, exclude, auto_index, files, synthesized)?
+                {
                     children.push(node);
                 }
             } else if Self::is_typ_file(path) {
@@ -185,8 +209,23 @@ impl SpineScan {
         let segment = Handle::sanitize_segment(&dirname);
         Ok(match landing_idx {
             Some(idx) => Some(SpineNode::landing(segment, idx, children)),
-            // Empty subtree after exclusion/pruning: drop the whole node.
+            // Empty subtree after exclusion/pruning: drop the whole node,
+            // regardless of auto_index — a page listing nothing is worse than
+            // no page.
             None if children.is_empty() => None,
+            // No real landing file, but the directory still has children:
+            // synthesize one at the notional `<dir>/index.typ` path, so every
+            // downstream derivation (handle, output path) comes out identical
+            // to what a real, empty index.typ would have produced — except
+            // the title, which names the directory rather than reading
+            // "Index" (there is no file for an author to override it in).
+            // auto_index fills an absence, not an exclusion.
+            None if auto_index && !landing_excluded => {
+                let idx = files.len();
+                files.push(dir.join(&index_name));
+                synthesized.insert(idx);
+                Some(SpineNode::landing(segment, idx, children))
+            }
             None => Some(SpineNode::group(
                 segment,
                 Self::prettify(&dirname),
@@ -272,7 +311,9 @@ mod tests {
             "guide/deep/x.typ",
         ]);
 
-        let result = SpineScan::run(temp.path(), &[]).unwrap();
+        // auto_index off: this fixture's own point is real landing pages, not
+        // synthesis, and `deep` (no landing file of its own) must stay a group.
+        let result = SpineScan::run(temp.path(), &[], false).unwrap();
         assert_eq!(result.files.len(), 6);
 
         let guide = find_node(&result.tree, "guide");
@@ -290,13 +331,57 @@ mod tests {
     }
 
     #[test]
-    fn scan_dir_without_index_is_group_node() {
+    fn scan_dir_without_index_is_group_node_when_auto_index_off() {
         let temp = create_test_dir_with_files(&["extras/note.typ"]);
-        let result = SpineScan::run(temp.path(), &[]).unwrap();
+        let result = SpineScan::run(temp.path(), &[], false).unwrap();
 
         let extras = find_node(&result.tree, "extras");
         assert!(extras.vertebra().is_none());
         assert_eq!(extras.title(), Some("Extras"));
+    }
+
+    /// The default: a directory with children and no landing file gets a
+    /// synthesized one instead of a non-clickable group, path-derived exactly
+    /// as a real, empty `extras/index.typ` would have been.
+    #[test]
+    fn scan_dir_without_index_synthesizes_landing_when_auto_index_on() {
+        let temp = create_test_dir_with_files(&["extras/note.typ"]);
+        let result = SpineScan::run(temp.path(), &[], true).unwrap();
+
+        let extras = find_node(&result.tree, "extras");
+        let idx = *extras
+            .vertebra()
+            .expect("extras must get a synthesized landing page");
+        assert!(result.files[idx].ends_with("extras/index.typ"));
+        assert!(result.synthesized.contains(&idx));
+
+        let note = find_node(&extras.children, "note");
+        assert!(note.vertebra().is_some());
+    }
+
+    /// Excluding a directory's landing file is a coherent request for "no page
+    /// here", not an absence for auto_index to fill — it must yield a group
+    /// node, not a synthesized replacement at the excluded path.
+    #[test]
+    fn scan_dir_with_excluded_index_stays_group_node_when_auto_index_on() {
+        let temp = create_test_dir_with_files(&["extras/index.typ", "extras/note.typ"]);
+        let result = SpineScan::run(temp.path(), &["extras/index.typ".to_string()], true).unwrap();
+
+        let extras = find_node(&result.tree, "extras");
+        assert!(extras.vertebra().is_none());
+        assert_eq!(extras.title(), Some("Extras"));
+    }
+
+    /// An empty directory (no `.typ` files after exclusion) is dropped
+    /// entirely either way — a page listing nothing is worse than no page.
+    #[test]
+    fn scan_empty_dir_yields_nothing_regardless_of_auto_index() {
+        let temp = create_test_dir_with_files(&["empty/skip.typ", "keep.typ"]);
+        for auto_index in [true, false] {
+            let result =
+                SpineScan::run(temp.path(), &["empty/**".to_string()], auto_index).unwrap();
+            assert!(result.tree.iter().all(|n| n.segment != "empty"));
+        }
     }
 
     /// Marrow is emitted at the bundle root, outside every document, so the
@@ -304,7 +389,7 @@ mod tests {
     #[test]
     fn scan_skips_marrow_file() {
         let temp = create_test_dir_with_files(&["index.typ", ".marrow.typ"]);
-        let result = SpineScan::run(temp.path(), &[]).unwrap();
+        let result = SpineScan::run(temp.path(), &[], true).unwrap();
 
         assert_eq!(result.files.len(), 1, "only index.typ is a vertebra");
         assert!(
@@ -323,7 +408,9 @@ mod tests {
     #[test]
     fn scan_keeps_a_nested_marrow_named_file_as_a_vertebra() {
         let temp = create_test_dir_with_files(&["index.typ", ".marrow.typ", "sub/.marrow.typ"]);
-        let result = SpineScan::run(temp.path(), &[]).unwrap();
+        // auto_index off: `sub` has one child (the nested marrow-named file)
+        // and no landing file of its own — irrelevant to what this test pins.
+        let result = SpineScan::run(temp.path(), &[], false).unwrap();
 
         assert_eq!(
             result.files.len(),
@@ -350,7 +437,8 @@ mod tests {
     #[test]
     fn scan_skips_the_configured_marrow_file() {
         let temp = create_test_dir_with_files(&["index.typ", "bundle-root.typ"]);
-        let result = SpineScan::run_with_marrow(temp.path(), &[], "bundle-root.typ").unwrap();
+        let result =
+            SpineScan::run_with_marrow(temp.path(), &[], "bundle-root.typ", true, None).unwrap();
 
         assert_eq!(result.files.len(), 1, "only index.typ is a vertebra");
         assert!(
@@ -365,7 +453,9 @@ mod tests {
     #[test]
     fn scan_numeric_prefix_dir_title() {
         let temp = create_test_dir_with_files(&["01-basics/setup.typ"]);
-        let result = SpineScan::run(temp.path(), &[]).unwrap();
+        // auto_index off: this test pins the group-title prettify path, which
+        // only applies to a group node.
+        let result = SpineScan::run(temp.path(), &[], false).unwrap();
 
         let basics = find_node(&result.tree, "01-basics");
         assert_eq!(basics.title(), Some("Basics"));
@@ -374,7 +464,7 @@ mod tests {
     #[test]
     fn scan_exclude_prunes_subtree() {
         let temp = create_test_dir_with_files(&["drafts/wip.typ", "keep.typ"]);
-        let result = SpineScan::run(temp.path(), &["drafts/**".to_string()]).unwrap();
+        let result = SpineScan::run(temp.path(), &["drafts/**".to_string()], true).unwrap();
 
         assert!(result.tree.iter().all(|n| n.segment != "drafts"));
         assert!(result.tree.iter().any(|n| n.segment == "keep"));
@@ -384,7 +474,7 @@ mod tests {
     #[test]
     fn scan_empty_after_exclude_errors() {
         let temp = create_test_dir_with_files(&["only.typ"]);
-        let result = SpineScan::run(temp.path(), &["only.typ".to_string()]);
+        let result = SpineScan::run(temp.path(), &["only.typ".to_string()], true);
         match result {
             Err(e) => assert!(e.to_string().contains("need at least one .typ file")),
             Ok(_) => panic!("expected empty-scan error"),

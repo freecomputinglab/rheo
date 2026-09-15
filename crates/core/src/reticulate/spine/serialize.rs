@@ -88,27 +88,31 @@ impl VirtualSpine {
     }
 
     /// Serialize one [`SpineNode`] (and its descendants) to its `spine` dict
-    /// shape: `title`/`handle`/`path`/`children`. Per-vertebra document
-    /// metadata is not part of this shape — read it live via
+    /// shape: `title`/`handle`/`path`/`synthesized`/`children`. Per-vertebra
+    /// document metadata is not part of this shape — read it live via
     /// `rheo-context().metadata-of` (see [`TypstStmt::MetadataHelper`]).
     fn node_literal(&self, node: &SpineNode) -> TypstLiteral {
         node.fold(&mut |n, children| {
-            let (handle, path, title) = match n.vertebra().and_then(|&i| self.vertebrae.get(i)) {
-                Some(v) => (
-                    TypstLiteral::str(v.handle.as_str()),
-                    TypstLiteral::str(v.rel_path.as_str()),
-                    TypstLiteral::str(v.title.as_str()),
-                ),
-                None => (
-                    TypstLiteral::None,
-                    TypstLiteral::None,
-                    TypstLiteral::str(n.title().unwrap_or(n.segment.as_str())),
-                ),
-            };
+            let (handle, path, title, synthesized) =
+                match n.vertebra().and_then(|&i| self.vertebrae.get(i)) {
+                    Some(v) => (
+                        TypstLiteral::str(v.handle.as_str()),
+                        TypstLiteral::str(v.rel_path.as_str()),
+                        TypstLiteral::str(v.title.as_str()),
+                        v.synthesized,
+                    ),
+                    None => (
+                        TypstLiteral::None,
+                        TypstLiteral::None,
+                        TypstLiteral::str(n.title().unwrap_or(n.segment.as_str())),
+                        false,
+                    ),
+                };
             TypstLiteral::Dict(vec![
                 ("title".to_string(), title),
                 ("handle".to_string(), handle),
                 ("path".to_string(), path),
+                ("synthesized".to_string(), TypstLiteral::bool(synthesized)),
                 ("children".to_string(), TypstLiteral::Array(children)),
             ])
         })
@@ -116,7 +120,7 @@ impl VirtualSpine {
 
     /// The flat spine as a [`TypstLiteral`] array-of-dictionaries, in the same
     /// pre-order as [`Self::flat_vertebrae`]: one entry per clickable vertebra
-    /// (group nodes excluded) with `handle`, `path`, and `title`.
+    /// (group nodes excluded) with `handle`, `path`, `title`, and `synthesized`.
     fn spine_flat(&self) -> TypstLiteral {
         TypstLiteral::Array(
             self.flat_vertebrae()
@@ -126,6 +130,7 @@ impl VirtualSpine {
                         ("handle".to_string(), TypstLiteral::str(v.handle.as_str())),
                         ("path".to_string(), TypstLiteral::str(v.rel_path.as_str())),
                         ("title".to_string(), TypstLiteral::str(v.title.as_str())),
+                        ("synthesized".to_string(), TypstLiteral::bool(v.synthesized)),
                     ])
                 })
                 .collect(),
@@ -170,7 +175,8 @@ mod tests {
         fs::write(content.join("intro.typ"), "= Intro\n").unwrap();
         fs::write(chapters.join("one.typ"), "= One\n").unwrap();
 
-        let scan = SpineScan::run(&content, &[]).unwrap();
+        // auto_index off: this test pins the group-node serialization shape.
+        let scan = SpineScan::run(&content, &[], false).unwrap();
         let layout = SpineLayout::OnePerVertebra {
             ext: "html".into(),
             format: "html".into(),
@@ -197,6 +203,36 @@ mod tests {
     }
 
     #[test]
+    fn spine_flat_marks_synthesized_vertebrae() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(content.join("extras")).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro\n").unwrap();
+        fs::write(content.join("extras").join("note.typ"), "= Note\n").unwrap();
+
+        // auto_index on: `extras/` has no landing file, so it gets a
+        // synthesized `index.typ` vertebra.
+        let scan = SpineScan::run(&content, &[], true).unwrap();
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let spine = VirtualSpine::build(scan, root, layout).unwrap();
+
+        let flat = spine.spine_flat().serialize();
+        assert!(flat.contains(
+            "handle: \"intro\", path: \"content/intro.typ\", title: \"Intro\", synthesized: false"
+        ));
+        assert!(flat.contains("handle: \"extras\""));
+        assert!(flat.contains("synthesized: true"));
+
+        let tree = spine.spine_tree().serialize();
+        assert!(tree.contains("synthesized: false"));
+        assert!(tree.contains("synthesized: true"));
+    }
+
+    #[test]
     fn spine_no_longer_exposes_a_metadata_key_on_entries() {
         // Neither the spine tree nor spine-flat entries carry a `metadata`
         // key — `Vertebra.title` is purely path-derived, so this vertebra's
@@ -216,7 +252,7 @@ mod tests {
         // A page with no `#set document(...)`.
         fs::write(content.join("bare.typ"), "= Bare\n").unwrap();
 
-        let scan = SpineScan::run(&content, &[]).unwrap();
+        let scan = SpineScan::run(&content, &[], true).unwrap();
         let layout = SpineLayout::OnePerVertebra {
             ext: "html".into(),
             format: "html".into(),

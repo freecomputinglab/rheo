@@ -9,7 +9,7 @@ use crate::packages::PackageResolver;
 use crate::reticulate::VertebraInjection;
 use crate::synth::source_injector::SourceInjector;
 use crate::synth::typst_literal::TypstLiteral;
-use crate::util::constants::METADATA_MODULE_PATH;
+use crate::util::constants::{METADATA_MODULE_PATH, RHEO_TEMPLATE_MODULE_PATH};
 use crate::{Result, RheoError};
 use chrono::{Datelike, Local};
 use codespan_reporting::files::{Error as CodespanError, Files};
@@ -471,10 +471,21 @@ impl World for RheoWorld {
 
         // The synthetic metadata-helper module the `MetadataHelper`/
         // `MetadataAllHelper`/`HandleTitleHelper` `#import` statements target
-        // (see `typst_source.rs`) — served from memory like `typ/rheo.typ`,
-        // never from the project's own filesystem.
+        // (see `typst_source.rs`) — served from memory, never from the
+        // project's own filesystem.
         if id.vpath().get_with_slash().trim_start_matches('/') == METADATA_MODULE_PATH {
             return Ok(self.cache_source(id, include_str!("typ/metadata.typ").to_string()));
+        }
+
+        // The same `typ/rheo.typ` `SourceInjector::main` splices wholesale
+        // into the bundle main, served here too as an independent module so
+        // the `IndexHelper` `#import` (see `typst_source.rs`) can reach
+        // `rheo-index-at` from a vertebra's own prelude — a separate Typst
+        // module from the bundle main, evaluated fresh on import, so its
+        // top-level `#show`/`#set` rules style only its own (empty) content,
+        // never the importer's.
+        if id.vpath().get_with_slash().trim_start_matches('/') == RHEO_TEMPLATE_MODULE_PATH {
+            return Ok(self.cache_source(id, include_str!("typ/rheo.typ").to_string()));
         }
 
         // Serve the synthesized virtual main, then any moulded vertebra overlay,
@@ -999,7 +1010,7 @@ mod tests {
         )
         .unwrap();
 
-        let scan = SpineScan::run(&content, &[]).unwrap();
+        let scan = SpineScan::run(&content, &[], true).unwrap();
         let layout = SpineLayout::OnePerVertebra {
             ext: "html".into(),
             format: "html".into(),
@@ -1064,7 +1075,7 @@ mod tests {
             .unwrap();
             fs::write(content.join("reader.typ"), reader_assertion).unwrap();
 
-            let scan = SpineScan::run(&content, &[]).unwrap();
+            let scan = SpineScan::run(&content, &[], true).unwrap();
             let layout = SpineLayout::OnePerVertebra {
                 ext: "html".into(),
                 format: "html".into(),

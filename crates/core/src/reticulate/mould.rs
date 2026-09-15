@@ -68,11 +68,14 @@ pub struct SpineMould {
 impl Vertebra {
     /// Apply this vertebra's Mould rewrites to its source.
     ///
-    /// Returns `None` when there are no rewrites (an identity mould), so the
-    /// caller can omit the vertebra from the overlay and let it disk-read.
+    /// Returns `None` when there are no rewrites AND the source is a real
+    /// on-disk file (an identity mould), so the caller can omit the vertebra
+    /// from the overlay and let it disk-read. A synthesized vertebra (see
+    /// [`Vertebra::synthesized`]) has no file on disk to fall back to, so it
+    /// is always `Some`, with or without rewrites.
     pub fn mould(&self) -> Option<String> {
         let rewrites = self.rewrites();
-        if rewrites.is_empty() {
+        if rewrites.is_empty() && !self.synthesized {
             return None;
         }
         Some(rewrites.apply(&self.source))

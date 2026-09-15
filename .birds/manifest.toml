@@ -1,0 +1,11 @@
+schema = 1
+prefix = "rh"
+backend = "auto"
+ideas = "auto"
+
+[markup]
+dialect = "md"
+
+[ideas-scan]
+roots = ["."]
+inbox = "birds.inbox.md"

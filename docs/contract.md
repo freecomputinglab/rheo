@@ -37,8 +37,8 @@ alongside it — see "Project-supplied `sys.inputs`" below — but not this one.
 | --- | --- | --- | --- | --- | --- |
 | `handle` | `rheo-context()` only | `str` | yes | Stable | This file's own `:`-joined handle. The only per-file field; never on `sys.inputs.rheo-context`. |
 | `metadata-of` | `rheo-context()` only | function `(handle) => dict` | yes | Stable | `= rheo-metadata`. Dict field, not a method — call as `(rheo-context().metadata-of)(handle)`. Requires `#context`. |
-| `spine` | both | `array` (recursive node dicts: `title`/`handle`/`path`/`children`) | yes | Stable | Titles are path-derived only, never a `#set document(title:)` value — see `docs/limitations.md`. |
-| `spine-flat` | both | `array` (dicts: `handle`/`path`/`title`) | yes | Stable | Pre-order, groups excluded. Same path-derived-title caveat. |
+| `spine` | both | `array` (recursive node dicts: `title`/`handle`/`path`/`synthesized`/`children`) | yes | Stable | Titles are path-derived only, never a `#set document(title:)` value — see `docs/limitations.md`. `synthesized: true` means `path` is notional — `auto_index` minted the page and there is no such file on disk, so never `read()` it (a group node always carries `synthesized: false`). |
+| `spine-flat` | both | `array` (dicts: `handle`/`path`/`title`/`synthesized`) | yes | Stable | Pre-order, groups excluded. Same path-derived-title caveat. `synthesized: true` means `path` is notional — `auto_index` minted the page and there is no such file on disk, so never `read()` it. |
 | `rheo-version` | both | `str`, semver (`x.y.z`) | yes | Stable | This build's own rheo version (`env!("CARGO_PKG_VERSION")`); pairs with `[tool.rheo] min_version` below for version negotiation. Verified by `rheo-tests/cases/rheo_context_all_formats/a.typ`. |
 | `target` | both | `str` (`"html"` \| `"epub"`) | **no** — omitted for PDF | Stable | Present for per-page formats only. `target()` (the polyfill, see `CLAUDE.md`) is the per-file-friendly way to read it. |
 | `ext` | both | `str` (`"html"` \| `"xhtml"`) | **no** — omitted for PDF, gated identically to `target` | Stable | `target`/`ext` always appear together or not at all — asserted in `rheo-tests/cases/rheo_context_all_formats/a.typ`. |
@@ -48,6 +48,12 @@ alongside it — see "Project-supplied `sys.inputs`" below — but not this one.
 Everything in this table not marked Internal is safe to read straight off
 `sys.inputs.rheo-context` with no `#context` — only `metadata-of`/`rheo-metadata`
 need it (they call `query(...)`).
+
+## Directory-index helper — `rheo-index()` (`crates/core/src/typ/rheo.typ`)
+
+| Helper | Signature | Scope | Notes |
+| --- | --- | --- | --- |
+| `rheo-index` | `() => content` | every vertebra (its own prelude), bound after `rheo-context()` to `rheo-index-at(rheo-context().handle)` | A synthesized directory-index vertebra's whole body is a call to this (`rheo.toml` `[spine] auto_index`, default `true`): a plain list of links to the current page's own children, read from `spine` — the full tree, groups included, unlike `spine-flat` — for the handle baked into that vertebra's own `rheo-context()` binding, a compile-time constant rather than a `state` read. This works in every format including the combined PDF, where each child renders as a Typst label link (`link(label(child.handle), child.title)`) rather than a relative href. A project overrides the default by binding its own `#let rheo-index() = ...` in `[spine] prelude`, spliced after this binding, so it shadows it for every vertebra. |
 
 ## Project-supplied `sys.inputs`
 
@@ -164,11 +170,21 @@ hoisted into that page's own `<head>`.
 *every* page's `<head>`, after each page's own `<rheo-head>` content
 (`crates/core/src/transclude.rs:272-341`, `ControlAssets`).
 
-**`.rheo/` prefix** — reserved for bundle assets consumed internally by rheo:
+**`.rheo/` prefix** — reserved for bundle *assets* consumed internally by rheo:
 never written to a plugin's output directory, never embedded in EPUB, never
 served by the dev server (`crates/core/src/util/constants.rs:18-25`,
 `CONTROL_ASSET_PREFIX`). An unrecognized `.rheo/*` member is dropped with a
 `warn!`, not an error.
+
+**`typ/` prefix — reserved on the input side.** `RheoWorld` serves paths under
+a project-root `typ/` from memory before falling back to disk
+(`crates/core/src/world.rs:471-490`): `typ/metadata.typ`
+(`METADATA_MODULE_PATH`) and `typ/rheo.typ` (`RHEO_TEMPLATE_MODULE_PATH`,
+`crates/core/src/util/constants.rs`), both targets of `#import` statements
+rheo's own injected Typst renders. A project file at either path is shadowed
+and unreachable — rheo's in-memory copy wins silently, with no build error.
+More paths under `typ/` may be reserved later. Stability: Internal — the two
+paths in use today, not the mechanism's shape.
 
 ## Package manifest keys (`typst.toml`, `crates/core/src/plugins/typst_manifest.rs`)
 
@@ -209,22 +225,23 @@ filename it ships (`crates/core/src/plugins/typst_manifest.rs:227-263`):
 
 | File | Position | Constant |
 | --- | --- | --- |
-| `.marrow.typ` | epilogue — spliced after every `#document(...)` | `MARROW_FILE` (`crates/core/src/util/constants.rs:10`) |
-| `.marrow-prologue.typ` | prologue — spliced before every `#document(...)`, so a `#show`/`#set` rule in it reaches pre-existing vertebrae | `MARROW_PROLOGUE_FILE` (`crates/core/src/util/constants.rs:16`) |
+| `.marrow.prologue.typ` | prologue — spliced before every `#document(...)`, so a `#show`/`#set` rule in it reaches pre-existing vertebrae | `MARROW_PROLOGUE_FILE` |
+| `.marrow.epilogue.typ` | epilogue — spliced after every `#document(...)` | `MARROW_EPILOGUE_FILE` |
+| `.marrow.typ` | whichever position the bare name falls back to | `MARROW_FILE` |
 
-A package may ship either or both (`crates/core/src/plugins/typst_manifest.rs`
-tests: `package_marrow_prologue_source_reads_sibling_file`,
-`package_may_ship_both_marrow_positions`). Within each position, **packages
-contribute first in import order, then the project's own marrow**, so a
-project's marrow can build on what a package registered
-(`crates/core/src/build.rs:289-296`).
+**Either explicit name outranks a bare `.marrow.typ`**, which is then not read
+at all: the bare name is a fallback, never a third contribution
+(`explicit_marrow_names_outrank_a_bare_one`). A package may ship either or both
+explicit names (`package_may_ship_both_marrow_positions`), and its bare
+`.marrow.typ` always falls back to the epilogue. Within each position,
+**packages contribute first in import order, then the project's own marrow**, so
+a project's marrow can build on what a package registered.
 
-A project has no per-position filename choice — it always writes
-`.marrow.typ` (or whatever `rheo.toml`'s `marrow` key renames it to,
-`crates/core/src/config/mod.rs:192-195`) and opts into the prologue position
-with `rheo.toml`'s `marrow_prologue = true` (default `false`, i.e. epilogue —
-today's byte-identical-on-upgrade behaviour;
-`crates/core/src/config/mod.rs:197-203,326-329`). Paths inside any marrow file
+A project's bare `.marrow.typ` (or whatever `rheo.toml`'s `[marrow] file` key
+renames it to) falls back to the position `[marrow] position` names — default
+`"epilogue"`, today's byte-identical-on-upgrade behaviour. That key is
+the project's own and never repositions a package's bare marrow. Paths inside
+any marrow file
 resolve against the *project* root, not the package's own directory — a
 package's marrow must reach its own code through its package spec
 (`@ns/name:version`), never a relative import.

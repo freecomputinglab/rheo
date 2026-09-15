@@ -1,5 +1,107 @@
 # Unreleased — user-visible changes
 
+## A childless directory index gets a real page: `[spine] auto_index`
+
+**This one is on by default, and changes what every existing project builds
+without any config edit.** A directory with children and no landing file
+(`index.typ`/`<dirname>.typ`) used to become a non-clickable group node with a
+prettified title. It now gets a synthesized landing page instead: a real
+vertebra whose whole body is a call to `rheo-index()`, the default
+directory-index renderer — so it's a new file in `build/`, a new entry in
+`spine-flat`, and a new row in any feed, sitemap or nav a project or package
+derives from `spine-flat`.
+
+A project restyles every directory index at once by binding its own `#let
+rheo-index() = ...` in `[spine] prelude`, which is spliced in after rheo's own
+binding and so shadows it — rather than hand-writing an `index.typ` per
+directory.
+
+`auto_index = false` under `[spine]` restores the previous behaviour exactly:
+such a directory goes back to being a non-clickable group node with no page of
+its own. It falls back field-by-field like every other spine key, so
+`[pdf.spine] auto_index = false` turns it off for the combined PDF alone while
+HTML and EPUB keep synthesizing.
+
+A directory left with no children after exclusion is now dropped entirely, in
+both modes — nothing to index and nothing to be a group node for.
+
+## Marrow position is a filename: `.marrow.prologue.typ` / `.marrow.epilogue.typ`
+
+Two reserved names now say where a marrow contribution splices, rather than one
+name plus a boolean:
+
+| File | Position |
+| --- | --- |
+| `.marrow.prologue.typ` | before every `#document(...)`, so a `#show`/`#set` in it reaches pre-existing vertebrae |
+| `.marrow.epilogue.typ` | after every `#document(...)` |
+| `.marrow.typ` | falls back to one of the above |
+
+**Either explicit name outranks a bare `.marrow.typ`, which is then not read at
+all.** The bare name is a fallback, never a third contribution — so a package
+adding `.marrow.prologue.typ` beside an existing `.marrow.typ` moves its marrow
+rather than running it twice.
+
+A project's bare `.marrow.typ` takes the position a new `[marrow]` table's
+`position` key names, default `"epilogue"` — so an unconfigured project
+compiles exactly as before:
+
+```toml
+[marrow]
+file = "bundle-root.typ"   # optional; overrides the bare `.marrow.typ` filename
+position = "prologue"      # optional; "epilogue" (default) or "prologue"
+```
+
+The table replaces the retired top-level `marrow` filename override and
+`dot_marrow_is_epilogue` boolean (`rheo migrate` converts both), and inverts
+the sense of the older retired `marrow_prologue` key once more:
+`marrow_prologue = true` is now `[marrow] position = "prologue"`. `position`
+governs the project's own marrow only; a package's bare `.marrow.typ` is
+always the epilogue, since one project's setting has no business
+repositioning a dependency's splice.
+
+## A project can inject Typst into every vertebra with `[spine] prelude`
+
+`[spine]` gained a `prelude` key: a path (relative to `content_dir`) to a Typst
+file whose text is prepended *inside* every vertebra, after rheo's own
+`rheo-context()` binding and before the vertebra's own source.
+
+```toml
+[spine]
+prelude = "_lib/prelude.typ"
+```
+
+The point is lexical scope, which marrow cannot give: marrow sits at the bundle
+root and a vertebra is `#include`d, so Typst scopes an included file's bindings
+to itself and only `#show`/`#set` rules reach through. A prelude is part of the
+vertebra's own source, so a `#let` in it binds a name every page can use — and
+because it lands after the context binding it can call `rheo-context()`, so a
+project derives per-page facts once instead of restating them per file. What
+used to be a preamble in every vertebra —
+
+```typst
+#import "/_lib/template.typ": constructors
+#let (page, note) = constructors(ctx: rheo-context())
+#show: page
+```
+
+— becomes `#show: page`, with the first two lines living in the prelude. A new
+file in a new subdirectory then inherits whatever its own path implies with
+nothing declared in it at all.
+
+Imports in the prelude must be **root-absolute** (`/_lib/x.typ`): the same text
+is spliced into vertebrae at every depth. The splice is keyed per vertebra, so
+it reaches neither a partial pulled in by `#include` nor the library file the
+prelude itself imports, which would otherwise recurse. The library it imports
+belongs OUTSIDE `content_dir`: only the prelude's own path leaves the scan, so a
+library beside it under `content_dir` is still compiled as a vertebra, is
+spliced with the prelude, and imports itself — a cyclic import that fails the
+build.
+
+An unreadable `prelude` path is fatal and names the path, unlike a missing
+marrow file (silent, its filename having a default) — this key exists only
+because someone wrote a path. It falls back field-by-field like every other
+spine key, so `[pdf.spine] prelude` overrides the global one for that format.
+
 ## A package namespace can resolve straight from a directory on disk
 
 `[packages.<ns>]` gained a third source alongside `repo` and `releases`: `path

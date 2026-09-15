@@ -136,6 +136,18 @@ impl<L: Eq + Hash> Node<L> {
             }
         });
     }
+
+    /// Drop a landing node whose payload is in `stranded` and which has been
+    /// left with no children, recursively — removing one such node can leave
+    /// its own parent in the same state. Leaves every other node untouched:
+    /// a landing node outside `stranded` keeps a page an author wrote even if
+    /// now childless, and a group node is never a landing node to begin with.
+    pub(super) fn prune_stranded(nodes: &mut Vec<Node<L>>, stranded: &HashSet<L>) {
+        nodes.retain_mut(|n| {
+            Self::prune_stranded(&mut n.children, stranded);
+            !matches!(&n.kind, NodeKind::Landing(p) if n.children.is_empty() && stranded.contains(p))
+        });
+    }
 }
 
 /// Every vertebra index the tree references, in pre-order: a node's own

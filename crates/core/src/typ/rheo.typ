@@ -103,3 +103,45 @@
     #body
   ]
 }
+
+// Recursively finds the spine node whose own `handle` matches `handle`,
+// searching `nodes` and their descendants (pre-order); `none` if not found.
+#let _rheo-index-find(nodes, handle) = {
+  for node in nodes {
+    if node.handle == handle { return node }
+    let found = _rheo-index-find(node.children, handle)
+    if found != none { return found }
+  }
+  none
+}
+
+// Default body for a synthesized directory-index page (auto_index in
+// [spine]): a plain list of links to `handle`'s own children. Takes the
+// handle as an argument rather than reading state — rheo already bakes it
+// into each vertebra's rheo-context() binding, a compile-time constant at
+// the call site — which also makes this work under a SingleCombined (PDF)
+// layout, where every vertebra shares one #document and state("rheo-handle")
+// is meaningless. Reads `spine` — the full tree, INCLUDING group nodes,
+// unlike spine-flat — off sys.inputs since this function is imported from
+// this module (see IndexHelper) rather than defined per vertebra, so it
+// cannot capture a vertebra-local rheo-context() binding. A project
+// overrides the default by binding its own #let rheo-index() in [spine]
+// prelude, spliced after the IndexBinding call site, so it shadows it for
+// every vertebra.
+#let rheo-index-at(handle) = {
+  let ctx = sys.inputs.rheo-context
+  let ext = ctx.at("ext", default: none)
+  let node = _rheo-index-find(ctx.spine, handle)
+  let children = if node == none { () } else { node.children }
+  list(..children.map(child => {
+    if child.handle == none {
+      [#child.title]
+    } else if ext != none {
+      link(_rheo-href(handle, child.handle, ext))[#child.title]
+    } else {
+      // No ext means a SingleCombined (PDF) layout: use the same label-link
+      // mechanism as ordinary cross-vertebra links, since there is no href.
+      link(label(child.handle), child.title)
+    }
+  }))
+}

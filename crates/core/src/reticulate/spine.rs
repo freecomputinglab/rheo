@@ -12,7 +12,7 @@ use crate::reticulate::document_meta::DocumentTitle;
 use crate::reticulate::handle::Handle;
 use crate::synth::typst_source::{TypstBlock, TypstStmt};
 use crate::util::path::to_forward_slash;
-use crate::{MARROW_FILE, RESERVED_META_LABEL_PREFIX, Result, RheoError};
+use crate::{MARROW_FILE, MARROW_RESERVED_FILES, RESERVED_META_LABEL_PREFIX, Result, RheoError};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,6 +30,12 @@ pub struct SpineScan {
     pub files: Vec<PathBuf>,
     /// Structured tree; `node.vertebra()` indexes into `files` (== pre-order position).
     pub tree: Vec<SpineNode>,
+    /// Indices into `files` of a landing page synthesized by `auto_index`
+    /// rather than found on disk — the notional `<dir>/index.typ` path a
+    /// directory with children and no landing file gets instead of a
+    /// non-clickable group. `VirtualSpine::build` reads this to know which
+    /// files to synthesize a source for rather than read from disk.
+    pub synthesized: HashSet<usize>,
 }
 
 impl SpineScan {
@@ -38,18 +44,25 @@ impl SpineScan {
     ///
     /// `exclude` is a list of glob patterns matched against each candidate
     /// path relative to `content_dir` (forward-slash separated); matching
-    /// files or directories are dropped entirely.
-    pub fn run(content_dir: &Path, exclude: &[String]) -> Result<SpineScan> {
-        Self::run_with_marrow(content_dir, exclude, MARROW_FILE)
+    /// files or directories are dropped entirely. `auto_index` is `[spine]
+    /// auto_index` — whether a directory with children and no landing file
+    /// gets a synthesized one instead of becoming a non-clickable group.
+    pub fn run(content_dir: &Path, exclude: &[String], auto_index: bool) -> Result<SpineScan> {
+        Self::run_with_marrow(content_dir, exclude, MARROW_FILE, auto_index, None)
     }
 
     /// As [`Self::run`], but with the project's configured marrow filename —
     /// that file is inlined at bundle root rather than compiled as a vertebra,
-    /// so the scan must skip it whatever it is called.
+    /// so the scan must skip it whatever it is called. `prelude` is the
+    /// `[spine] prelude` path (already relative to `content_dir`, like
+    /// `exclude`) — it is spliced into every vertebra's own source rather than
+    /// compiled as one of its own, so the scan must skip it too.
     pub fn run_with_marrow(
         content_dir: &Path,
         exclude: &[String],
         marrow_file: &str,
+        auto_index: bool,
+        prelude: Option<&str>,
     ) -> Result<SpineScan> {
         // The marrow file is inlined at bundle root, never compiled as a
         // vertebra, so the scan must not see it. Injected as an escaped literal
@@ -57,11 +70,28 @@ impl SpineScan {
         // own knob; `literal_separator` keeps it matching only at the top level,
         // where marrow is actually read from.
         let mut exclude_patterns = exclude.to_vec();
-        exclude_patterns.push(globset::escape(marrow_file));
+        let marrow_names: Vec<&str> = std::iter::once(marrow_file)
+            .chain(MARROW_RESERVED_FILES)
+            .collect();
+        exclude_patterns.extend(marrow_names.iter().map(|n| globset::escape(n)));
+        // The prelude is spliced into every vertebra's own source, not
+        // compiled as a vertebra of its own — same reasoning as marrow, and
+        // escaped for the same reason: it's a literal path the user wrote.
+        if let Some(prelude) = prelude {
+            exclude_patterns.push(globset::escape(prelude));
+        }
         let exclude_set = Self::build_exclude_set(&exclude_patterns)?;
 
         let mut files = Vec::new();
-        let tree = Self::scan_dir(content_dir, content_dir, &exclude_set, &mut files)?;
+        let mut synthesized = HashSet::new();
+        let tree = Self::scan_dir(
+            content_dir,
+            content_dir,
+            &exclude_set,
+            auto_index,
+            &mut files,
+            &mut synthesized,
+        )?;
 
         if files.is_empty() {
             return Err(RheoError::project_config("need at least one .typ file"));
@@ -74,7 +104,8 @@ impl SpineScan {
         // say so rather than letting it look like marrow that silently did
         // nothing.
         for file in &files {
-            if file.file_name().and_then(|n| n.to_str()) == Some(marrow_file) {
+            let name = file.file_name().and_then(|n| n.to_str());
+            if name.is_some_and(|n| marrow_names.contains(&n)) {
                 let shown = file.strip_prefix(content_dir).unwrap_or(file);
                 warn!(
                     path = %to_forward_slash(shown),
@@ -93,7 +124,11 @@ impl SpineScan {
             "spine scan tree indices must be unique and in range"
         );
 
-        Ok(SpineScan { files, tree })
+        Ok(SpineScan {
+            files,
+            tree,
+            synthesized,
+        })
     }
 
     /// Build a flat spine (no nesting) from an explicit, ordered file list.
@@ -120,6 +155,7 @@ impl SpineScan {
         SpineScan {
             files: files.to_vec(),
             tree,
+            synthesized: HashSet::new(),
         }
     }
 
@@ -187,6 +223,11 @@ pub struct Vertebra {
     pub title: String,
     /// The vertebra's raw source text, retained for the Mould stage.
     pub source: String,
+    /// Whether `source` was synthesized by `auto_index` rather than read from
+    /// a real file on disk — there is nothing on disk to fall back to, so the
+    /// Mould stage (`crate::reticulate::mould`) must always serve it from the
+    /// moulded overlay, with or without rewrites.
+    pub synthesized: bool,
 }
 
 impl Vertebra {
@@ -236,12 +277,23 @@ pub struct VirtualSpine {
     /// not sequential). Global-by-default and powerful — opt-in only, applied
     /// with [`Self::with_marrow_prologue`].
     pub marrow_prologue: Vec<String>,
+    /// The project's `[spine] prelude`, prepended inside every vertebra rather
+    /// than at bundle root, so its bindings are in the page's own scope.
+    /// Resolved by callers and applied with [`Self::with_vertebra_prelude`],
+    /// for the same no-config-access reason as `title`.
+    pub vertebra_prelude: Option<String>,
 }
 
 impl VirtualSpine {
     /// Attach a resolved spine title, builder-style.
     pub fn with_title(mut self, title: Option<String>) -> Self {
         self.title = title;
+        self
+    }
+
+    /// Attach the project's per-vertebra Typst prelude, builder-style.
+    pub fn with_vertebra_prelude(mut self, prelude: Option<String>) -> Self {
+        self.vertebra_prelude = prelude;
         self
     }
 
@@ -283,7 +335,11 @@ impl VirtualSpine {
     /// on a cross-directory stem collision). Pass `project_root` for `#include` paths.
     pub fn build(scan: SpineScan, project_root: &Path, layout: SpineLayout) -> Result<Self> {
         let handles = scan.handles();
-        let SpineScan { files, tree } = scan;
+        let SpineScan {
+            files,
+            tree,
+            synthesized,
+        } = scan;
 
         // First pass: parse each file, compute handles, collect user labels.
         struct FileInfo {
@@ -294,6 +350,7 @@ impl VirtualSpine {
             rel_path: String,
             title: String,
             source: String,
+            synthesized: bool,
         }
 
         // Union of all user-authored labels across the spine, as they land in
@@ -304,8 +361,9 @@ impl VirtualSpine {
 
         let file_infos: Result<Vec<FileInfo>> = files
             .iter()
+            .enumerate()
             .zip(handles.iter())
-            .map(|(file, handle)| {
+            .map(|((i, file), handle)| {
                 let handle = handle.clone();
                 let escape = handle.escape();
 
@@ -314,11 +372,17 @@ impl VirtualSpine {
                     SpineLayout::SingleCombined { output_name, .. } => output_name.clone(),
                 };
 
-                // The scan already proved this path exists and ends in `.typ`,
-                // so a read failure here is a real fault, not an absence.
-                let source = fs::read_to_string(file).map_err(|e| {
-                    RheoError::io(e, format!("reading spine file '{}'", file.display()))
-                })?;
+                // The scan already proved this path exists on disk, or is one
+                // of the scan's synthesized indexes — its whole body is a call
+                // to the default (overridable) directory-index renderer.
+                let is_synthesized = synthesized.contains(&i);
+                let source = if is_synthesized {
+                    "#rheo-index()\n".to_string()
+                } else {
+                    fs::read_to_string(file).map_err(|e| {
+                        RheoError::io(e, format!("reading spine file '{}'", file.display()))
+                    })?
+                };
                 let stem = file
                     .file_stem()
                     .unwrap_or_default()
@@ -338,7 +402,17 @@ impl VirtualSpine {
                 // `crate::build::flatten_bundle_outputs`); this path-derived
                 // value is only a pre-compile placeholder (spine ordering,
                 // `@handle` display text before the bundle compiles, etc.).
-                let title = DocumentTitle::to_readable_name(&stem);
+                // For a synthesized index there is no file an author could
+                // publish a beacon from, so this path-derived title is final —
+                // it names the directory it stands for, not "Index".
+                let title = if is_synthesized {
+                    file.parent()
+                        .and_then(|p| p.file_name())
+                        .map(|name| SpineScan::prettify(&name.to_string_lossy()))
+                        .unwrap_or_else(|| DocumentTitle::to_readable_name(&stem))
+                } else {
+                    DocumentTitle::to_readable_name(&stem)
+                };
 
                 // The `rheo-meta:` namespace is reserved for the synthesized
                 // per-vertebra metadata beacon (`TypstStmt::MetadataBeacon`).
@@ -370,6 +444,7 @@ impl VirtualSpine {
                     rel_path,
                     title,
                     source,
+                    synthesized: is_synthesized,
                 })
             })
             .collect();
@@ -406,6 +481,7 @@ impl VirtualSpine {
                     emit_handle,
                     title: fi.title,
                     source: fi.source,
+                    synthesized: fi.synthesized,
                 })
             })
             .collect();
@@ -426,6 +502,7 @@ impl VirtualSpine {
             layout,
             tree,
             title: None,
+            vertebra_prelude: None,
             marrow: Vec::new(),
             marrow_prologue: Vec::new(),
         })
@@ -453,19 +530,35 @@ impl VirtualSpine {
     /// `docs/spikes/typst-native-metadata.md`, Q6), so `epilogue` is empty
     /// there; `rheo-metadata` is still defined (it just finds no beacon and
     /// returns `(:)`).
+    ///
+    /// `rheo-index-at` (see [`TypstStmt::IndexHelper`]) — the default,
+    /// overridable renderer a synthesized directory-index vertebra's body
+    /// calls — is imported next, then bound to this vertebra's own handle as
+    /// `rheo-index()` (see [`TypstStmt::IndexBinding`]).
+    ///
+    /// `self.vertebra_prelude` goes last, so it can call the `rheo-context()`
+    /// defined above it, and so a `#let rheo-index() = ...` in it shadows the
+    /// default. Keying by vertebra is also what keeps it out of the
+    /// library file it imports, which would otherwise recurse.
     pub fn vertebra_injections(&self) -> HashMap<String, VertebraInjection> {
         let emit_beacon = matches!(self.layout, SpineLayout::OnePerVertebra { .. });
         self.vertebrae
             .iter()
             .map(|v| {
                 let prelude = format!(
-                    "{}\n\n",
+                    "{}\n\n{}",
                     TypstBlock(vec![
                         TypstStmt::MetadataHelper,
                         TypstStmt::ContextBinding {
                             handle: v.handle.clone(),
                         },
-                    ])
+                        TypstStmt::IndexHelper,
+                        TypstStmt::IndexBinding,
+                    ]),
+                    match &self.vertebra_prelude {
+                        Some(p) => format!("{}\n\n", p.trim_end()),
+                        None => String::new(),
+                    },
                 );
                 let epilogue = if emit_beacon {
                     let beacon = TypstStmt::MetadataBeacon {
@@ -743,6 +836,116 @@ mod tests {
         assert!(v.source.contains("<etal>"));
     }
 
+    /// A synthesized directory-index vertebra's source is exactly `#rheo-index()`,
+    /// and every downstream derivation (handle, output path) comes out
+    /// identical to what a real, empty `index.typ` in the same directory
+    /// would have produced.
+    #[test]
+    fn synthesized_index_source_and_output_path_match_a_real_index_typ() {
+        let layout = || SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+
+        let synthesized_tmp = TempDir::new().unwrap();
+        let synthesized_root = synthesized_tmp.path();
+        let synthesized_content = synthesized_root.join("content");
+        fs::create_dir_all(synthesized_content.join("extras")).unwrap();
+        fs::write(
+            synthesized_content.join("extras").join("note.typ"),
+            "= Note\n",
+        )
+        .unwrap();
+        let scan = SpineScan::run(&synthesized_content, &[], true).unwrap();
+        let spine = VirtualSpine::build(scan, synthesized_root, layout()).unwrap();
+        let synthesized = spine
+            .vertebrae
+            .iter()
+            .find(|v| v.rel_path.ends_with("extras/index.typ"))
+            .expect("extras gets a synthesized index.typ vertebra");
+        assert_eq!(synthesized.source, "#rheo-index()\n");
+
+        let real_tmp = TempDir::new().unwrap();
+        let real_root = real_tmp.path();
+        let real_content = real_root.join("content");
+        fs::create_dir_all(real_content.join("extras")).unwrap();
+        fs::write(real_content.join("extras").join("index.typ"), "").unwrap();
+        fs::write(real_content.join("extras").join("note.typ"), "= Note\n").unwrap();
+        let scan = SpineScan::run(&real_content, &[], true).unwrap();
+        let spine = VirtualSpine::build(scan, real_root, layout()).unwrap();
+        let real = spine
+            .vertebrae
+            .iter()
+            .find(|v| v.rel_path.ends_with("extras/index.typ"))
+            .unwrap();
+
+        assert_eq!(synthesized.handle, real.handle);
+        assert_eq!(synthesized.output_path, real.output_path);
+    }
+
+    /// A synthesized directory-index vertebra is titled after its own
+    /// directory, prettified the same way a non-clickable group node would
+    /// have been — not "Index".
+    #[test]
+    fn synthesized_index_titled_after_parent_directory() {
+        let layout = || SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(content.join("chapters")).unwrap();
+        fs::create_dir_all(content.join("01-intro")).unwrap();
+        fs::write(content.join("chapters").join("one.typ"), "= One\n").unwrap();
+        fs::write(content.join("01-intro").join("one.typ"), "= One\n").unwrap();
+
+        let scan = SpineScan::run(&content, &[], true).unwrap();
+        let spine = VirtualSpine::build(scan, root, layout()).unwrap();
+
+        let chapters = spine
+            .vertebrae
+            .iter()
+            .find(|v| v.rel_path.ends_with("chapters/index.typ"))
+            .expect("chapters gets a synthesized index.typ vertebra");
+        assert_eq!(chapters.title, "Chapters");
+
+        let intro = spine
+            .vertebrae
+            .iter()
+            .find(|v| v.rel_path.ends_with("01-intro/index.typ"))
+            .expect("01-intro gets a synthesized index.typ vertebra");
+        assert_eq!(intro.title, "Intro");
+    }
+
+    /// A REAL, authored `index.typ` keeps its path-derived "Index" title —
+    /// only a synthesized landing page borrows its directory's name.
+    #[test]
+    fn real_index_typ_keeps_index_title() {
+        let layout = || SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(content.join("chapters")).unwrap();
+        fs::write(content.join("chapters").join("index.typ"), "").unwrap();
+        fs::write(content.join("chapters").join("one.typ"), "= One\n").unwrap();
+
+        let scan = SpineScan::run(&content, &[], true).unwrap();
+        let spine = VirtualSpine::build(scan, root, layout()).unwrap();
+
+        let chapters = spine
+            .vertebrae
+            .iter()
+            .find(|v| v.rel_path.ends_with("chapters/index.typ"))
+            .unwrap();
+        assert_eq!(chapters.title, "Index");
+    }
+
     #[test]
     fn vertebra_injection_prelude_is_composed_function_with_own_handle() {
         let tmp = TempDir::new().unwrap();
@@ -789,6 +992,20 @@ mod tests {
             // ...so the large spine is NOT duplicated into the per-file prelude.
             assert!(!p.contains("spine-flat"));
             assert!(!p.contains("path:"));
+            // ...and rheo-index-at (the default, overridable directory-index
+            // renderer a synthesized landing page's body calls) is imported
+            // after rheo-context(), so a later override can shadow it, and
+            // rheo-index() is bound to call it with THIS vertebra's own handle.
+            assert!(p.contains("#import \"/typ/rheo.typ\": rheo-index-at"));
+            assert!(
+                p.find("#let rheo-context() = ").unwrap()
+                    < p.find("#import \"/typ/rheo.typ\"").unwrap()
+            );
+            assert!(p.contains("#let rheo-index() = rheo-index-at(rheo-context().handle)"));
+            assert!(
+                p.find("#import \"/typ/rheo.typ\"").unwrap()
+                    < p.find("#let rheo-index() = rheo-index-at").unwrap()
+            );
             // OnePerVertebra layouts get a beacon epilogue naming this vertebra.
             assert!(inj.epilogue.contains("#metadata("));
         }
@@ -798,6 +1015,50 @@ mod tests {
                 .epilogue
                 .contains("<rheo-meta:chapters:intro>")
         );
+
+        // Unconfigured `[spine] prelude` appends nothing.
+        for inj in [root_injection, nested_injection] {
+            assert!(
+                inj.prelude
+                    .ends_with("rheo-index() = rheo-index-at(rheo-context().handle)\n\n")
+            );
+        }
+    }
+
+    #[test]
+    fn vertebra_prelude_is_appended_to_every_vertebra_after_the_context_binding() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        let chapters = content.join("chapters");
+        fs::create_dir_all(&chapters).unwrap();
+        fs::write(content.join("intro.typ"), "= Intro\n").unwrap();
+        fs::write(chapters.join("deep.typ"), "= Deep\n").unwrap();
+
+        let files = vec![content.join("intro.typ"), chapters.join("deep.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        // Trailing blank lines are normalized, so a prelude file's own
+        // whitespace cannot shift where the vertebra's first line lands.
+        let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout)
+            .unwrap()
+            .with_vertebra_prelude(Some(
+                "#let page-tag = rheo-context().handle\n\n\n".to_string(),
+            ));
+
+        let injections = spine.vertebra_injections();
+        assert_eq!(injections.len(), 2);
+
+        for key in ["content/intro.typ", "content/chapters/deep.typ"] {
+            let p = &injections[key].prelude;
+            assert!(
+                p.find("#let rheo-context() = ").unwrap() < p.find("#let page-tag").unwrap(),
+                "{key}: prelude must follow the context binding it reads"
+            );
+            assert!(p.ends_with("rheo-context().handle\n\n"), "{key}: {p:?}");
+        }
     }
 
     #[test]
@@ -867,6 +1128,7 @@ mod tests {
             emit_handle: true,
             title: "Introduction".into(),
             source: String::new(),
+            synthesized: false,
         };
         let spine = VirtualSpine {
             vertebrae: vec![v],
@@ -876,6 +1138,7 @@ mod tests {
             },
             tree: Vec::new(),
             title: None,
+            vertebra_prelude: None,
             marrow: Vec::new(),
             marrow_prologue: Vec::new(),
         };
@@ -902,6 +1165,7 @@ mod tests {
                     emit_handle: true,
                     title: "A".into(),
                     source: String::new(),
+                    synthesized: false,
                 },
                 Vertebra {
                     rel_path: "content/b.typ".into(),
@@ -911,6 +1175,7 @@ mod tests {
                     emit_handle: true,
                     title: "B".into(),
                     source: String::new(),
+                    synthesized: false,
                 },
             ],
             layout: SpineLayout::SingleCombined {
@@ -919,6 +1184,7 @@ mod tests {
             },
             tree: Vec::new(),
             title: None,
+            vertebra_prelude: None,
             marrow: Vec::new(),
             marrow_prologue: Vec::new(),
         };
@@ -948,6 +1214,7 @@ mod tests {
                     emit_handle: true,
                     title: "A".into(),
                     source: String::new(),
+                    synthesized: false,
                 },
                 Vertebra {
                     rel_path: "b.typ".into(),
@@ -957,6 +1224,7 @@ mod tests {
                     emit_handle: true,
                     title: "B".into(),
                     source: String::new(),
+                    synthesized: false,
                 },
             ],
             layout: SpineLayout::SingleCombined {
@@ -965,6 +1233,7 @@ mod tests {
             },
             tree: Vec::new(),
             title: None,
+            vertebra_prelude: None,
             marrow: Vec::new(),
             marrow_prologue: Vec::new(),
         };
@@ -1074,7 +1343,7 @@ mod tests {
         fs::create_dir_all(&content).unwrap();
         fs::write(content.join("index.typ"), "= Index").unwrap();
 
-        let scan = SpineScan::run(&content, &[]).unwrap();
+        let scan = SpineScan::run(&content, &[], true).unwrap();
         VirtualSpine::build(
             scan,
             root,
@@ -1108,8 +1377,8 @@ mod tests {
     }
 
     /// Prologue marrow — opted into via `with_marrow_prologue` (the project's
-    /// `marrow_prologue = true`, or a package's `.marrow-prologue.typ`) — is
-    /// emitted before every `#document` block instead.
+    /// `[marrow] position = "prologue"`, or a package's `.marrow.prologue.typ`)
+    /// — is emitted before every `#document` block instead.
     #[test]
     fn bundle_source_emits_marrow_prologue_before_documents() {
         let tmp = TempDir::new().unwrap();
@@ -1124,6 +1393,29 @@ mod tests {
         assert!(
             marrow_at < first_document_at,
             "prologue marrow must precede every document, got:\n{source}"
+        );
+    }
+
+    /// `[spine] prelude` names a file inside the scanned content tree (it is
+    /// resolved relative to `content_dir`, like `exclude`). It must never be
+    /// compiled as a vertebra of its own.
+    #[test]
+    fn prelude_path_is_excluded_from_the_scan() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(content.join("_lib")).unwrap();
+        fs::write(content.join("index.typ"), "= Index\n").unwrap();
+        fs::write(content.join("_lib").join("prelude.typ"), "").unwrap();
+
+        let scan =
+            SpineScan::run_with_marrow(&content, &[], MARROW_FILE, true, Some("_lib/prelude.typ"))
+                .unwrap();
+
+        assert!(
+            scan.files.iter().all(|f| !f.ends_with("_lib/prelude.typ")),
+            "prelude file must not appear in the scanned files: {:?}",
+            scan.files
         );
     }
 }

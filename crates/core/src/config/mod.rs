@@ -43,12 +43,42 @@ impl<'de, const DEFAULT: bool> Deserialize<'de> for Flag<DEFAULT> {
     }
 }
 
+/// Which position a bare `.marrow.typ` splices into: after every document
+/// (the default) or before. Only the project's own knob — a package's bare
+/// marrow is always epilogue, since one project's setting has no business
+/// moving a dependency's splice. Either explicit filename
+/// ([`crate::MARROW_PROLOGUE_FILE`], [`crate::MARROW_EPILOGUE_FILE`]) outranks
+/// the bare name and ignores this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MarrowPosition {
+    #[default]
+    Epilogue,
+    Prologue,
+}
+
+/// `[marrow]` table: which file is inlined at the bundle root instead of
+/// being compiled as a vertebra, and where a bare `.marrow.typ` splices when
+/// no explicit name is present.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MarrowConfig {
+    /// Filename, relative to `content_dir`. Defaults to [`crate::MARROW_FILE`]
+    /// when unset.
+    pub file: Option<String>,
+    #[serde(default)]
+    pub position: MarrowPosition,
+}
+
 /// One format's resolved spine knobs: every field already merged over the
 /// global `[spine]` table. See [`Spine::merged_over`].
 pub struct MergedSpine {
     pub exclude: Vec<String>,
     pub layering: Option<SpineLayering>,
     pub title: Option<String>,
+    pub prelude: Option<String>,
+    /// Whether a directory with no landing file gets a synthesized one.
+    /// Defaults to `true` when unset on every table in the fallback chain.
+    pub auto_index: bool,
 }
 
 /// How a spine lays out its leaves beyond the plain directory scan.
@@ -89,6 +119,20 @@ pub struct Spine {
     /// for the same per-field fallback reason as `exclude`.
     pub layering: Option<SpineLayering>,
 
+    /// Path (relative to `content_dir`) of a Typst file prepended inside every
+    /// vertebra, after its `rheo-context()` binding — so a `#let` in it binds a
+    /// name the page can use, which marrow cannot (a vertebra is `#include`d,
+    /// and Typst scopes an included file's bindings to itself).
+    ///
+    /// The text lands at every depth, so its own imports must be root-absolute.
+    pub prelude: Option<String>,
+
+    /// Whether a directory with no landing file (`index.typ`/`<dirname>.typ`)
+    /// gets a synthesized one instead of becoming a non-clickable group node.
+    /// `None` when unset in this table, for the same per-field fallback reason
+    /// as `exclude`; [`Spine::merged_over`] applies the `true` default.
+    pub auto_index: Option<bool>,
+
     /// Unrecognized keys, captured so [`warn_on_retired_keys`] can warn when a
     /// field retired from `Spine` in a past version (e.g. the removed
     /// `vertebrae` glob list) is still set in an older `rheo.toml`, rather than
@@ -106,6 +150,10 @@ pub struct SpineRaw {
     section: Option<Vec<SpineSection>>,
     #[serde(default)]
     include: Option<Vec<String>>,
+    #[serde(default)]
+    prelude: Option<String>,
+    #[serde(default)]
+    auto_index: Option<bool>,
     #[serde(flatten, default)]
     extra: toml::Table,
 }
@@ -129,6 +177,8 @@ impl TryFrom<SpineRaw> for Spine {
             title: raw.title,
             exclude: raw.exclude,
             layering,
+            prelude: raw.prelude,
+            auto_index: raw.auto_index,
             extra: raw.extra,
         })
     }
@@ -266,22 +316,14 @@ pub struct RheoConfig {
     /// Global spine configuration (applies when no per-plugin spine is set).
     pub spine: Option<Spine>,
 
-    /// Filename, relative to `content_dir`, whose Typst is inlined at the
-    /// bundle root instead of being compiled as a vertebra. Defaults to
-    /// [`crate::MARROW_FILE`] when unset.
+    /// `[marrow]` — the project's own marrow filename override and the
+    /// position a bare `.marrow.typ` takes. `None` behaves exactly as an
+    /// empty table would (default filename, epilogue position).
     ///
-    /// This names the *project's* marrow only. An imported package always
+    /// `file` names the *project's* marrow only. An imported package always
     /// contributes its own `.marrow.typ`, so renaming this cannot suppress a
     /// package's contribution or vice versa — both are inlined.
-    pub marrow: Option<String>,
-
-    /// When true, the project's own marrow is spliced BEFORE every document
-    /// instead of after, so a `#show`/`#set` rule in it reaches pre-existing
-    /// vertebrae. Defaults to `false` (today's behaviour) — prologue is
-    /// global-by-default and powerful, so it is opt-in only. A package
-    /// declares its own marrow's position by filename instead (`.marrow.typ`
-    /// vs `.marrow-prologue.typ`); this key affects only the project's marrow.
-    pub marrow_prologue: Flag<false>,
+    pub marrow: Option<MarrowConfig>,
 
     /// `[inputs]` — project-declared `sys.inputs` keys for the Typst compile.
     ///
@@ -309,6 +351,11 @@ pub struct RheoConfig {
     /// entry for `rheo` overrides the built-in, which is how a project tests a
     /// branch of rheo-packages.
     pub packages: HashMap<String, NamespaceSource>,
+
+    /// Unrecognized top-level scalar keys (e.g. a retired `marrow_prologue`),
+    /// captured so [`warn_on_retired_keys`] can warn on one still set in an
+    /// older `rheo.toml`, the same way [`Spine::extra`] does for `[spine]`.
+    pub extra: toml::Table,
 }
 
 impl Spine {
@@ -331,6 +378,8 @@ impl Spine {
             exclude: pick(this, global, |s| s.exclude.as_ref()).unwrap_or_default(),
             layering: pick(this, global, |s| s.layering.as_ref()),
             title: pick(this, global, |s| s.title.as_ref()),
+            prelude: pick(this, global, |s| s.prelude.as_ref()),
+            auto_index: pick(this, global, |s| s.auto_index.as_ref()).unwrap_or(true),
         }
     }
 }
@@ -347,9 +396,9 @@ impl Default for RheoConfig {
             plugin_sections: HashMap::new(),
             spine: None,
             marrow: None,
-            marrow_prologue: Flag::default(),
             inputs: HashMap::new(),
             packages: HashMap::new(),
+            extra: toml::Table::new(),
         }
     }
 }
@@ -366,9 +415,6 @@ pub struct RheoConfigRaw {
     copy: Vec<String>,
     #[serde(default)]
     font_dirs: Vec<String>,
-    marrow: Option<String>,
-    #[serde(default)]
-    marrow_prologue: Flag<false>,
     #[serde(flatten)]
     extra: HashMap<String, toml::Value>,
 }
@@ -411,13 +457,28 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             Some(value) => NamespaceSource::parse_table(value)?,
             None => HashMap::new(),
         };
+        // Pulled out only when it's the new `[marrow]` table — a retired
+        // top-level scalar `marrow = "x"` is left in `extra` below, where the
+        // retired-key warning catches it, exactly like `dot_marrow_is_epilogue`
+        // (always a bare scalar, never a table).
+        let marrow: Option<MarrowConfig> = match raw.extra.get("marrow") {
+            Some(toml::Value::Table(_)) => Some(
+                raw.extra
+                    .remove("marrow")
+                    .expect("just matched")
+                    .try_into()?,
+            ),
+            _ => None,
+        };
         let mut plugin_sections = HashMap::new();
+        let mut extra = toml::Table::new();
         for (key, value) in raw.extra {
             if let toml::Value::Table(_) = &value {
                 let section: PluginSection = value.try_into()?;
                 plugin_sections.insert(key, section);
+            } else {
+                extra.insert(key, value);
             }
-            // Non-table entries (unknown scalar fields) are silently ignored.
         }
 
         let current = ManifestVersion::current();
@@ -428,6 +489,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
                 raw.version, current
             );
         }
+        warn_on_retired_keys("the top level", &extra);
         // Naming the table each key was authored in, so a per-format table's
         // retired key does not send the reader to the global one.
         if let Some(spine) = &spine {
@@ -449,10 +511,10 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             font_dirs: raw.font_dirs,
             plugin_sections,
             spine,
-            marrow: raw.marrow,
-            marrow_prologue: raw.marrow_prologue,
+            marrow,
             inputs,
             packages,
+            extra,
         })
     }
 }
@@ -525,7 +587,20 @@ impl RheoConfig {
 
     /// The project's marrow filename, relative to `content_dir`.
     pub fn marrow_file(&self) -> &str {
-        self.marrow.as_deref().unwrap_or(crate::MARROW_FILE)
+        self.marrow
+            .as_ref()
+            .and_then(|m| m.file.as_deref())
+            .unwrap_or(crate::MARROW_FILE)
+    }
+
+    /// Whether a bare `.marrow.typ` splices as the epilogue (the default) or
+    /// the prologue — `[marrow] position`. Irrelevant once an explicit marrow
+    /// filename is present.
+    pub fn marrow_is_epilogue(&self) -> bool {
+        !matches!(
+            self.marrow.as_ref().map(|m| m.position),
+            Some(MarrowPosition::Prologue)
+        )
     }
 
     /// Resolve content_dir against the project root, if configured.
@@ -706,19 +781,77 @@ mod tests {
         assert!(merged.exclude.is_empty());
         assert!(merged.layering.is_none());
         assert_eq!(merged.title, None);
+        assert_eq!(merged.prelude, None);
     }
 
     #[test]
-    fn test_marrow_prologue_defaults_false_and_honors_true() {
-        // No key at all -> defaults to epilogue (today's behaviour).
+    fn test_spine_prelude_parses_and_overrides_per_format() {
+        let config = parse(&versioned_toml(
+            "[spine]\nprelude = \"_lib/prelude.typ\"\n\n[pdf.spine]\nprelude = \"_lib/paged.typ\"\n",
+        ));
+        let global = config.spine.as_ref();
+
+        let html = Spine::merged_over(config.plugin_section("html").spine.as_ref(), global);
+        assert_eq!(html.prelude.as_deref(), Some("_lib/prelude.typ"));
+
+        let pdf = Spine::merged_over(config.plugin_section("pdf").spine.as_ref(), global);
+        assert_eq!(pdf.prelude.as_deref(), Some("_lib/paged.typ"));
+
+        let config = parse(&versioned_toml("[spine]\nexclude = [\"drafts/**\"]\n"));
+        let merged = Spine::merged_over(None, config.spine.as_ref());
+        assert_eq!(merged.prelude, None);
+    }
+
+    #[test]
+    fn test_marrow_table_defaults_epilogue_and_honors_position() {
+        // No `[marrow]` table at all -> defaults to epilogue (today's behaviour).
         let config = parse(&versioned_toml(""));
-        assert!(!config.marrow_prologue.get());
+        assert!(config.marrow_is_epilogue());
+        assert_eq!(config.marrow_file(), crate::MARROW_FILE);
 
+        let config = parse(&versioned_toml("[marrow]\nposition = \"epilogue\"\n"));
+        assert!(config.marrow_is_epilogue());
+
+        let config = parse(&versioned_toml("[marrow]\nposition = \"prologue\"\n"));
+        assert!(!config.marrow_is_epilogue());
+
+        let config = parse(&versioned_toml("[marrow]\nfile = \"bundle-root.typ\"\n"));
+        assert_eq!(config.marrow_file(), "bundle-root.typ");
+        assert!(config.marrow_is_epilogue());
+    }
+
+    /// The retired top-level `marrow` filename override and
+    /// `dot_marrow_is_epilogue` boolean have no effect any more — they land
+    /// in `extra` for the retired-key warning, exactly like `marrow_prologue`.
+    #[test]
+    fn test_retired_marrow_scalars_have_no_effect() {
+        let config = parse(&versioned_toml(
+            "marrow = \"bundle-root.typ\"\ndot_marrow_is_epilogue = false\n",
+        ));
+        assert!(config.marrow.is_none());
+        assert!(config.marrow_is_epilogue());
+        assert_eq!(config.marrow_file(), crate::MARROW_FILE);
+        assert_eq!(
+            config.extra.get("marrow"),
+            Some(&toml::Value::String("bundle-root.typ".to_string()))
+        );
+        assert_eq!(
+            config.extra.get("dot_marrow_is_epilogue"),
+            Some(&toml::Value::Boolean(false))
+        );
+    }
+
+    /// The retired top-level `marrow_prologue` no longer has any effect: it
+    /// lands in `extra` for the retired-key warning, and the marrow position
+    /// still defaults as if it were absent.
+    #[test]
+    fn test_retired_marrow_prologue_key_does_not_affect_marrow_position() {
         let config = parse(&versioned_toml("marrow_prologue = true"));
-        assert!(config.marrow_prologue.get());
-
-        let config = parse(&versioned_toml("marrow_prologue = false"));
-        assert!(!config.marrow_prologue.get());
+        assert!(config.marrow_is_epilogue());
+        assert_eq!(
+            config.extra.get("marrow_prologue"),
+            Some(&toml::Value::Boolean(true))
+        );
     }
 
     #[test]
