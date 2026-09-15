@@ -5,7 +5,10 @@ title: Cut rheo 0.6.3
 priority: 4
 labels:
 - fix-rheo-path-floor
-deps: []
+deps:
+- blocked-by:rh-rename-dot-marrow-is-epilogue-9b3bbd43
+- blocked-by:rh-drop-an-index-left-childless-by-layering-d5f237fe
+- blocked-by:rh-auto-index-must-not-refill-an-exclusion-c6b49937
 closed: false
 ---
 Every CI run on the `rookery` repository's `0.1.0` branch fails, and the fix is
