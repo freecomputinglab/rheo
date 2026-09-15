@@ -1,5 +1,30 @@
 # Unreleased — user-visible changes
 
+## A childless directory index gets a real page: `[spine] auto_index`
+
+**This one is on by default, and changes what every existing project builds
+without any config edit.** A directory with children and no landing file
+(`index.typ`/`<dirname>.typ`) used to become a non-clickable group node with a
+prettified title. It now gets a synthesized landing page instead: a real
+vertebra whose whole body is a call to `rheo-index()`, the default
+directory-index renderer — so it's a new file in `build/`, a new entry in
+`spine-flat`, and a new row in any feed, sitemap or nav a project or package
+derives from `spine-flat`.
+
+A project restyles every directory index at once by binding its own `#let
+rheo-index() = ...` in `[spine] prelude`, which is spliced in after rheo's own
+binding and so shadows it — rather than hand-writing an `index.typ` per
+directory.
+
+`auto_index = false` under `[spine]` restores the previous behaviour exactly:
+such a directory goes back to being a non-clickable group node with no page of
+its own. It falls back field-by-field like every other spine key, so
+`[pdf.spine] auto_index = false` turns it off for the combined PDF alone while
+HTML and EPUB keep synthesizing.
+
+A directory left with no children after exclusion is now dropped entirely, in
+both modes — nothing to index and nothing to be a group node for.
+
 ## Marrow position is a filename: `.marrow.prelude.typ` / `.marrow.epilogue.typ`
 
 Two reserved names now say where a marrow contribution splices, rather than one

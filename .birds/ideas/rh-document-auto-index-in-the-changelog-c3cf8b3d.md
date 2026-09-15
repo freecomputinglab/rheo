@@ -7,7 +7,7 @@ labels:
 - doc-auto-index-changelog
 deps:
 - blocked-by:rh-keep-the-spine-prelude-out-of-the-scan-bd7af0ec
-closed: false
+closed: true
 ---
 Touches: changelog.md
 
