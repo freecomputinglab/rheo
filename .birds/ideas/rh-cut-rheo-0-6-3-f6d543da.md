@@ -12,9 +12,45 @@ deps:
 closed: false
 ---
 Every CI run on the `rookery` repository's `0.1.0` branch fails, and the fix is
-a rheo release. This bird cuts it.
+a rheo release. This bird prepares the release commit; the operator opens the
+PR.
 
-Touches: Cargo.toml, Cargo.lock, changelog.md
+Touches: Cargo.toml, changelog.md (and `Cargo.lock` only if `cargo check` moves it)
+
+## Do not start until the operator says so
+
+**This bird runs AFTER `feat/vertebra-prelude` has been reviewed and merged into
+`main`, as its own PR. The release is a second, separate PR on top.** The
+operator merges; you never do.
+
+Two checks before touching anything. If either fails, stop and report — do not
+proceed, and do not "help" by merging or rebasing:
+
+```bash
+cd /home/lox/code/_fcl/rheo
+jj log -r main --no-graph -T 'description.first_line() ++ "\n"'   # must NOT be "Support for incremental compile (#174)"
+jj file show -r main Cargo.toml | rg -n '^version'                # must print 0.6.3
+```
+
+`main`'s tip being `#174` means the merge has not happened yet. The version
+already reading `0.6.3` on `main` is the positive signal that the branch landed
+(see "The bump is already half-done" below).
+
+**The paired rheo-tests branch must merge first.** rheo's CI clones a
+rheo-tests branch named `rheo/<this-branch>` when one exists and falls back to
+`main` otherwise (`.github/workflows/ci.yml:32-42`, and the same logic in
+`compat.yml:24-35`). A release PR's branch has no paired snapshot, so its CI
+clones rheo-tests **`main`** — which, until `rheo/feat/vertebra-prelude` is
+merged there, still carries the pre-rename marrow fixture and none of the
+`auto_index` coverage. The release PR would go red through no fault of its own.
+rheo-tests' own `README.md` states the order: merge the rheo-tests PR first.
+Confirm with:
+
+```bash
+cd /home/lox/code/_fcl/rheo-tests
+jj log -r main --no-graph -T 'description.first_line() ++ "\n"'   # must be the vertebra-prelude work, not the older tip
+ls cases/marrow_names/content/                                    # must show .marrow.prologue.typ, not .marrow.prelude.typ
+```
 
 ## Why
 
@@ -40,51 +76,72 @@ inferred: `crates/core/src/config/packages.rs` at the `v0.6.2` tag has a
 two-armed `match (raw.repo, raw.releases)` and no `path` arm at all, while the
 same file on `main` matches on `(raw.repo, raw.releases, raw.path)`.
 
-A developer machine hides this completely, because a locally built `rheo` from
-`main` still reports `rheo 0.6.2` — `Cargo.toml`'s version has not been bumped
-since the release. The binary that has `path` and the binary that does not both
-print the same version string. Bumping the version is therefore not only the
-release mechanic, it is what makes the two distinguishable at all.
+A developer machine hid this completely for a while, because a locally built
+`rheo` still reported `rheo 0.6.2` — the binary that has `path` and the binary
+that does not printed the same version string.
 
-`main` is four commits past `v0.6.2`: PRs #171 (local custom namespaces), #172
-(code quality in core and cli), #173 (Nix flake package fix) and #174
-(incremental compile).
+0.6.3 is no longer only the `path` fix. Once `feat/vertebra-prelude` merges,
+the release also carries `[spine] auto_index` (default-on, and it changes what
+every existing project builds), `[spine] prelude`, the `[marrow]` table and
+`.marrow.prologue.typ` rename, `synthesized` on `spine`/`spine-flat`, and the
+per-vertebra `rheo-index()` binding. `changelog.md`'s `# Unreleased` section
+already documents all of it — that section, retitled, IS the release notes.
+
+## The bump is already half-done
+
+`feat/vertebra-prelude` bumped the workspace version to `0.6.3` as part of
+`rh-rename-dot-marrow-is-epilogue-9b3bbd43`, not as a release act. It had to:
+`rheo migrate`'s gate is `if from >= to { "already up to date" }`, so a fixture
+pinned at `version = "0.6.2"` could never exercise a migration shipped by a
+crate still calling itself `0.6.2`. **Leave that bump alone. Do not revert it
+and do not re-apply it.**
+
+What it did NOT do is move the four path-dependency constraints. MEASURED on
+the branch:
+
+- `Cargo.toml:6` — `version = "0.6.3"` (done)
+- `Cargo.toml:29-32` — `rheo-core`/`rheo-html`/`rheo-pdf`/`rheo-epub` each still
+  carry `version = "0.6.2"` (not done)
+- `Cargo.lock:2629,2650,2686,2706,2727` — all five already read `0.6.3` (done,
+  as a side effect of building the branch)
+
+The stale constraints build fine, because `version = "0.6.2"` on a `0.x` crate
+means `^0.6.2`, which a `0.6.3` sibling satisfies. They matter at publish time:
+crates.io records the requirement as written, so the published `rheo 0.6.3`
+would declare a floor of `rheo-core 0.6.2` it was never built against.
 
 ## Steps
 
-1. Base the work on `main`, whose tip is "Support for incremental compile
-   (#174)". Do NOT base it on the `feat/vertebra-prelude` bookmark or on any
-   in-progress marrow-prelude work — that is unmerged and unrelated, and
-   including it in a release commit ships it by accident.
+1. Work on `main` after the merge (see the gate above). Start from a clean
+   working copy with nothing else in it — a release commit carries the bump and
+   the changelog heading, and nothing else at all.
 
-2. In `/home/lox/code/_fcl/rheo/Cargo.toml`, change `0.6.2` to `0.6.3` in five
-   places — the workspace package version at line 6, and the four path
-   dependencies at lines 29-32:
+2. In `/home/lox/code/_fcl/rheo/Cargo.toml`, change `0.6.2` to `0.6.3` on lines
+   29-32 only:
 
    ```toml
-   version = "0.6.2"                                            # line 6
-   rheo-core = { path = "crates/core", version = "0.6.2" }      # line 29
-   rheo-html = { path = "crates/html", version = "0.6.2" }      # line 30
-   rheo-pdf  = { path = "crates/pdf",  version = "0.6.2" }      # line 31
-   rheo-epub = { path = "crates/epub", version = "0.6.2" }      # line 32
+   rheo-core = { path = "crates/core", version = "0.6.2" }   # line 29
+   rheo-html = { path = "crates/html", version = "0.6.2" }   # line 30
+   rheo-pdf = { path = "crates/pdf", version = "0.6.2" }     # line 31
+   rheo-epub = { path = "crates/epub", version = "0.6.2" }   # line 32
    ```
 
-   Lines 29-32 are shown here with their `=` aligned for readability; copy the
-   version strings, not the spacing. Leave every other `0.6.2` in the
+   Line 6 is already `0.6.3`; do not touch it. Leave every other `0.6.2` in the
    repository alone — the ones under `.birds/` are fixture text inside a bird's
-   own description, and the ones in `changelog.md` below line 90 are that
-   release's own section heading and prose.
+   own description, and the ones in `changelog.md` below the unreleased section
+   are older releases' own headings and prose.
 
-3. Refresh `Cargo.lock`. The five workspace crates carry the old version at
-   lines 2629, 2650, 2686, 2706 and 2727. Do not hand-edit them:
+3. Confirm the lock still agrees:
 
    ```bash
    cd /home/lox/code/_fcl/rheo && cargo check --workspace
    ```
 
-   That rewrites the lock as a side effect. `cargo check --workspace --locked`
-   would instead fail, because the lock no longer matches the manifest — which
-   is exactly the state this step exists to leave behind.
+   Expect `Cargo.lock` NOT to change — all five entries already read `0.6.3`,
+   and loosening a requirement from `^0.6.2` to `^0.6.3` does not move a
+   resolved version. If the lock does change, read the diff and say what moved
+   before continuing; a dependency bump riding along on a release commit is
+   exactly what the non-goals forbid.
 
 4. In `/home/lox/code/_fcl/rheo/changelog.md`, retitle line 1 from
 
@@ -98,24 +155,27 @@ release mechanic, it is what makes the two distinguishable at all.
    # 0.6.3 — user-visible changes
    ```
 
-   The section under it already documents the release's content, opening with
-   "A package namespace can resolve straight from a directory on disk" — that is
-   the `path` source this release exists to ship. Do not add a fresh empty
-   `# Unreleased` heading above it; the next unreleased change adds its own.
+   Do not add a fresh empty `# Unreleased` heading above it; the next
+   unreleased change adds its own. Do not rewrite the sections under it — they
+   were written by the birds that landed each change, and this bird documents
+   nothing new.
 
-5. Leave a commit ready for the operator to push. The rheo release runs off a
-   pull request into `main`, so the operator will need a PR whose **title is
-   exactly `v0.6.3`** and which carries the `release` label:
-   `.github/workflows/release.yml` publishes the five crates to crates.io, tags
-   the merged commit by matching `v([0-9]+\.[0-9]+\.[0-9]+)`, and then uploads
-   six platform zips with `tag_name: ${{ github.event.pull_request.title }}`. A
-   PR titled anything else produces a release under a nonsense tag. Say this
-   plainly in the report back, because the title is the release mechanism.
+5. Leave one commit ready for the operator to push, and stop. Tell the operator
+   in the report, plainly, that the PR **title must be exactly `v0.6.3`** and it
+   must carry the `release` label: `.github/workflows/release.yml` publishes the
+   five crates to crates.io, tags the merged commit by matching
+   `v([0-9]+\.[0-9]+\.[0-9]+)`, and uploads six platform zips with
+   `tag_name: ${{ github.event.pull_request.title }}`. A PR titled anything else
+   produces a release under a nonsense tag. The title is the release mechanism,
+   so it is worth a sentence of its own in the report.
 
 ## Non-goals
 
-- **Do not push, open the PR, label it, or merge it.** The operator does every
-  outward-facing step. This bird ends with the bump prepared locally.
+- **Do not push, open the PR, label it, or merge it** — and do not merge
+  `feat/vertebra-prelude` either. Every outward-facing step is the operator's.
+  This bird ends with the commit prepared locally.
+- **Do not revert or re-do the workspace version bump.** It is already `0.6.3`
+  and it belongs to the marrow-rename bird.
 - **Do not touch the `rookery` repository.** Repinning its CI to the new
   release is a separate bird there, labelled `fix-rheo-path-floor` like this
   one, and it cannot start until the release has actually published.
@@ -123,20 +183,35 @@ release mechanic, it is what makes the two distinguishable at all.
   changelog heading, no dependency bumps. A release commit that also changes
   behaviour is a release nobody can bisect.
 - **Do not edit `flake.nix`.** It pins no rheo version string of its own.
+- **Do not bless or regenerate anything in `../rheo-tests`.** If its suite is
+  red against this commit, that is a finding to report, not a reference to
+  rewrite on the way to a release.
 
 ## VERIFY
 
 ```bash
 cd /home/lox/code/_fcl/rheo
-cargo check --workspace                  # succeeds, and rewrites Cargo.lock
+cargo check --workspace                  # succeeds; Cargo.lock unchanged
 cargo run -p rheo -- --version           # must print exactly: rheo 0.6.3
 rg -n '0\.6\.2' Cargo.toml               # must print nothing
 rg -n '^version = "0\.6\.3"' Cargo.lock  # must print five lines
 head -1 changelog.md                     # must print: # 0.6.3 — user-visible changes
+cargo test && cargo clippy --all-targets -- -D warnings   # both clean
 ```
 
-Then confirm the new binary accepts the config key this release exists for, by
-pointing it at a rookery demo:
+Then the integration suite, which is what the release PR's CI will run, against
+rheo-tests `main` (not a paired branch — a release branch has none):
+
+```bash
+cd /home/lox/code/_fcl/rheo-tests \
+  && RHEO_MANIFEST=../rheo/Cargo.toml cargo test --test harness
+```
+
+It must be fully green. It stood at 145 passed, 0 failed when this bird was
+written.
+
+Finally confirm the new binary accepts the config key this release exists for,
+by pointing it at a rookery demo:
 
 ```bash
 cd /home/lox/code/_fcl/rheo && cargo build -p rheo
