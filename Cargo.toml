@@ -26,10 +26,10 @@ perf = "warn"
 
 [workspace.dependencies]
 # Internal crates (for convenience in workspace)
-rheo-core = { path = "crates/core", version = "0.6.2" }
-rheo-html = { path = "crates/html", version = "0.6.2" }
-rheo-pdf = { path = "crates/pdf", version = "0.6.2" }
-rheo-epub = { path = "crates/epub", version = "0.6.2" }
+rheo-core = { path = "crates/core", version = "0.6.3" }
+rheo-html = { path = "crates/html", version = "0.6.3" }
+rheo-pdf = { path = "crates/pdf", version = "0.6.3" }
+rheo-epub = { path = "crates/epub", version = "0.6.3" }
 
 # Typst dependencies
 typst = "0.15.0"

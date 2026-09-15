@@ -1,4 +1,4 @@
-# Unreleased — user-visible changes
+# 0.6.3 — user-visible changes
 
 ## A childless directory index gets a real page: `[spine] auto_index`
 
