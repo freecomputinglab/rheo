@@ -128,6 +128,11 @@ impl SpineScan {
         roots.extend(virtual_nodes);
         roots.sort_by(|a, b| a.segment.cmp(&b.segment));
 
+        // A section can claim every child of a directory whose landing page
+        // auto_index synthesized, stranding it with nothing left to list —
+        // drop it now, before reindex assigns fresh indices off `roots`.
+        PathNode::prune_stranded(&mut roots, &synthesized_paths);
+
         // Re-index into SpineNode + flat file list (pre-order, parent before child).
         let mut files = Vec::new();
         let tree = Self::reindex(&roots, &mut files);
@@ -280,6 +285,14 @@ impl SpineScan {
             new_roots.extend(matched.into_iter().filter_map(|p| by_path.remove(&p)));
         }
 
+        // Same stranding as `apply_sections`: a synthesized landing dropped
+        // to childless by this reorder has nothing left to list. In practice
+        // a synthesized landing (always non-leaf at scan time, see
+        // `collect_leaf_nodes`) can never itself be one of `new_roots`, but
+        // pruning here keeps this function honest about the same invariant
+        // rather than relying on that being true elsewhere.
+        PathNode::prune_stranded(&mut new_roots, &synthesized_paths);
+
         let mut files = Vec::new();
         let tree = Self::reindex(&new_roots, &mut files);
         if files.is_empty() {
@@ -386,6 +399,25 @@ mod tests {
             let idx = *c.vertebra().expect("section child is a leaf vertebra");
             assert!(idx < out.files.len());
         }
+    }
+
+    #[test]
+    fn apply_sections_prunes_stranded_synthesized_index() {
+        // `chapters/` has no landing file, so auto_index synthesizes one at
+        // the notional `chapters/index.typ`. A section then claims chapters'
+        // only child, stranding that synthesized index with nothing to list.
+        let temp = create_test_dir_with_files(&["chapters/one.typ"]);
+        let scan = SpineScan::run(temp.path(), &[], true).unwrap();
+        let out = scan
+            .apply_sections(temp.path(), &[section("grouped", &["chapters/one.typ"])])
+            .unwrap();
+
+        assert!(
+            !out.files.iter().any(|f| f.ends_with("chapters/index.typ")),
+            "stranded synthesized index should be dropped, got files: {:?}",
+            out.files
+        );
+        assert!(out.synthesized.is_empty());
     }
 
     #[test]

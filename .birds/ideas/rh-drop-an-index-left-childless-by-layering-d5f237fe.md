@@ -6,7 +6,7 @@ priority: 3
 labels:
 - fix-auto-index-stranded
 deps: []
-closed: false
+closed: true
 ---
 Touches: crates/core/src/reticulate/spine/section.rs
 
