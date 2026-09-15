@@ -8,7 +8,7 @@ labels:
 deps:
 - blocked-by:rh-keep-the-spine-prelude-out-of-the-scan-bd7af0ec
 - blocked-by:rh-bind-rheo-index-per-vertebra-c7c34420
-closed: false
+closed: true
 ---
 Touches: CLAUDE.md, docs/contract.md
 

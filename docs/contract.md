@@ -170,11 +170,21 @@ hoisted into that page's own `<head>`.
 *every* page's `<head>`, after each page's own `<rheo-head>` content
 (`crates/core/src/transclude.rs:272-341`, `ControlAssets`).
 
-**`.rheo/` prefix** — reserved for bundle assets consumed internally by rheo:
+**`.rheo/` prefix** — reserved for bundle *assets* consumed internally by rheo:
 never written to a plugin's output directory, never embedded in EPUB, never
 served by the dev server (`crates/core/src/util/constants.rs:18-25`,
 `CONTROL_ASSET_PREFIX`). An unrecognized `.rheo/*` member is dropped with a
 `warn!`, not an error.
+
+**`typ/` prefix — reserved on the input side.** `RheoWorld` serves paths under
+a project-root `typ/` from memory before falling back to disk
+(`crates/core/src/world.rs:471-490`): `typ/metadata.typ`
+(`METADATA_MODULE_PATH`) and `typ/rheo.typ` (`RHEO_TEMPLATE_MODULE_PATH`,
+`crates/core/src/util/constants.rs`), both targets of `#import` statements
+rheo's own injected Typst renders. A project file at either path is shadowed
+and unreachable — rheo's in-memory copy wins silently, with no build error.
+More paths under `typ/` may be reserved later. Stability: Internal — the two
+paths in use today, not the mechanism's shape.
 
 ## Package manifest keys (`typst.toml`, `crates/core/src/plugins/typst_manifest.rs`)
 

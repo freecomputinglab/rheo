@@ -201,6 +201,8 @@ prelude = "_lib/prelude.typ"
 
 Imports in it must be **root-absolute** — the same text lands in vertebrae at every depth. The splice is keyed per vertebra, so it reaches neither a partial pulled in by `#include` nor the library file it imports (which would recurse). The imported library belongs outside `content_dir`: only the prelude's own path leaves the scan, so a library beside it under `content_dir` compiles as a vertebra, gets the prelude spliced in, and imports itself — a cyclic import that fails the build. An unreadable path is fatal.
 
+The prelude's own text is inlined verbatim into every vertebra, so its cost is page count times its own size — a 10 KB prelude on a 5000-page site is 50 MB of synthesized source, parsed once per page, where marrow is parsed once for the whole build. Keep it to a few `#let` bindings that import from a root-absolute module (evaluated once by Typst), rather than putting the template's own code inline here.
+
 **Precedence — field-by-field, not whole-table:** a per-format `[<format>.spine]` table can set `title`, `exclude`, `prelude`, `auto_index` and its layering (`include` or `section`) independently; any field it leaves unset falls back to the matching field on the global `[spine]` table (not the whole table at once). Layering falls back as one unit — a per-format `include` replaces a global `section`, rather than joining it. For example, `[pdf.spine] title = "My Book"` with no `exclude` of its own still inherits the global `[spine] exclude` — it does *not* silently drop it just because `[pdf.spine]` exists.
 
 The retired `vertebrae` glob-list key (pre-0.5.0) is no longer read; `rheo migrate` converts an old inclusion-filter `vertebrae` list into an equivalent `exclude`.
