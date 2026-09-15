@@ -25,32 +25,39 @@ HTML and EPUB keep synthesizing.
 A directory left with no children after exclusion is now dropped entirely, in
 both modes — nothing to index and nothing to be a group node for.
 
-## Marrow position is a filename: `.marrow.prelude.typ` / `.marrow.epilogue.typ`
+## Marrow position is a filename: `.marrow.prologue.typ` / `.marrow.epilogue.typ`
 
 Two reserved names now say where a marrow contribution splices, rather than one
 name plus a boolean:
 
 | File | Position |
 | --- | --- |
-| `.marrow.prelude.typ` | before every `#document(...)`, so a `#show`/`#set` in it reaches pre-existing vertebrae |
+| `.marrow.prologue.typ` | before every `#document(...)`, so a `#show`/`#set` in it reaches pre-existing vertebrae |
 | `.marrow.epilogue.typ` | after every `#document(...)` |
 | `.marrow.typ` | falls back to one of the above |
 
 **Either explicit name outranks a bare `.marrow.typ`, which is then not read at
 all.** The bare name is a fallback, never a third contribution — so a package
-adding `.marrow.prelude.typ` beside an existing `.marrow.typ` moves its marrow
+adding `.marrow.prologue.typ` beside an existing `.marrow.typ` moves its marrow
 rather than running it twice.
 
-A project's bare `.marrow.typ` takes the position the new
-`dot_marrow_is_epilogue` key names, default `true` — so an unconfigured project
-compiles exactly as before. It replaces `marrow_prologue`, whose sense it
-inverts: `marrow_prologue = true` is now `dot_marrow_is_epilogue = false`. The
-key governs the project's own marrow only; a package's bare `.marrow.typ` is
-always the epilogue, since one project's setting has no business repositioning a
-dependency's splice.
+A project's bare `.marrow.typ` takes the position a new `[marrow]` table's
+`position` key names, default `"epilogue"` — so an unconfigured project
+compiles exactly as before:
 
-`.marrow-prologue.typ` is renamed to `.marrow.prelude.typ` and the old name is
-no longer read. Nothing in the package ecosystem shipped one.
+```toml
+[marrow]
+file = "bundle-root.typ"   # optional; overrides the bare `.marrow.typ` filename
+position = "prologue"      # optional; "epilogue" (default) or "prologue"
+```
+
+The table replaces the retired top-level `marrow` filename override and
+`dot_marrow_is_epilogue` boolean (`rheo migrate` converts both), and inverts
+the sense of the older retired `marrow_prologue` key once more:
+`marrow_prologue = true` is now `[marrow] position = "prologue"`. `position`
+governs the project's own marrow only; a package's bare `.marrow.typ` is
+always the epilogue, since one project's setting has no business
+repositioning a dependency's splice.
 
 ## A project can inject Typst into every vertebra with `[spine] prelude`
 

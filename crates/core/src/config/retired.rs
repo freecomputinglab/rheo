@@ -27,8 +27,19 @@ pub const RETIRED_KEYS: &[RetiredKey] = &[
     RetiredKey {
         table: "the top level",
         key: "marrow_prologue",
-        replacement: "replaced by `dot_marrow_is_epilogue`, whose sense is inverted: \
-            `marrow_prologue = true` is now `dot_marrow_is_epilogue = false`",
+        replacement: "replaced by `[marrow] position`, whose sense is inverted: \
+            `marrow_prologue = true` is now `[marrow] position = \"prologue\"`",
+    },
+    RetiredKey {
+        table: "the top level",
+        key: "marrow",
+        replacement: "moved into `[marrow] file`",
+    },
+    RetiredKey {
+        table: "the top level",
+        key: "dot_marrow_is_epilogue",
+        replacement: "replaced by `[marrow] position`, whose sense is inverted: \
+            `dot_marrow_is_epilogue = false` is now `[marrow] position = \"prologue\"`",
     },
     RetiredKey {
         table: "[spine]",

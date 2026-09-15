@@ -225,7 +225,7 @@ filename it ships (`crates/core/src/plugins/typst_manifest.rs:227-263`):
 
 | File | Position | Constant |
 | --- | --- | --- |
-| `.marrow.prelude.typ` | prelude — spliced before every `#document(...)`, so a `#show`/`#set` rule in it reaches pre-existing vertebrae | `MARROW_PRELUDE_FILE` |
+| `.marrow.prologue.typ` | prologue — spliced before every `#document(...)`, so a `#show`/`#set` rule in it reaches pre-existing vertebrae | `MARROW_PROLOGUE_FILE` |
 | `.marrow.epilogue.typ` | epilogue — spliced after every `#document(...)` | `MARROW_EPILOGUE_FILE` |
 | `.marrow.typ` | whichever position the bare name falls back to | `MARROW_FILE` |
 
@@ -237,9 +237,9 @@ explicit names (`package_may_ship_both_marrow_positions`), and its bare
 **packages contribute first in import order, then the project's own marrow**, so
 a project's marrow can build on what a package registered.
 
-A project's bare `.marrow.typ` (or whatever `rheo.toml`'s `marrow` key renames
-it to) falls back to the position `dot_marrow_is_epilogue` names — default
-`true`, i.e. epilogue, today's byte-identical-on-upgrade behaviour. That key is
+A project's bare `.marrow.typ` (or whatever `rheo.toml`'s `[marrow] file` key
+renames it to) falls back to the position `[marrow] position` names — default
+`"epilogue"`, today's byte-identical-on-upgrade behaviour. That key is
 the project's own and never repositions a package's bare marrow. Paths inside
 any marrow file
 resolve against the *project* root, not the package's own directory — a

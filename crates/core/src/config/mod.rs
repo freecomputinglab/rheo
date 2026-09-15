@@ -43,6 +43,32 @@ impl<'de, const DEFAULT: bool> Deserialize<'de> for Flag<DEFAULT> {
     }
 }
 
+/// Which position a bare `.marrow.typ` splices into: after every document
+/// (the default) or before. Only the project's own knob — a package's bare
+/// marrow is always epilogue, since one project's setting has no business
+/// moving a dependency's splice. Either explicit filename
+/// ([`crate::MARROW_PROLOGUE_FILE`], [`crate::MARROW_EPILOGUE_FILE`]) outranks
+/// the bare name and ignores this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MarrowPosition {
+    #[default]
+    Epilogue,
+    Prologue,
+}
+
+/// `[marrow]` table: which file is inlined at the bundle root instead of
+/// being compiled as a vertebra, and where a bare `.marrow.typ` splices when
+/// no explicit name is present.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MarrowConfig {
+    /// Filename, relative to `content_dir`. Defaults to [`crate::MARROW_FILE`]
+    /// when unset.
+    pub file: Option<String>,
+    #[serde(default)]
+    pub position: MarrowPosition,
+}
+
 /// One format's resolved spine knobs: every field already merged over the
 /// global `[spine]` table. See [`Spine::merged_over`].
 pub struct MergedSpine {
@@ -290,22 +316,14 @@ pub struct RheoConfig {
     /// Global spine configuration (applies when no per-plugin spine is set).
     pub spine: Option<Spine>,
 
-    /// Filename, relative to `content_dir`, whose Typst is inlined at the
-    /// bundle root instead of being compiled as a vertebra. Defaults to
-    /// [`crate::MARROW_FILE`] when unset.
+    /// `[marrow]` — the project's own marrow filename override and the
+    /// position a bare `.marrow.typ` takes. `None` behaves exactly as an
+    /// empty table would (default filename, epilogue position).
     ///
-    /// This names the *project's* marrow only. An imported package always
+    /// `file` names the *project's* marrow only. An imported package always
     /// contributes its own `.marrow.typ`, so renaming this cannot suppress a
     /// package's contribution or vice versa — both are inlined.
-    pub marrow: Option<String>,
-
-    /// Which position a bare `.marrow.typ` takes: epilogue (after every
-    /// document, the default) or prelude (before it). Only the project's own —
-    /// a package's bare marrow is always epilogue, since one project's flag has
-    /// no business moving a dependency's splice. Either explicit filename
-    /// ([`crate::MARROW_PRELUDE_FILE`], [`crate::MARROW_EPILOGUE_FILE`])
-    /// outranks the bare name and ignores this.
-    pub dot_marrow_is_epilogue: Flag<true>,
+    pub marrow: Option<MarrowConfig>,
 
     /// `[inputs]` — project-declared `sys.inputs` keys for the Typst compile.
     ///
@@ -378,7 +396,6 @@ impl Default for RheoConfig {
             plugin_sections: HashMap::new(),
             spine: None,
             marrow: None,
-            dot_marrow_is_epilogue: Flag::default(),
             inputs: HashMap::new(),
             packages: HashMap::new(),
             extra: toml::Table::new(),
@@ -398,9 +415,6 @@ pub struct RheoConfigRaw {
     copy: Vec<String>,
     #[serde(default)]
     font_dirs: Vec<String>,
-    marrow: Option<String>,
-    #[serde(default)]
-    dot_marrow_is_epilogue: Flag<true>,
     #[serde(flatten)]
     extra: HashMap<String, toml::Value>,
 }
@@ -443,6 +457,19 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             Some(value) => NamespaceSource::parse_table(value)?,
             None => HashMap::new(),
         };
+        // Pulled out only when it's the new `[marrow]` table — a retired
+        // top-level scalar `marrow = "x"` is left in `extra` below, where the
+        // retired-key warning catches it, exactly like `dot_marrow_is_epilogue`
+        // (always a bare scalar, never a table).
+        let marrow: Option<MarrowConfig> = match raw.extra.get("marrow") {
+            Some(toml::Value::Table(_)) => Some(
+                raw.extra
+                    .remove("marrow")
+                    .expect("just matched")
+                    .try_into()?,
+            ),
+            _ => None,
+        };
         let mut plugin_sections = HashMap::new();
         let mut extra = toml::Table::new();
         for (key, value) in raw.extra {
@@ -484,8 +511,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             font_dirs: raw.font_dirs,
             plugin_sections,
             spine,
-            marrow: raw.marrow,
-            dot_marrow_is_epilogue: raw.dot_marrow_is_epilogue,
+            marrow,
             inputs,
             packages,
             extra,
@@ -561,7 +587,20 @@ impl RheoConfig {
 
     /// The project's marrow filename, relative to `content_dir`.
     pub fn marrow_file(&self) -> &str {
-        self.marrow.as_deref().unwrap_or(crate::MARROW_FILE)
+        self.marrow
+            .as_ref()
+            .and_then(|m| m.file.as_deref())
+            .unwrap_or(crate::MARROW_FILE)
+    }
+
+    /// Whether a bare `.marrow.typ` splices as the epilogue (the default) or
+    /// the prologue — `[marrow] position`. Irrelevant once an explicit marrow
+    /// filename is present.
+    pub fn marrow_is_epilogue(&self) -> bool {
+        !matches!(
+            self.marrow.as_ref().map(|m| m.position),
+            Some(MarrowPosition::Prologue)
+        )
     }
 
     /// Resolve content_dir against the project root, if configured.
@@ -764,25 +803,51 @@ mod tests {
     }
 
     #[test]
-    fn test_dot_marrow_is_epilogue_defaults_true_and_honors_false() {
-        // No key at all -> defaults to epilogue (today's behaviour).
+    fn test_marrow_table_defaults_epilogue_and_honors_position() {
+        // No `[marrow]` table at all -> defaults to epilogue (today's behaviour).
         let config = parse(&versioned_toml(""));
-        assert!(config.dot_marrow_is_epilogue.get());
+        assert!(config.marrow_is_epilogue());
+        assert_eq!(config.marrow_file(), crate::MARROW_FILE);
 
-        let config = parse(&versioned_toml("dot_marrow_is_epilogue = true"));
-        assert!(config.dot_marrow_is_epilogue.get());
+        let config = parse(&versioned_toml("[marrow]\nposition = \"epilogue\"\n"));
+        assert!(config.marrow_is_epilogue());
 
-        let config = parse(&versioned_toml("dot_marrow_is_epilogue = false"));
-        assert!(!config.dot_marrow_is_epilogue.get());
+        let config = parse(&versioned_toml("[marrow]\nposition = \"prologue\"\n"));
+        assert!(!config.marrow_is_epilogue());
+
+        let config = parse(&versioned_toml("[marrow]\nfile = \"bundle-root.typ\"\n"));
+        assert_eq!(config.marrow_file(), "bundle-root.typ");
+        assert!(config.marrow_is_epilogue());
+    }
+
+    /// The retired top-level `marrow` filename override and
+    /// `dot_marrow_is_epilogue` boolean have no effect any more — they land
+    /// in `extra` for the retired-key warning, exactly like `marrow_prologue`.
+    #[test]
+    fn test_retired_marrow_scalars_have_no_effect() {
+        let config = parse(&versioned_toml(
+            "marrow = \"bundle-root.typ\"\ndot_marrow_is_epilogue = false\n",
+        ));
+        assert!(config.marrow.is_none());
+        assert!(config.marrow_is_epilogue());
+        assert_eq!(config.marrow_file(), crate::MARROW_FILE);
+        assert_eq!(
+            config.extra.get("marrow"),
+            Some(&toml::Value::String("bundle-root.typ".to_string()))
+        );
+        assert_eq!(
+            config.extra.get("dot_marrow_is_epilogue"),
+            Some(&toml::Value::Boolean(false))
+        );
     }
 
     /// The retired top-level `marrow_prologue` no longer has any effect: it
-    /// lands in `extra` for the retired-key warning, and `dot_marrow_is_epilogue`
+    /// lands in `extra` for the retired-key warning, and the marrow position
     /// still defaults as if it were absent.
     #[test]
-    fn test_retired_marrow_prologue_does_not_affect_dot_marrow_is_epilogue() {
+    fn test_retired_marrow_prologue_key_does_not_affect_marrow_position() {
         let config = parse(&versioned_toml("marrow_prologue = true"));
-        assert!(config.dot_marrow_is_epilogue.get());
+        assert!(config.marrow_is_epilogue());
         assert_eq!(
             config.extra.get("marrow_prologue"),
             Some(&toml::Value::Boolean(true))

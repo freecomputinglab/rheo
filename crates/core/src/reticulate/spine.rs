@@ -275,8 +275,8 @@ pub struct VirtualSpine {
     /// Marrow spliced BEFORE every document instead of after, so a `#show`/`#set`
     /// rule in it reaches pre-existing vertebrae (introspection is bundle-wide,
     /// not sequential). Global-by-default and powerful — opt-in only, applied
-    /// with [`Self::with_marrow_prelude`].
-    pub marrow_prelude: Vec<String>,
+    /// with [`Self::with_marrow_prologue`].
+    pub marrow_prologue: Vec<String>,
     /// The project's `[spine] prelude`, prepended inside every vertebra rather
     /// than at bundle root, so its bindings are in the page's own scope.
     /// Resolved by callers and applied with [`Self::with_vertebra_prelude`],
@@ -305,8 +305,8 @@ impl VirtualSpine {
     }
 
     /// Attach marrow contributions spliced before every document, builder-style.
-    pub fn with_marrow_prelude(mut self, marrow: Vec<String>) -> Self {
-        self.marrow_prelude = marrow;
+    pub fn with_marrow_prologue(mut self, marrow: Vec<String>) -> Self {
+        self.marrow_prologue = marrow;
         self
     }
 
@@ -504,7 +504,7 @@ impl VirtualSpine {
             title: None,
             vertebra_prelude: None,
             marrow: Vec::new(),
-            marrow_prelude: Vec::new(),
+            marrow_prologue: Vec::new(),
         })
     }
 
@@ -677,7 +677,7 @@ impl VirtualSpine {
 
         BundleSource {
             documents,
-            marrow_prelude: to_stmts(&self.marrow_prelude),
+            marrow_prologue: to_stmts(&self.marrow_prologue),
             marrow: to_stmts(&self.marrow),
         }
     }
@@ -1140,7 +1140,7 @@ mod tests {
             title: None,
             vertebra_prelude: None,
             marrow: Vec::new(),
-            marrow_prelude: Vec::new(),
+            marrow_prologue: Vec::new(),
         };
         let src = spine.source();
         assert!(src.contains("#document(\"intro.html\", format: \"html\""));
@@ -1186,7 +1186,7 @@ mod tests {
             title: None,
             vertebra_prelude: None,
             marrow: Vec::new(),
-            marrow_prelude: Vec::new(),
+            marrow_prologue: Vec::new(),
         };
         let src = spine.source();
         assert!(src.contains("#document(\"doc.pdf\", format: \"pdf\""));
@@ -1235,7 +1235,7 @@ mod tests {
             title: None,
             vertebra_prelude: None,
             marrow: Vec::new(),
-            marrow_prelude: Vec::new(),
+            marrow_prologue: Vec::new(),
         };
         assert!(spine.check_output_collisions().is_ok());
     }
@@ -1337,7 +1337,7 @@ mod tests {
     }
 
     /// Builds a one-vertebra spine (an `index.typ` under `root/content`),
-    /// shared by the prelude/epilogue ordering tests below.
+    /// shared by the prologue/epilogue ordering tests below.
     fn build_single_vertebra_spine(root: &Path) -> VirtualSpine {
         let content = root.join("content");
         fs::create_dir_all(&content).unwrap();
@@ -1357,7 +1357,7 @@ mod tests {
 
     /// Marrow statements are emitted after every `#document` block by default,
     /// at bundle root, where `document()`/`asset()` are legal — the position a
-    /// project gets with no `marrow_prelude` config and a package gets by
+    /// project gets with no `marrow_prologue` config and a package gets by
     /// shipping `.marrow.typ`.
     #[test]
     fn bundle_source_emits_marrow_after_documents() {
@@ -1376,14 +1376,14 @@ mod tests {
         );
     }
 
-    /// Prelude marrow — opted into via `with_marrow_prelude` (the project's
-    /// `marrow_prelude = true`, or a package's `.marrow.prelude.typ`) — is
-    /// emitted before every `#document` block instead.
+    /// Prologue marrow — opted into via `with_marrow_prologue` (the project's
+    /// `[marrow] position = "prologue"`, or a package's `.marrow.prologue.typ`)
+    /// — is emitted before every `#document` block instead.
     #[test]
-    fn bundle_source_emits_marrow_prelude_before_documents() {
+    fn bundle_source_emits_marrow_prologue_before_documents() {
         let tmp = TempDir::new().unwrap();
         let spine = build_single_vertebra_spine(tmp.path())
-            .with_marrow_prelude(vec!["#asset(\"extra/hello.txt\", \"hi\")".to_string()]);
+            .with_marrow_prologue(vec!["#asset(\"extra/hello.txt\", \"hi\")".to_string()]);
 
         let source = spine.bundle_source().to_string();
         let marrow_at = source
@@ -1392,7 +1392,7 @@ mod tests {
         let first_document_at = source.find("#document(").expect("a document is emitted");
         assert!(
             marrow_at < first_document_at,
-            "prelude marrow must precede every document, got:\n{source}"
+            "prologue marrow must precede every document, got:\n{source}"
         );
     }
 

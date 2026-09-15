@@ -5,20 +5,20 @@ pub const TYP_EXT: &str = ".typ";
 /// Filename, directly under `content_dir`, whose Typst is emitted as marrow — at
 /// the bundle root, outside every document — rather than compiled as a vertebra.
 ///
-/// Position-agnostic: a project's copy lands wherever `dot_marrow_is_epilogue`
+/// Position-agnostic: a project's copy lands wherever `[marrow] position`
 /// says, a package's always in the epilogue. Either way the two explicit names
 /// below outrank it.
 pub const MARROW_FILE: &str = ".marrow.typ";
 
 /// Marrow spliced before every document. Outranks [`MARROW_FILE`].
-pub const MARROW_PRELUDE_FILE: &str = ".marrow.prelude.typ";
+pub const MARROW_PROLOGUE_FILE: &str = ".marrow.prologue.typ";
 
 /// Marrow spliced after every document. Outranks [`MARROW_FILE`].
 pub const MARROW_EPILOGUE_FILE: &str = ".marrow.epilogue.typ";
 
 /// Every reserved marrow filename, for the scan that must keep all of them out
 /// of the vertebra list.
-pub const MARROW_RESERVED_FILES: [&str; 2] = [MARROW_PRELUDE_FILE, MARROW_EPILOGUE_FILE];
+pub const MARROW_RESERVED_FILES: [&str; 2] = [MARROW_PROLOGUE_FILE, MARROW_EPILOGUE_FILE];
 
 /// Prefix reserved for bundle assets consumed internally by rheo itself.
 ///

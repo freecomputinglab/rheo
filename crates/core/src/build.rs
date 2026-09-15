@@ -146,7 +146,7 @@ struct MarrowContext {
     target: Option<&'static str>,
     ext: Option<&'static str>,
     marrow: Vec<String>,
-    marrow_prelude: Vec<String>,
+    marrow_prologue: Vec<String>,
 }
 
 /// The result of [`Build::mould_bundle`]: the synthesized bundle main and
@@ -528,7 +528,7 @@ impl Build {
             title,
             prelude,
             marrow_ctx.marrow,
-            marrow_ctx.marrow_prelude,
+            marrow_ctx.marrow_prologue,
         )?;
 
         let moulded = self.timed(phase::MOULD, Some(plugin.name()), || {
@@ -654,10 +654,10 @@ impl Build {
     /// `asset()` both hard-error under the combined PDF target ("setting the
     /// document format is only supported in the bundle target"), so the same
     /// `ext` gate that marks a per-page format decides whether to gather it at
-    /// all. Position (prelude, spliced before every document, vs. epilogue,
+    /// all. Position (prologue, spliced before every document, vs. epilogue,
     /// spliced after) is per-contribution: a package picks its own by
-    /// filename (`.marrow.prelude.typ` vs `.marrow.typ`); the project picks
-    /// its own via `rheo.toml`'s `dot_marrow_is_epilogue` key, defaulting to
+    /// filename (`.marrow.prologue.typ` vs `.marrow.typ`); the project picks
+    /// its own via `rheo.toml`'s `[marrow] position` key, defaulting to
     /// epilogue so an unconfigured project compiles byte-identically. Within
     /// each position, packages contribute first in import order, then the
     /// project's own file, so it can build on what they registered.
@@ -672,7 +672,7 @@ impl Build {
         let ext = target.map(|_| plugin.extension());
 
         let mut marrow = Vec::new();
-        let mut marrow_prelude = Vec::new();
+        let mut marrow_prologue = Vec::new();
         if ext.is_some() {
             // Behind the same opt-out that governs every other package-driven
             // behaviour.
@@ -683,14 +683,14 @@ impl Build {
                 // `.marrow.typ` and the package mints none of the pages it
                 // exists to mint — silently, on a green build).
                 marrow.extend(packages.marrow());
-                marrow_prelude.extend(packages.marrow_prelude());
+                marrow_prologue.extend(packages.marrow_prologue());
             }
 
             // The explicit names first; a bare `.marrow.typ` is read only when
             // neither is present, and then takes the position the flag names.
             let mut explicit = false;
             for (name, into) in [
-                (crate::MARROW_PRELUDE_FILE, &mut marrow_prelude),
+                (crate::MARROW_PROLOGUE_FILE, &mut marrow_prologue),
                 (crate::MARROW_EPILOGUE_FILE, &mut marrow),
             ] {
                 if let Some(text) = read_marrow_at(&content_dir.join(name))? {
@@ -701,9 +701,9 @@ impl Build {
             if !explicit {
                 let bare = content_dir.join(self.project.config.marrow_file());
                 if let Some(text) = read_marrow_at(&bare)? {
-                    match self.project.config.dot_marrow_is_epilogue.get() {
+                    match self.project.config.marrow_is_epilogue() {
                         true => marrow.push(text),
-                        false => marrow_prelude.push(text),
+                        false => marrow_prologue.push(text),
                     }
                 }
             }
@@ -713,7 +713,7 @@ impl Build {
             target,
             ext,
             marrow,
-            marrow_prelude,
+            marrow_prologue,
         })
     }
 
@@ -726,13 +726,13 @@ impl Build {
         title: Option<String>,
         prelude: Option<String>,
         marrow: Vec<String>,
-        marrow_prelude: Vec<String>,
+        marrow_prologue: Vec<String>,
     ) -> Result<VirtualSpine> {
         let virtual_spine = VirtualSpine::build(scan, &self.project.root, layout)?
             .with_title(title)
             .with_vertebra_prelude(prelude)
             .with_marrow(marrow)
-            .with_marrow_prelude(marrow_prelude);
+            .with_marrow_prologue(marrow_prologue);
         virtual_spine.check_output_collisions()?;
         Ok(virtual_spine)
     }
@@ -1668,7 +1668,7 @@ mod tests {
             title: None,
             vertebra_prelude: None,
             marrow: Vec::new(),
-            marrow_prelude: Vec::new(),
+            marrow_prologue: Vec::new(),
         };
 
         let mut virtual_fs = typst_bundle::VirtualFs::default();
@@ -1729,7 +1729,7 @@ mod tests {
             title: None,
             vertebra_prelude: None,
             marrow: Vec::new(),
-            marrow_prelude: Vec::new(),
+            marrow_prologue: Vec::new(),
         };
 
         let mut virtual_fs = typst_bundle::VirtualFs::default();
@@ -1992,9 +1992,12 @@ mod tests {
     }
 
     /// A one-vertebra project with a `*bold text*` paragraph and a marrow
-    /// `#show strong` rule, shared by the epilogue/prelude end-to-end tests
+    /// `#show strong` rule, shared by the epilogue/prologue end-to-end tests
     /// below. Only the bare marrow's position differs between them.
-    fn build_show_rule_project(root: &Path, dot_marrow_is_epilogue: bool) -> ProjectConfig {
+    fn build_show_rule_project(
+        root: &Path,
+        position: crate::config::MarrowPosition,
+    ) -> ProjectConfig {
         std::fs::create_dir_all(root.join("content")).expect("create content dir");
         std::fs::write(
             root.join("content/index.typ"),
@@ -2013,7 +2016,10 @@ mod tests {
             config: crate::RheoConfig {
                 content_dir: Some("content".to_string()),
                 formats: vec!["html".to_string()],
-                dot_marrow_is_epilogue: dot_marrow_is_epilogue.into(),
+                marrow: Some(crate::config::MarrowConfig {
+                    file: None,
+                    position,
+                }),
                 ..Default::default()
             },
             typ_files: vec![root.join("content/index.typ")],
@@ -2030,7 +2036,7 @@ mod tests {
     #[test]
     fn test_run_default_marrow_epilogue_does_not_reach_pre_existing_vertebra() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let project = build_show_rule_project(dir.path(), true);
+        let project = build_show_rule_project(dir.path(), crate::config::MarrowPosition::Epilogue);
 
         let html = run_capturing(project).html("index.html");
         assert!(
@@ -2039,33 +2045,33 @@ mod tests {
         );
     }
 
-    /// End-to-end: with `dot_marrow_is_epilogue = false`, the same `#show` rule
+    /// End-to-end: with `[marrow] position = "prologue"`, the same `#show` rule
     /// is spliced BEFORE every document, so it reaches the pre-existing vertebra.
     #[test]
-    fn test_run_dot_marrow_as_prelude_reaches_pre_existing_vertebra() {
+    fn test_run_dot_marrow_as_prologue_reaches_pre_existing_vertebra() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let project = build_show_rule_project(dir.path(), false);
+        let project = build_show_rule_project(dir.path(), crate::config::MarrowPosition::Prologue);
 
         let html = run_capturing(project).html("index.html");
         assert!(
             html.contains("TOUCHED"),
-            "dot_marrow_is_epilogue = false should let #show reach the pre-existing vertebra, got:\n{html}"
+            "[marrow] position = \"prologue\" should let #show reach the pre-existing vertebra, got:\n{html}"
         );
         assert!(!html.contains("bold text"));
     }
 
-    /// `.marrow.prelude.typ` takes the prelude position on its own merits, and
+    /// `.marrow.prologue.typ` takes the prologue position on its own merits, and
     /// its presence sends the bare `.marrow.typ` to neither position — even with
-    /// `dot_marrow_is_epilogue` left at its default.
+    /// `[marrow] position` left at its default.
     #[test]
-    fn test_run_explicit_marrow_prelude_outranks_bare_marrow() {
+    fn test_run_explicit_marrow_prologue_outranks_bare_marrow() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let project = build_show_rule_project(dir.path(), true);
+        let project = build_show_rule_project(dir.path(), crate::config::MarrowPosition::Epilogue);
         std::fs::write(
-            dir.path().join("content").join(crate::MARROW_PRELUDE_FILE),
+            dir.path().join("content").join(crate::MARROW_PROLOGUE_FILE),
             "#show strong: it => [TOUCHED]\n",
         )
-        .expect("write prelude marrow");
+        .expect("write prologue marrow");
 
         let html = run_capturing(project).html("index.html");
         assert!(html.contains("TOUCHED"), "got:\n{html}");

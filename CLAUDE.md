@@ -82,6 +82,10 @@ date = 2025-01-15T00:00:00Z
 [epub.spine]
 title = "My Book"
 
+[marrow]
+file = "bundle-root.typ"  # optional; overrides the bare `.marrow.typ` filename
+position = "prologue"     # optional; "epilogue" (default) or "prologue" — see "Marrow filenames" below
+
 # Where a package namespace resolves from. Optional and rarely needed: with no
 # [packages] table, @rheo resolves from its built-in releases host and every
 # other namespace goes to Typst universe.
@@ -219,7 +223,7 @@ A `.marrow.typ` at the bundle root (a project's own, or one shipped by a package
 
 **Control assets.** The `.rheo/` bundle-output prefix is reserved: an asset minted under it (e.g. `.rheo/head.html`) is a message from the bundle to rheo, consumed during compilation and never written to the actual build output.
 
-**Marrow filenames.** `.marrow.prelude.typ` splices before every `#document(...)` (so a `#show`/`#set` in it reaches pre-existing vertebrae) and `.marrow.epilogue.typ` after. A bare `.marrow.typ` is a fallback for whichever position the other two leave open: **either explicit name outranks it and it is then not read at all**. A project's bare marrow takes the position `dot_marrow_is_epilogue` names (default `true`); a package's is always epilogue, since one project's key has no business moving a dependency's splice.
+**Marrow filenames.** `.marrow.prologue.typ` splices before every `#document(...)` (so a `#show`/`#set` in it reaches pre-existing vertebrae) and `.marrow.epilogue.typ` after. A bare `.marrow.typ` is a fallback for whichever position the other two leave open: **either explicit name outranks it and it is then not read at all**. A project's bare marrow takes the position `[marrow] position` names (default `"epilogue"`); a package's is always epilogue, since one project's setting has no business moving a dependency's splice.
 
 `@rheo/feeds` (in `../rheo-packages`) is where Atom feed generation now lives, built on these three primitives plus `rheo-metadata-all()` (see `rheo-context` above) — no Rust code, no plugin, no `rheo.toml` keys.
 

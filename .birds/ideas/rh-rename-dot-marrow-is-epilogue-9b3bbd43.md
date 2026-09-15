@@ -9,7 +9,7 @@ deps:
 - blocked-by:rh-title-a-synthesized-index-by-directory-0b69f6c4
 - blocked-by:rh-document-auto-index-in-the-changelog-c3cf8b3d
 - blocked-by:rh-document-prelude-cost-and-reserved-typ-dc5db8c8
-closed: false
+closed: true
 ---
 Touches: crates/core/src/util/constants.rs, crates/core/src/config/mod.rs, crates/core/src/config/retired.rs, crates/core/src/reticulate/spine.rs, crates/core/src/reticulate/bundle_source.rs, crates/core/src/packages/manifest.rs, crates/core/src/build.rs, crates/cli/src/migrate.rs, CLAUDE.md, changelog.md, docs/contract.md
 
