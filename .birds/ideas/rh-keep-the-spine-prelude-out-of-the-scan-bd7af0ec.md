@@ -7,7 +7,7 @@ labels:
 - fix-prelude-scan-exclude
 deps:
 - blocked-by:rh-mark-synthesized-vertebrae-in-spine-flat-607892ff
-closed: false
+closed: true
 ---
 Touches: crates/core/src/reticulate/spine.rs, crates/core/src/build.rs, CLAUDE.md, changelog.md
 

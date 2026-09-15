@@ -48,17 +48,21 @@ impl SpineScan {
     /// auto_index` — whether a directory with children and no landing file
     /// gets a synthesized one instead of becoming a non-clickable group.
     pub fn run(content_dir: &Path, exclude: &[String], auto_index: bool) -> Result<SpineScan> {
-        Self::run_with_marrow(content_dir, exclude, MARROW_FILE, auto_index)
+        Self::run_with_marrow(content_dir, exclude, MARROW_FILE, auto_index, None)
     }
 
     /// As [`Self::run`], but with the project's configured marrow filename —
     /// that file is inlined at bundle root rather than compiled as a vertebra,
-    /// so the scan must skip it whatever it is called.
+    /// so the scan must skip it whatever it is called. `prelude` is the
+    /// `[spine] prelude` path (already relative to `content_dir`, like
+    /// `exclude`) — it is spliced into every vertebra's own source rather than
+    /// compiled as one of its own, so the scan must skip it too.
     pub fn run_with_marrow(
         content_dir: &Path,
         exclude: &[String],
         marrow_file: &str,
         auto_index: bool,
+        prelude: Option<&str>,
     ) -> Result<SpineScan> {
         // The marrow file is inlined at bundle root, never compiled as a
         // vertebra, so the scan must not see it. Injected as an escaped literal
@@ -70,6 +74,12 @@ impl SpineScan {
             .chain(MARROW_RESERVED_FILES)
             .collect();
         exclude_patterns.extend(marrow_names.iter().map(|n| globset::escape(n)));
+        // The prelude is spliced into every vertebra's own source, not
+        // compiled as a vertebra of its own — same reasoning as marrow, and
+        // escaped for the same reason: it's a literal path the user wrote.
+        if let Some(prelude) = prelude {
+            exclude_patterns.push(globset::escape(prelude));
+        }
         let exclude_set = Self::build_exclude_set(&exclude_patterns)?;
 
         let mut files = Vec::new();
@@ -1299,6 +1309,29 @@ mod tests {
         assert!(
             marrow_at < first_document_at,
             "prelude marrow must precede every document, got:\n{source}"
+        );
+    }
+
+    /// `[spine] prelude` names a file inside the scanned content tree (it is
+    /// resolved relative to `content_dir`, like `exclude`). It must never be
+    /// compiled as a vertebra of its own.
+    #[test]
+    fn prelude_path_is_excluded_from_the_scan() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(content.join("_lib")).unwrap();
+        fs::write(content.join("index.typ"), "= Index\n").unwrap();
+        fs::write(content.join("_lib").join("prelude.typ"), "").unwrap();
+
+        let scan =
+            SpineScan::run_with_marrow(&content, &[], MARROW_FILE, true, Some("_lib/prelude.typ"))
+                .unwrap();
+
+        assert!(
+            scan.files.iter().all(|f| !f.ends_with("_lib/prelude.typ")),
+            "prelude file must not appear in the scanned files: {:?}",
+            scan.files
         );
     }
 }

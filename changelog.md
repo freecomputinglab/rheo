@@ -59,7 +59,11 @@ nothing declared in it at all.
 Imports in the prelude must be **root-absolute** (`/_lib/x.typ`): the same text
 is spliced into vertebrae at every depth. The splice is keyed per vertebra, so
 it reaches neither a partial pulled in by `#include` nor the library file the
-prelude itself imports, which would otherwise recurse.
+prelude itself imports, which would otherwise recurse. The library it imports
+belongs OUTSIDE `content_dir`: only the prelude's own path leaves the scan, so a
+library beside it under `content_dir` is still compiled as a vertebra, is
+spliced with the prelude, and imports itself — a cyclic import that fails the
+build.
 
 An unreadable `prelude` path is fatal and names the path, unlike a missing
 marrow file (silent, its filename having a default) — this key exists only

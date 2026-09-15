@@ -435,7 +435,8 @@ mod tests {
     #[test]
     fn scan_skips_the_configured_marrow_file() {
         let temp = create_test_dir_with_files(&["index.typ", "bundle-root.typ"]);
-        let result = SpineScan::run_with_marrow(temp.path(), &[], "bundle-root.typ", true).unwrap();
+        let result =
+            SpineScan::run_with_marrow(temp.path(), &[], "bundle-root.typ", true, None).unwrap();
 
         assert_eq!(result.files.len(), 1, "only index.typ is a vertebra");
         assert!(

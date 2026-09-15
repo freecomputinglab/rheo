@@ -194,12 +194,12 @@ A package needing only the shared spine can read `sys.inputs.rheo-context.spine`
 prelude = "_lib/prelude.typ"
 ```
 ```typst
-// _lib/prelude.typ
+// content/_lib/prelude.typ
 #import "/_lib/template.typ": constructors
 #let (page, note) = constructors(ctx: rheo-context())
 ```
 
-Imports in it must be **root-absolute** — the same text lands in vertebrae at every depth. The splice is keyed per vertebra, so it reaches neither a partial pulled in by `#include` nor the library file it imports (which would recurse). An unreadable path is fatal.
+Imports in it must be **root-absolute** — the same text lands in vertebrae at every depth. The splice is keyed per vertebra, so it reaches neither a partial pulled in by `#include` nor the library file it imports (which would recurse). The imported library belongs outside `content_dir`: only the prelude's own path leaves the scan, so a library beside it under `content_dir` compiles as a vertebra, gets the prelude spliced in, and imports itself — a cyclic import that fails the build. An unreadable path is fatal.
 
 **Precedence — field-by-field, not whole-table:** a per-format `[<format>.spine]` table can set `title`, `exclude`, `prelude`, `auto_index` and its layering (`include` or `section`) independently; any field it leaves unset falls back to the matching field on the global `[spine]` table (not the whole table at once). Layering falls back as one unit — a per-format `include` replaces a global `section`, rather than joining it. For example, `[pdf.spine] title = "My Book"` with no `exclude` of its own still inherits the global `[spine] exclude` — it does *not* silently drop it just because `[pdf.spine]` exists.
 

@@ -612,6 +612,7 @@ impl Build {
                 &spine.exclude,
                 self.project.config.marrow_file(),
                 spine.auto_index,
+                spine.prelude.as_deref(),
             )?
             .apply_layering(content_dir, spine.layering.as_ref())?,
         };
