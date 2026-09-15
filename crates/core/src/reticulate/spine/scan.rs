@@ -153,24 +153,34 @@ impl SpineScan {
             .unwrap_or_default()
             .to_string();
 
-        // Excluded once, up front — both the landing-file search and the
-        // children loop below read this same pre-filtered list.
-        let entries: Vec<PathBuf> = Self::read_sorted_entries(dir)?
+        // Excluded once, up front — the children loop below reads this same
+        // pre-filtered list. `unfiltered_entries` is kept alongside it only to
+        // tell an excluded landing file apart from a genuinely absent one.
+        let unfiltered_entries: Vec<PathBuf> = Self::read_sorted_entries(dir)?
             .into_iter()
             .map(|e| e.path())
+            .collect();
+        let entries: Vec<PathBuf> = unfiltered_entries
+            .iter()
             .filter(|p| !Self::is_excluded(content_dir, p, exclude))
+            .cloned()
             .collect();
 
         // Find the landing file: prefer index.typ, else <dirname>.typ.
         let index_name = format!("index{}", TYP_EXT);
         let named_name = format!("{}{}", dirname, TYP_EXT);
-        let named = |name: &str| {
-            entries
+        let named = |haystack: &[PathBuf], name: &str| {
+            haystack
                 .iter()
                 .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(name))
                 .cloned()
         };
-        let landing_path = named(&index_name).or_else(|| named(&named_name));
+        let landing_path = named(&entries, &index_name).or_else(|| named(&entries, &named_name));
+        // True when a landing file exists but exclude filtered it out, so
+        // auto_index below fills only an absence, never an exclusion.
+        let landing_excluded = landing_path.is_none()
+            && (named(&unfiltered_entries, &index_name).is_some()
+                || named(&unfiltered_entries, &named_name).is_some());
 
         let landing_idx = landing_path.as_ref().map(|landing| {
             let idx = files.len();
@@ -207,7 +217,8 @@ impl SpineScan {
             // synthesize one at the notional `<dir>/index.typ` path, so every
             // downstream derivation (handle, output path, title) comes out
             // identical to what a real, empty index.typ would have produced.
-            None if auto_index => {
+            // auto_index fills an absence, not an exclusion.
+            None if auto_index && !landing_excluded => {
                 let idx = files.len();
                 files.push(dir.join(&index_name));
                 synthesized.insert(idx);
@@ -344,6 +355,19 @@ mod tests {
 
         let note = find_node(&extras.children, "note");
         assert!(note.vertebra().is_some());
+    }
+
+    /// Excluding a directory's landing file is a coherent request for "no page
+    /// here", not an absence for auto_index to fill — it must yield a group
+    /// node, not a synthesized replacement at the excluded path.
+    #[test]
+    fn scan_dir_with_excluded_index_stays_group_node_when_auto_index_on() {
+        let temp = create_test_dir_with_files(&["extras/index.typ", "extras/note.typ"]);
+        let result = SpineScan::run(temp.path(), &["extras/index.typ".to_string()], true).unwrap();
+
+        let extras = find_node(&result.tree, "extras");
+        assert!(extras.vertebra().is_none());
+        assert_eq!(extras.title(), Some("Extras"));
     }
 
     /// An empty directory (no `.typ` files after exclusion) is dropped
