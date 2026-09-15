@@ -215,8 +215,10 @@ impl SpineScan {
             None if children.is_empty() => None,
             // No real landing file, but the directory still has children:
             // synthesize one at the notional `<dir>/index.typ` path, so every
-            // downstream derivation (handle, output path, title) comes out
-            // identical to what a real, empty index.typ would have produced.
+            // downstream derivation (handle, output path) comes out identical
+            // to what a real, empty index.typ would have produced — except
+            // the title, which names the directory rather than reading
+            // "Index" (there is no file for an author to override it in).
             // auto_index fills an absence, not an exclusion.
             None if auto_index && !landing_excluded => {
                 let idx = files.len();

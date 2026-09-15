@@ -402,7 +402,17 @@ impl VirtualSpine {
                 // `crate::build::flatten_bundle_outputs`); this path-derived
                 // value is only a pre-compile placeholder (spine ordering,
                 // `@handle` display text before the bundle compiles, etc.).
-                let title = DocumentTitle::to_readable_name(&stem);
+                // For a synthesized index there is no file an author could
+                // publish a beacon from, so this path-derived title is final —
+                // it names the directory it stands for, not "Index".
+                let title = if is_synthesized {
+                    file.parent()
+                        .and_then(|p| p.file_name())
+                        .map(|name| SpineScan::prettify(&name.to_string_lossy()))
+                        .unwrap_or_else(|| DocumentTitle::to_readable_name(&stem))
+                } else {
+                    DocumentTitle::to_readable_name(&stem)
+                };
 
                 // The `rheo-meta:` namespace is reserved for the synthesized
                 // per-vertebra metadata beacon (`TypstStmt::MetadataBeacon`).
@@ -871,6 +881,69 @@ mod tests {
 
         assert_eq!(synthesized.handle, real.handle);
         assert_eq!(synthesized.output_path, real.output_path);
+    }
+
+    /// A synthesized directory-index vertebra is titled after its own
+    /// directory, prettified the same way a non-clickable group node would
+    /// have been — not "Index".
+    #[test]
+    fn synthesized_index_titled_after_parent_directory() {
+        let layout = || SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(content.join("chapters")).unwrap();
+        fs::create_dir_all(content.join("01-intro")).unwrap();
+        fs::write(content.join("chapters").join("one.typ"), "= One\n").unwrap();
+        fs::write(content.join("01-intro").join("one.typ"), "= One\n").unwrap();
+
+        let scan = SpineScan::run(&content, &[], true).unwrap();
+        let spine = VirtualSpine::build(scan, root, layout()).unwrap();
+
+        let chapters = spine
+            .vertebrae
+            .iter()
+            .find(|v| v.rel_path.ends_with("chapters/index.typ"))
+            .expect("chapters gets a synthesized index.typ vertebra");
+        assert_eq!(chapters.title, "Chapters");
+
+        let intro = spine
+            .vertebrae
+            .iter()
+            .find(|v| v.rel_path.ends_with("01-intro/index.typ"))
+            .expect("01-intro gets a synthesized index.typ vertebra");
+        assert_eq!(intro.title, "Intro");
+    }
+
+    /// A REAL, authored `index.typ` keeps its path-derived "Index" title —
+    /// only a synthesized landing page borrows its directory's name.
+    #[test]
+    fn real_index_typ_keeps_index_title() {
+        let layout = || SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(content.join("chapters")).unwrap();
+        fs::write(content.join("chapters").join("index.typ"), "").unwrap();
+        fs::write(content.join("chapters").join("one.typ"), "= One\n").unwrap();
+
+        let scan = SpineScan::run(&content, &[], true).unwrap();
+        let spine = VirtualSpine::build(scan, root, layout()).unwrap();
+
+        let chapters = spine
+            .vertebrae
+            .iter()
+            .find(|v| v.rel_path.ends_with("chapters/index.typ"))
+            .unwrap();
+        assert_eq!(chapters.title, "Index");
     }
 
     #[test]

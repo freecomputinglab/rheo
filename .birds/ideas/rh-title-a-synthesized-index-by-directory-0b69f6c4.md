@@ -7,7 +7,7 @@ labels:
 - fix-auto-index-title
 deps:
 - blocked-by:rh-bind-rheo-index-per-vertebra-c7c34420
-closed: false
+closed: true
 ---
 Touches: crates/core/src/reticulate/spine.rs
 
