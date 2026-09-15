@@ -53,7 +53,7 @@ need it (they call `query(...)`).
 
 | Helper | Signature | Scope | Notes |
 | --- | --- | --- | --- |
-| `rheo-index` | `() => content` | every vertebra (its own prelude), imported alongside `rheo-context()` | A synthesized directory-index vertebra's whole body is a call to this (`rheo.toml` `[spine] auto_index`, default `true`): a plain list of links to the current page's own children, read from `spine` — the full tree, groups included, unlike `spine-flat` — and this page's own handle from `state("rheo-handle")` (published by `rheo-page-init`). A project overrides the default by binding its own `#let rheo-index() = ...` in `[spine] prelude`, spliced after this import, so it shadows it for every vertebra. |
+| `rheo-index` | `() => content` | every vertebra (its own prelude), bound after `rheo-context()` to `rheo-index-at(rheo-context().handle)` | A synthesized directory-index vertebra's whole body is a call to this (`rheo.toml` `[spine] auto_index`, default `true`): a plain list of links to the current page's own children, read from `spine` — the full tree, groups included, unlike `spine-flat` — for the handle baked into that vertebra's own `rheo-context()` binding, a compile-time constant rather than a `state` read. This works in every format including the combined PDF, where each child renders as a Typst label link (`link(label(child.handle), child.title)`) rather than a relative href. A project overrides the default by binding its own `#let rheo-index() = ...` in `[spine] prelude`, spliced after this binding, so it shadows it for every vertebra. |
 
 ## Project-supplied `sys.inputs`
 

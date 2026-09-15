@@ -480,7 +480,7 @@ impl World for RheoWorld {
         // The same `typ/rheo.typ` `SourceInjector::main` splices wholesale
         // into the bundle main, served here too as an independent module so
         // the `IndexHelper` `#import` (see `typst_source.rs`) can reach
-        // `rheo-index` from a vertebra's own prelude — a separate Typst
+        // `rheo-index-at` from a vertebra's own prelude — a separate Typst
         // module from the bundle main, evaluated fresh on import, so its
         // top-level `#show`/`#set` rules style only its own (empty) content,
         // never the importer's.

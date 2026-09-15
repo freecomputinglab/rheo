@@ -7,7 +7,7 @@ labels:
 - fix-rheo-index-handle
 deps:
 - blocked-by:rh-keep-the-spine-prelude-out-of-the-scan-bd7af0ec
-closed: false
+closed: true
 ---
 Touches: crates/core/src/typ/rheo.typ, crates/core/src/synth/typst_source.rs, crates/core/src/reticulate/spine.rs, docs/contract.md
 

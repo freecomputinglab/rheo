@@ -41,7 +41,7 @@ pub const RESERVED_META_LABEL_PREFIX: &str = "rheo-meta:";
 pub const METADATA_MODULE_PATH: &str = "typ/metadata.typ";
 
 /// Project-root-relative path `RheoWorld` serves `typ/rheo.typ` under, for the
-/// `#import "/<RHEO_TEMPLATE_MODULE_PATH>": rheo-index` statement
+/// `#import "/<RHEO_TEMPLATE_MODULE_PATH>": rheo-index-at` statement
 /// [`crate::synth::typst_source::TypstStmt::IndexHelper`] renders. The same
 /// file is also spliced wholesale into the bundle main
 /// (`crate::synth::source_injector::SourceInjector::main`); serving it here

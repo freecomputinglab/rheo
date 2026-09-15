@@ -116,26 +116,32 @@
 }
 
 // Default body for a synthesized directory-index page (auto_index in
-// [spine]): a plain list of links to the current page's own children. Reads
-// `spine` — the full tree, INCLUDING group nodes, unlike spine-flat — off
-// sys.inputs rather than rheo-context(), and this page's own handle off
-// state("rheo-handle") (published by rheo-page-init above) rather than
-// rheo-context().handle, because this function is imported from this module
-// (see IndexHelper) rather than defined per vertebra, so it cannot capture a
-// vertebra-local rheo-context() binding. A project overrides the default by
-// binding its own #let rheo-index() in [spine] prelude, spliced after this
-// import, so it shadows it for every vertebra.
-#let rheo-index() = context {
-  let handle = state("rheo-handle").get()
+// [spine]): a plain list of links to `handle`'s own children. Takes the
+// handle as an argument rather than reading state — rheo already bakes it
+// into each vertebra's rheo-context() binding, a compile-time constant at
+// the call site — which also makes this work under a SingleCombined (PDF)
+// layout, where every vertebra shares one #document and state("rheo-handle")
+// is meaningless. Reads `spine` — the full tree, INCLUDING group nodes,
+// unlike spine-flat — off sys.inputs since this function is imported from
+// this module (see IndexHelper) rather than defined per vertebra, so it
+// cannot capture a vertebra-local rheo-context() binding. A project
+// overrides the default by binding its own #let rheo-index() in [spine]
+// prelude, spliced after the IndexBinding call site, so it shadows it for
+// every vertebra.
+#let rheo-index-at(handle) = {
   let ctx = sys.inputs.rheo-context
   let ext = ctx.at("ext", default: none)
   let node = _rheo-index-find(ctx.spine, handle)
   let children = if node == none { () } else { node.children }
   list(..children.map(child => {
-    if child.handle != none and ext != none {
+    if child.handle == none {
+      [#child.title]
+    } else if ext != none {
       link(_rheo-href(handle, child.handle, ext))[#child.title]
     } else {
-      [#child.title]
+      // No ext means a SingleCombined (PDF) layout: use the same label-link
+      // mechanism as ordinary cross-vertebra links, since there is no href.
+      link(label(child.handle), child.title)
     }
   }))
 }

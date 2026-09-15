@@ -521,9 +521,10 @@ impl VirtualSpine {
     /// there; `rheo-metadata` is still defined (it just finds no beacon and
     /// returns `(:)`).
     ///
-    /// `rheo-index` (see [`TypstStmt::IndexHelper`]) — the default,
+    /// `rheo-index-at` (see [`TypstStmt::IndexHelper`]) — the default,
     /// overridable renderer a synthesized directory-index vertebra's body
-    /// calls — follows the context binding for the same reason.
+    /// calls — is imported next, then bound to this vertebra's own handle as
+    /// `rheo-index()` (see [`TypstStmt::IndexBinding`]).
     ///
     /// `self.vertebra_prelude` goes last, so it can call the `rheo-context()`
     /// defined above it, and so a `#let rheo-index() = ...` in it shadows the
@@ -542,6 +543,7 @@ impl VirtualSpine {
                             handle: v.handle.clone(),
                         },
                         TypstStmt::IndexHelper,
+                        TypstStmt::IndexBinding,
                     ]),
                     match &self.vertebra_prelude {
                         Some(p) => format!("{}\n\n", p.trim_end()),
@@ -917,13 +919,19 @@ mod tests {
             // ...so the large spine is NOT duplicated into the per-file prelude.
             assert!(!p.contains("spine-flat"));
             assert!(!p.contains("path:"));
-            // ...and rheo-index (the default, overridable directory-index
+            // ...and rheo-index-at (the default, overridable directory-index
             // renderer a synthesized landing page's body calls) is imported
-            // after rheo-context(), so a later override can shadow it.
-            assert!(p.contains("#import \"/typ/rheo.typ\": rheo-index"));
+            // after rheo-context(), so a later override can shadow it, and
+            // rheo-index() is bound to call it with THIS vertebra's own handle.
+            assert!(p.contains("#import \"/typ/rheo.typ\": rheo-index-at"));
             assert!(
                 p.find("#let rheo-context() = ").unwrap()
                     < p.find("#import \"/typ/rheo.typ\"").unwrap()
+            );
+            assert!(p.contains("#let rheo-index() = rheo-index-at(rheo-context().handle)"));
+            assert!(
+                p.find("#import \"/typ/rheo.typ\"").unwrap()
+                    < p.find("#let rheo-index() = rheo-index-at").unwrap()
             );
             // OnePerVertebra layouts get a beacon epilogue naming this vertebra.
             assert!(inj.epilogue.contains("#metadata("));
@@ -937,7 +945,10 @@ mod tests {
 
         // Unconfigured `[spine] prelude` appends nothing.
         for inj in [root_injection, nested_injection] {
-            assert!(inj.prelude.ends_with("rheo-index\n\n"));
+            assert!(
+                inj.prelude
+                    .ends_with("rheo-index() = rheo-index-at(rheo-context().handle)\n\n")
+            );
         }
     }
 
