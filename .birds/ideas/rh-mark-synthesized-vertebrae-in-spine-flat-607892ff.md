@@ -6,7 +6,7 @@ priority: 3
 labels:
 - fix-spine-flat-synthesized
 deps: []
-closed: false
+closed: true
 ---
 A template that reads spine paths off disk cannot survive `auto_index`.
 
