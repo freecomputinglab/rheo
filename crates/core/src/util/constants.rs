@@ -4,13 +4,21 @@ pub const TYP_EXT: &str = ".typ";
 
 /// Filename, directly under `content_dir`, whose Typst is emitted as marrow — at
 /// the bundle root, outside every document — rather than compiled as a vertebra.
+///
+/// Position-agnostic: a project's copy lands wherever `[marrow] position`
+/// says, a package's always in the epilogue. Either way the two explicit names
+/// below outrank it.
 pub const MARROW_FILE: &str = ".marrow.typ";
 
-/// Sibling of [`MARROW_FILE`], read only from a package's source root: a
-/// package's prologue marrow, spliced before every document instead of after.
-/// A project has no equivalent filename — it opts its own marrow into the
-/// prologue position via `rheo.toml`'s `marrow_prologue` key instead.
-pub const MARROW_PROLOGUE_FILE: &str = ".marrow-prologue.typ";
+/// Marrow spliced before every document. Outranks [`MARROW_FILE`].
+pub const MARROW_PROLOGUE_FILE: &str = ".marrow.prologue.typ";
+
+/// Marrow spliced after every document. Outranks [`MARROW_FILE`].
+pub const MARROW_EPILOGUE_FILE: &str = ".marrow.epilogue.typ";
+
+/// Every reserved marrow filename, for the scan that must keep all of them out
+/// of the vertebra list.
+pub const MARROW_RESERVED_FILES: [&str; 2] = [MARROW_PROLOGUE_FILE, MARROW_EPILOGUE_FILE];
 
 /// Prefix reserved for bundle assets consumed internally by rheo itself.
 ///
@@ -31,6 +39,17 @@ pub const RESERVED_META_LABEL_PREFIX: &str = "rheo-meta:";
 /// the `#import "/<METADATA_MODULE_PATH>": ...` statements
 /// [`crate::synth::typst_source::TypstStmt`]'s metadata-helper variants render.
 pub const METADATA_MODULE_PATH: &str = "typ/metadata.typ";
+
+/// Project-root-relative path `RheoWorld` serves `typ/rheo.typ` under, for the
+/// `#import "/<RHEO_TEMPLATE_MODULE_PATH>": rheo-index-at` statement
+/// [`crate::synth::typst_source::TypstStmt::IndexHelper`] renders. The same
+/// file is also spliced wholesale into the bundle main
+/// (`crate::synth::source_injector::SourceInjector::main`); serving it here
+/// too, as an independently importable module, is what lets a vertebra's own
+/// default `rheo-index()` reuse `rheo.typ`'s private `_rheo-href` instead of
+/// duplicating it, the same way `METADATA_MODULE_PATH` does for the metadata
+/// helpers.
+pub const RHEO_TEMPLATE_MODULE_PATH: &str = "typ/rheo.typ";
 pub const PDF_EXT: &str = ".pdf";
 pub const HTML_EXT: &str = ".html";
 pub const XHTML_EXT: &str = ".xhtml";

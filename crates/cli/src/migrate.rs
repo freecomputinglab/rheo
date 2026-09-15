@@ -46,6 +46,15 @@
 //! configuration, so `report_removed_feed_surface` only reports every
 //! affected key and binding, with its location, pointing at `@rheo/feeds`
 //! or (for `rheo-author`) the `#set document(...)` replacement.
+//!
+//! # Marrow config: `marrow` / `dot_marrow_is_epilogue` -> `[marrow]` table
+//!
+//! The top-level `marrow` filename override and `dot_marrow_is_epilogue`
+//! boolean are retired in favour of a single `[marrow]` table with `file`
+//! and `position` keys (`migrate_marrow_table`). `dot_marrow_is_epilogue`'s
+//! sense is inverted: `false` (the bare marrow was a prologue) becomes
+//! `position = "prologue"`; `true`/absent needs no `position` key at all,
+//! since `"epilogue"` is the table's own default.
 
 use crate::reporter::Reporter;
 use rheo_core::build::resolve_effective_content_dir;
@@ -164,6 +173,12 @@ const MIGRATIONS: &[Migration] = &[
         plan: "  - report removed Atom feed config keys and rheo-* variables (no rewrite)",
         heading: "\nRemoved feed surface:",
         run: run_removed_feed_surface,
+    },
+    Migration {
+        since: "0.6.3",
+        plan: "  - convert retired top-level `marrow` / `dot_marrow_is_epilogue` into a [marrow] table",
+        heading: "\nMarrow config:",
+        run: migrate_marrow_table,
     },
 ];
 
@@ -739,6 +754,61 @@ fn run_removed_feed_surface(
     Ok(())
 }
 
+/// Convert the retired top-level `marrow` filename override and
+/// `dot_marrow_is_epilogue` boolean into a single `[marrow]` table with
+/// `file` and `position` keys. `dot_marrow_is_epilogue = false` means the
+/// bare marrow was a PROLOGUE, so it migrates to `position = "prologue"`;
+/// `true` (or absent) is the position table's own default and needs no key
+/// at all. Both retired scalars land in [`rheo_core::RheoConfig::extra`]
+/// (never a typed field any more), the same way `vertebrae` lands in
+/// [`Spine::extra`] for [`migrate_vertebrae_to_exclude`].
+fn migrate_marrow_table(
+    project: &ProjectConfig,
+    _sources: &mut [Source],
+    doc: &mut toml_edit::DocumentMut,
+    reporter: &mut Reporter,
+) -> Result<()> {
+    let file = project
+        .config
+        .extra
+        .get("marrow")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let prologue = project
+        .config
+        .extra
+        .get("dot_marrow_is_epilogue")
+        .and_then(|v| v.as_bool())
+        == Some(false);
+
+    if file.is_none() && !prologue {
+        return Ok(());
+    }
+
+    let mut parts = Vec::new();
+    if let Some(f) = &file {
+        parts.push(format!("file = {f:?}"));
+    }
+    if prologue {
+        parts.push("position = \"prologue\"".to_string());
+    }
+    reporter.line(format_args!("  - [marrow]: {}", parts.join(", ")));
+
+    doc.remove("marrow");
+    doc.remove("dot_marrow_is_epilogue");
+
+    let mut table = toml_edit::Table::new();
+    if let Some(f) = &file {
+        table["file"] = toml_edit::value(f.as_str());
+    }
+    if prologue {
+        table["position"] = toml_edit::value("prologue");
+    }
+    doc["marrow"] = toml_edit::Item::Table(table);
+
+    Ok(())
+}
+
 /// One `[spine]`/`[<plugin>.spine]` table that still sets the retired
 /// `vertebrae` glob list.
 struct VertebraeSite {
@@ -891,8 +961,11 @@ fn migrate_vertebrae_to_exclude(
 
     let content_dir = resolve_effective_content_dir(project);
     // Full directory-scan file set the new zero-config model would include.
-    // No `.typ` files under content_dir means nothing to reconcile.
-    let Ok(scan) = SpineScan::run(&content_dir, &[]) else {
+    // No `.typ` files under content_dir means nothing to reconcile. auto_index
+    // is off here: this reconciles real on-disk files against old `vertebrae`
+    // glob patterns, and a synthesized notional index.typ is not a real file
+    // an old pattern could ever have matched.
+    let Ok(scan) = SpineScan::run(&content_dir, &[], false) else {
         return Ok(());
     };
     let scanned: HashSet<PathBuf> = scan
@@ -1402,6 +1475,75 @@ mod tests {
         let updated = doc.to_string();
         assert!(!updated.contains("merge"), "{updated}");
         assert!(updated.contains("title = \"Book\""), "{updated}");
+    }
+
+    /// `dot_marrow_is_epilogue = false` means the bare marrow was a PROLOGUE,
+    /// so it converts to `[marrow] position = "prologue"`, alongside the
+    /// top-level `marrow` filename override folding into `[marrow] file`.
+    #[test]
+    fn marrow_table_migration_converts_both_retired_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let toml_path = root.join("rheo.toml");
+        fs::write(
+            &toml_path,
+            "version = \"0.6.2\"\nformats = [\"html\"]\nmarrow = \"bundle-root.typ\"\ndot_marrow_is_epilogue = false\n",
+        )
+        .unwrap();
+
+        let config = rheo_core::RheoConfig::load_from_path(&toml_path).unwrap();
+        let project = ProjectConfig {
+            root: root.to_path_buf(),
+            name: "test".into(),
+            config,
+            typ_files: vec![],
+            mode: rheo_core::project::ProjectMode::Directory,
+            config_path: Some(toml_path.clone()),
+        };
+
+        let mut doc = load_toml_doc(&toml_path).unwrap();
+        let (mut reporter, captured) = Reporter::capture();
+        migrate_marrow_table(&project, &mut [], &mut doc, &mut reporter).unwrap();
+
+        let report = captured.text();
+        assert!(report.contains("[marrow]"), "{report}");
+
+        let updated = doc.to_string();
+        assert!(updated.contains("[marrow]"), "{updated}");
+        assert!(updated.contains(r#"file = "bundle-root.typ""#), "{updated}");
+        assert!(updated.contains(r#"position = "prologue""#), "{updated}");
+        assert!(!updated.contains("dot_marrow_is_epilogue"), "{updated}");
+        assert!(
+            !updated.contains("marrow = \"bundle-root.typ\""),
+            "{updated}"
+        );
+    }
+
+    /// `dot_marrow_is_epilogue = true` (the default) needs no `position` key
+    /// at all — `"epilogue"` is the table's own default — and a project with
+    /// neither retired key gets no `[marrow]` table added.
+    #[test]
+    fn marrow_table_migration_is_a_no_op_with_neither_retired_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let toml_path = root.join("rheo.toml");
+        fs::write(&toml_path, "version = \"0.6.2\"\nformats = [\"html\"]\n").unwrap();
+
+        let config = rheo_core::RheoConfig::load_from_path(&toml_path).unwrap();
+        let project = ProjectConfig {
+            root: root.to_path_buf(),
+            name: "test".into(),
+            config,
+            typ_files: vec![],
+            mode: rheo_core::project::ProjectMode::Directory,
+            config_path: Some(toml_path.clone()),
+        };
+
+        let mut doc = load_toml_doc(&toml_path).unwrap();
+        migrate_marrow_table(&project, &mut [], &mut doc, &mut Reporter::capture().0).unwrap();
+
+        let updated = doc.to_string();
+        assert!(!updated.contains("[marrow]"), "{updated}");
     }
 
     #[test]

@@ -15,7 +15,7 @@
 
 use crate::reticulate::handle::Handle;
 use crate::synth::typst_literal::{TypstLiteral, escape_typst_content};
-use crate::util::constants::METADATA_MODULE_PATH;
+use crate::util::constants::{METADATA_MODULE_PATH, RHEO_TEMPLATE_MODULE_PATH};
 use std::fmt;
 
 /// A synthesized top-level Typst statement, rendered via [`fmt::Display`].
@@ -67,6 +67,27 @@ pub enum TypstStmt {
     /// per-vertebra prelude — a vertebra itself has no need to enumerate
     /// every vertebra's metadata, only marrow-authored code does.
     MetadataAllHelper,
+    /// Brings `rheo-index-at` into scope once per vertebra, immediately after
+    /// [`TypstStmt::ContextBinding`]: an `#import` of the default (and
+    /// overridable) directory-index renderer from the synthetic
+    /// `typ/rheo.typ` module `RheoWorld` serves at
+    /// [`crate::util::constants::RHEO_TEMPLATE_MODULE_PATH`] — the same file
+    /// spliced wholesale into the bundle main, served here instead as an
+    /// importable module so a vertebra's own `rheo-index()` can reuse
+    /// `rheo.typ`'s private `_rheo-href` without duplicating it. Takes the
+    /// handle as an argument rather than reading `state`, so it works under a
+    /// `SingleCombined` (PDF) layout too. Paired with
+    /// [`TypstStmt::IndexBinding`], which binds it to this vertebra's own
+    /// handle.
+    IndexHelper,
+    /// `#let rheo-index() = rheo-index-at(rheo-context().handle)` — binds the
+    /// zero-arg `rheo-index()` every vertebra calls to
+    /// [`TypstStmt::IndexHelper`]'s `rheo-index-at`, closed over this
+    /// vertebra's own handle. Emitted immediately after `IndexHelper`, so a
+    /// project's own `#let rheo-index() = ...` (from `[spine] prelude`,
+    /// spliced after it) shadows this default. A synthesized directory-index
+    /// vertebra's whole body is a call to `rheo-index()`.
+    IndexBinding,
     /// Brings `rheo-handle-title` into scope at the bundle root, alongside
     /// [`TypstStmt::MetadataAllHelper`], for every [`TypstStmt::HandleAnchor`]
     /// in the same compile to call. Looks up the owning vertebra's live
@@ -187,6 +208,15 @@ impl fmt::Display for TypstStmt {
             TypstStmt::MetadataAllHelper => {
                 write!(f, "#import \"/{METADATA_MODULE_PATH}\": rheo-metadata-all")
             }
+            TypstStmt::IndexHelper => {
+                write!(f, "#import \"/{RHEO_TEMPLATE_MODULE_PATH}\": rheo-index-at")
+            }
+            TypstStmt::IndexBinding => {
+                write!(
+                    f,
+                    "#let rheo-index() = rheo-index-at(rheo-context().handle)"
+                )
+            }
             TypstStmt::HandleTitleHelper => {
                 write!(f, "#import \"/{METADATA_MODULE_PATH}\": rheo-handle-title")
             }
@@ -267,6 +297,21 @@ mod tests {
             stmt.to_string(),
             "#import \"/typ/metadata.typ\": rheo-metadata-impl\n\
              #let rheo-metadata(handle) = rheo-metadata-impl(handle)"
+        );
+    }
+
+    #[test]
+    fn index_helper_imports_rheo_index_at_from_rheo_typ() {
+        let stmt = TypstStmt::IndexHelper;
+        assert_eq!(stmt.to_string(), "#import \"/typ/rheo.typ\": rheo-index-at");
+    }
+
+    #[test]
+    fn index_binding_calls_rheo_index_at_with_own_handle() {
+        let stmt = TypstStmt::IndexBinding;
+        assert_eq!(
+            stmt.to_string(),
+            "#let rheo-index() = rheo-index-at(rheo-context().handle)"
         );
     }
 
