@@ -97,6 +97,14 @@ impl ReleasesSource {
                 .replace("{version}", version),
         }
     }
+
+    /// The value identifying this source, for keying its cache directory.
+    pub fn source_key(&self) -> &str {
+        match self {
+            ReleasesSource::Base(base) => base,
+            ReleasesSource::Template(template) => template,
+        }
+    }
 }
 
 /// A namespace served from a directory on disk — a package's own working
