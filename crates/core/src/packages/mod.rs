@@ -85,13 +85,14 @@ fn package_dir(root: &Path, subdir: &str, spec: &PackageSpec) -> Result<PathBuf,
     if dir.exists() { Ok(dir) } else { Err(dir) }
 }
 
-/// A filesystem-safe stand-in for a git URL. Hashed rather than sanitised: a URL
-/// carries `:`, `/` and `@`, and any escaping scheme that stayed readable would
-/// also have to stay injective.
+/// A filesystem-safe stand-in for a source's URL — a git remote or a releases
+/// host. Hashed rather than sanitised: a URL carries `:`, `/` and `@`, and any
+/// escaping scheme that stayed readable would also have to stay injective.
 ///
 /// `DefaultHasher` is deterministic across runs but not promised to be stable
-/// across Rust versions; the cost of it changing is one extra clone, not a wrong
-/// answer, since the sha below it still names the content.
+/// across Rust versions; the cost of it changing is one re-fetch, not a wrong
+/// answer, since what sits under a slug names its own content — a commit sha, or
+/// an immutable `<name>-<version>` release.
 pub(super) fn slug(url: &str) -> String {
     let mut hasher = DefaultHasher::new();
     url.hash(&mut hasher);
