@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -82,6 +83,19 @@ fn package_dir(root: &Path, subdir: &str, spec: &PackageSpec) -> Result<PathBuf,
     dir.push(spec.name.as_str());
     dir.push(spec.version.to_string());
     if dir.exists() { Ok(dir) } else { Err(dir) }
+}
+
+/// A filesystem-safe stand-in for a git URL. Hashed rather than sanitised: a URL
+/// carries `:`, `/` and `@`, and any escaping scheme that stayed readable would
+/// also have to stay injective.
+///
+/// `DefaultHasher` is deterministic across runs but not promised to be stable
+/// across Rust versions; the cost of it changing is one extra clone, not a wrong
+/// answer, since the sha below it still names the content.
+pub(super) fn slug(url: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    url.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 /// Resolves a package spec to a directory on disk, routing by namespace.
@@ -191,6 +205,20 @@ fn downloader() -> SystemDownloader {
     SystemDownloader::new(USER_AGENT)
 }
 
+/// Where the built-in `@rheo` backend caches: the shared Typst package cache,
+/// which an unconfigured namespace also resolves from.
+fn builtin_cache_root(root: &Path) -> PathBuf {
+    root.join("typst/packages")
+}
+
+/// Where a namespace configured with `releases = ...` caches. Keyed by the
+/// source, so two projects backing one namespace name with different hosts
+/// cannot serve each other stale packages, and nothing dropped in the shared
+/// Typst cache can shadow what the project declares.
+fn releases_cache_root(root: &Path, source: &ReleasesSource) -> PathBuf {
+    root.join("rheo/releases").join(slug(source.source_key()))
+}
+
 /// Downloads and caches packages served as release tarballs.
 ///
 /// Packages are stored as `{name}-{version}.tar.gz` release assets under the tag
@@ -205,14 +233,25 @@ pub struct RheoPackages {
 impl RheoPackages {
     /// The built-in `@rheo` backend, serving from the rheo-packages releases.
     pub fn new(downloader: SystemDownloader) -> Self {
-        Self::with_source(downloader, ReleasesSource::Base(REGISTRY_URL.to_string()))
+        let source = ReleasesSource::Base(REGISTRY_URL.to_string());
+        let cache = cache_root().map(|d| FsPackages::new(builtin_cache_root(&d)));
+        Self::with_root(downloader, source, cache)
     }
 
     /// A backend for a namespace configured with `releases = ...`.
     pub fn with_source(downloader: SystemDownloader, source: ReleasesSource) -> Self {
+        let cache = cache_root().map(|d| FsPackages::new(releases_cache_root(&d, &source)));
+        Self::with_root(downloader, source, cache)
+    }
+
+    fn with_root(
+        downloader: SystemDownloader,
+        source: ReleasesSource,
+        cache: Option<FsPackages>,
+    ) -> Self {
         Self {
             source,
-            cache: cache_root().map(|d| FsPackages::new(d.join("typst/packages"))),
+            cache,
             downloader,
         }
     }
@@ -223,8 +262,9 @@ impl RheoPackages {
         // is keyed by commit sha for the opposite reason — a branch moves — so
         // do not "fix" one of these to match the other.
         //
-        // `FsPackages` keys its layout `{namespace}/{name}/{version}`, so two
-        // namespaces backed by different hosts cannot collide here.
+        // The cache root for a configured namespace is keyed by its source
+        // (`releases_cache_root`), so two hosts serving one namespace name get
+        // two directories and cannot collide here.
         if let Some(cache) = &self.cache
             && let Some(root) = cache.obtain(spec)
         {
@@ -306,6 +346,31 @@ mod tests {
             .packages
             .remove("ns")
             .expect("namespace absent")
+    }
+
+    /// Unwraps a `releases = ...` value straight to its `ReleasesSource`.
+    fn releases_of(releases: &str) -> ReleasesSource {
+        match parse_source(releases) {
+            NamespaceSource::Releases(source) => source,
+            other => panic!("expected a releases source, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn two_releases_hosts_do_not_share_a_cache_directory() {
+        let root = Path::new("/cache");
+        let mine = releases_cache_root(root, &releases_of("freecomputinglab/rookery"));
+        let theirs = releases_cache_root(root, &releases_of("someone-else/rookery"));
+        assert_ne!(mine, theirs);
+        assert!(mine.starts_with("/cache/rheo/releases"));
+    }
+
+    #[test]
+    fn the_built_in_backend_stays_in_the_typst_cache() {
+        assert_eq!(
+            builtin_cache_root(Path::new("/cache")),
+            Path::new("/cache/typst/packages"),
+        );
     }
 
     /// The built-in base is unchanged, so a project configuring nothing requests

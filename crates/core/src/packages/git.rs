@@ -1,4 +1,3 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -9,7 +8,7 @@ use typst_kit::files::FsRoot;
 use typst_library::diag::{PackageError, PackageResult};
 use typst_syntax::package::PackageSpec;
 
-use super::{Announce, PackageSource, SourceKind, cache_root, package_dir};
+use super::{Announce, PackageSource, SourceKind, cache_root, package_dir, slug};
 use crate::config::{GitRef, RepoSource};
 
 /// Serves a namespace from a repository, checked out at a resolved commit sha.
@@ -255,19 +254,6 @@ impl PackageSource for GitPackages {
     fn prune(&self) -> std::io::Result<usize> {
         self.prune()
     }
-}
-
-/// A filesystem-safe stand-in for a git URL. Hashed rather than sanitised: a URL
-/// carries `:`, `/` and `@`, and any escaping scheme that stayed readable would
-/// also have to stay injective.
-///
-/// `DefaultHasher` is deterministic across runs but not promised to be stable
-/// across Rust versions; the cost of it changing is one extra clone, not a wrong
-/// answer, since the sha below it still names the content.
-fn slug(url: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    url.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
 }
 
 #[cfg(test)]

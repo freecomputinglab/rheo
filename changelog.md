@@ -1,3 +1,17 @@
+# 0.6.4 — user-visible changes
+
+## A configured releases namespace caches by its host, not in the shared Typst cache
+
+A namespace configured with `releases = ...` now caches its downloaded
+packages under `rheo/releases` in the cache directory, keyed by the host it
+downloads from, rather than in the shared Typst package cache. Two projects
+backing one namespace name with different `releases` hosts no longer share
+packages — each host gets its own directory, so neither can serve the other's
+packages by accident. A copy placed by hand in the Typst package cache no
+longer shadows a configured host either; a developer wanting that kind of
+override should use `path = ...` instead. The one-time cost is that each
+configured namespace re-downloads its packages once.
+
 # 0.6.3 — user-visible changes
 
 ## A childless directory index gets a real page: `[spine] auto_index`
