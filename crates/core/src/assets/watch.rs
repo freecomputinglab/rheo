@@ -112,8 +112,9 @@ const DEBOUNCE_POLL: Duration = Duration::from_millis(50);
 /// Event indicating files have changed and compilation should be triggered
 #[derive(Debug)]
 pub enum WatchEvent {
-    /// Source files or assets changed, trigger recompilation
-    FilesChanged,
+    /// Source files or assets changed, trigger recompilation. `assets` is true
+    /// when a changed path was one the browser caches under an unchanged URL.
+    FilesChanged { assets: bool },
     /// Config file changed, need to reload ProjectConfig
     ConfigChanged,
 }
@@ -220,11 +221,14 @@ where
         }
     }
 
-    // True if `rheo.toml` changed, which needs a full project reload rather than
-    // a recompile. There is no companion flag for ordinary files:
+    // `config_changed`: `rheo.toml` changed, needs a full project reload rather
+    // than a recompile. `assets_changed`: a changed path was a `Relevance::Asset`
+    // (declared asset, copy glob, or font) — the browser holds its old bytes
+    // under an unchanged URL, so the callback must navigate rather than morph.
     // `first_event_time` below is already set by ANY relevant change, so it is
-    // the gate, and this only picks WHICH event to send.
+    // the "anything pending?" gate; these two only pick WHICH event to send.
     let mut config_changed = false;
+    let mut assets_changed = false;
     let mut last_event_time = std::time::Instant::now();
     // Set on the FIRST change of a batch and cleared when that batch fires, so
     // `DEBOUNCE_MAX` has something to measure from. `None` means nothing is
@@ -243,24 +247,21 @@ where
                     // if we treated Access as a change.
                     Ok(event) if !matches!(event.kind, notify::EventKind::Access(_)) => {
                         // Filter events to only relevant files (.typ files, rheo.toml, assets)
-                        let paths: Vec<PathBuf> = event
-                            .paths
-                            .into_iter()
-                            .filter(|p| is_relevant_path(p, project, build_dir, asset_spec))
-                            .collect();
+                        let mut relevant: Vec<&Path> = Vec::new();
+                        for path in &event.paths {
+                            match classify(path, project, build_dir, asset_spec) {
+                                Some(Relevance::Config) => config_changed = true,
+                                Some(Relevance::Asset) => assets_changed = true,
+                                Some(Relevance::Content) => {}
+                                None => continue,
+                            }
+                            relevant.push(path);
+                        }
 
-                        if !paths.is_empty() {
-                            debug!(?paths, "detected file changes");
+                        if !relevant.is_empty() {
+                            debug!(paths = ?relevant, "detected file changes");
                             last_event_time = std::time::Instant::now();
                             first_event_time.get_or_insert(last_event_time);
-
-                            // Config changes require reloading project
-                            // configuration, so they are worth distinguishing;
-                            // any other relevant path just needs a recompile,
-                            // which `first_event_time` above already records.
-                            if paths.iter().any(|p| is_config_path(p, project)) {
-                                config_changed = true;
-                            }
                         }
                     }
                     Ok(_) => {}
@@ -291,7 +292,9 @@ where
             let event = if config_changed {
                 WatchEvent::ConfigChanged
             } else {
-                WatchEvent::FilesChanged
+                WatchEvent::FilesChanged {
+                    assets: assets_changed,
+                }
             };
 
             if let Err(e) = callback(event) {
@@ -300,6 +303,7 @@ where
 
             // Reset for the next batch of changes.
             config_changed = false;
+            assets_changed = false;
             first_event_time = None;
         }
     }
@@ -307,55 +311,67 @@ where
     Ok(())
 }
 
-/// Check if a path is relevant for triggering recompilation
-fn is_relevant_path(
+/// Why a changed path matters to the build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Relevance {
+    /// The project's configuration file.
+    Config,
+    /// A declared asset, a copy-glob match, or a font. The browser holds the
+    /// old bytes under an unchanged URL, so only a navigation picks these up.
+    Asset,
+    /// A `.typ` source file, whose compiled HTML is the whole delta.
+    Content,
+}
+
+/// Classify why a path matters to the build, or `None` if it doesn't.
+fn classify(
     path: &Path,
     project: &ProjectConfig,
     build_dir: &Path,
     asset_spec: &WatchAssetSpec,
-) -> bool {
+) -> Option<Relevance> {
     // CRITICAL: Exclude all paths under the build directory to prevent infinite loops
     // Try canonicalized comparison first (handles symlinks and relative paths)
     if let Ok(canonical_path) = path.canonicalize() {
         if canonical_path.starts_with(build_dir) {
-            return false;
+            return None;
         }
     }
     // Fallback: If canonicalize fails (file doesn't exist yet), check prefix match
     // This handles cases where notify fires events for paths being created
     else if path.starts_with(build_dir) {
-        return false;
+        return None;
     }
 
     // The config file is relevant in both modes (see `is_config_path`).
     if is_config_path(path, project) {
-        return true;
+        return Some(Relevance::Config);
     }
 
     // A declared/resolved asset (from any plugin or imported package) or a
     // copy-glob match is relevant regardless of extension or location. This
     // covers both project-local assets and package assets under a package root.
     if asset_spec.matches(path) {
-        return true;
+        return Some(Relevance::Asset);
     }
 
     match project.mode {
         ProjectMode::SingleFile => {
             // Otherwise only the exact target .typ file is relevant.
-            path == project.typ_files[0].as_path()
+            (path == project.typ_files[0].as_path()).then_some(Relevance::Content)
         }
         ProjectMode::Directory => {
             // Any .typ file in the project triggers recompilation.
             if path.extension().and_then(|e| e.to_str()) == Some("typ") {
-                return true;
+                return Some(Relevance::Content);
             }
 
             // Check if it's a font file
             let font_extensions = ["ttf", "otf", "woff", "woff2"];
             path.extension()
                 .and_then(|e| e.to_str())
-                .map(|e| font_extensions.contains(&e))
-                .unwrap_or(false)
+                .is_some_and(|e| font_extensions.contains(&e))
+                .then_some(Relevance::Asset)
         }
     }
 }
@@ -412,10 +428,26 @@ mod tests {
         let scss = project.root.join("styles").join("theme.scss");
         let spec = WatchAssetSpec::new(vec![scss.clone()], vec![], vec![]);
 
-        assert!(is_relevant_path(&scss, &project, &build_dir, &spec));
+        assert_eq!(
+            classify(&scss, &project, &build_dir, &spec),
+            Some(Relevance::Asset)
+        );
         // An undeclared file with the same unusual extension is NOT relevant.
         let other = project.root.join("styles").join("other.scss");
-        assert!(!is_relevant_path(&other, &project, &build_dir, &spec));
+        assert_eq!(classify(&other, &project, &build_dir, &spec), None);
+    }
+
+    #[test]
+    fn test_font_file_is_asset_relevance() {
+        let temp = TempDir::new().unwrap();
+        let project = dir_project(&temp);
+        let build_dir = project.root.join("build");
+
+        let font = project.root.join("fonts").join("custom.woff2");
+        assert_eq!(
+            classify(&font, &project, &build_dir, &empty_spec()),
+            Some(Relevance::Asset)
+        );
     }
 
     #[test]
@@ -431,10 +463,13 @@ mod tests {
         );
 
         let matched = project.root.join("images").join("logo.png");
-        assert!(is_relevant_path(&matched, &project, &build_dir, &spec));
+        assert_eq!(
+            classify(&matched, &project, &build_dir, &spec),
+            Some(Relevance::Asset)
+        );
 
         let unmatched = project.root.join("docs").join("notes.md");
-        assert!(!is_relevant_path(&unmatched, &project, &build_dir, &spec));
+        assert_eq!(classify(&unmatched, &project, &build_dir, &spec), None);
     }
 
     #[test]
@@ -452,12 +487,15 @@ mod tests {
             vec![pkg_root.path().to_path_buf()],
         );
 
-        assert!(is_relevant_path(&pkg_css, &project, &build_dir, &spec));
+        assert_eq!(
+            classify(&pkg_css, &project, &build_dir, &spec),
+            Some(Relevance::Asset)
+        );
         assert_eq!(spec.package_roots().len(), 1);
 
         // A file under the package root that is not a declared asset is ignored.
         let stray = pkg_root.path().join("assets").join("readme.bin");
-        assert!(!is_relevant_path(&stray, &project, &build_dir, &spec));
+        assert_eq!(classify(&stray, &project, &build_dir, &spec), None);
     }
 
     #[test]
@@ -467,7 +505,10 @@ mod tests {
         let build_dir = project.root.join("build");
 
         let typ = project.root.join("chapters").join("intro.typ");
-        assert!(is_relevant_path(&typ, &project, &build_dir, &empty_spec()));
+        assert_eq!(
+            classify(&typ, &project, &build_dir, &empty_spec()),
+            Some(Relevance::Content)
+        );
     }
 
     #[test]
@@ -483,7 +524,7 @@ mod tests {
         fs::write(&generated, "body {}").unwrap();
         let spec = WatchAssetSpec::new(vec![generated.clone()], vec![], vec![]);
 
-        assert!(!is_relevant_path(&generated, &project, &build_dir, &spec));
+        assert_eq!(classify(&generated, &project, &build_dir, &spec), None);
     }
 
     /// A single-file project whose loaded config lives at `config_path`.
@@ -505,12 +546,10 @@ mod tests {
         let project = single_file_project(temp.path(), config.clone());
         let build_dir = temp.path().join("build");
 
-        assert!(is_relevant_path(
-            &config,
-            &project,
-            &build_dir,
-            &empty_spec()
-        ));
+        assert_eq!(
+            classify(&config, &project, &build_dir, &empty_spec()),
+            Some(Relevance::Config)
+        );
         assert!(is_config_path(&config, &project));
     }
 
@@ -522,21 +561,14 @@ mod tests {
         let build_dir = temp.path().join("build");
 
         // The custom-named config is detected via project.config_path...
-        assert!(is_relevant_path(
-            &config,
-            &project,
-            &build_dir,
-            &empty_spec()
-        ));
+        assert_eq!(
+            classify(&config, &project, &build_dir, &empty_spec()),
+            Some(Relevance::Config)
+        );
         assert!(is_config_path(&config, &project));
         // ...while an unrelated .toml is not.
         let other = temp.path().join("other.toml");
-        assert!(!is_relevant_path(
-            &other,
-            &project,
-            &build_dir,
-            &empty_spec()
-        ));
+        assert_eq!(classify(&other, &project, &build_dir, &empty_spec()), None);
     }
 
     #[test]
@@ -547,12 +579,10 @@ mod tests {
 
         // Directory mode with no loaded config still reacts to a rheo.toml by name.
         let config = project.root.join("rheo.toml");
-        assert!(is_relevant_path(
-            &config,
-            &project,
-            &build_dir,
-            &empty_spec()
-        ));
+        assert_eq!(
+            classify(&config, &project, &build_dir, &empty_spec()),
+            Some(Relevance::Config)
+        );
     }
 
     #[test]
@@ -567,16 +597,17 @@ mod tests {
         let spec = WatchAssetSpec::new(vec![css.clone()], vec![], vec![]);
 
         // The target file and the declared asset are relevant.
-        assert!(is_relevant_path(
-            &project.typ_files[0],
-            &project,
-            &build_dir,
-            &spec
-        ));
-        assert!(is_relevant_path(&css, &project, &build_dir, &spec));
+        assert_eq!(
+            classify(&project.typ_files[0], &project, &build_dir, &spec),
+            Some(Relevance::Content)
+        );
+        assert_eq!(
+            classify(&css, &project, &build_dir, &spec),
+            Some(Relevance::Asset)
+        );
 
         // Another .typ file in the same directory is NOT relevant in single-file mode.
         let other = project.root.join("other.typ");
-        assert!(!is_relevant_path(&other, &project, &build_dir, &spec));
+        assert_eq!(classify(&other, &project, &build_dir, &spec), None);
     }
 }

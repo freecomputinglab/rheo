@@ -6,11 +6,11 @@ use axum::{
     response::{IntoResponse, Response, Sse, sse::Event},
     routing::get,
 };
-use rheo_core::{Result, util::constants::HTML_EXT};
+use rheo_core::{ReloadKind, Result, util::constants::HTML_EXT};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::{RwLock, broadcast};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{info, warn};
@@ -20,7 +20,7 @@ use typst::syntax::VirtualPath;
 #[derive(Clone)]
 pub struct ServerState {
     /// Broadcast channel for sending reload events to connected clients
-    pub reload_tx: broadcast::Sender<()>,
+    pub reload_tx: broadcast::Sender<ReloadKind>,
     /// Directory containing HTML files to serve (fallback if virtual_fs is empty)
     pub html_dir: PathBuf,
     /// In-memory virtual file system (optional, for bundle compile mode)
@@ -35,7 +35,7 @@ pub async fn start_server(
     port: u16,
 ) -> Result<(
     tokio::task::JoinHandle<()>,
-    broadcast::Sender<()>,
+    broadcast::Sender<ReloadKind>,
     String,
     Arc<RwLock<Option<typst_bundle::VirtualFs>>>,
 )> {
@@ -52,7 +52,7 @@ pub async fn start_server_with_virtual_fs(
     virtual_fs: Option<typst_bundle::VirtualFs>,
 ) -> Result<(
     tokio::task::JoinHandle<()>,
-    broadcast::Sender<()>,
+    broadcast::Sender<ReloadKind>,
     String,
     Arc<RwLock<Option<typst_bundle::VirtualFs>>>,
 )> {
@@ -69,7 +69,9 @@ pub async fn start_server_with_virtual_fs(
     // Build router
     let app = Router::new()
         .route("/events", get(sse_handler))
+        .route("/.rheo/live.js", get(live_js_handler))
         .fallback(get(static_handler))
+        .layer(axum::middleware::from_fn(no_store))
         .with_state(state);
 
     // Bind to an available port, advancing past ones already in use.
@@ -125,21 +127,79 @@ async fn bind_in_range(start_port: u16, max_port: u16) -> Result<tokio::net::Tcp
     ))
 }
 
+/// Forbids caching every dev-server response. A page, a stylesheet or the live
+/// client answered from cache shows the previous build, and the live client in
+/// particular is only re-fetched on a page load — so a stale copy outlives
+/// every restart of the server that would have replaced it.
+async fn no_store(request: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
+/// Identifies this server process to the client, so a `hello` carrying a new
+/// id distinguishes a restarted `rheo watch` from a reconnect to this one.
+fn boot_id() -> u128 {
+    static BOOT_ID: LazyLock<u128> = LazyLock::new(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default()
+    });
+    *BOOT_ID
+}
+
 /// SSE handler for live reload events
 async fn sse_handler(
     State(state): State<ServerState>,
 ) -> Sse<impl tokio_stream::Stream<Item = std::result::Result<Event, Infallible>>> {
     let rx = state.reload_tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
-        Ok(_) => Some(Ok(Event::default().event("reload").data("refresh"))),
+
+    // GREETS EVERY SUBSCRIPTION, and that is what makes a missed rebuild
+    // detectable. A dropped connection loses the events broadcast while it was
+    // gone — the receiver is gone with it, and nothing replays them — so a
+    // client that is greeted twice knows its DOM may be arbitrarily stale and
+    // must navigate rather than morph. Inferring the same thing from the
+    // browser's own `open` event does not work: `EventSource` reconnect and
+    // dispatch semantics vary, and a merely resumed stream fires nothing.
+    let hello = tokio_stream::once(Ok(Event::default()
+        .event("hello")
+        .data(boot_id().to_string())));
+
+    let stream = hello.chain(BroadcastStream::new(rx).filter_map(|result| match result {
+        Ok(ReloadKind::Morph) => Some(Ok(Event::default().event("morph").data("refresh"))),
+        Ok(ReloadKind::Reload) => Some(Ok(Event::default().event("reload").data("refresh"))),
         Err(_) => None, // Ignore lagged messages
-    });
+    }));
 
     Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(std::time::Duration::from_secs(30))
             .text("ping"),
     )
+}
+
+/// Idiomorph (vendored, 0BSD) followed by the client script — the client calls
+/// `Idiomorph.morph`, so it must load second.
+const LIVE_JS: &str = concat!(
+    include_str!("live/idiomorph.min.js"),
+    "\n",
+    include_str!("live/live-reload.js")
+);
+
+/// Serves the dev-server-only live-reload client bundle.
+async fn live_js_handler() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )
+        .body(Body::from(LIVE_JS))
+        .unwrap()
 }
 
 /// Static file handler with HTML injection for live reload script
@@ -270,18 +330,9 @@ async fn static_handler(State(state): State<ServerState>, uri: axum::http::Uri) 
 fn inject_live_reload_script(html: &[u8]) -> std::io::Result<Vec<u8>> {
     let html_str = String::from_utf8_lossy(html);
 
-    const SCRIPT: &str = r#"
-<script>
-const eventSource = new EventSource('/events');
-eventSource.addEventListener('reload', function(e) {
-    console.log('Reloading page...');
-    location.reload();
-});
-eventSource.onerror = function(e) {
-    console.log('SSE connection error, will retry automatically');
-};
-</script>
-"#;
+    // Absolute path: the dev server serves the output dir as root, so this
+    // resolves correctly from a page at any depth.
+    const SCRIPT: &str = r#"<script src="/.rheo/live.js"></script>"#;
 
     // Try to inject before </body>, fall back to end of document
     let modified = if let Some(pos) = html_str.rfind("</body>") {
@@ -421,6 +472,22 @@ mod tests {
 
         let result = bind_in_range(taken, taken).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_live_js_serves_idiomorph_and_client_concatenated() {
+        let response = live_js_handler().await;
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let js = String::from_utf8(body.to_vec()).unwrap();
+
+        let idiomorph_pos = js.find("Idiomorph").expect("idiomorph present");
+        let client_pos = js.find("__rheoLive").expect("client script present");
+        assert!(
+            idiomorph_pos < client_pos,
+            "idiomorph must load before the client script"
+        );
     }
 
     #[tokio::test]

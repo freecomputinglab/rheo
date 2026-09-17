@@ -6,10 +6,28 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 use typst::foundations::Bytes;
 
+/// How a browser should apply a rebuild.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReloadKind {
+    /// Refetch the page and morph it into the live DOM, preserving scroll,
+    /// focus, selection and open elements.
+    Morph,
+    /// Navigate afresh, so assets whose URLs did not change are refetched.
+    Reload,
+}
+
+impl ReloadKind {
+    /// A rebuild that touched a cached asset must navigate; a content-only one
+    /// can morph.
+    pub fn for_assets_changed(assets: bool) -> Self {
+        if assets { Self::Reload } else { Self::Morph }
+    }
+}
+
 /// Trait for managing a running preview server.
 pub trait ServerHandle: Send + Sync {
     fn url(&self) -> &str;
-    fn reload(&self);
+    fn reload(&self, kind: ReloadKind);
     /// Push a new in-memory file system to the server (no-op by default).
     fn update_virtual_fs(&self, _vfs: typst_bundle::VirtualFs) {}
 }
