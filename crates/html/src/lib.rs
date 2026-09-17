@@ -11,14 +11,14 @@ pub const DEFAULT_STYLESHEET_NAME: &str = "rheo-default.css";
 use rayon::prelude::*;
 use rheo_core::{
     AssetConfig, CastVertebra, EmbeddedDefault, FormatInitTemplate, FormatPlugin, LiveReload,
-    OpenHandle, PluginContext, Result, RheoError, ServedPage, ServerHandle,
+    OpenHandle, PluginContext, ReloadKind, Result, RheoError, ServedPage, ServerHandle,
 };
 use std::collections::HashSet;
 use std::path::Path;
 use tracing::{debug, info, warn};
 
 /// Reload callback type - called by watch loop after successful compilation.
-pub type ReloadCallback = Box<dyn Fn() + Send + Sync>;
+pub type ReloadCallback = Box<dyn Fn(ReloadKind) + Send + Sync>;
 
 /// Server handle for HTML plugin's development server
 pub struct HtmlServerHandle {
@@ -33,8 +33,8 @@ impl ServerHandle for HtmlServerHandle {
     fn url(&self) -> &str {
         &self.url
     }
-    fn reload(&self) {
-        (self.reload_callback)();
+    fn reload(&self, kind: ReloadKind) {
+        (self.reload_callback)(kind);
     }
     fn update_virtual_fs(&self, vfs: typst_bundle::VirtualFs) {
         let arc = self.vfs_arc.clone();
@@ -80,8 +80,8 @@ impl FormatPlugin for HtmlPlugin {
             warn!(error = %e, "failed to open browser, but server is running");
         }
 
-        let reload_callback: ReloadCallback = Box::new(move || {
-            let _ = reload_tx.send(());
+        let reload_callback: ReloadCallback = Box::new(move |kind| {
+            let _ = reload_tx.send(kind);
         });
 
         let handle = HtmlServerHandle {

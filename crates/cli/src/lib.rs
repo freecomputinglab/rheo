@@ -5,7 +5,7 @@ use rheo_core::build::{Build, BuildOptions, evict_compile_cache, resolve_build_d
 use rheo_core::config::manifest_version;
 use rheo_core::output::OutputConfig;
 use rheo_core::project::ProjectConfig;
-use rheo_core::{FormatPlugin, Result, RheoError, ServerHandle};
+use rheo_core::{FormatPlugin, ReloadKind, Result, RheoError, ServerHandle};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -568,10 +568,6 @@ pub fn run() -> Result<()> {
     }
 }
 
-/// Compile a fresh VirtualFs for the dev server and push it, then optionally
-/// reload connected browsers. The initial `--open` push has nothing to reload
-/// yet (the browser is only just being launched), so it passes `reload: false`;
-/// both watch-loop arms want a reload after every successful push.
 /// Run a build and render whatever it reported — the pairing every command
 /// that compiles wants, since core collects diagnostics rather than printing
 /// them.
@@ -581,7 +577,12 @@ fn compile_and_report(build: &Build) -> Result<rheo_core::CompilationResults> {
     results
 }
 
-fn update_dev_server(build: &mut Build, server: &dyn ServerHandle, reload: bool) {
+/// Compile a fresh VirtualFs for the dev server and push it, then optionally
+/// reload connected browsers with the given `kind`. The initial `--open` push
+/// has nothing to reload yet (the browser is only just being launched), so it
+/// passes `None`; both watch-loop arms want a reload after every successful
+/// push, in the [`ReloadKind`] their triggering change calls for.
+fn update_dev_server(build: &mut Build, server: &dyn ServerHandle, reload: Option<ReloadKind>) {
     let compiled = build.compile_for_watch();
     diagnostics::render(&build.take_diagnostics());
     match compiled {
@@ -596,8 +597,8 @@ fn update_dev_server(build: &mut Build, server: &dyn ServerHandle, reload: bool)
         Ok(None) => {}
         Err(e) => warn!(error = %e, "VirtualFs compile failed, reload will serve stale content"),
     }
-    if reload {
-        server.reload();
+    if let Some(kind) = reload {
+        server.reload(kind);
     }
 }
 
@@ -634,7 +635,7 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
         // compile_for_watch() reuses comemo-cached Typst state from build.run(),
         // so this second compile is near-instant.
         if let Some(server) = &server {
-            update_dev_server(&mut build, server.as_ref(), false);
+            update_dev_server(&mut build, server.as_ref(), None);
         }
     }
 
@@ -654,12 +655,16 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
         &asset_spec,
         move |event| {
             match event {
-                WatchEvent::FilesChanged => {
+                WatchEvent::FilesChanged { assets } => {
                     info!("files changed, recompiling");
                     if compile_and_report(&build).is_ok()
                         && let Some(server) = &server
                     {
-                        update_dev_server(&mut build, server.as_ref(), true);
+                        update_dev_server(
+                            &mut build,
+                            server.as_ref(),
+                            Some(ReloadKind::for_assets_changed(assets)),
+                        );
                     }
                 }
                 WatchEvent::ConfigChanged => {
@@ -675,7 +680,11 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
                             if compile_and_report(&build).is_ok()
                                 && let Some(server) = &server
                             {
-                                update_dev_server(&mut build, server.as_ref(), true);
+                                update_dev_server(
+                                    &mut build,
+                                    server.as_ref(),
+                                    Some(ReloadKind::Reload),
+                                );
                             }
                         }
                         Err(e) => warn!(error = %e, "failed to reload config"),
