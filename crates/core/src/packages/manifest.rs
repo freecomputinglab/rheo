@@ -2,6 +2,7 @@ use crate::config::PluginAssets;
 use crate::packages::PackageResolver;
 use crate::parser::ImportInfo;
 use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
+use crate::reticulate::SpineScan;
 use crate::{Result, RheoError};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -49,6 +50,58 @@ pub fn scan_project_package_imports(typ_files: &[PathBuf]) -> Vec<String> {
         }
     }
     result
+}
+
+/// Scans `typ_files` for package imports, then follows each imported package's
+/// own package imports to a fixed point, so a package's dependency contributes
+/// its assets without the consuming project repeating the import.
+///
+/// The project's own specs come first and encounter order is otherwise
+/// preserved: asset injection order is script execution order on the page, so
+/// reaching a package only transitively must never reorder the scripts a
+/// project already had. A spec that resolves to no directory is skipped, as an
+/// unreadable `.typ` is — a transitive dependency rheo cannot locate must not
+/// fail a build that would otherwise have succeeded.
+pub fn scan_transitive_package_imports(
+    typ_files: &[PathBuf],
+    resolver: &PackageResolver,
+) -> Vec<String> {
+    scan_transitive_in(typ_files, resolver, &typst_package_search_dirs(None))
+}
+
+/// [`scan_transitive_package_imports`] against explicit search directories.
+fn scan_transitive_in(
+    typ_files: &[PathBuf],
+    resolver: &PackageResolver,
+    search_dirs: &[PathBuf],
+) -> Vec<String> {
+    let mut specs = scan_project_package_imports(typ_files);
+    // `specs` doubles as the breadth-first queue. A spec enters it only by
+    // passing the `seen` guard, so it is descended into at most once and two
+    // packages importing each other terminate.
+    let mut seen: HashSet<String> = specs.iter().cloned().collect();
+    let mut next = 0;
+    while next < specs.len() {
+        let spec = specs[next].clone();
+        next += 1;
+        let Some(pkg) = resolve_package(&spec, resolver, search_dirs) else {
+            debug!(spec = %spec, "package did not resolve; its own imports contribute nothing");
+            continue;
+        };
+        let package_files = match SpineScan::typ_files(&pkg.source_root) {
+            Ok(files) => files,
+            Err(e) => {
+                warn!(spec = %spec, error = %e, "could not walk a package for its own imports");
+                continue;
+            }
+        };
+        for path in scan_project_package_imports(&package_files) {
+            if seen.insert(path.clone()) {
+                specs.push(path);
+            }
+        }
+    }
+    specs
 }
 
 /// Probe `search_dirs` (in order) for `{namespace}/{name}/{version}/`.
@@ -182,6 +235,7 @@ impl PackageManifest {
             merged.assets.copy = source.assets.copy.clone();
         }
         merged.js_module = source.js_module;
+        merged.js_rehydrate = source.js_rehydrate;
         Some(merged)
     }
 
@@ -242,6 +296,10 @@ impl PackageManifest {
             .get("js_module")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let js_rehydrate = section
+            .get("js_rehydrate")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let copy = section
             .get("copy")
             .and_then(|v| v.as_array())
@@ -266,6 +324,7 @@ impl PackageManifest {
             },
             source_root: self.pkg.source_root.clone(),
             js_module,
+            js_rehydrate,
         })
     }
 
@@ -607,6 +666,106 @@ mod tests {
         assert_eq!(result, vec!["@preview/tablex:0.0.6"]);
     }
 
+    /// A resolver with no `[packages]` table, so every namespace resolves by
+    /// probing the search directories.
+    fn unconfigured_resolver() -> PackageResolver {
+        PackageResolver::new(&std::collections::HashMap::new())
+    }
+
+    /// Lays down `{ns}/{name}/{version}/lib.typ` under `base` containing `body`.
+    fn make_pkg_source(
+        base: &std::path::Path,
+        ns: &str,
+        name: &str,
+        version: &str,
+        body: &str,
+    ) -> PathBuf {
+        let dir = make_pkg_dir(base, ns, name, version);
+        std::fs::write(dir.join("lib.typ"), body).unwrap();
+        dir
+    }
+
+    #[test]
+    fn package_own_import_contributes_its_spec() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project.typ");
+        std::fs::write(&project, r#"#import "@ns/outer:1.0.0": *"#).unwrap();
+        let pkgs = dir.path().join("pkgs");
+        make_pkg_source(
+            &pkgs,
+            "ns",
+            "outer",
+            "1.0.0",
+            r#"#import "@ns/inner:2.0.0": *"#,
+        );
+        make_pkg_source(&pkgs, "ns", "inner", "2.0.0", "#let x = 1");
+        let result = scan_transitive_in(&[project], &unconfigured_resolver(), &[pkgs]);
+        assert_eq!(result, vec!["@ns/outer:1.0.0", "@ns/inner:2.0.0"]);
+    }
+
+    #[test]
+    fn project_specs_precede_transitive_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project.typ");
+        std::fs::write(
+            &project,
+            "#import \"@ns/outer:1.0.0\": *\n#import \"@ns/last:1.0.0\": *",
+        )
+        .unwrap();
+        let pkgs = dir.path().join("pkgs");
+        make_pkg_source(
+            &pkgs,
+            "ns",
+            "outer",
+            "1.0.0",
+            r#"#import "@ns/inner:2.0.0": *"#,
+        );
+        make_pkg_source(&pkgs, "ns", "inner", "2.0.0", "#let x = 1");
+        make_pkg_source(&pkgs, "ns", "last", "1.0.0", "#let y = 2");
+        let result = scan_transitive_in(&[project], &unconfigured_resolver(), &[pkgs]);
+        assert_eq!(
+            result,
+            vec!["@ns/outer:1.0.0", "@ns/last:1.0.0", "@ns/inner:2.0.0"]
+        );
+    }
+
+    #[test]
+    fn import_cycle_terminates() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project.typ");
+        std::fs::write(&project, r#"#import "@ns/a:1.0.0": *"#).unwrap();
+        let pkgs = dir.path().join("pkgs");
+        make_pkg_source(&pkgs, "ns", "a", "1.0.0", r#"#import "@ns/b:1.0.0": *"#);
+        make_pkg_source(&pkgs, "ns", "b", "1.0.0", r#"#import "@ns/a:1.0.0": *"#);
+        let result = scan_transitive_in(&[project], &unconfigured_resolver(), &[pkgs]);
+        assert_eq!(result, vec!["@ns/a:1.0.0", "@ns/b:1.0.0"]);
+    }
+
+    #[test]
+    fn unresolvable_spec_skipped_without_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project.typ");
+        std::fs::write(
+            &project,
+            "#import \"@ns/missing:1.0.0\": *\n#import \"@ns/present:1.0.0\": *",
+        )
+        .unwrap();
+        let pkgs = dir.path().join("pkgs");
+        make_pkg_source(
+            &pkgs,
+            "ns",
+            "present",
+            "1.0.0",
+            r#"#import "@ns/deep:1.0.0": *"#,
+        );
+        make_pkg_source(&pkgs, "ns", "deep", "1.0.0", "#let x = 1");
+        let result = scan_transitive_in(&[project], &unconfigured_resolver(), &[pkgs]);
+        assert_eq!(
+            result,
+            vec!["@ns/missing:1.0.0", "@ns/present:1.0.0", "@ns/deep:1.0.0"]
+        );
+    }
+
     #[test]
     fn parse_package_spec_valid() {
         assert_eq!(
@@ -819,7 +978,7 @@ css_stylesheet = "style.css"
             pkg_dir.join("typst.toml"),
             "[tool.rheo]\nmin_version = \"0.5.0\"\n\n[tool.rheo.html]\ncss_stylesheet = \"a.css\"\n\
              js_scripts = \"dist/lib.js\"\n\n[tool.rheo.source.html]\n\
-             js_scripts = [\"src/a.js\", \"src/b.js\"]\njs_module = true\n",
+             js_scripts = [\"src/a.js\", \"src/b.js\"]\njs_module = true\njs_rehydrate = true\n",
         )
         .unwrap();
         let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
@@ -834,14 +993,17 @@ css_stylesheet = "style.css"
         // Release mode keeps the bundle and its classic tag.
         let release = manifest.assets_for("html", false).unwrap();
         assert!(!release.js_module);
+        assert!(!release.js_rehydrate);
         assert_eq!(
             release.assets.extra.get("js_scripts").unwrap().as_str(),
             Some("dist/lib.js"),
         );
 
-        // Source mode takes the unbundled list and asks for modules.
+        // Source mode takes the unbundled list, asks for modules, and flags
+        // them for client-side rehydration.
         let source = manifest.assets_for("html", true).unwrap();
         assert!(source.js_module);
+        assert!(source.js_rehydrate);
         assert_eq!(
             source
                 .assets

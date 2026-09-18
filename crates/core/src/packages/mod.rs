@@ -21,7 +21,7 @@ mod path;
 pub use git::GitPackages;
 pub use manifest::{
     PackageIndex, find_package_in_dirs, manifest_package_assets, prewarm_packages,
-    scan_project_package_imports, typst_package_search_dirs,
+    scan_project_package_imports, scan_transitive_package_imports, typst_package_search_dirs,
 };
 pub use path::PathPackages;
 

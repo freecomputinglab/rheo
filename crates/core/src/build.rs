@@ -292,7 +292,7 @@ impl Build {
         let default_section = PluginSection::default();
         let resolver = self.package_resolver();
         let packages = PackageIndex::resolved(
-            &crate::packages::scan_project_package_imports(&self.project.typ_files),
+            &crate::packages::scan_transitive_package_imports(&self.project.typ_files, &resolver),
             &resolver,
         );
 
@@ -922,9 +922,11 @@ impl Build {
             .get(serving_plugin.name())
             .unwrap_or(&default_section);
         let (packages, package_resolver) = self.timed(phase::PACKAGES, None, || {
-            let package_imports =
-                crate::packages::scan_project_package_imports(&self.project.typ_files);
             let resolver = self.package_resolver();
+            let package_imports = crate::packages::scan_transitive_package_imports(
+                &self.project.typ_files,
+                &resolver,
+            );
             let packages = prewarm_and_resolve(
                 &package_imports,
                 plugin_section.auto_detect_packages.get(),
@@ -1161,9 +1163,11 @@ impl Build {
         // package (a directory probe plus a `typst.toml` parse) once — both
         // shared across every plugin in this build.
         let packages = self.timed(phase::PACKAGES, None, || {
-            let package_imports =
-                crate::packages::scan_project_package_imports(&self.project.typ_files);
             let resolver = self.package_resolver();
+            let package_imports = crate::packages::scan_transitive_package_imports(
+                &self.project.typ_files,
+                &resolver,
+            );
             let packages =
                 prewarm_and_resolve(&package_imports, self.auto_detects_packages(), &resolver)?;
             Ok::<_, RheoError>((packages, resolver))
