@@ -229,6 +229,7 @@ impl LiveReload for HtmlPlugin {
             .map(|a| rheo_core::html_dom::ScriptRef {
                 src: a.built_relative_path.clone(),
                 module: a.module,
+                rehydrate: a.rehydrate,
             })
             .collect();
 
@@ -341,6 +342,7 @@ mod tests {
                 default_content: None,
             },
             module: false,
+            rehydrate: false,
             source_path: Path::new("/project").join(name),
             resolved_path: Path::new("/build/html").join(name),
             built_relative_path: name.to_string(),

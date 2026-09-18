@@ -196,6 +196,7 @@ never break the build):
 | --- | --- | --- | --- |
 | `[tool.rheo.<format>]` | `css_stylesheet` | `str` (path, relative to the package's own root) | Consulted only by plugins that declare an `AssetConfig` under that name — today only `html` (`crates/html/src/lib.rs:48`). |
 | `[tool.rheo.<format>]` | `js_scripts` | `str` (path) | Same as above (`crates/html/src/lib.rs:49`). |
+| `[tool.rheo.<format>]` | `js_rehydrate` | `bool`, default `false` | Declares that every script this block ships can rebuild its own state on demand, and registers itself to be asked. Renders the script tag with `data-rheo-rehydrate`, which is what admits the page to the dev server's morph path — see **Dev-server rehydrate protocol** below. Absent or `false` is the safe reading, not a defect. |
 | `[tool.rheo.<format>]` | `copy` | `array` of glob strings | Copied into that format's output dir for every format `manifest_blocks_for` is called with (html/pdf/epub alike), independent of whether that format defines named asset keys. |
 | `[tool.rheo]` | `min_version` | `str`, semver | A floor: if this build's own version is below it, `check_package_min_versions` fails the build, naming every offending import in one error (`crates/core/src/plugins/typst_manifest.rs:199-219`). Runs for every scanned `@`-import **unconditionally** — unlike asset/marrow auto-detection, it is *not* gated by the package auto-detect opt-out (`crates/core/src/build.rs:920-927`, called from both the full-build and dev-server-preview paths). Absent or unparseable → no floor, not an error. |
 
@@ -267,6 +268,67 @@ prefix is a hard build error naming the offending file and label
 (`crates/core/src/reticulate/spine.rs:879-891`) — unconditionally, unlike the
 canonical-label collision rule above (which silently skips injection instead
 of erroring).
+
+## Dev-server rehydrate protocol (`window.__rheoRehydrate`)
+
+`rheo watch` patches the live DOM on a content edit rather than navigating:
+a rebuild that touched only `.typ` sources broadcasts `morph`, and the client
+(`crates/html/src/live/live-reload.js`) refetches the page and morphs it in
+with Idiomorph, preserving scroll, focus, selection, open `<details>` and
+media playback. A rebuild that touched assets still broadcasts `reload`
+(`ReloadKind::for_change`, `crates/core/src/plugins/mod.rs`).
+
+**A morph does not re-execute the page's scripts.** Idiomorph reuses a
+byte-identical `<script src>` tag rather than re-adding it, and refetched page
+bytes are always the *pre-hydration* build output. So for any package whose
+script mutates the DOM at boot — pressing buttons the URL names, hiding
+filtered rows, setting the `data-…-ready` attribute a stylesheet keys off — a
+morph reverts all of that and re-runs nothing. Nothing throws; the island is
+simply left drawn as though it had never booted.
+
+The protocol that closes this has two halves, and a package needs both:
+
+1. **Declare it** — `js_rehydrate = true` in the package's
+   `[tool.rheo.<format>]` block. rheo renders the block's scripts with
+   `data-rheo-rehydrate`.
+2. **Register a callback** — `(window.__rheoRehydrate ??= []).push(fn)`. The
+   `??=` spelling is required rather than stylistic: load order between the
+   live client and a package's own module is not something either can assume.
+
+The client then surveys **every** `script[src]` on the page (bar its own,
+marked `data-rheo-live`) before morphing, and reloads instead if any one of
+them is undeclared. One undeclared script disqualifies the page: a page is a
+single DOM, and morphing it for the widgets that cope would break the ones
+that do not. A non-empty `__rheoRehydrate` says somebody can rehydrate, never
+that everybody can, which is why the gate reads the DOM and not the hook list.
+The survey runs again after the morph, because an edit that puts a new widget
+on a page brings its scripts in with it.
+
+Hooks run **after** the morph, in registration order, and a hook that throws
+triggers a reload — it has left its island half-wired, and a reload is the one
+recovery that does not depend on knowing how far it got.
+
+**No hook may depend on another hook having run first.** Registration order is
+script order, which is the order a *consuming project* imported the packages
+in — nothing a package can see or control. So a package that keeps a
+page-global registry must not have one hook clear it for the others: state
+shared across packages has to be reclaimable by each holder on its own
+evidence. `@rookery/search` does this by refusing a URL-key claim only when
+the element holding it is still in the document, which needs no agreement
+about order.
+
+What this asks of a hook is **idempotence on a morphed DOM**, which is a
+stronger requirement than "run again": Idiomorph mutates elements *in place*,
+so listeners bound to surviving nodes survive the morph and a naive re-wire
+double-fires. The shape that works is to scope each wiring to an
+`AbortController` kept on the container and abort the previous one first, and
+to make any module-level registry releasable rather than write-once. A package
+that has not done this work should leave `js_rehydrate` unset and take the
+reload.
+
+Stability: Experimental — the attribute name, the global's name and the
+one-undeclared-script-disqualifies rule are all new with the morph path, and
+no first-party package has migrated yet.
 
 ## Not part of this contract, on purpose
 

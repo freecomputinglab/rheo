@@ -77,6 +77,9 @@ pub struct Asset {
     /// Whether this script must be loaded as an ES module. Only ever true for a
     /// package's source-mode block, whose unbundled files use `import`.
     pub module: bool,
+    /// Whether this script carries `data-rheo-rehydrate` on its emitted `<script>`
+    /// tag. Set only by a package declaring `js_rehydrate = true`.
+    pub rehydrate: bool,
     /// Absolute path of the source file this asset was copied from.
     ///
     /// For user-declared assets this is under the project root; for
@@ -315,6 +318,9 @@ pub struct PackageAssets {
     pub source_root: PathBuf,
     /// Whether this block's scripts are ES modules (`js_module = true`).
     pub js_module: bool,
+    /// Whether this block's scripts should be rehydrated client-side
+    /// (`js_rehydrate = true`).
+    pub js_rehydrate: bool,
 }
 
 /// A resolved package specifier ready for asset block synthesis.

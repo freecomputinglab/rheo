@@ -182,6 +182,7 @@ impl PackageManifest {
             merged.assets.copy = source.assets.copy.clone();
         }
         merged.js_module = source.js_module;
+        merged.js_rehydrate = source.js_rehydrate;
         Some(merged)
     }
 
@@ -242,6 +243,10 @@ impl PackageManifest {
             .get("js_module")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let js_rehydrate = section
+            .get("js_rehydrate")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let copy = section
             .get("copy")
             .and_then(|v| v.as_array())
@@ -266,6 +271,7 @@ impl PackageManifest {
             },
             source_root: self.pkg.source_root.clone(),
             js_module,
+            js_rehydrate,
         })
     }
 
@@ -819,7 +825,7 @@ css_stylesheet = "style.css"
             pkg_dir.join("typst.toml"),
             "[tool.rheo]\nmin_version = \"0.5.0\"\n\n[tool.rheo.html]\ncss_stylesheet = \"a.css\"\n\
              js_scripts = \"dist/lib.js\"\n\n[tool.rheo.source.html]\n\
-             js_scripts = [\"src/a.js\", \"src/b.js\"]\njs_module = true\n",
+             js_scripts = [\"src/a.js\", \"src/b.js\"]\njs_module = true\njs_rehydrate = true\n",
         )
         .unwrap();
         let pkg = make_resolved(&pkg_dir, "ns", "pkg", "1.0");
@@ -834,14 +840,17 @@ css_stylesheet = "style.css"
         // Release mode keeps the bundle and its classic tag.
         let release = manifest.assets_for("html", false).unwrap();
         assert!(!release.js_module);
+        assert!(!release.js_rehydrate);
         assert_eq!(
             release.assets.extra.get("js_scripts").unwrap().as_str(),
             Some("dist/lib.js"),
         );
 
-        // Source mode takes the unbundled list and asks for modules.
+        // Source mode takes the unbundled list, asks for modules, and flags
+        // them for client-side rehydration.
         let source = manifest.assets_for("html", true).unwrap();
         assert!(source.js_module);
+        assert!(source.js_rehydrate);
         assert_eq!(
             source
                 .assets

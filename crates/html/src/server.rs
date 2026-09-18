@@ -332,7 +332,12 @@ fn inject_live_reload_script(html: &[u8]) -> std::io::Result<Vec<u8>> {
 
     // Absolute path: the dev server serves the output dir as root, so this
     // resolves correctly from a page at any depth.
-    const SCRIPT: &str = r#"<script src="/.rheo/live.js"></script>"#;
+    //
+    // `data-rheo-live` MARKS THIS TAG AS RHEO'S OWN, because the client has to
+    // survey the page's other scripts to decide whether a morph is safe (see
+    // `live/live-reload.js`) and must not count itself among them. Matching on
+    // the `src` instead would tie that decision to this route's spelling.
+    const SCRIPT: &str = r#"<script src="/.rheo/live.js" data-rheo-live></script>"#;
 
     // Try to inject before </body>, fall back to end of document
     let modified = if let Some(pos) = html_str.rfind("</body>") {

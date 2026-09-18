@@ -396,13 +396,21 @@ impl Element {
     ///
     /// A module gets `type="module"` and NO `defer`: modules are deferred by
     /// default and `defer` is ignored on them, so emitting both would only
-    /// mislead a reader of the output.
+    /// mislead a reader of the output. A script whose package declared
+    /// `js_rehydrate = true` ALSO carries a bare `data-rheo-rehydrate`
+    /// attribute, regardless of which of those two forms it takes — the flag
+    /// is orthogonal to module vs. classic loading.
     pub fn create_script(script: &ScriptRef) -> Self {
+        let mut attrs: Vec<(&str, &str)> = vec![("src", &script.src)];
         if script.module {
-            Self::create_element("script", &[("src", &script.src), ("type", "module")])
+            attrs.push(("type", "module"));
         } else {
-            Self::create_element("script", &[("src", &script.src), ("defer", "")])
+            attrs.push(("defer", ""));
         }
+        if script.rehydrate {
+            attrs.push(("data-rheo-rehydrate", ""));
+        }
+        Self::create_element("script", &attrs)
     }
 
     /// Prepend a child element to this element.
@@ -727,9 +735,12 @@ pub fn depth_relative_refs(paths: &[String], output_rel_path: &str) -> Vec<Strin
 pub struct ScriptRef {
     pub src: String,
     pub module: bool,
+    /// Whether to stamp `data-rheo-rehydrate` on the emitted `<script>` tag.
+    pub rehydrate: bool,
 }
 
-/// [`depth_relative_refs`] for scripts, carrying each one's module flag through.
+/// [`depth_relative_refs`] for scripts, carrying each one's module and
+/// rehydrate flags through.
 pub fn depth_relative_scripts(scripts: &[ScriptRef], output_rel_path: &str) -> Vec<ScriptRef> {
     let prefix = depth_prefix(output_rel_path);
     scripts
@@ -737,6 +748,7 @@ pub fn depth_relative_scripts(scripts: &[ScriptRef], output_rel_path: &str) -> V
         .map(|s| ScriptRef {
             src: format!("{prefix}{}", s.src),
             module: s.module,
+            rehydrate: s.rehydrate,
         })
         .collect()
 }
@@ -970,6 +982,7 @@ mod tests {
         ScriptRef {
             src: src.to_string(),
             module: false,
+            rehydrate: false,
         }
     }
 
@@ -985,6 +998,7 @@ mod tests {
             &[ScriptRef {
                 src: "src/lib.js".to_string(),
                 module: true,
+                rehydrate: false,
             }],
         )
         .unwrap();
@@ -998,12 +1012,48 @@ mod tests {
         );
     }
 
+    /// A script flagged `js_rehydrate = true` carries a bare
+    /// `data-rheo-rehydrate` attribute — orthogonal to, and independent of,
+    /// whichever of the two forms above it also takes.
+    #[test]
+    fn test_inject_head_links_rehydrate_script() {
+        let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_head_links(
+            &[],
+            &[],
+            &[ScriptRef {
+                src: "src/lib.js".to_string(),
+                module: false,
+                rehydrate: true,
+            }],
+        )
+        .unwrap();
+        let result = dom.serialize().unwrap();
+
+        assert!(result.contains(r#"src="src/lib.js""#));
+        assert!(result.contains("data-rheo-rehydrate"));
+    }
+
+    /// Without the flag, no `data-rheo-rehydrate` attribute is emitted at all.
+    #[test]
+    fn test_inject_head_links_without_rehydrate_omits_the_attribute() {
+        let html = "<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>";
+        let mut dom = HtmlDom::parse(html).unwrap();
+        dom.inject_head_links(&[], &[], &[classic("index.js")])
+            .unwrap();
+        let result = dom.serialize().unwrap();
+
+        assert!(!result.contains("data-rheo-rehydrate"));
+    }
+
     #[test]
     fn test_depth_relative_scripts_keeps_the_module_flag() {
         let scripts = vec![
             ScriptRef {
                 src: "a.js".to_string(),
                 module: true,
+                rehydrate: false,
             },
             classic("b.js"),
         ];
@@ -1012,6 +1062,21 @@ mod tests {
         assert!(out[0].module);
         assert_eq!(out[1].src, "../b.js");
         assert!(!out[1].module);
+    }
+
+    #[test]
+    fn test_depth_relative_scripts_keeps_the_rehydrate_flag() {
+        let scripts = vec![
+            ScriptRef {
+                src: "a.js".to_string(),
+                module: false,
+                rehydrate: true,
+            },
+            classic("b.js"),
+        ];
+        let out = depth_relative_scripts(&scripts, "deep/page.html");
+        assert!(out[0].rehydrate);
+        assert!(!out[1].rehydrate);
     }
 
     #[test]

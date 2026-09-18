@@ -1,5 +1,35 @@
 # 0.6.4 — user-visible changes
 
+## `rheo watch` patches the page on a content edit, and a package must opt in
+
+A rebuild that touched only `.typ` sources no longer reloads the page. The
+dev-server client refetches it and morphs the new HTML into the live DOM
+instead, so scroll position, focus, text selection, open `<details>` and
+playing media survive an edit. A rebuild that touched assets still reloads.
+
+**A package shipping JavaScript has to declare that it can cope, or its page
+falls back to a reload.** A morph does not re-execute the page's scripts, and
+refetched page bytes are the pre-hydration build output — so for a package
+whose script does work at boot (pressing the buttons the URL names, hiding
+filtered rows, setting the attribute its stylesheet keys off), a morph would
+revert all of it and re-run nothing, leaving the widget drawn as though it had
+never started. Nothing would throw.
+
+So rheo asks. A package sets `js_rehydrate = true` in its
+`[tool.rheo.<format>]` block and pushes a callback onto
+`window.__rheoRehydrate`; rheo renders its scripts with `data-rheo-rehydrate`
+and calls the callbacks after each morph. Before morphing, the client checks
+every script on the page and reloads instead if any one of them is
+undeclared — a page is a single DOM, and patching it for the widgets that cope
+would break the ones that do not.
+
+The upshot for an existing project is that nothing changes yet: a page
+carrying package JavaScript keeps reloading exactly as it did, and pages with
+no scripts get the morph immediately. `docs/contract.md` has the protocol,
+including what idempotence on a morphed DOM actually requires of a hook —
+Idiomorph mutates elements in place, so listeners survive and a naive re-wire
+double-fires.
+
 ## A configured releases namespace caches by its host, not in the shared Typst cache
 
 A namespace configured with `releases = ...` now caches its downloaded

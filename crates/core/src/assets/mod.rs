@@ -26,7 +26,11 @@ enum AssetSource<'b> {
     User,
     /// Contributed by an `[packages.<ns>]` block, resolved against the
     /// package's own directory.
-    Package { source_root: &'b Path, module: bool },
+    Package {
+        source_root: &'b Path,
+        module: bool,
+        rehydrate: bool,
+    },
     /// The project-root filename convention, pushed by [`gather_entries`]
     /// only when the project declared no `User` entry of its own.
     ProjectDefault,
@@ -44,6 +48,16 @@ impl<'b> AssetSource<'b> {
         matches!(self, AssetSource::Package { module: true, .. })
     }
 
+    fn rehydrate(&self) -> bool {
+        matches!(
+            self,
+            AssetSource::Package {
+                rehydrate: true,
+                ..
+            }
+        )
+    }
+
     /// Only a path the project wrote down in a `[[<plugin>.assets]]` block
     /// warns when it's missing. A package file and the root convention are
     /// paths rheo proposed itself, so their absence is routine rather than
@@ -51,6 +65,13 @@ impl<'b> AssetSource<'b> {
     fn warns_on_missing(&self) -> bool {
         matches!(self, AssetSource::User)
     }
+}
+
+/// An on-disk source's module/rehydrate flags, collected in [`AssetResolver::copy_group`]
+/// alongside its path and zipped back onto the copied output there.
+struct ScriptFlags {
+    module: bool,
+    rehydrate: bool,
 }
 
 /// One candidate source for a declared asset, gathered from user overrides,
@@ -103,6 +124,7 @@ fn gather_entries<'b>(
             source: AssetSource::Package {
                 source_root: &pkg.source_root,
                 module: pkg.js_module,
+                rehydrate: pkg.js_rehydrate,
             },
         }));
     }
@@ -246,12 +268,19 @@ impl<'a> AssetResolver<'a> {
         };
 
         let mut sources: Vec<PathBuf> = Vec::new();
-        let mut modules: Vec<bool> = Vec::new();
+        // `module` and `rehydrate` travel together as one struct rather than a
+        // second parallel `Vec<bool>` (or an unlabelled `Vec<(bool, bool)>`), so
+        // the zip below reads as `flags.module` / `flags.rehydrate` instead of a
+        // positional `.0`/`.1`.
+        let mut flags: Vec<ScriptFlags> = Vec::new();
         for entry in &group.entries {
             let abs = group.root.join(entry.path);
             if abs.is_file() {
                 sources.push(abs);
-                modules.push(entry.source.module());
+                flags.push(ScriptFlags {
+                    module: entry.source.module(),
+                    rehydrate: entry.source.rehydrate(),
+                });
             } else if entry.source.warns_on_missing() {
                 warn!(
                     plugin = plugin.name(),
@@ -269,8 +298,8 @@ impl<'a> AssetResolver<'a> {
         outputs
             .into_iter()
             .zip(sources.iter())
-            .zip(modules.iter())
-            .map(|((abs, src), module)| {
+            .zip(flags.iter())
+            .map(|((abs, src), flags)| {
                 let rel = abs
                     .strip_prefix(self.plugin_output_dir)
                     .expect("copy_each output is always under plugin_output_dir")
@@ -287,7 +316,8 @@ impl<'a> AssetResolver<'a> {
                 seen_relative_paths.insert(rel.clone(), src.clone());
                 Ok(Asset {
                     config: asset_config.clone(),
-                    module: *module,
+                    module: flags.module,
+                    rehydrate: flags.rehydrate,
                     source_path: src.clone(),
                     resolved_path: abs,
                     built_relative_path: rel,
@@ -333,6 +363,7 @@ impl<'a> AssetResolver<'a> {
         Ok(Some(Asset {
             config: asset_config.clone(),
             module: false,
+            rehydrate: false,
             source_path: dest.clone(),
             resolved_path: dest,
             built_relative_path: rel,
@@ -684,6 +715,7 @@ mod tests {
             !AssetSource::Package {
                 source_root: Path::new("/tmp"),
                 module: false,
+                rehydrate: false,
             }
             .warns_on_missing()
         );
@@ -1149,6 +1181,7 @@ mod tests {
                 extra,
             },
             js_module: false,
+            js_rehydrate: false,
             source_root: pkg_dir.clone(),
         }];
 
@@ -1193,6 +1226,7 @@ mod tests {
                 extra,
             },
             js_module: false,
+            js_rehydrate: false,
             source_root: pkg_dir,
         }];
 
@@ -1246,6 +1280,7 @@ mod tests {
                 extra: pkg_extra,
             },
             js_module: false,
+            js_rehydrate: false,
             source_root: pkg_dir,
         }];
 
@@ -1307,6 +1342,7 @@ mod tests {
                 extra: pkg_extra,
             },
             js_module: false,
+            js_rehydrate: false,
             source_root: pkg_dir,
         }];
 
@@ -1370,6 +1406,7 @@ mod tests {
                 extra: pkg_extra,
             },
             js_module: false,
+            js_rehydrate: false,
             source_root: pkg_dir,
         }];
 
@@ -1439,6 +1476,7 @@ mod tests {
                 extra: pkg_extra,
             },
             js_module: false,
+            js_rehydrate: false,
             source_root: pkg_dir,
         }];
 
