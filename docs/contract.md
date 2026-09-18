@@ -346,3 +346,26 @@ package does. `AssetResolver::resolve`
 user-declared pairs alone, so a package dependency — an additive third scope,
 outside the CLI > `rheo.toml` > defaults chain — cannot answer the question of
 whether the project overrode its own default.
+
+### Transitive package imports
+
+The scan that finds package assets is **transitive**: a package's own
+`@`-imports contribute their declared assets too. A project importing
+`@rheo/notebox` gets the assets of whatever `@rheo/notebox` itself imports,
+without repeating that import in its own content. This is what makes a shared
+helper package possible — a package can depend on one without every consuming
+project having to know it exists.
+
+The order is **project-first, then transitive**: every spec a project imports
+directly keeps its position ahead of anything reached only through a package,
+and within each level first sight wins. Asset injection order is script
+execution order on the page, so adding a dependency to a package can never
+reorder the scripts a project already had.
+
+A transitive spec that resolves to no package is **skipped silently**. A
+dependency rheo cannot locate costs that package's assets and nothing else; it
+never fails a build that would otherwise have succeeded. Discovering a
+package's own imports means reading its `.typ` files, so a package must be on
+disk to be descended into — a namespace served from a releases host therefore
+contributes its transitive dependencies from the build after the one that first
+cached it.
