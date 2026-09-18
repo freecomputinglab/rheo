@@ -2626,7 +2626,7 @@ dependencies = [
 
 [[package]]
 name = "rheo"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "atty",
  "clap",
@@ -2647,7 +2647,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-core"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "chrono",
  "codespan-reporting",
@@ -2683,7 +2683,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-epub"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "chrono",
  "iref",
@@ -2703,7 +2703,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-html"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "axum",
  "globset",
@@ -2724,7 +2724,7 @@ dependencies = [
 
 [[package]]
 name = "rheo-pdf"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "rheo-core",
  "thiserror 2.0.18",
