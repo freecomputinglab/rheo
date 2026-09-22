@@ -27,6 +27,10 @@ pub struct SourceFile {
     /// Display name, project-relative (or `@pkg/name:ver/path` for a package).
     pub name: String,
     pub text: String,
+    /// True when this is Typst rheo generated — the synthesized bundle main, a
+    /// per-vertebra injected prelude, or one of rheo's own served modules — and
+    /// so not a file the project can open and edit.
+    pub generated: bool,
 }
 
 /// A byte range in one of the report's [`SourceFile`]s.
@@ -143,6 +147,7 @@ impl DiagnosticReport {
                 file: self.intern(SourceFile {
                     name: file.name.clone(),
                     text: file.text.to_string(),
+                    generated: false,
                 }),
                 range: authored_range,
             }),
@@ -152,6 +157,7 @@ impl DiagnosticReport {
                     file: self.intern(SourceFile {
                         name: format!("{name} (rheo-generated)"),
                         text,
+                        generated: true,
                     }),
                     range,
                 })
@@ -169,5 +175,66 @@ impl DiagnosticReport {
                 self.files.len() - 1
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::constants::METADATA_MODULE_PATH;
+    use crate::world::WorldSpec;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use typst::World;
+    use typst::syntax::{DiagSpan, RootedPath, VirtualPath, VirtualRoot};
+
+    /// A span into a vertebra's own served text resolves authored
+    /// (`generated: false`); a span into a served-from-memory rheo module —
+    /// entirely injected, per its `SourceMap` — resolves generated.
+    #[test]
+    fn resolve_marks_generated_only_for_a_synthesized_only_source() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let mut source_overlay = HashMap::new();
+        source_overlay.insert("content/a.typ".to_string(), "= Title\n".to_string());
+
+        let world = RheoWorld::new_for_bundle(
+            root,
+            "#document(\"a.html\", format: \"html\")[#include \"content/a.typ\"]".to_string(),
+            WorldSpec {
+                source_overlay: Arc::new(source_overlay),
+                format_name: Some("html".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let vertebra_id = RootedPath::new(
+            VirtualRoot::Project,
+            VirtualPath::new("content/a.typ").unwrap(),
+        )
+        .intern();
+        let text = World::source(&world, vertebra_id)
+            .unwrap()
+            .text()
+            .to_string();
+        let offset = text.find("Title").unwrap();
+        let span = DiagSpan::from_range(vertebra_id, offset..offset + "Title".len());
+
+        let mut report = DiagnosticReport::default();
+        let resolved = report.resolve(&world, span).expect("resolves");
+        assert!(!report.files()[resolved.file].generated);
+
+        let metadata_id = RootedPath::new(
+            VirtualRoot::Project,
+            VirtualPath::new(METADATA_MODULE_PATH).unwrap(),
+        )
+        .intern();
+        World::source(&world, metadata_id).unwrap();
+        let span = DiagSpan::from_range(metadata_id, 0..1);
+        let resolved = report.resolve(&world, span).expect("resolves");
+        assert!(report.files()[resolved.file].generated);
     }
 }
