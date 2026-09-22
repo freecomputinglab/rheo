@@ -24,10 +24,12 @@ use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+use typst::World as _;
 use typst::introspection::Introspector as _;
 use typst::model::Document as _;
 use typst_kit::fonts::FontStore;
@@ -60,6 +62,10 @@ pub struct BuildOptions {
     /// never read back — for diagnosing marrow/spine authoring errors. Off by
     /// default.
     pub emit_bundle_source: bool,
+    /// `--timings`: write Typst's own `typst-timing` trace for each compile to
+    /// this path, as Chrome-tracing JSON. A read-only debug artifact for
+    /// finding the dominant sub-step inside a slow compile. `None` by default.
+    pub timings: Option<PathBuf>,
     /// `--metadata-two-pass`: opt in to gated two-pass metadata resolution
     /// (see [`Build::compile_bundle_once`]) — recovers a title set inside a
     /// bounded code block for cross-vertebra reads (`metadata-of`, `@handle`)
@@ -96,6 +102,7 @@ pub struct Build {
     fonts: OnceLock<Arc<FontStore>>,
     inputs: HashMap<String, String>,
     emit_bundle_source: bool,
+    timings: Option<PathBuf>,
     metadata_two_pass: bool,
 }
 
@@ -258,6 +265,7 @@ impl Build {
             timing: Mutex::new(BuildTiming::default()),
             inputs,
             emit_bundle_source: opts.emit_bundle_source,
+            timings: opts.timings,
             metadata_two_pass: opts.metadata_two_pass,
         })
     }
@@ -827,12 +835,18 @@ impl Build {
                 ..Default::default()
             },
         )?;
+        if self.timings.is_some() {
+            typst_timing::enable();
+        }
         // Drained whether or not the compile succeeded: a failed pass's
         // diagnostics are exactly the ones worth rendering.
         let compiled = self.timed(phase::TYPST_COMPILE, Some(plugin.name()), || {
             world.compile_bundle()
         });
         self.diagnostics.lock().extend(world.take_diagnostics());
+        if let Some(path) = &self.timings {
+            Self::export_timings(&world, path);
+        }
         let bundle = compiled?;
         let mut assets: HashSet<String> = HashSet::new();
         let mut meta: HashMap<String, DocumentMeta> = HashMap::new();
@@ -856,6 +870,27 @@ impl Build {
             files,
             bundle,
         })
+    }
+
+    /// Write the `typst-timing` trace recorded during the just-finished
+    /// compile to `path`, as Chrome-tracing JSON. A failure to create or
+    /// write the file is a warning, not a build error — this is a debug
+    /// artifact, and a build that succeeds except for its instrumentation has
+    /// succeeded.
+    fn export_timings(world: &RheoWorld, path: &Path) {
+        let file = match std::fs::File::create(path) {
+            Ok(file) => file,
+            Err(e) => {
+                warn!(path = %path.display(), error = %e, "failed to create timings trace file");
+                return;
+            }
+        };
+        let writer = std::io::BufWriter::new(file);
+        if let Err(e) = typst_timing::export_json(writer, |raw| {
+            resolve_timing_span(world, raw).unwrap_or_else(|| ("unknown".to_string(), 0))
+        }) {
+            warn!(path = %path.display(), error = %e, "failed to write timings trace");
+        }
     }
 
     /// The plain-text `title` a vertebra's own metadata beacon (`<rheo-meta:
@@ -1446,6 +1481,18 @@ fn plugins_for_formats(
 fn ensure_output_dir(dir: &Path, plugin_name: &str) -> Result<()> {
     std::fs::create_dir_all(dir)
         .map_err(|e| RheoError::io(e, format!("creating output directory for {plugin_name}")))
+}
+
+/// Turn a `typst-timing` raw span into the `(file, line)` pair its JSON trace
+/// records, resolving it off `world`. `None` for a detached span or one whose
+/// source has since gone missing.
+fn resolve_timing_span(world: &RheoWorld, raw: NonZeroU64) -> Option<(String, u32)> {
+    let span = typst::syntax::Span::from_raw(raw);
+    let id = span.id()?;
+    let source = world.source(id).ok()?;
+    let range = typst::WorldExt::range(world, span)?;
+    let line = source.lines().byte_to_line(range.start)?;
+    Some((format!("{id:?}"), line as u32 + 1))
 }
 
 /// A project marrow file's text, with the project-relative display path it
