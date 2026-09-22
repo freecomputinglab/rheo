@@ -8,8 +8,18 @@
 //! `format!` calls at the injection site.
 
 use crate::reticulate::VertebraInjection;
+use crate::synth::source_map::{AuthoredFile, SourceMap};
 use crate::synth::typst_source::{TypstBlock, TypstStmt};
 use std::collections::HashMap;
+#[cfg(test)]
+use std::sync::Arc;
+
+/// A synthesized Typst source plus the map back to the authored text it
+/// carries.
+pub struct Synthesized {
+    pub text: String,
+    pub map: SourceMap,
+}
 
 /// Makes `target()` return rheo's output format, so an authored file detects
 /// the format the same way under every plugin. Opaque source, hence `Raw`.
@@ -49,7 +59,11 @@ impl<'a> SourceInjector<'a> {
     /// title lookup (anchors only appear in bundle-root `#document(...)`
     /// bodies). No format gate is needed beyond the polyfill's — marrow and
     /// beacons are only ever assembled for per-page targets anyway.
-    pub fn main(&self, body: &str) -> String {
+    ///
+    /// `body_map` is `body`'s own map (e.g. from [`crate::reticulate::bundle_source::BundleSource::render`]),
+    /// attributing marrow within it; it is shifted onto the tail of the
+    /// scaffolding this method generates ahead of `body`.
+    pub fn main(&self, body: &str, body_map: &SourceMap) -> Synthesized {
         let stmts = vec![
             self.polyfill(),
             TypstStmt::Raw(include_str!("../typ/rheo.typ").to_string()),
@@ -59,26 +73,67 @@ impl<'a> SourceInjector<'a> {
             TypstStmt::Raw(self.plugin_library.unwrap_or_default().to_string()),
             TypstStmt::Raw("#show: rheo_template".to_string()),
         ];
-        format!("{}\n\n{body}", TypstBlock(stmts))
+        let prefix = format!("{}\n\n", TypstBlock(stmts));
+        let text = format!("{prefix}{body}");
+        let mut map = SourceMap::default();
+        map.push_injected(prefix.len());
+        map.append_shifted(body_map);
+        Synthesized { text, map }
     }
 
     /// A vertebra or partial identified by its bundle-relative path: the
     /// polyfill, that vertebra's `rheo-context()` prelude, its own source, then
     /// its metadata-beacon epilogue. A file with neither (a partial pulled in by
     /// an `#include`) is returned untouched but for the polyfill.
-    pub fn vertebra(&self, rel_path: &str, body: &str) -> String {
+    pub fn vertebra(&self, rel_path: &str, body: &str) -> Synthesized {
         let injection = self.injections.get(rel_path);
-        let prelude = injection.map(|i| i.prelude.as_str()).unwrap_or_default();
+        let generated = injection.map(|i| i.generated.as_str()).unwrap_or_default();
+        let project_prelude = injection.and_then(|i| i.project_prelude.as_ref());
         let epilogue = injection.map(|i| i.epilogue.as_str()).unwrap_or_default();
-        if !self.polyfill_target && prelude.is_empty() && epilogue.is_empty() {
-            return body.to_string();
+        let file = || AuthoredFile {
+            name: rel_path.to_string(),
+            text: body.into(),
+        };
+        if injection.is_none() && !self.polyfill_target {
+            let mut map = SourceMap::default();
+            map.push_authored(file(), 0, body.len());
+            return Synthesized {
+                text: body.to_string(),
+                map,
+            };
         }
         let polyfill = TypstBlock(vec![self.polyfill()]).to_string();
         let head = match polyfill.is_empty() {
             true => polyfill,
             false => polyfill + "\n\n",
         };
-        format!("{head}{prelude}{body}{epilogue}")
+        // `generated`, a literal two-newline separator, then the project's own
+        // `[spine] prelude` verbatim (as spliced, i.e. with its own trailing
+        // two-newline separator) when configured.
+        const SEPARATOR: &str = "\n\n";
+        let project_splice = project_prelude
+            .map(|(_, text)| format!("{text}{SEPARATOR}"))
+            .unwrap_or_default();
+
+        let mut map = SourceMap::default();
+        map.push_injected(head.len() + generated.len() + SEPARATOR.len());
+        if let Some((path, text)) = project_prelude {
+            map.push_authored(
+                AuthoredFile {
+                    name: path.clone(),
+                    text: text.clone(),
+                },
+                0,
+                text.len(),
+            );
+            map.push_injected(SEPARATOR.len());
+        }
+        map.push_authored(file(), 0, body.len());
+        map.push_injected(epilogue.len());
+        Synthesized {
+            text: format!("{head}{generated}{SEPARATOR}{project_splice}{body}{epilogue}"),
+            map,
+        }
     }
 
     fn polyfill(&self) -> TypstStmt {
@@ -104,7 +159,9 @@ mod tests {
     fn main_carries_template_helpers_and_plugin_library() {
         let none = injections(&[]);
         let injector = SourceInjector::new(true, Some("#let plugin-lib = 1"), &none);
-        let out = injector.main("#document(\"a.html\")[]");
+        let out = injector
+            .main("#document(\"a.html\")[]", &SourceMap::default())
+            .text;
 
         assert!(out.starts_with("// Polyfill target()"));
         assert!(out.contains("#import \"/typ/metadata.typ\": rheo-metadata-all"));
@@ -117,7 +174,9 @@ mod tests {
     #[test]
     fn main_without_polyfill_or_plugin_library_leaves_no_gap() {
         let none = injections(&[]);
-        let out = SourceInjector::new(false, None, &none).main("body");
+        let out = SourceInjector::new(false, None, &none)
+            .main("body", &SourceMap::default())
+            .text;
 
         assert!(!out.contains("Polyfill target()"));
         assert!(
@@ -133,14 +192,55 @@ mod tests {
         let map = injections(&[(
             "content/a.typ",
             VertebraInjection {
-                prelude: "#let rheo-context() = ()\n\n".to_string(),
+                generated: "#let rheo-context() = ()".to_string(),
+                project_prelude: None,
                 epilogue: "\n#beacon\n".to_string(),
             },
         )]);
-        let out = SourceInjector::new(true, None, &map).vertebra("content/a.typ", "= Title");
+        let out = SourceInjector::new(true, None, &map)
+            .vertebra("content/a.typ", "= Title")
+            .text;
 
         assert!(out.contains("#let rheo-context() = ()\n\n= Title\n#beacon\n"));
         assert!(out.starts_with("// Polyfill target()"));
+    }
+
+    #[test]
+    fn vertebra_map_resolves_project_prelude_offset_to_its_own_file() {
+        let map = injections(&[(
+            "content/a.typ",
+            VertebraInjection {
+                generated: "#let rheo-context() = ()".to_string(),
+                project_prelude: Some((
+                    "content/_lib/prelude.typ".to_string(),
+                    Arc::from("#let broken = undefined-thing"),
+                )),
+                epilogue: String::new(),
+            },
+        )]);
+        let synthesized =
+            SourceInjector::new(true, None, &map).vertebra("content/a.typ", "= Title");
+
+        let prelude_offset = synthesized.text.find("undefined-thing").unwrap();
+        let (file, range) = synthesized
+            .map
+            .resolve(&(prelude_offset..prelude_offset + "undefined-thing".len()))
+            .expect("resolves");
+        assert_eq!(file.name, "content/_lib/prelude.typ");
+        assert_eq!(
+            range,
+            "#let broken = undefined-thing"
+                .find("undefined-thing")
+                .unwrap().."#let broken = undefined-thing".len()
+        );
+
+        let body_offset = synthesized.text.find("Title").unwrap();
+        let (file, range) = synthesized
+            .map
+            .resolve(&(body_offset..body_offset + "Title".len()))
+            .expect("resolves");
+        assert_eq!(file.name, "content/a.typ");
+        assert_eq!(range, "= Title".find("Title").unwrap()..7);
     }
 
     /// A partial with no injection under a format that needs no polyfill is
@@ -148,7 +248,33 @@ mod tests {
     #[test]
     fn untouched_file_is_returned_verbatim() {
         let none = injections(&[]);
-        let out = SourceInjector::new(false, None, &none).vertebra("content/partial.typ", "= P");
+        let out = SourceInjector::new(false, None, &none)
+            .vertebra("content/partial.typ", "= P")
+            .text;
         assert_eq!(out, "= P");
+    }
+
+    /// A vertebra with a polyfill and a prelude resolves a byte offset of the
+    /// body back to the body's own offset.
+    #[test]
+    fn vertebra_map_resolves_body_offset_to_the_body_file() {
+        let map = injections(&[(
+            "content/a.typ",
+            VertebraInjection {
+                generated: "#let rheo-context() = ()".to_string(),
+                project_prelude: None,
+                epilogue: "\n#beacon\n".to_string(),
+            },
+        )]);
+        let synthesized =
+            SourceInjector::new(true, None, &map).vertebra("content/a.typ", "= Title");
+
+        let offset = synthesized.text.find("Title").unwrap();
+        let (file, range) = synthesized
+            .map
+            .resolve(&(offset..offset + "Title".len()))
+            .expect("resolves");
+        assert_eq!(file.name, "content/a.typ");
+        assert_eq!(range, "= Title".find("Title").unwrap()..7);
     }
 }

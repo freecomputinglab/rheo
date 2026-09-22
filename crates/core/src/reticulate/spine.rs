@@ -7,7 +7,7 @@ pub use serialize::FormatContext;
 use tree::{SpineNode, tree_indices};
 
 use crate::parser;
-use crate::reticulate::bundle_source::BundleSource;
+use crate::reticulate::bundle_source::{BundleSource, MarrowSource};
 use crate::reticulate::document_meta::DocumentTitle;
 use crate::reticulate::handle::Handle;
 use crate::synth::typst_source::{TypstBlock, TypstStmt};
@@ -16,6 +16,7 @@ use crate::{MARROW_FILE, MARROW_RESERVED_FILES, RESERVED_META_LABEL_PREFIX, Resu
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tracing::warn;
 use typst::syntax::Source;
 
@@ -237,14 +238,29 @@ impl Vertebra {
     }
 }
 
-/// The Typst source injected around one vertebra's own body: a `prelude`
-/// prepended before it, an `epilogue` appended after it. See
+/// The project's `[spine] prelude`: its own text plus the project-relative
+/// path it was read from, so a diagnostic landing inside it can be
+/// attributed to that file instead of to whichever vertebra it was inlined
+/// into.
+#[derive(Debug, Clone)]
+pub struct SpinePrelude {
+    pub path: String,
+    pub text: String,
+}
+
+/// The Typst source injected around one vertebra's own body: `generated`
+/// and, when configured, the project's own `[spine] prelude` prepended
+/// before it, an `epilogue` appended after it. See
 /// [`VirtualSpine::vertebra_injections`].
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct VertebraInjection {
-    /// Text prepended before the vertebra's own source (the `rheo-metadata`
-    /// helper and the `rheo-context()` binding).
-    pub prelude: String,
+    /// Typst rheo generates for this vertebra: the `rheo-metadata` helper
+    /// and the `rheo-context()` binding.
+    pub generated: String,
+    /// The project's `[spine] prelude`, inlined verbatim (trimmed, with no
+    /// trailing separator), with the project-relative path it came from.
+    /// `None` when unset.
+    pub project_prelude: Option<(String, Arc<str>)>,
     /// Text appended after the vertebra's own source (the metadata beacon,
     /// when emitted for this layout — empty otherwise).
     pub epilogue: String,
@@ -266,22 +282,21 @@ pub struct VirtualSpine {
     /// it with [`Self::with_title`], since `VirtualSpine` is built from a pure
     /// directory scan with no config access of its own.
     pub title: Option<String>,
-    /// Marrow: raw Typst blobs emitted at bundle root, outside every document,
-    /// so they can mint extra output files. Resolved by callers (the author's
-    /// `.marrow.typ`, later also package-declared contributions) and applied
-    /// with [`Self::with_marrow`], for the same no-config-access reason as
-    /// `title`.
-    pub marrow: Vec<String>,
+    /// Marrow emitted at bundle root, outside every document, so it can mint
+    /// extra output files. Resolved by callers (the author's `.marrow.typ`,
+    /// plus any package-declared contributions) and applied with
+    /// [`Self::with_marrow`], for the same no-config-access reason as `title`.
+    pub marrow: Vec<MarrowSource>,
     /// Marrow spliced BEFORE every document instead of after, so a `#show`/`#set`
     /// rule in it reaches pre-existing vertebrae (introspection is bundle-wide,
     /// not sequential). Global-by-default and powerful — opt-in only, applied
     /// with [`Self::with_marrow_prologue`].
-    pub marrow_prologue: Vec<String>,
+    pub marrow_prologue: Vec<MarrowSource>,
     /// The project's `[spine] prelude`, prepended inside every vertebra rather
     /// than at bundle root, so its bindings are in the page's own scope.
     /// Resolved by callers and applied with [`Self::with_vertebra_prelude`],
     /// for the same no-config-access reason as `title`.
-    pub vertebra_prelude: Option<String>,
+    pub vertebra_prelude: Option<SpinePrelude>,
 }
 
 impl VirtualSpine {
@@ -292,20 +307,20 @@ impl VirtualSpine {
     }
 
     /// Attach the project's per-vertebra Typst prelude, builder-style.
-    pub fn with_vertebra_prelude(mut self, prelude: Option<String>) -> Self {
+    pub fn with_vertebra_prelude(mut self, prelude: Option<SpinePrelude>) -> Self {
         self.vertebra_prelude = prelude;
         self
     }
 
     /// Attach marrow contributions spliced after every document (today's
     /// default position), builder-style.
-    pub fn with_marrow(mut self, marrow: Vec<String>) -> Self {
+    pub fn with_marrow(mut self, marrow: Vec<MarrowSource>) -> Self {
         self.marrow = marrow;
         self
     }
 
     /// Attach marrow contributions spliced before every document, builder-style.
-    pub fn with_marrow_prologue(mut self, marrow: Vec<String>) -> Self {
+    pub fn with_marrow_prologue(mut self, marrow: Vec<MarrowSource>) -> Self {
         self.marrow_prologue = marrow;
         self
     }
@@ -542,24 +557,24 @@ impl VirtualSpine {
     /// library file it imports, which would otherwise recurse.
     pub fn vertebra_injections(&self) -> HashMap<String, VertebraInjection> {
         let emit_beacon = matches!(self.layout, SpineLayout::OnePerVertebra { .. });
+        // Trimmed once and shared (via `Arc<str>`) across every vertebra,
+        // rather than reallocated per vertebra for the same text.
+        let project_prelude: Option<(String, Arc<str>)> = self
+            .vertebra_prelude
+            .as_ref()
+            .map(|p| (p.path.clone(), Arc::from(p.text.trim_end())));
         self.vertebrae
             .iter()
             .map(|v| {
-                let prelude = format!(
-                    "{}\n\n{}",
-                    TypstBlock(vec![
-                        TypstStmt::MetadataHelper,
-                        TypstStmt::ContextBinding {
-                            handle: v.handle.clone(),
-                        },
-                        TypstStmt::IndexHelper,
-                        TypstStmt::IndexBinding,
-                    ]),
-                    match &self.vertebra_prelude {
-                        Some(p) => format!("{}\n\n", p.trim_end()),
-                        None => String::new(),
+                let generated = TypstBlock(vec![
+                    TypstStmt::MetadataHelper,
+                    TypstStmt::ContextBinding {
+                        handle: v.handle.clone(),
                     },
-                );
+                    TypstStmt::IndexHelper,
+                    TypstStmt::IndexBinding,
+                ])
+                .to_string();
                 let epilogue = if emit_beacon {
                     let beacon = TypstStmt::MetadataBeacon {
                         handle: v.handle.clone(),
@@ -568,7 +583,14 @@ impl VirtualSpine {
                 } else {
                     String::new()
                 };
-                (v.rel_path.clone(), VertebraInjection { prelude, epilogue })
+                (
+                    v.rel_path.clone(),
+                    VertebraInjection {
+                        generated,
+                        project_prelude: project_prelude.clone(),
+                        epilogue,
+                    },
+                )
             })
             .collect()
     }
@@ -668,17 +690,10 @@ impl VirtualSpine {
             }
         };
 
-        let to_stmts = |texts: &[String]| {
-            texts
-                .iter()
-                .map(|text| TypstStmt::Raw(text.clone()))
-                .collect()
-        };
-
         BundleSource {
             documents,
-            marrow_prologue: to_stmts(&self.marrow_prologue),
-            marrow: to_stmts(&self.marrow),
+            marrow_prologue: self.marrow_prologue.clone(),
+            marrow: self.marrow.clone(),
         }
     }
 }
@@ -970,14 +985,14 @@ mod tests {
         let nested_injection = &injections["content/chapters/intro.typ"];
 
         // Each bakes only its OWN handle...
-        assert!(root_injection.prelude.contains("handle: \"intro\""));
+        assert!(root_injection.generated.contains("handle: \"intro\""));
         assert!(
             nested_injection
-                .prelude
+                .generated
                 .contains("handle: \"chapters:intro\"")
         );
         for inj in [root_injection, nested_injection] {
-            let p = &inj.prelude;
+            let p = &inj.generated;
             // ...the rheo-metadata helper is defined ahead of rheo-context()...
             assert!(p.contains("#let rheo-metadata(handle) = "));
             assert!(
@@ -1019,9 +1034,10 @@ mod tests {
         // Unconfigured `[spine] prelude` appends nothing.
         for inj in [root_injection, nested_injection] {
             assert!(
-                inj.prelude
-                    .ends_with("rheo-index() = rheo-index-at(rheo-context().handle)\n\n")
+                inj.generated
+                    .ends_with("rheo-index() = rheo-index-at(rheo-context().handle)")
             );
+            assert!(inj.project_prelude.is_none());
         }
     }
 
@@ -1044,20 +1060,25 @@ mod tests {
         // whitespace cannot shift where the vertebra's first line lands.
         let spine = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout)
             .unwrap()
-            .with_vertebra_prelude(Some(
-                "#let page-tag = rheo-context().handle\n\n\n".to_string(),
-            ));
+            .with_vertebra_prelude(Some(SpinePrelude {
+                path: "content/_lib/prelude.typ".to_string(),
+                text: "#let page-tag = rheo-context().handle\n\n\n".to_string(),
+            }));
 
         let injections = spine.vertebra_injections();
         assert_eq!(injections.len(), 2);
 
         for key in ["content/intro.typ", "content/chapters/deep.typ"] {
-            let p = &injections[key].prelude;
+            let inj = &injections[key];
             assert!(
-                p.find("#let rheo-context() = ").unwrap() < p.find("#let page-tag").unwrap(),
-                "{key}: prelude must follow the context binding it reads"
+                inj.generated.contains("#let rheo-context() = "),
+                "{key}: generated must define the context binding the prelude reads"
             );
-            assert!(p.ends_with("rheo-context().handle\n\n"), "{key}: {p:?}");
+            let (path, text) = inj.project_prelude.as_ref().unwrap();
+            assert_eq!(path, "content/_lib/prelude.typ");
+            // Trailing blank lines are normalized, so a prelude file's own
+            // whitespace cannot shift where the vertebra's first line lands.
+            assert!(text.ends_with("rheo-context().handle"), "{key}: {text:?}");
         }
     }
 
@@ -1082,8 +1103,12 @@ mod tests {
         assert_eq!(injection.epilogue, "");
         // The helper (and rheo-context's metadata-of field) are still defined,
         // so `(rheo-context().metadata-of)(...)` is always callable.
-        assert!(injection.prelude.contains("#let rheo-metadata(handle) = "));
-        assert!(injection.prelude.contains("metadata-of: rheo-metadata"));
+        assert!(
+            injection
+                .generated
+                .contains("#let rheo-metadata(handle) = ")
+        );
+        assert!(injection.generated.contains("metadata-of: rheo-metadata"));
     }
 
     #[test]
@@ -1362,8 +1387,10 @@ mod tests {
     #[test]
     fn bundle_source_emits_marrow_after_documents() {
         let tmp = TempDir::new().unwrap();
-        let spine = build_single_vertebra_spine(tmp.path())
-            .with_marrow(vec!["#asset(\"extra/hello.txt\", \"hi\")".to_string()]);
+        let spine = build_single_vertebra_spine(tmp.path()).with_marrow(vec![MarrowSource {
+            origin: "content/.marrow.typ".to_string(),
+            text: "#asset(\"extra/hello.txt\", \"hi\")".to_string(),
+        }]);
 
         let source = spine.bundle_source().to_string();
         let marrow_at = source
@@ -1382,8 +1409,11 @@ mod tests {
     #[test]
     fn bundle_source_emits_marrow_prologue_before_documents() {
         let tmp = TempDir::new().unwrap();
-        let spine = build_single_vertebra_spine(tmp.path())
-            .with_marrow_prologue(vec!["#asset(\"extra/hello.txt\", \"hi\")".to_string()]);
+        let spine =
+            build_single_vertebra_spine(tmp.path()).with_marrow_prologue(vec![MarrowSource {
+                origin: "content/.marrow.prologue.typ".to_string(),
+                text: "#asset(\"extra/hello.txt\", \"hi\")".to_string(),
+            }]);
 
         let source = spine.bundle_source().to_string();
         let marrow_at = source

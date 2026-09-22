@@ -15,9 +15,10 @@ use crate::output::OutputConfig;
 use crate::packages::PackageIndex;
 use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, TypstFormat, spine_layout_for};
 use crate::project::{ProjectConfig, ProjectMode};
+use crate::reticulate::bundle_source::MarrowSource;
 use crate::reticulate::document_meta::DocumentMeta;
 use crate::reticulate::handle::Handle;
-use crate::reticulate::spine::{FormatContext, SpineLayout, SpineScan, VirtualSpine};
+use crate::reticulate::spine::{FormatContext, SpineLayout, SpinePrelude, SpineScan, VirtualSpine};
 use crate::transclude::{ContentTransclusion, ControlAssetKind, ControlAssets};
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
@@ -137,7 +138,7 @@ struct SpineScanResult {
     layout: SpineLayout,
     title: Option<String>,
     /// The merged spine's `prelude` file, already read; `None` when unset.
-    prelude: Option<String>,
+    prelude: Option<SpinePrelude>,
 }
 
 /// The result of [`Build::resolve_marrow`]: the per-plugin output target and
@@ -145,8 +146,8 @@ struct SpineScanResult {
 struct MarrowContext {
     target: Option<&'static str>,
     ext: Option<&'static str>,
-    marrow: Vec<String>,
-    marrow_prologue: Vec<String>,
+    marrow: Vec<MarrowSource>,
+    marrow_prologue: Vec<MarrowSource>,
 }
 
 /// The result of [`Build::mould_bundle`]: the synthesized bundle main and
@@ -158,6 +159,9 @@ struct MarrowContext {
 /// gated second pass compiles the same ones again, as does the next format.
 struct MouldedBundle {
     main: String,
+    /// Where every byte of `main` came from, so a diagnostic landing in
+    /// authored marrow is attributed to its own file rather than to `main`.
+    main_map: crate::synth::source_map::SourceMap,
     sources: Arc<HashMap<String, String>>,
     rheo_context: Arc<HashMap<String, crate::reticulate::VertebraInjection>>,
     bundle_source: Option<String>,
@@ -630,9 +634,19 @@ impl Build {
             None => None,
             Some(rel) => {
                 let path = content_dir.join(rel);
-                Some(std::fs::read_to_string(&path).map_err(|e| {
+                let text = std::fs::read_to_string(&path).map_err(|e| {
                     RheoError::io(e, format!("reading spine prelude '{}'", path.display()))
-                })?)
+                })?;
+                // The project-relative display path — what every other
+                // diagnostic names a file by (see `RheoWorld`'s `Files::name`).
+                let display_path = pathdiff::diff_paths(&path, &self.project.root)
+                    .unwrap_or_else(|| path.clone())
+                    .to_string_lossy()
+                    .into_owned();
+                Some(SpinePrelude {
+                    path: display_path,
+                    text,
+                })
             }
         };
 
@@ -693,17 +707,17 @@ impl Build {
                 (crate::MARROW_PROLOGUE_FILE, &mut marrow_prologue),
                 (crate::MARROW_EPILOGUE_FILE, &mut marrow),
             ] {
-                if let Some(text) = read_marrow_at(&content_dir.join(name))? {
-                    into.push(text);
+                if let Some(source) = read_marrow_at(&self.project.root, &content_dir.join(name))? {
+                    into.push(source);
                     explicit = true;
                 }
             }
             if !explicit {
                 let bare = content_dir.join(self.project.config.marrow_file());
-                if let Some(text) = read_marrow_at(&bare)? {
+                if let Some(source) = read_marrow_at(&self.project.root, &bare)? {
                     match self.project.config.marrow_is_epilogue() {
-                        true => marrow.push(text),
-                        false => marrow_prologue.push(text),
+                        true => marrow.push(source),
+                        false => marrow_prologue.push(source),
                     }
                 }
             }
@@ -724,9 +738,9 @@ impl Build {
         scan: SpineScan,
         layout: SpineLayout,
         title: Option<String>,
-        prelude: Option<String>,
-        marrow: Vec<String>,
-        marrow_prologue: Vec<String>,
+        prelude: Option<SpinePrelude>,
+        marrow: Vec<MarrowSource>,
+        marrow_prologue: Vec<MarrowSource>,
     ) -> Result<VirtualSpine> {
         let virtual_spine = VirtualSpine::build(scan, &self.project.root, layout)?
             .with_title(title)
@@ -759,6 +773,7 @@ impl Build {
 
         MouldedBundle {
             main: moulded.main,
+            main_map: moulded.main_map,
             sources: Arc::new(moulded.sources),
             rheo_context: Arc::new(rheo_context),
             bundle_source,
@@ -803,6 +818,7 @@ impl Build {
             crate::world::WorldSpec {
                 source_overlay: Arc::clone(&moulded.sources),
                 rheo_context: Arc::clone(&moulded.rheo_context),
+                virtual_main_map: moulded.main_map.clone(),
                 global_context: Some(global_context),
                 format_name: plugin.rheo_target().map(str::to_string),
                 fonts: Some(self.fonts()),
@@ -1432,12 +1448,19 @@ fn ensure_output_dir(dir: &Path, plugin_name: &str) -> Result<()> {
         .map_err(|e| RheoError::io(e, format!("creating output directory for {plugin_name}")))
 }
 
-/// A project marrow file's text; `None` when it does not exist. Any other read
-/// error is fatal — a marrow present but unreadable would otherwise mint none
-/// of the pages it exists to mint, on a green build.
-fn read_marrow_at(path: &Path) -> Result<Option<String>> {
+/// A project marrow file's text, with the project-relative display path it
+/// was read from; `None` when it does not exist. Any other read error is
+/// fatal — a marrow present but unreadable would otherwise mint none of the
+/// pages it exists to mint, on a green build.
+fn read_marrow_at(root: &Path, path: &Path) -> Result<Option<MarrowSource>> {
     match std::fs::read_to_string(path) {
-        Ok(text) => Ok(Some(text)),
+        Ok(text) => {
+            let origin = pathdiff::diff_paths(path, root)
+                .unwrap_or_else(|| path.to_path_buf())
+                .to_string_lossy()
+                .into_owned();
+            Ok(Some(MarrowSource { origin, text }))
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(RheoError::io(
             e,
