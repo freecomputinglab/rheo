@@ -94,6 +94,10 @@ pub struct WorldSpec {
     pub plugin_library: Option<String>,
     /// In-memory source served for the main file instead of reading from disk.
     pub virtual_main_source: Option<String>,
+    /// Where every byte of `virtual_main_source` came from — an authored
+    /// marrow file, or Typst rheo generated. Empty (resolves nothing) when
+    /// `virtual_main_source` is unset or carries no attributable marrow.
+    pub virtual_main_map: SourceMap,
     /// Per-vertebra rewritten sources from the Mould stage, keyed by
     /// project-relative include path. Shared rather than copied: one build
     /// compiles the same overlay once per format, and again on a second pass.
@@ -137,6 +141,9 @@ pub struct RheoWorld {
     /// In-memory source for the main file. When set, the world serves this
     /// content for the main FileId instead of reading from disk.
     virtual_main_source: Option<String>,
+    /// Where every byte of `virtual_main_source` came from. See
+    /// [`WorldSpec::virtual_main_map`].
+    virtual_main_map: SourceMap,
     /// Per-vertebra source overlay from the Mould stage, keyed by project-relative
     /// include path (e.g. `content/intro.typ`). When an included file matches, the
     /// world serves the rewritten source instead of reading it from disk.
@@ -192,6 +199,7 @@ impl RheoWorld {
             format_name: spec.format_name,
             plugin_library: spec.plugin_library,
             virtual_main_source: spec.virtual_main_source,
+            virtual_main_map: spec.virtual_main_map,
             source_overlay: spec.source_overlay,
             rheo_context: spec.rheo_context,
             diagnostics: Mutex::new(DiagnosticReport::default()),
@@ -536,7 +544,7 @@ impl World for RheoWorld {
             &self.rheo_context,
         );
         let synthesized = match id == self.main {
-            true => injector.main(&text),
+            true => injector.main(&text, &self.virtual_main_map),
             false => injector.vertebra(&rel, &text),
         };
 

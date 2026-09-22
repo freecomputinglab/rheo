@@ -4,7 +4,7 @@ pub mod handle;
 pub mod mould;
 pub mod spine;
 
-pub use bundle_source::BundleSource;
+pub use bundle_source::{BundleSource, MarrowSource};
 pub use document_meta::{DocumentMeta, DocumentTitle};
 pub use handle::Handle;
 pub use mould::{Rewrites, SpineMould, SyntaxRewrite};

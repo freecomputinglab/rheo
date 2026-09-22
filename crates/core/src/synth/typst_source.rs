@@ -28,6 +28,11 @@ pub enum TypstStmt {
     /// Verbatim Typst source (template blobs, polyfills, `#show: …` application).
     Raw(String),
     /// `#let <name> = <value>`.
+    // No current call site constructs this — every present-day `#let` this
+    // module emits (context/index bindings, metadata helpers) has its own
+    // dedicated variant instead. Kept as the general form a future Mould
+    // producer or plugin can reach for rather than hand-writing `format!`.
+    #[allow(dead_code)]
     Let { name: String, value: TypstLiteral },
     /// The per-vertebra `rheo-context` binding, as a zero-arg function that
     /// composes this file's `handle` with the format-global values spread from
@@ -108,6 +113,10 @@ pub enum TypstStmt {
     /// `#document(...)`, so no beacon is emitted there.
     MetadataBeacon { handle: Handle },
     /// `#state("<key>").update(<value>)`.
+    // No current call site constructs this — see `Let`'s note above; the
+    // per-page handle state `typ/rheo.typ`'s `rheo-page-init` updates is
+    // reached via `PageInit` instead.
+    #[allow(dead_code)]
     StateUpdate { key: String, value: TypstLiteral },
     /// `#rheo-page-init("<handle>")` — the per-document init hook defined in
     /// `typ/rheo.typ`: it publishes the page handle to `state` and, for per-page

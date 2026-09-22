@@ -7,7 +7,7 @@ pub use serialize::FormatContext;
 use tree::{SpineNode, tree_indices};
 
 use crate::parser;
-use crate::reticulate::bundle_source::BundleSource;
+use crate::reticulate::bundle_source::{BundleSource, MarrowSource};
 use crate::reticulate::document_meta::DocumentTitle;
 use crate::reticulate::handle::Handle;
 use crate::synth::typst_source::{TypstBlock, TypstStmt};
@@ -282,17 +282,16 @@ pub struct VirtualSpine {
     /// it with [`Self::with_title`], since `VirtualSpine` is built from a pure
     /// directory scan with no config access of its own.
     pub title: Option<String>,
-    /// Marrow: raw Typst blobs emitted at bundle root, outside every document,
-    /// so they can mint extra output files. Resolved by callers (the author's
-    /// `.marrow.typ`, later also package-declared contributions) and applied
-    /// with [`Self::with_marrow`], for the same no-config-access reason as
-    /// `title`.
-    pub marrow: Vec<String>,
+    /// Marrow emitted at bundle root, outside every document, so it can mint
+    /// extra output files. Resolved by callers (the author's `.marrow.typ`,
+    /// plus any package-declared contributions) and applied with
+    /// [`Self::with_marrow`], for the same no-config-access reason as `title`.
+    pub marrow: Vec<MarrowSource>,
     /// Marrow spliced BEFORE every document instead of after, so a `#show`/`#set`
     /// rule in it reaches pre-existing vertebrae (introspection is bundle-wide,
     /// not sequential). Global-by-default and powerful — opt-in only, applied
     /// with [`Self::with_marrow_prologue`].
-    pub marrow_prologue: Vec<String>,
+    pub marrow_prologue: Vec<MarrowSource>,
     /// The project's `[spine] prelude`, prepended inside every vertebra rather
     /// than at bundle root, so its bindings are in the page's own scope.
     /// Resolved by callers and applied with [`Self::with_vertebra_prelude`],
@@ -315,13 +314,13 @@ impl VirtualSpine {
 
     /// Attach marrow contributions spliced after every document (today's
     /// default position), builder-style.
-    pub fn with_marrow(mut self, marrow: Vec<String>) -> Self {
+    pub fn with_marrow(mut self, marrow: Vec<MarrowSource>) -> Self {
         self.marrow = marrow;
         self
     }
 
     /// Attach marrow contributions spliced before every document, builder-style.
-    pub fn with_marrow_prologue(mut self, marrow: Vec<String>) -> Self {
+    pub fn with_marrow_prologue(mut self, marrow: Vec<MarrowSource>) -> Self {
         self.marrow_prologue = marrow;
         self
     }
@@ -691,17 +690,10 @@ impl VirtualSpine {
             }
         };
 
-        let to_stmts = |texts: &[String]| {
-            texts
-                .iter()
-                .map(|text| TypstStmt::Raw(text.clone()))
-                .collect()
-        };
-
         BundleSource {
             documents,
-            marrow_prologue: to_stmts(&self.marrow_prologue),
-            marrow: to_stmts(&self.marrow),
+            marrow_prologue: self.marrow_prologue.clone(),
+            marrow: self.marrow.clone(),
         }
     }
 }
@@ -1395,8 +1387,10 @@ mod tests {
     #[test]
     fn bundle_source_emits_marrow_after_documents() {
         let tmp = TempDir::new().unwrap();
-        let spine = build_single_vertebra_spine(tmp.path())
-            .with_marrow(vec!["#asset(\"extra/hello.txt\", \"hi\")".to_string()]);
+        let spine = build_single_vertebra_spine(tmp.path()).with_marrow(vec![MarrowSource {
+            origin: "content/.marrow.typ".to_string(),
+            text: "#asset(\"extra/hello.txt\", \"hi\")".to_string(),
+        }]);
 
         let source = spine.bundle_source().to_string();
         let marrow_at = source
@@ -1415,8 +1409,11 @@ mod tests {
     #[test]
     fn bundle_source_emits_marrow_prologue_before_documents() {
         let tmp = TempDir::new().unwrap();
-        let spine = build_single_vertebra_spine(tmp.path())
-            .with_marrow_prologue(vec!["#asset(\"extra/hello.txt\", \"hi\")".to_string()]);
+        let spine =
+            build_single_vertebra_spine(tmp.path()).with_marrow_prologue(vec![MarrowSource {
+                origin: "content/.marrow.prologue.typ".to_string(),
+                text: "#asset(\"extra/hello.txt\", \"hi\")".to_string(),
+            }]);
 
         let source = spine.bundle_source().to_string();
         let marrow_at = source

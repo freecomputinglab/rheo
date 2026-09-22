@@ -72,6 +72,20 @@ impl SourceMap {
         });
     }
 
+    /// Append every segment of `other`, continuing immediately after this
+    /// map's own bytes — for splicing one synthesized source's map onto the
+    /// tail of another (the bundle main's own map onto the scaffolding
+    /// injected around it).
+    pub fn append_shifted(&mut self, other: &SourceMap) {
+        for segment in &other.segments {
+            let len = segment.range.end - segment.range.start;
+            match &segment.origin {
+                Origin::Injected => self.push_injected(len),
+                Origin::Authored { file, start } => self.push_authored(file.clone(), *start, len),
+            }
+        }
+    }
+
     /// Translate a byte range in the synthesized text back to the authored
     /// file it came from. `None` when the range begins in injected text or
     /// straddles a segment boundary — a span rheo cannot honestly attribute
@@ -134,5 +148,23 @@ mod tests {
         map.push_injected(5);
 
         assert!(map.resolve(&(3..7)).is_none());
+    }
+
+    #[test]
+    fn append_shifted_continues_the_other_maps_segments_at_this_maps_own_end() {
+        let mut inner = SourceMap::default();
+        inner.push_injected(4);
+        inner.push_authored(file("a.typ", "hello"), 0, 5);
+
+        let mut outer = SourceMap::default();
+        outer.push_injected(3);
+        outer.append_shifted(&inner);
+
+        // The authored segment now starts at 3 (outer's own prefix) + 4
+        // (inner's own injected prefix) = 7.
+        let (resolved, range) = outer.resolve(&(7..12)).expect("resolves");
+        assert_eq!(resolved.name, "a.typ");
+        assert_eq!(range, 0..5);
+        assert!(outer.resolve(&(0..3)).is_none());
     }
 }
