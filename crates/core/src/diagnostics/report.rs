@@ -128,15 +128,35 @@ impl DiagnosticReport {
     /// Resolve a Typst span into this report's own file list, keeping the file's
     /// text. A detached span (or a file the world cannot serve) resolves to
     /// `None`, and the diagnostic renders without source context.
+    ///
+    /// The world's source map translates the span's synthesized-text range
+    /// back to the authored file it came from when it can; a span that
+    /// genuinely lands in Typst rheo generated keeps today's synthesized
+    /// text and range, interned under a name distinct from the authored
+    /// file's own so the two never share (and corrupt) one entry.
     fn resolve(&mut self, world: &RheoWorld, span: typst::syntax::DiagSpan) -> Option<Span> {
         let id = span.id()?;
         let range = world.range(span)?;
         let name = world.name(id).ok()?;
-        let text = world.source(id).ok()?.text().to_string();
-        Some(Span {
-            file: self.intern(SourceFile { name, text }),
-            range,
-        })
+        match world.source_map(id).resolve(&range) {
+            Some((file, authored_range)) => Some(Span {
+                file: self.intern(SourceFile {
+                    name: file.name.clone(),
+                    text: file.text.to_string(),
+                }),
+                range: authored_range,
+            }),
+            None => {
+                let text = world.source(id).ok()?.text().to_string();
+                Some(Span {
+                    file: self.intern(SourceFile {
+                        name: format!("{name} (rheo-generated)"),
+                        text,
+                    }),
+                    range,
+                })
+            }
+        }
     }
 
     /// The index of `file` in this report, adding it if it is new. Files are

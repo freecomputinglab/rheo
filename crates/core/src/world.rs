@@ -8,6 +8,7 @@ use crate::diagnostics::DiagnosticReport;
 use crate::packages::PackageResolver;
 use crate::reticulate::VertebraInjection;
 use crate::synth::source_injector::SourceInjector;
+use crate::synth::source_map::SourceMap;
 use crate::synth::typst_literal::TypstLiteral;
 use crate::util::constants::{METADATA_MODULE_PATH, RHEO_TEMPLATE_MODULE_PATH};
 use crate::{Result, RheoError};
@@ -155,6 +156,10 @@ pub struct RheoWorld {
 struct FileSlot {
     source: Option<Source>,
     file: Option<Bytes>,
+    /// Where every byte of `source`'s text came from, so a diagnostic can be
+    /// attributed to the authored file it carries. Empty (resolves nothing)
+    /// for a slot with no source, or one whose text is served verbatim.
+    map: SourceMap,
 }
 
 impl RheoWorld {
@@ -269,15 +274,28 @@ impl RheoWorld {
         Ok(())
     }
 
-    /// Wrap `text` as a `Source` for `id` and cache it in `slots`, the shape
-    /// every in-memory-served file (main, overlay, the metadata module) needs.
-    fn cache_source(&self, id: FileId, text: String) -> Source {
+    /// Wrap `text` as a `Source` for `id` and cache it, alongside the map
+    /// back to whatever authored file(s) `text` carries, in `slots` — the
+    /// shape every in-memory-served file (main, overlay, the metadata
+    /// module) needs.
+    fn cache_source(&self, id: FileId, text: String, map: SourceMap) -> Source {
         let source = Source::new(id, text);
         self.slots.lock().entry(id).or_insert_with(|| FileSlot {
             source: Some(source.clone()),
             file: None,
+            map,
         });
         source
+    }
+
+    /// The map back to the authored file(s) the source served for `id`
+    /// carries. Empty (resolves nothing) when `id` has no slot yet.
+    pub fn source_map(&self, id: FileId) -> SourceMap {
+        self.slots
+            .lock()
+            .get(&id)
+            .map(|slot| slot.map.clone())
+            .unwrap_or_default()
     }
 
     fn path_for_id(&self, id: FileId) -> FileResult<PathBuf> {
@@ -474,7 +492,10 @@ impl World for RheoWorld {
         // (see `typst_source.rs`) — served from memory, never from the
         // project's own filesystem.
         if id.vpath().get_with_slash().trim_start_matches('/') == METADATA_MODULE_PATH {
-            return Ok(self.cache_source(id, include_str!("typ/metadata.typ").to_string()));
+            let text = include_str!("typ/metadata.typ").to_string();
+            let mut map = SourceMap::default();
+            map.push_injected(text.len());
+            return Ok(self.cache_source(id, text, map));
         }
 
         // The same `typ/rheo.typ` `SourceInjector::main` splices wholesale
@@ -485,7 +506,10 @@ impl World for RheoWorld {
         // top-level `#show`/`#set` rules style only its own (empty) content,
         // never the importer's.
         if id.vpath().get_with_slash().trim_start_matches('/') == RHEO_TEMPLATE_MODULE_PATH {
-            return Ok(self.cache_source(id, include_str!("typ/rheo.typ").to_string()));
+            let text = include_str!("typ/rheo.typ").to_string();
+            let mut map = SourceMap::default();
+            map.push_injected(text.len());
+            return Ok(self.cache_source(id, text, map));
         }
 
         // Serve the synthesized virtual main, then any moulded vertebra overlay,
@@ -511,12 +535,12 @@ impl World for RheoWorld {
             self.plugin_library.as_deref(),
             &self.rheo_context,
         );
-        let text = match id == self.main {
+        let synthesized = match id == self.main {
             true => injector.main(&text),
             false => injector.vertebra(&rel, &text),
         };
 
-        Ok(self.cache_source(id, text))
+        Ok(self.cache_source(id, synthesized.text, synthesized.map))
     }
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {
@@ -533,6 +557,7 @@ impl World for RheoWorld {
         self.slots.lock().entry(id).or_insert_with(|| FileSlot {
             source: None,
             file: Some(bytes.clone()),
+            map: SourceMap::default(),
         });
 
         Ok(bytes)
