@@ -35,6 +35,10 @@ mod arg {
     pub const INPUT: &str = "input";
     pub const EMIT_BUNDLE_SOURCE: &str = "emit-bundle-source";
     pub const METADATA_TWO_PASS: &str = "metadata-two-pass";
+    #[cfg(feature = "timings")]
+    pub const TIMINGS: &str = "timings";
+    #[cfg(feature = "timings")]
+    pub const ITERATIONS: &str = "iterations";
     pub const OPEN: &str = "open";
     pub const PACKAGES: &str = "packages";
     pub const QUIET: &str = "quiet";
@@ -135,7 +139,8 @@ fn add_common_flags(cmd: Command) -> Command {
 
 /// The build flags both `compile` and `watch` declare last.
 fn add_build_flags(cmd: Command) -> Command {
-    cmd.arg(
+    let cmd = cmd
+        .arg(
         Arg::new(arg::FONT_DIR)
             .long(arg::FONT_DIR)
             .value_name("DIR")
@@ -153,17 +158,50 @@ fn add_build_flags(cmd: Command) -> Command {
             .long(arg::METADATA_TWO_PASS)
             .action(ArgAction::SetTrue)
             .help("Recompile once more (only if needed) to resolve a #set document(title:) set inside a bounded code block for cross-vertebra metadata-of/@handle reads"),
-    )
+    );
+    // Split out so the pair can be compiled out with the `timings` feature,
+    // leaving the flags around them where they were.
+    let cmd = add_instrumentation_flags(cmd);
     // Declared HERE rather than on either subcommand, so `compile` and `watch`
     // get it from one definition and cannot drift. Repeatable, like `--font-dir`
     // just above.
-    .arg(
+    cmd.arg(
         Arg::new(arg::INPUT)
             .long(arg::INPUT)
             .value_name("KEY=VALUE")
             .action(ArgAction::Append)
             .help("Set a sys.inputs key for the Typst compile (repeatable; values are always strings)"),
     )
+}
+
+/// `--timings` and `--iterations`, the two flags that turn Typst's own
+/// instrumentation on.
+///
+/// Both are compiled out with the `timings` feature, and then a build that
+/// only publishes carries neither the flags nor `typst-timing` — see
+/// `docs/observability.md`. Absent rather than accepted-and-ignored, so a
+/// script passing one gets clap's unknown-argument error rather than silence.
+#[cfg(feature = "timings")]
+fn add_instrumentation_flags(cmd: Command) -> Command {
+    cmd.arg(
+        Arg::new(arg::TIMINGS)
+            .long(arg::TIMINGS)
+            .value_name("OUTPUT_JSON")
+            .help("Write Typst's own compilation timings to a JSON trace file (experimental; large trace, slows the compile)"),
+    )
+    .arg(
+        Arg::new(arg::ITERATIONS)
+            .long(arg::ITERATIONS)
+            .action(ArgAction::SetTrue)
+            .help(
+                "Enables Typst instrumentation; slows the compile and adds post-compile overhead proportional to project size. Do not use when timing builds.",
+            ),
+    )
+}
+
+#[cfg(not(feature = "timings"))]
+fn add_instrumentation_flags(cmd: Command) -> Command {
+    cmd
 }
 
 /// Parse repeated `--input KEY=VALUE` into a map.
@@ -231,7 +269,28 @@ fn build_watch_command(plugins: &[Box<dyn FormatPlugin>]) -> Command {
             .action(ArgAction::SetTrue)
             .help("Open output in appropriate viewer (HTML opens in browser with live reload)"),
     );
-    add_format_flags(add_build_flags(cmd), plugins)
+    let cmd = add_format_flags(add_build_flags(cmd), plugins);
+    watch_timings_help(cmd)
+}
+
+/// `--timings` is declared once in `add_build_flags` so `compile` and `watch`
+/// cannot drift on the flag itself, but a rebuild is not a single compile the
+/// way `compile` is: `watch` writes one numbered trace per rebuild into a
+/// directory rather than one file, so its own value name and help text say
+/// so. `mut_arg` panics on an argument that was never declared, hence the
+/// pair — with the `timings` feature off there is no such argument.
+#[cfg(feature = "timings")]
+fn watch_timings_help(cmd: Command) -> Command {
+    cmd.mut_arg(arg::TIMINGS, |a| {
+        a.value_name("OUTPUT_DIR").help(
+            "Write Typst's own compilation timings to one JSON trace per rebuild in this directory (experimental)",
+        )
+    })
+}
+
+#[cfg(not(feature = "timings"))]
+fn watch_timings_help(cmd: Command) -> Command {
+    cmd
 }
 
 fn build_clean_command() -> Command {
@@ -505,6 +564,8 @@ struct BuildArgs {
     inputs: HashMap<String, String>,
     emit_bundle_source: bool,
     metadata_two_pass: bool,
+    timings: Option<PathBuf>,
+    iterations: bool,
 }
 
 impl BuildArgs {
@@ -524,6 +585,14 @@ impl BuildArgs {
             inputs: parse_inputs(sub)?,
             emit_bundle_source: sub.get_flag(arg::EMIT_BUNDLE_SOURCE),
             metadata_two_pass: sub.get_flag(arg::METADATA_TWO_PASS),
+            #[cfg(feature = "timings")]
+            timings: sub.get_one::<String>(arg::TIMINGS).map(PathBuf::from),
+            #[cfg(not(feature = "timings"))]
+            timings: None,
+            #[cfg(feature = "timings")]
+            iterations: sub.get_flag(arg::ITERATIONS),
+            #[cfg(not(feature = "timings"))]
+            iterations: false,
         })
     }
 
@@ -535,6 +604,19 @@ impl BuildArgs {
             inputs: self.inputs.clone(),
             emit_bundle_source: self.emit_bundle_source,
             metadata_two_pass: self.metadata_two_pass,
+            timings: self.timings.clone(),
+            timings_per_rebuild: false,
+            iterations: self.iterations,
+        }
+    }
+
+    /// [`Self::build_options`], but for a `watch` session: `--timings` names a
+    /// directory that gets one numbered trace per rebuild rather than the
+    /// single file a one-shot `rheo compile` writes.
+    fn watch_build_options(&self) -> BuildOptions {
+        BuildOptions {
+            timings_per_rebuild: true,
+            ..self.build_options()
         }
     }
 }
@@ -609,7 +691,7 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
     let mut build = prepare_build(
         &args.path,
         args.config.as_deref(),
-        args.build_options(),
+        args.watch_build_options(),
         plugins,
     )?;
 
@@ -672,7 +754,7 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
                     match prepare_build(
                         &args.path,
                         args.config.as_deref(),
-                        args.build_options(),
+                        args.watch_build_options(),
                         all_plugins(),
                     ) {
                         Ok(new_build) => {
