@@ -1257,6 +1257,10 @@ impl Build {
             // assets itself (e.g. EPUB, via `ctx.bundle_assets`) takes over
             // placing them instead — a loose file next to a packaged container
             // would be unreachable from inside it.
+            // Destinations this build itself wrote, i.e. the only ones a copy
+            // glob can legitimately be said to clobber further down — a file
+            // left over from an earlier build at the same path is not one.
+            let mut bundle_outputs: HashSet<PathBuf> = HashSet::new();
             if !plugin.embeds_bundle_assets() {
                 for (path, bytes) in &prepared.asset_files {
                     let dest = prepared.output_dir.join(path);
@@ -1267,6 +1271,7 @@ impl Build {
                     }
                     std::fs::write(&dest, bytes.as_slice())
                         .map_err(|e| RheoError::io(e, format!("writing asset {path}")))?;
+                    bundle_outputs.insert(dest);
                 }
             }
 
@@ -1282,14 +1287,14 @@ impl Build {
                             &self.project.config.copy,
                             &self.project.root,
                             None,
-                            true,
+                            &bundle_outputs,
                         )?;
                         for block in &prepared.manifest_blocks {
                             resolver.copy_globs(
                                 &block.assets.copy,
                                 &block.source_root,
                                 block.assets.dest.as_deref(),
-                                true,
+                                &bundle_outputs,
                             )?;
                         }
                         for block in prepared.section.asset_blocks() {
@@ -1297,7 +1302,7 @@ impl Build {
                                 &block.copy,
                                 &self.project.root,
                                 block.dest.as_deref(),
-                                true,
+                                &bundle_outputs,
                             )?;
                         }
                         Ok::<(), RheoError>(())
