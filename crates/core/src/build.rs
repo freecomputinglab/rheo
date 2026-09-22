@@ -17,7 +17,7 @@ use crate::plugins::{CastVertebra, FormatPlugin, PluginContext, TypstFormat, spi
 use crate::project::{ProjectConfig, ProjectMode};
 use crate::reticulate::document_meta::DocumentMeta;
 use crate::reticulate::handle::Handle;
-use crate::reticulate::spine::{FormatContext, SpineLayout, SpineScan, VirtualSpine};
+use crate::reticulate::spine::{FormatContext, SpineLayout, SpinePrelude, SpineScan, VirtualSpine};
 use crate::transclude::{ContentTransclusion, ControlAssetKind, ControlAssets};
 use crate::world::RheoWorld;
 use crate::{Result, RheoError};
@@ -137,7 +137,7 @@ struct SpineScanResult {
     layout: SpineLayout,
     title: Option<String>,
     /// The merged spine's `prelude` file, already read; `None` when unset.
-    prelude: Option<String>,
+    prelude: Option<SpinePrelude>,
 }
 
 /// The result of [`Build::resolve_marrow`]: the per-plugin output target and
@@ -630,9 +630,19 @@ impl Build {
             None => None,
             Some(rel) => {
                 let path = content_dir.join(rel);
-                Some(std::fs::read_to_string(&path).map_err(|e| {
+                let text = std::fs::read_to_string(&path).map_err(|e| {
                     RheoError::io(e, format!("reading spine prelude '{}'", path.display()))
-                })?)
+                })?;
+                // The project-relative display path — what every other
+                // diagnostic names a file by (see `RheoWorld`'s `Files::name`).
+                let display_path = pathdiff::diff_paths(&path, &self.project.root)
+                    .unwrap_or_else(|| path.clone())
+                    .to_string_lossy()
+                    .into_owned();
+                Some(SpinePrelude {
+                    path: display_path,
+                    text,
+                })
             }
         };
 
@@ -724,7 +734,7 @@ impl Build {
         scan: SpineScan,
         layout: SpineLayout,
         title: Option<String>,
-        prelude: Option<String>,
+        prelude: Option<SpinePrelude>,
         marrow: Vec<String>,
         marrow_prologue: Vec<String>,
     ) -> Result<VirtualSpine> {
