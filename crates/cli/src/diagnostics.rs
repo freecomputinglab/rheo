@@ -1,8 +1,9 @@
 //! Rendering a compile's diagnostics for a terminal.
 //!
 //! Core resolves diagnostics into a [`DiagnosticReport`] and hands it back; the
-//! destination (stderr), the colours and the source-context styling are decided
-//! here, where the terminal actually is.
+//! destination (stderr), the colours, the source-context styling, and the
+//! wording of the note pointing a `generated` primary span at
+//! `--emit-bundle-source` are decided here, where the terminal actually is.
 
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::SimpleFiles;
@@ -38,18 +39,33 @@ pub fn render(report: &DiagnosticReport) {
     };
 
     for diagnostic in report.diagnostics() {
+        let mut notes: Vec<String> = diagnostic
+            .hints
+            .iter()
+            .map(|hint| format!("hint: {hint}"))
+            .collect();
+        // Emitted once, only for the primary span, and only when it lands in
+        // Typst rheo generated — the trace's own points already read as a
+        // chain, where a repeated note per point would be noise.
+        if diagnostic
+            .span
+            .as_ref()
+            .is_some_and(|s| report.files()[s.file].generated)
+        {
+            notes.push(
+                "note: this location is in Typst rheo generated, not a file in your project; \
+                 run with --emit-bundle-source to write the synthesized source to \
+                 <build_dir>/<format>/.rheo-bundle.typ and read it there"
+                    .to_string(),
+            );
+        }
+
         let rendered = match diagnostic.severity {
             Severity::Error => Diagnostic::error(),
             Severity::Warning => Diagnostic::warning(),
         }
         .with_message(diagnostic.message.clone())
-        .with_notes(
-            diagnostic
-                .hints
-                .iter()
-                .map(|hint| format!("hint: {hint}"))
-                .collect(),
-        )
+        .with_notes(notes)
         .with_labels(label(&diagnostic.span));
 
         let _ = term::emit_to_write_style(&mut stderr, &config, &files, &rendered);

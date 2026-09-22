@@ -8,6 +8,7 @@ use crate::diagnostics::DiagnosticReport;
 use crate::packages::PackageResolver;
 use crate::reticulate::VertebraInjection;
 use crate::synth::source_injector::SourceInjector;
+use crate::synth::source_map::SourceMap;
 use crate::synth::typst_literal::TypstLiteral;
 use crate::util::constants::{METADATA_MODULE_PATH, RHEO_TEMPLATE_MODULE_PATH};
 use crate::{Result, RheoError};
@@ -93,6 +94,10 @@ pub struct WorldSpec {
     pub plugin_library: Option<String>,
     /// In-memory source served for the main file instead of reading from disk.
     pub virtual_main_source: Option<String>,
+    /// Where every byte of `virtual_main_source` came from — an authored
+    /// marrow file, or Typst rheo generated. Empty (resolves nothing) when
+    /// `virtual_main_source` is unset or carries no attributable marrow.
+    pub virtual_main_map: SourceMap,
     /// Per-vertebra rewritten sources from the Mould stage, keyed by
     /// project-relative include path. Shared rather than copied: one build
     /// compiles the same overlay once per format, and again on a second pass.
@@ -136,6 +141,9 @@ pub struct RheoWorld {
     /// In-memory source for the main file. When set, the world serves this
     /// content for the main FileId instead of reading from disk.
     virtual_main_source: Option<String>,
+    /// Where every byte of `virtual_main_source` came from. See
+    /// [`WorldSpec::virtual_main_map`].
+    virtual_main_map: SourceMap,
     /// Per-vertebra source overlay from the Mould stage, keyed by project-relative
     /// include path (e.g. `content/intro.typ`). When an included file matches, the
     /// world serves the rewritten source instead of reading it from disk.
@@ -155,6 +163,10 @@ pub struct RheoWorld {
 struct FileSlot {
     source: Option<Source>,
     file: Option<Bytes>,
+    /// Where every byte of `source`'s text came from, so a diagnostic can be
+    /// attributed to the authored file it carries. Empty (resolves nothing)
+    /// for a slot with no source, or one whose text is served verbatim.
+    map: SourceMap,
 }
 
 impl RheoWorld {
@@ -187,6 +199,7 @@ impl RheoWorld {
             format_name: spec.format_name,
             plugin_library: spec.plugin_library,
             virtual_main_source: spec.virtual_main_source,
+            virtual_main_map: spec.virtual_main_map,
             source_overlay: spec.source_overlay,
             rheo_context: spec.rheo_context,
             diagnostics: Mutex::new(DiagnosticReport::default()),
@@ -269,15 +282,28 @@ impl RheoWorld {
         Ok(())
     }
 
-    /// Wrap `text` as a `Source` for `id` and cache it in `slots`, the shape
-    /// every in-memory-served file (main, overlay, the metadata module) needs.
-    fn cache_source(&self, id: FileId, text: String) -> Source {
+    /// Wrap `text` as a `Source` for `id` and cache it, alongside the map
+    /// back to whatever authored file(s) `text` carries, in `slots` — the
+    /// shape every in-memory-served file (main, overlay, the metadata
+    /// module) needs.
+    fn cache_source(&self, id: FileId, text: String, map: SourceMap) -> Source {
         let source = Source::new(id, text);
         self.slots.lock().entry(id).or_insert_with(|| FileSlot {
             source: Some(source.clone()),
             file: None,
+            map,
         });
         source
+    }
+
+    /// The map back to the authored file(s) the source served for `id`
+    /// carries. Empty (resolves nothing) when `id` has no slot yet.
+    pub fn source_map(&self, id: FileId) -> SourceMap {
+        self.slots
+            .lock()
+            .get(&id)
+            .map(|slot| slot.map.clone())
+            .unwrap_or_default()
     }
 
     fn path_for_id(&self, id: FileId) -> FileResult<PathBuf> {
@@ -474,7 +500,10 @@ impl World for RheoWorld {
         // (see `typst_source.rs`) — served from memory, never from the
         // project's own filesystem.
         if id.vpath().get_with_slash().trim_start_matches('/') == METADATA_MODULE_PATH {
-            return Ok(self.cache_source(id, include_str!("typ/metadata.typ").to_string()));
+            let text = include_str!("typ/metadata.typ").to_string();
+            let mut map = SourceMap::default();
+            map.push_injected(text.len());
+            return Ok(self.cache_source(id, text, map));
         }
 
         // The same `typ/rheo.typ` `SourceInjector::main` splices wholesale
@@ -485,7 +514,10 @@ impl World for RheoWorld {
         // top-level `#show`/`#set` rules style only its own (empty) content,
         // never the importer's.
         if id.vpath().get_with_slash().trim_start_matches('/') == RHEO_TEMPLATE_MODULE_PATH {
-            return Ok(self.cache_source(id, include_str!("typ/rheo.typ").to_string()));
+            let text = include_str!("typ/rheo.typ").to_string();
+            let mut map = SourceMap::default();
+            map.push_injected(text.len());
+            return Ok(self.cache_source(id, text, map));
         }
 
         // Serve the synthesized virtual main, then any moulded vertebra overlay,
@@ -511,12 +543,12 @@ impl World for RheoWorld {
             self.plugin_library.as_deref(),
             &self.rheo_context,
         );
-        let text = match id == self.main {
-            true => injector.main(&text),
+        let synthesized = match id == self.main {
+            true => injector.main(&text, &self.virtual_main_map),
             false => injector.vertebra(&rel, &text),
         };
 
-        Ok(self.cache_source(id, text))
+        Ok(self.cache_source(id, synthesized.text, synthesized.map))
     }
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {
@@ -533,6 +565,7 @@ impl World for RheoWorld {
         self.slots.lock().entry(id).or_insert_with(|| FileSlot {
             source: None,
             file: Some(bytes.clone()),
+            map: SourceMap::default(),
         });
 
         Ok(bytes)
@@ -657,8 +690,9 @@ mod tests {
         rheo_context.insert(
             "content/intro.typ".to_string(),
             VertebraInjection {
-                prelude: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)\n\n"
+                generated: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)"
                     .to_string(),
+                project_prelude: None,
                 epilogue: String::new(),
             },
         );
@@ -696,8 +730,9 @@ mod tests {
         rheo_context.insert(
             "content/intro.typ".to_string(),
             VertebraInjection {
-                prelude: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)\n\n"
+                generated: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)"
                     .to_string(),
+                project_prelude: None,
                 epilogue: "\n#metadata((handle: \"intro\")) <rheo-meta:intro>\n".to_string(),
             },
         );
@@ -873,13 +908,14 @@ mod tests {
         rheo_context.insert(
             "content/intro.typ".to_string(),
             VertebraInjection {
-                prelude: format!(
-                    "{}\n\n{}\n\n",
+                generated: format!(
+                    "{}\n\n{}",
                     TypstStmt::MetadataHelper,
                     TypstStmt::ContextBinding {
                         handle: "intro".into()
                     }
                 ),
+                project_prelude: None,
                 epilogue: format!(
                     "\n{}\n",
                     TypstStmt::MetadataBeacon {
