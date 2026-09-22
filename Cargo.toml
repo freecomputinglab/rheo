@@ -40,6 +40,7 @@ typst-kit = { version = "0.15.0", features = ["embedded-fonts", "scan-fonts", "s
 typst-syntax = "0.15.0"
 typst-layout = "0.15.0"
 typst-bundle = "0.15.0"
+typst-timing = "0.15.0"
 comemo = "0.5"
 rayon = "1.12"
 

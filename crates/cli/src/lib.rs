@@ -35,6 +35,7 @@ mod arg {
     pub const INPUT: &str = "input";
     pub const EMIT_BUNDLE_SOURCE: &str = "emit-bundle-source";
     pub const METADATA_TWO_PASS: &str = "metadata-two-pass";
+    pub const TIMINGS: &str = "timings";
     pub const OPEN: &str = "open";
     pub const PACKAGES: &str = "packages";
     pub const QUIET: &str = "quiet";
@@ -153,6 +154,12 @@ fn add_build_flags(cmd: Command) -> Command {
             .long(arg::METADATA_TWO_PASS)
             .action(ArgAction::SetTrue)
             .help("Recompile once more (only if needed) to resolve a #set document(title:) set inside a bounded code block for cross-vertebra metadata-of/@handle reads"),
+    )
+    .arg(
+        Arg::new(arg::TIMINGS)
+            .long(arg::TIMINGS)
+            .value_name("OUTPUT_JSON")
+            .help("Write Typst's own compilation timings to a JSON trace file (experimental)"),
     )
     // Declared HERE rather than on either subcommand, so `compile` and `watch`
     // get it from one definition and cannot drift. Repeatable, like `--font-dir`
@@ -505,6 +512,7 @@ struct BuildArgs {
     inputs: HashMap<String, String>,
     emit_bundle_source: bool,
     metadata_two_pass: bool,
+    timings: Option<PathBuf>,
 }
 
 impl BuildArgs {
@@ -524,6 +532,7 @@ impl BuildArgs {
             inputs: parse_inputs(sub)?,
             emit_bundle_source: sub.get_flag(arg::EMIT_BUNDLE_SOURCE),
             metadata_two_pass: sub.get_flag(arg::METADATA_TWO_PASS),
+            timings: sub.get_one::<String>(arg::TIMINGS).map(PathBuf::from),
         })
     }
 
@@ -535,6 +544,7 @@ impl BuildArgs {
             inputs: self.inputs.clone(),
             emit_bundle_source: self.emit_bundle_source,
             metadata_two_pass: self.metadata_two_pass,
+            timings: self.timings.clone(),
         }
     }
 }
