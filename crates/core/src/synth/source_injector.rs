@@ -59,7 +59,11 @@ impl<'a> SourceInjector<'a> {
     /// title lookup (anchors only appear in bundle-root `#document(...)`
     /// bodies). No format gate is needed beyond the polyfill's — marrow and
     /// beacons are only ever assembled for per-page targets anyway.
-    pub fn main(&self, body: &str) -> Synthesized {
+    ///
+    /// `body_map` is `body`'s own map (e.g. from [`crate::reticulate::bundle_source::BundleSource::render`]),
+    /// attributing marrow within it; it is shifted onto the tail of the
+    /// scaffolding this method generates ahead of `body`.
+    pub fn main(&self, body: &str, body_map: &SourceMap) -> Synthesized {
         let stmts = vec![
             self.polyfill(),
             TypstStmt::Raw(include_str!("../typ/rheo.typ").to_string()),
@@ -69,9 +73,11 @@ impl<'a> SourceInjector<'a> {
             TypstStmt::Raw(self.plugin_library.unwrap_or_default().to_string()),
             TypstStmt::Raw("#show: rheo_template".to_string()),
         ];
-        let text = format!("{}\n\n{body}", TypstBlock(stmts));
+        let prefix = format!("{}\n\n", TypstBlock(stmts));
+        let text = format!("{prefix}{body}");
         let mut map = SourceMap::default();
-        map.push_injected(text.len());
+        map.push_injected(prefix.len());
+        map.append_shifted(body_map);
         Synthesized { text, map }
     }
 
@@ -153,7 +159,9 @@ mod tests {
     fn main_carries_template_helpers_and_plugin_library() {
         let none = injections(&[]);
         let injector = SourceInjector::new(true, Some("#let plugin-lib = 1"), &none);
-        let out = injector.main("#document(\"a.html\")[]").text;
+        let out = injector
+            .main("#document(\"a.html\")[]", &SourceMap::default())
+            .text;
 
         assert!(out.starts_with("// Polyfill target()"));
         assert!(out.contains("#import \"/typ/metadata.typ\": rheo-metadata-all"));
@@ -166,7 +174,9 @@ mod tests {
     #[test]
     fn main_without_polyfill_or_plugin_library_leaves_no_gap() {
         let none = injections(&[]);
-        let out = SourceInjector::new(false, None, &none).main("body").text;
+        let out = SourceInjector::new(false, None, &none)
+            .main("body", &SourceMap::default())
+            .text;
 
         assert!(!out.contains("Polyfill target()"));
         assert!(

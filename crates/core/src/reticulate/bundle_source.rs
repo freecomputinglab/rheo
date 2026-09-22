@@ -1,6 +1,16 @@
 use crate::reticulate::handle::Handle;
+use crate::synth::source_map::{AuthoredFile, SourceMap};
 use crate::synth::typst_source::TypstStmt;
 use std::fmt;
+
+/// One marrow contribution: the Typst text spliced into the bundle root, and
+/// the display path of the file it was read from, so a diagnostic inside it
+/// points at that file rather than at the synthesized main.
+#[derive(Debug, Clone)]
+pub struct MarrowSource {
+    pub origin: String,
+    pub text: String,
+}
 
 /// A handle anchor emitted into a `BundleDocument` body so that `@label` cross-references
 /// resolve across vertebrae during bundle compilation.
@@ -43,35 +53,68 @@ pub struct BundleDocument {
 /// Constructed from a `VirtualSpine`; serialized to a `String` via `Display`.
 pub struct BundleSource {
     pub documents: Vec<BundleDocument>,
-    /// Raw Typst emitted at bundle root BEFORE all documents — opt-in, since a
+    /// Marrow emitted at bundle root BEFORE all documents — opt-in, since a
     /// `#show`/`#set` rule here is global-by-default and reaches every
     /// pre-existing vertebra (Typst introspection is bundle-wide, not
     /// sequential).
-    pub marrow_prologue: Vec<TypstStmt>,
-    /// Raw Typst emitted at bundle root AFTER all documents, outside any
+    pub marrow_prologue: Vec<MarrowSource>,
+    /// Marrow emitted at bundle root AFTER all documents, outside any
     /// `#document` block, so it may itself mint `document()` and `asset()`
     /// elements. Typst has no nested bundles — those elements are legal only as
     /// root children — so this is the one place author or package code can add
     /// output files that no vertebra backs. This is the default position: a
     /// rule here is naturally scoped to marrow's own output only.
-    pub marrow: Vec<TypstStmt>,
+    pub marrow: Vec<MarrowSource>,
+}
+
+impl BundleSource {
+    /// Render to Typst source, building the map back to the marrow files
+    /// spliced into it. Everything else — the per-document scaffolding rheo
+    /// generates — is injected; no source map exists yet for what a document
+    /// itself carries (its `#include`d vertebra is mapped separately, by
+    /// `SourceInjector::vertebra`).
+    pub fn render(&self) -> (String, SourceMap) {
+        let mut text = String::new();
+        let mut map = SourceMap::default();
+        for source in &self.marrow_prologue {
+            text.push_str(&source.text);
+            text.push('\n');
+            map.push_authored(
+                AuthoredFile {
+                    name: source.origin.clone(),
+                    text: source.text.as_str().into(),
+                },
+                0,
+                source.text.len(),
+            );
+            map.push_injected(1);
+        }
+        for doc in &self.documents {
+            let rendered = doc.to_stmt().to_string();
+            text.push_str(&rendered);
+            text.push_str("\n\n");
+            map.push_injected(rendered.len() + 2);
+        }
+        for source in &self.marrow {
+            text.push_str(&source.text);
+            text.push('\n');
+            map.push_authored(
+                AuthoredFile {
+                    name: source.origin.clone(),
+                    text: source.text.as_str().into(),
+                },
+                0,
+                source.text.len(),
+            );
+            map.push_injected(1);
+        }
+        (text, map)
+    }
 }
 
 impl fmt::Display for BundleSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for stmt in &self.marrow_prologue {
-            writeln!(f, "{stmt}")?;
-        }
-        for doc in &self.documents {
-            // Each document renders itself as a systematic `TypstStmt::Document`;
-            // a blank line separates successive documents.
-            writeln!(f, "{}", doc.to_stmt())?;
-            writeln!(f)?;
-        }
-        for stmt in &self.marrow {
-            writeln!(f, "{stmt}")?;
-        }
-        Ok(())
+        f.write_str(&self.render().0)
     }
 }
 
@@ -114,5 +157,50 @@ impl BundleDocument {
             title: self.title.clone(),
             body,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_resolves_marrow_offset_and_leaves_document_text_unattributed() {
+        let bundle = BundleSource {
+            documents: vec![BundleDocument {
+                output_path: "a.html".to_string(),
+                format: "html".to_string(),
+                title: "A".to_string(),
+                handle: Handle::default(),
+                segments: vec![BundleSegment {
+                    anchors: Vec::new(),
+                    include: "content/a.typ".to_string(),
+                }],
+            }],
+            marrow_prologue: Vec::new(),
+            marrow: vec![MarrowSource {
+                origin: "content/.marrow.typ".to_string(),
+                text: "#let feed = broken-marrow-fn()".to_string(),
+            }],
+        };
+
+        let (text, map) = bundle.render();
+
+        let marrow_text = "#let feed = broken-marrow-fn()";
+        let offset_in_text = marrow_text.find("broken-marrow-fn").unwrap();
+        let offset = text.rfind("broken-marrow-fn").unwrap();
+        let (file, range) = map
+            .resolve(&(offset..offset + "broken-marrow-fn".len()))
+            .expect("resolves");
+        assert_eq!(file.name, "content/.marrow.typ");
+        assert_eq!(
+            range,
+            offset_in_text..offset_in_text + "broken-marrow-fn".len()
+        );
+
+        // An offset inside the document's own `#document(...)` block is not
+        // authored marrow — the vertebra it `#include`s is mapped separately.
+        let doc_offset = text.find("#document(").unwrap();
+        assert!(map.resolve(&(doc_offset..doc_offset + 1)).is_none());
     }
 }

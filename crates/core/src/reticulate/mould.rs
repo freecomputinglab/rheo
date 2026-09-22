@@ -9,6 +9,7 @@
 //! (Typst bundle compilation).
 
 use super::spine::{Vertebra, VirtualSpine};
+use crate::synth::source_map::SourceMap;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -60,6 +61,9 @@ impl Rewrites {
 pub struct SpineMould {
     /// The synthesized `#document(…)[…#include…]` main (see [`VirtualSpine::bundle_source`]).
     pub main: String,
+    /// Where every byte of `main` came from — an authored marrow file, or
+    /// Typst rheo generated — so a diagnostic in it can be attributed.
+    pub main_map: SourceMap,
     /// Rewritten source per vertebra, keyed by its `#include` path (`Vertebra::rel_path`).
     /// A vertebra with no rewrites is omitted, so the world reads it from disk unchanged.
     pub sources: HashMap<String, String>,
@@ -97,14 +101,18 @@ impl VirtualSpine {
     /// A vertebra with no rewrites is omitted from `sources` and served from
     /// disk unchanged. With no producers wired, `sources` is empty (identity).
     pub fn mould(&self) -> SpineMould {
-        let main = self.bundle_source().to_string();
+        let (main, main_map) = self.bundle_source().render();
         let mut sources = HashMap::new();
         for vertebra in &self.vertebrae {
             if let Some(body) = vertebra.mould() {
                 sources.insert(vertebra.rel_path.clone(), body);
             }
         }
-        SpineMould { main, sources }
+        SpineMould {
+            main,
+            main_map,
+            sources,
+        }
     }
 }
 

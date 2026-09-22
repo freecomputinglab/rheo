@@ -2,7 +2,7 @@ use crate::config::PluginAssets;
 use crate::packages::PackageResolver;
 use crate::parser::ImportInfo;
 use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
-use crate::reticulate::SpineScan;
+use crate::reticulate::{MarrowSource, SpineScan};
 use crate::{Result, RheoError};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -511,29 +511,29 @@ impl PackageIndex {
     }
 
     /// Every package's epilogue marrow, in import order.
-    pub fn marrow(&self) -> Vec<String> {
+    pub fn marrow(&self) -> Vec<MarrowSource> {
         self.read_marrow(crate::MARROW_EPILOGUE_FILE, true)
     }
 
     /// Every package's prologue marrow, in import order.
-    pub fn marrow_prologue(&self) -> Vec<String> {
+    pub fn marrow_prologue(&self) -> Vec<MarrowSource> {
         self.read_marrow(crate::MARROW_PROLOGUE_FILE, false)
     }
 
     /// A package's bare `.marrow.typ` is the epilogue's fallback, and only when
     /// the package ships neither explicit name — `[marrow] position` is the
     /// project's own knob and does not reach a dependency.
-    fn read_marrow(&self, explicit: &str, bare_falls_back: bool) -> Vec<String> {
+    fn read_marrow(&self, explicit: &str, bare_falls_back: bool) -> Vec<MarrowSource> {
         self.resolved
             .iter()
             .filter_map(|entry| {
-                package_marrow_file(&entry.pkg, explicit).or_else(|| {
+                package_marrow_file(&entry.spec, &entry.pkg, explicit).or_else(|| {
                     let bare_is_free = bare_falls_back
                         && crate::MARROW_RESERVED_FILES
                             .iter()
                             .all(|f| !entry.pkg.source_root.join(f).is_file());
                     bare_is_free
-                        .then(|| package_marrow_file(&entry.pkg, crate::MARROW_FILE))
+                        .then(|| package_marrow_file(&entry.spec, &entry.pkg, crate::MARROW_FILE))
                         .flatten()
                 })
             })
@@ -555,14 +555,19 @@ impl PackageIndex {
 /// against the project root, not the package directory: a package's marrow must
 /// reach its own code through its package spec (`@ns/name:version`), never a
 /// relative import. Files the package imports that way may use relative paths
-/// among themselves as usual.
-fn package_marrow_file(pkg: &ResolvedPackage, filename: &str) -> Option<String> {
+/// among themselves as usual. `spec` (the `@ns/name:version` the package was
+/// imported under) names the resulting [`MarrowSource::origin`], matching how
+/// `RheoWorld`'s `Files::name` names a package file.
+fn package_marrow_file(spec: &str, pkg: &ResolvedPackage, filename: &str) -> Option<MarrowSource> {
     let marrow_path = pkg.source_root.join(filename);
     if !marrow_path.is_file() {
         return None;
     }
     match std::fs::read_to_string(&marrow_path) {
-        Ok(text) => Some(text),
+        Ok(text) => Some(MarrowSource {
+            origin: format!("{spec}/{filename}"),
+            text,
+        }),
         Err(e) => {
             warn!(path = %marrow_path.display(), error = %e, "could not read package marrow file");
             None
@@ -1220,9 +1225,12 @@ css_stylesheet = "style.css"
         .unwrap();
 
         let index = index_for(tmp.path());
+        let prologue = index.marrow_prologue();
+        assert_eq!(prologue.len(), 1);
+        assert_eq!(prologue[0].text, "#show strong: it => it");
         assert_eq!(
-            index.marrow_prologue(),
-            vec!["#show strong: it => it".to_string()]
+            prologue[0].origin,
+            "@testns/testpkg:0.1.0/.marrow.prologue.typ"
         );
         assert!(index.marrow().is_empty(), "no .marrow.typ shipped");
     }
@@ -1235,8 +1243,8 @@ css_stylesheet = "style.css"
         std::fs::write(pkg_dir.join(crate::MARROW_PROLOGUE_FILE), "prologue").unwrap();
 
         let index = index_for(tmp.path());
-        assert_eq!(index.marrow(), vec!["epilogue".to_string()]);
-        assert_eq!(index.marrow_prologue(), vec!["prologue".to_string()]);
+        assert_eq!(index.marrow()[0].text, "epilogue");
+        assert_eq!(index.marrow_prologue()[0].text, "prologue");
     }
 
     /// A bare `.marrow.typ` is the epilogue's fallback, and either explicit
@@ -1257,14 +1265,14 @@ css_stylesheet = "style.css"
 
         // A bare marrow alone is the epilogue.
         let (_t, index) = pkg(&[(crate::MARROW_FILE, "bare")]);
-        assert_eq!(index.marrow(), vec!["bare".to_string()]);
+        assert_eq!(index.marrow()[0].text, "bare");
 
         // The explicit epilogue name replaces it.
         let (_t, index) = pkg(&[
             (crate::MARROW_FILE, "bare"),
             (crate::MARROW_EPILOGUE_FILE, "explicit"),
         ]);
-        assert_eq!(index.marrow(), vec!["explicit".to_string()]);
+        assert_eq!(index.marrow()[0].text, "explicit");
 
         // So does the prologue one, which leaves no epilogue at all.
         let (_t, index) = pkg(&[
@@ -1272,7 +1280,7 @@ css_stylesheet = "style.css"
             (crate::MARROW_PROLOGUE_FILE, "explicit"),
         ]);
         assert!(index.marrow().is_empty());
-        assert_eq!(index.marrow_prologue(), vec!["explicit".to_string()]);
+        assert_eq!(index.marrow_prologue()[0].text, "explicit");
     }
 
     #[test]
@@ -1288,9 +1296,7 @@ css_stylesheet = "style.css"
             &[dir.path().to_path_buf()],
         )
         .marrow_prologue();
-        assert_eq!(
-            result,
-            vec!["a-prologue".to_string(), "b-prologue".to_string()]
-        );
+        let texts: Vec<&str> = result.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(texts, vec!["a-prologue", "b-prologue"]);
     }
 }
