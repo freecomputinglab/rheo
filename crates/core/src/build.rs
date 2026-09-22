@@ -24,10 +24,14 @@ use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
+#[cfg(feature = "timings")]
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+#[cfg(feature = "timings")]
+use typst::World as _;
 use typst::introspection::Introspector as _;
 use typst::model::Document as _;
 use typst_kit::fonts::FontStore;
@@ -60,6 +64,14 @@ pub struct BuildOptions {
     /// never read back — for diagnosing marrow/spine authoring errors. Off by
     /// default.
     pub emit_bundle_source: bool,
+    /// `--timings`: write Typst's own `typst-timing` trace for each compile to
+    /// this path, as Chrome-tracing JSON. A read-only debug artifact for
+    /// finding the dominant sub-step inside a slow compile. `None` by default.
+    pub timings: Option<PathBuf>,
+    /// Set by `watch` only: `timings` names a directory that gets one numbered
+    /// trace per rebuild (`rebuild-000.json`, ...) rather than the single file
+    /// a one-shot `rheo compile` writes. `false` for `compile`.
+    pub timings_per_rebuild: bool,
     /// `--metadata-two-pass`: opt in to gated two-pass metadata resolution
     /// (see [`Build::compile_bundle_once`]) — recovers a title set inside a
     /// bounded code block for cross-vertebra reads (`metadata-of`, `@handle`)
@@ -67,6 +79,12 @@ pub struct BuildOptions {
     /// actually found such a gap. Off by default: the ordinary single-pass
     /// build never pays this cost.
     pub metadata_two_pass: bool,
+    /// `--iterations`: report Typst's introspection-convergence loop as one
+    /// INFO line per compile (`N convergence iteration(s) — iter(1) ...`).
+    /// Enables `typst_timing` instrumentation like `timings` does, but reads
+    /// the trace through a scanning `Write` that discards everything except
+    /// `iter (N)` events rather than writing a trace file. `false` by default.
+    pub iterations: bool,
 }
 
 /// A prepared, runnable build: a project, the selected plugins, the resolved
@@ -96,7 +114,22 @@ pub struct Build {
     fonts: OnceLock<Arc<FontStore>>,
     inputs: HashMap<String, String>,
     emit_bundle_source: bool,
+    timings: Option<PathBuf>,
+    timings_per_rebuild: bool,
+    /// Assigns each rebuild's number under `timings_per_rebuild`; unused
+    /// otherwise. Set by [`Build::begin_rebuild_timings`], read back by the
+    /// same call's `devserver` half so the two share one number.
+    rebuild_index: std::sync::atomic::AtomicUsize,
+    /// This rebuild's resolved export target, stashed by
+    /// [`Build::begin_rebuild_timings`] so every plugin's
+    /// [`Build::compile_bundle_once`] call within it writes to the same
+    /// place — the file itself for a one-shot compile, or that rebuild's
+    /// numbered trace under `timings` when watching.
+    current_timings_target: Mutex<Option<PathBuf>>,
     metadata_two_pass: bool,
+    /// Read only by the instrumentation, which is what the feature gates.
+    #[cfg(feature = "timings")]
+    iterations: bool,
 }
 
 /// The result of [`Build::compile_spine`]: the built spine, the compiled
@@ -258,7 +291,13 @@ impl Build {
             timing: Mutex::new(BuildTiming::default()),
             inputs,
             emit_bundle_source: opts.emit_bundle_source,
+            timings: opts.timings,
+            timings_per_rebuild: opts.timings_per_rebuild,
+            rebuild_index: std::sync::atomic::AtomicUsize::new(0),
+            current_timings_target: Mutex::new(None),
             metadata_two_pass: opts.metadata_two_pass,
+            #[cfg(feature = "timings")]
+            iterations: opts.iterations,
         })
     }
 
@@ -827,12 +866,14 @@ impl Build {
                 ..Default::default()
             },
         )?;
+        self.enable_typst_instrumentation();
         // Drained whether or not the compile succeeded: a failed pass's
         // diagnostics are exactly the ones worth rendering.
         let compiled = self.timed(phase::TYPST_COMPILE, Some(plugin.name()), || {
             world.compile_bundle()
         });
         self.diagnostics.lock().extend(world.take_diagnostics());
+        self.report_typst_instrumentation(&world);
         let bundle = compiled?;
         let mut assets: HashSet<String> = HashSet::new();
         let mut meta: HashMap<String, DocumentMeta> = HashMap::new();
@@ -856,6 +897,139 @@ impl Build {
             files,
             bundle,
         })
+    }
+
+    /// Resolve and stash this rebuild's timings export target, before its
+    /// plugins compile, so every [`Build::compile_bundle_once`] call within
+    /// the same rebuild writes to the same place.
+    ///
+    /// A one-shot `rheo compile` (`timings_per_rebuild` false) writes straight
+    /// to `self.timings`, unchanged from before this existed. A `watch`
+    /// session treats `self.timings` as a directory and numbers a trace per
+    /// rebuild — `rebuild-000.json`, `rebuild-001.json`, ... — assigning the
+    /// next number from `rebuild_index` on the ordinary [`Build::run`] half of
+    /// a rebuild (`devserver` false) and reusing that same number, suffixed,
+    /// for the `--open` dev-server's extra [`Build::compile_for_watch`] half
+    /// (`devserver` true) — the two are one rebuild, not two.
+    fn begin_rebuild_timings(&self, devserver: bool) {
+        let Some(dir_or_file) = &self.timings else {
+            *self.current_timings_target.lock() = None;
+            return;
+        };
+        let target = if self.timings_per_rebuild {
+            use std::sync::atomic::Ordering;
+            let idx = if devserver {
+                self.rebuild_index.load(Ordering::Relaxed).saturating_sub(1)
+            } else {
+                self.rebuild_index.fetch_add(1, Ordering::Relaxed)
+            };
+            if let Err(e) = std::fs::create_dir_all(dir_or_file) {
+                warn!(path = %dir_or_file.display(), error = %e, "failed to create timings trace directory");
+            }
+            dir_or_file.join(rebuild_trace_filename(idx, devserver))
+        } else {
+            dir_or_file.clone()
+        };
+        *self.current_timings_target.lock() = Some(target);
+    }
+
+    /// Turn Typst's own instrumentation on, if anything is going to read it.
+    /// `typst_timing::enable()` is process-global and idempotent.
+    #[cfg(feature = "timings")]
+    fn enable_typst_instrumentation(&self) {
+        if self.timings.is_some() || self.iterations {
+            typst_timing::enable();
+        }
+    }
+
+    /// Read whatever Typst's instrumentation recorded during the compile that
+    /// just finished: a trace file, a convergence summary, or both.
+    ///
+    /// `typst_timing::export_json` clears the event buffer, so there is at
+    /// most ONE export per compile — which is why `--iterations` writes the
+    /// `--timings` file itself when both are given, rather than each flag
+    /// exporting for itself.
+    #[cfg(feature = "timings")]
+    fn report_typst_instrumentation(&self, world: &RheoWorld) {
+        let target = self.current_timings_target.lock().clone();
+        if self.iterations {
+            Self::report_convergence(world, target.as_deref());
+        } else if let Some(path) = target {
+            Self::export_timings(world, &path);
+        }
+    }
+
+    /// Both halves above, in a build with the `timings` feature compiled out.
+    /// Nothing can ask for instrumentation — the flags that would are not
+    /// registered — so there is nothing to enable and nothing to read.
+    #[cfg(not(feature = "timings"))]
+    fn enable_typst_instrumentation(&self) {}
+
+    #[cfg(not(feature = "timings"))]
+    fn report_typst_instrumentation(&self, _world: &RheoWorld) {}
+
+    /// Write the `typst-timing` trace recorded during the just-finished
+    /// compile to `path`, as Chrome-tracing JSON. A failure to create or
+    /// write the file is a warning, not a build error — this is a debug
+    /// artifact, and a build that succeeds except for its instrumentation has
+    /// succeeded.
+    #[cfg(feature = "timings")]
+    fn export_timings(world: &RheoWorld, path: &Path) {
+        let file = match std::fs::File::create(path) {
+            Ok(file) => file,
+            Err(e) => {
+                warn!(path = %path.display(), error = %e, "failed to create timings trace file");
+                return;
+            }
+        };
+        let writer = std::io::BufWriter::new(file);
+        if let Err(e) = typst_timing::export_json(writer, |raw| {
+            resolve_timing_span(world, raw).unwrap_or_else(|| ("unknown".to_string(), 0))
+        }) {
+            warn!(path = %path.display(), error = %e, "failed to write timings trace");
+        }
+    }
+
+    /// Report the just-finished compile's introspection-convergence
+    /// iterations as one INFO line — see [`crate::diagnostics::convergence`].
+    /// Reads the `typst_timing` trace through a scanning `Write` that never
+    /// materializes it; `timings_target`, when set, tees the same pass to
+    /// that file, since `export_json` can only be called once per compile.
+    /// The serialization cost through `export_json` is unavoidable and
+    /// proportional to project size, not something the scanner can optimize.
+    /// Prints nothing when the compile recorded no `iter (N)` events, which
+    /// only happens if instrumentation wasn't actually enabled.
+    #[cfg(feature = "timings")]
+    fn report_convergence(world: &RheoWorld, timings_target: Option<&Path>) {
+        use crate::diagnostics::convergence::ConvergenceScanner;
+
+        let tee = timings_target.and_then(|path| match std::fs::File::create(path) {
+            Ok(file) => Some(Box::new(std::io::BufWriter::new(file)) as Box<dyn std::io::Write>),
+            Err(e) => {
+                warn!(path = %path.display(), error = %e, "failed to create timings trace file");
+                None
+            }
+        });
+        // Resolving a span to a file and a line is a lookup per event, and
+        // there are millions of them. Worth paying only when a trace file is
+        // actually being written: the scanner discards every byte of the
+        // `args` object those locations land in.
+        let teeing = tee.is_some();
+        let mut scanner = match tee {
+            Some(tee) => ConvergenceScanner::with_tee(tee),
+            None => ConvergenceScanner::new(),
+        };
+        let export = typst_timing::export_json(&mut scanner, |raw| match teeing {
+            true => resolve_timing_span(world, raw).unwrap_or_else(|| ("unknown".to_string(), 0)),
+            false => (String::new(), 0),
+        });
+        if let Err(e) = export {
+            warn!(error = %e, "failed to scan convergence-iteration timings");
+            return;
+        }
+        if let Some(line) = scanner.finish() {
+            info!("{line}");
+        }
     }
 
     /// The plain-text `title` a vertebra's own metadata beacon (`<rheo-meta:
@@ -924,6 +1098,10 @@ impl Build {
         else {
             return Ok(None);
         };
+
+        // Reuses the rebuild number `run()` just assigned — this is that same
+        // rebuild's dev-server half, not a rebuild of its own.
+        self.begin_rebuild_timings(true);
 
         let default_section = PluginSection::default();
         let content_dir = resolve_effective_content_dir(&self.project);
@@ -1168,6 +1346,11 @@ impl Build {
 
         let mut results = CompilationResults::new();
         let default_section = PluginSection::default();
+
+        // Resolved once per rebuild, ahead of every plugin's own compile, so
+        // they all write the same rebuild's trace rather than each claiming a
+        // number of its own.
+        self.begin_rebuild_timings(false);
 
         // CLEARED FIRST, so a `watch` session's summary describes the rebuild
         // the reader just waited for rather than the session's running total.
@@ -1446,6 +1629,31 @@ fn plugins_for_formats(
 fn ensure_output_dir(dir: &Path, plugin_name: &str) -> Result<()> {
     std::fs::create_dir_all(dir)
         .map_err(|e| RheoError::io(e, format!("creating output directory for {plugin_name}")))
+}
+
+/// Turn a `typst-timing` raw span into the `(file, line)` pair its JSON trace
+/// records, resolving it off `world`. `None` for a detached span or one whose
+/// source has since gone missing.
+#[cfg(feature = "timings")]
+fn resolve_timing_span(world: &RheoWorld, raw: NonZeroU64) -> Option<(String, u32)> {
+    let span = typst::syntax::Span::from_raw(raw);
+    let id = span.id()?;
+    let source = world.source(id).ok()?;
+    let range = typst::WorldExt::range(world, span)?;
+    let line = source.lines().byte_to_line(range.start)?;
+    Some((format!("{id:?}"), line as u32 + 1))
+}
+
+/// The file name for one rebuild's numbered timings trace, under
+/// `Build::begin_rebuild_timings`'s directory mode: `rebuild-000.json`, then
+/// `rebuild-001.json`, ...; `devserver` suffixes the `--open` dev-server's
+/// extra compile for the same rebuild number, e.g. `rebuild-000-devserver.json`.
+fn rebuild_trace_filename(idx: usize, devserver: bool) -> String {
+    if devserver {
+        format!("rebuild-{idx:03}-devserver.json")
+    } else {
+        format!("rebuild-{idx:03}.json")
+    }
 }
 
 /// A project marrow file's text, with the project-relative display path it
@@ -2135,5 +2343,24 @@ mod tests {
         let selected = plugins_for_formats(&["pdf".into(), "epub".into()], all);
         let names: Vec<&str> = selected.iter().map(|p| p.name()).collect();
         assert_eq!(names, vec!["pdf", "epub"]);
+    }
+
+    #[test]
+    fn test_rebuild_trace_filename_numbers_and_pads() {
+        assert_eq!(rebuild_trace_filename(0, false), "rebuild-000.json");
+        assert_eq!(rebuild_trace_filename(1, false), "rebuild-001.json");
+        assert_eq!(rebuild_trace_filename(23, false), "rebuild-023.json");
+    }
+
+    #[test]
+    fn test_rebuild_trace_filename_devserver_suffix_shares_the_number() {
+        assert_eq!(
+            rebuild_trace_filename(0, true),
+            "rebuild-000-devserver.json"
+        );
+        assert_eq!(
+            rebuild_trace_filename(1, true),
+            "rebuild-001-devserver.json"
+        );
     }
 }

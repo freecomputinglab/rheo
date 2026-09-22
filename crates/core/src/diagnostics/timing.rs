@@ -151,7 +151,7 @@ fn human_bytes(bytes: usize) -> String {
 
 /// `29.4s` above a second, `847ms` below it. Sub-second phases are the common
 /// case and reading `0.0s` for each of them says nothing.
-fn human_duration(d: Duration) -> String {
+pub(crate) fn human_duration(d: Duration) -> String {
     if d.as_secs() >= 1 {
         format!("{:.1}s", d.as_secs_f64())
     } else {
