@@ -682,8 +682,9 @@ mod tests {
         rheo_context.insert(
             "content/intro.typ".to_string(),
             VertebraInjection {
-                prelude: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)\n\n"
+                generated: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)"
                     .to_string(),
+                project_prelude: None,
                 epilogue: String::new(),
             },
         );
@@ -721,8 +722,9 @@ mod tests {
         rheo_context.insert(
             "content/intro.typ".to_string(),
             VertebraInjection {
-                prelude: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)\n\n"
+                generated: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)"
                     .to_string(),
+                project_prelude: None,
                 epilogue: "\n#metadata((handle: \"intro\")) <rheo-meta:intro>\n".to_string(),
             },
         );
@@ -898,13 +900,14 @@ mod tests {
         rheo_context.insert(
             "content/intro.typ".to_string(),
             VertebraInjection {
-                prelude: format!(
-                    "{}\n\n{}\n\n",
+                generated: format!(
+                    "{}\n\n{}",
                     TypstStmt::MetadataHelper,
                     TypstStmt::ContextBinding {
                         handle: "intro".into()
                     }
                 ),
+                project_prelude: None,
                 epilogue: format!(
                     "\n{}\n",
                     TypstStmt::MetadataBeacon {

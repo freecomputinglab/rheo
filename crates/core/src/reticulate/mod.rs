@@ -8,4 +8,4 @@ pub use bundle_source::BundleSource;
 pub use document_meta::{DocumentMeta, DocumentTitle};
 pub use handle::Handle;
 pub use mould::{Rewrites, SpineMould, SyntaxRewrite};
-pub use spine::{SpineLayout, SpineScan, Vertebra, VertebraInjection, VirtualSpine};
+pub use spine::{SpineLayout, SpinePrelude, SpineScan, Vertebra, VertebraInjection, VirtualSpine};
