@@ -10,7 +10,7 @@ use crate::config::PluginSection;
 use crate::plugins::{Asset, AssetConfig, FormatPlugin, PackageAssets};
 use crate::{Result, RheoError};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 use walkdir::WalkDir;
@@ -373,21 +373,23 @@ impl<'a> AssetResolver<'a> {
     /// Expand glob patterns against `source_root` and copy matching files into
     /// the plugin output directory (optionally under `dest_prefix`).
     ///
-    /// When `warn_on_overwrite` is true, logs a warning for each destination file
-    /// that already exists (meaning a bundle output is being overwritten by a copy glob).
+    /// Logs a warning for each destination in `bundle_outputs` — one this
+    /// build itself wrote — that a copy glob then overwrites; a file merely
+    /// left over from an earlier build at that path is not one and warns
+    /// about nothing. Returns every destination warned about.
     pub fn copy_globs(
         &self,
         patterns: &[String],
         source_root: &Path,
         dest_prefix: Option<&str>,
-        warn_on_overwrite: bool,
-    ) -> Result<()> {
+        bundle_outputs: &HashSet<PathBuf>,
+    ) -> Result<Vec<PathBuf>> {
         copy_glob_patterns(
             patterns,
             source_root,
             self.plugin_output_dir,
             dest_prefix,
-            warn_on_overwrite,
+            bundle_outputs,
         )
     }
 }
@@ -489,21 +491,23 @@ impl CopyGlobs {
 /// Walk `source_root` and copy every file matching a compiled copy-glob into
 /// `plugin_output_dir` (optionally under `dest_prefix`).
 ///
-/// When `warn_on_overwrite` is true, logs a warning for each destination file
-/// that already exists before it is overwritten. A directory-walk error (e.g.
-/// a permission-denied subdirectory) is warned about and skipped rather than
-/// silently dropped.
+/// Logs a warning, and includes in the returned `Vec`, each destination that
+/// is a member of `bundle_outputs` before it is overwritten — a real clobber
+/// of something this build wrote, not a stale file from an earlier one. A
+/// directory-walk error (e.g. a permission-denied subdirectory) is warned
+/// about and skipped rather than silently dropped.
 fn copy_glob_patterns(
     patterns: &[String],
     source_root: &Path,
     plugin_output_dir: &Path,
     dest_prefix: Option<&str>,
-    warn_on_overwrite: bool,
-) -> Result<()> {
+    bundle_outputs: &HashSet<PathBuf>,
+) -> Result<Vec<PathBuf>> {
     let Some(globs) = CopyGlobs::compile(source_root, patterns) else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let mut matched = vec![false; globs.patterns.len()];
+    let mut clobbered = Vec::new();
     for entry in WalkDir::new(source_root) {
         let entry = match entry {
             Ok(e) => e,
@@ -536,12 +540,13 @@ fn copy_glob_patterns(
                 )
             })?;
         }
-        if warn_on_overwrite && dest.exists() {
+        if bundle_outputs.contains(&dest) {
             warn!(
                 src = %path.display(),
                 dest = %dest.display(),
                 "copy glob overwrites existing bundle output"
             );
+            clobbered.push(dest.clone());
         }
         std::fs::copy(path, &dest).map_err(|e| RheoError::AssetCopy {
             source: path.to_path_buf(),
@@ -555,7 +560,7 @@ fn copy_glob_patterns(
             debug!(pattern = %pattern, "copy pattern matched no files");
         }
     }
-    Ok(())
+    Ok(clobbered)
 }
 
 #[cfg(test)]
@@ -1512,9 +1517,11 @@ mod tests {
         let copy_content = b"copy-wins";
         std::fs::write(project_root.join("logo.png"), copy_content).unwrap();
 
+        let bundle_outputs: HashSet<PathBuf> = HashSet::from([output_dir.join("logo.png")]);
+
         let resolver = AssetResolver::new(project_root, &output_dir);
-        resolver
-            .copy_globs(&["logo.png".into()], project_root, None, true)
+        let clobbered = resolver
+            .copy_globs(&["logo.png".into()], project_root, None, &bundle_outputs)
             .unwrap();
 
         let written = std::fs::read(output_dir.join("logo.png")).unwrap();
@@ -1522,6 +1529,7 @@ mod tests {
             written, copy_content,
             "copy glob should overwrite bundle output"
         );
+        assert_eq!(clobbered, vec![output_dir.join("logo.png")]);
     }
 
     #[test]
@@ -1534,11 +1542,33 @@ mod tests {
         std::fs::write(project_root.join("style.css"), b"body {}").unwrap();
 
         let resolver = AssetResolver::new(project_root, &output_dir);
-        // Should succeed without panicking even with warn_on_overwrite=true.
-        resolver
-            .copy_globs(&["style.css".into()], project_root, None, true)
+        let clobbered = resolver
+            .copy_globs(&["style.css".into()], project_root, None, &HashSet::new())
             .unwrap();
 
         assert!(output_dir.join("style.css").exists());
+        assert!(clobbered.is_empty());
+    }
+
+    #[test]
+    fn test_copy_globs_ignores_stale_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        // A destination left over from a previous build — not one this
+        // build wrote, so it must not be reported as clobbered.
+        std::fs::write(output_dir.join("logo.png"), b"stale-output").unwrap();
+        std::fs::write(project_root.join("logo.png"), b"copy-wins").unwrap();
+
+        let resolver = AssetResolver::new(project_root, &output_dir);
+        let clobbered = resolver
+            .copy_globs(&["logo.png".into()], project_root, None, &HashSet::new())
+            .unwrap();
+
+        assert!(clobbered.is_empty());
+        let written = std::fs::read(output_dir.join("logo.png")).unwrap();
+        assert_eq!(written, b"copy-wins");
     }
 }
