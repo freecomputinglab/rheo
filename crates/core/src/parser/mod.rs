@@ -11,12 +11,15 @@
 //! * [`syntax_site`] — the [`SyntaxSite`] trait and the traversal engine.
 //! * [`labels`], [`imports`] — one extractor each: a small `impl SyntaxSite`
 //!   plus its public collectors.
+//! * [`cache`] — the content-addressed cache both hot-path harvests go
+//!   through, so a build re-harvests only the files whose bytes changed.
 //! * this file — the aggregate [`extract_nodes`], which gathers all per-vertebra
 //!   metadata (labels) in a **single** parse and a **single** traversal by
 //!   fanning one walk out to every visitor. That once-only pass is a design
 //!   constraint on the spine-building hot path, enforced by
 //!   `extract_nodes_parses_and_traverses_once`.
 
+pub mod cache;
 mod imports;
 mod labels;
 mod syntax_site;
@@ -28,6 +31,7 @@ pub use syntax_site::{SyntaxSite, WalkCtx};
 use typst::syntax::Source;
 
 /// Everything harvested from a vertebra's source in the canonical parse.
+#[derive(Clone)]
 pub struct ExtractedNodes {
     /// Label definition and reference sites (with byte ranges), partitioned by
     /// role. Definition names drive the canonical-handle machinery; the full
@@ -44,7 +48,7 @@ pub struct ExtractedNodes {
 pub fn extract_nodes(source: &Source) -> ExtractedNodes {
     let root = syntax_site::parse_source(source);
     let mut labels = Vec::new();
-    syntax_site::walk_once(source, &root, |s, n, o, c| {
+    syntax_site::walk_once(source, root, |s, n, o, c| {
         LabelSite::visit(s, n, o, c, &mut labels);
     });
     let mut label_sites = LabelSites::default();
