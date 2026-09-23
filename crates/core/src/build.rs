@@ -24,11 +24,13 @@ use crate::world::RheoWorld;
 use crate::{Result, RheoError};
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
+#[cfg(feature = "timings")]
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
+#[cfg(feature = "timings")]
 use typst::World as _;
 use typst::introspection::Introspector as _;
 use typst::model::Document as _;
@@ -77,6 +79,12 @@ pub struct BuildOptions {
     /// actually found such a gap. Off by default: the ordinary single-pass
     /// build never pays this cost.
     pub metadata_two_pass: bool,
+    /// `--iterations`: report Typst's introspection-convergence loop as one
+    /// INFO line per compile (`N convergence iteration(s) — iter(1) ...`).
+    /// Enables `typst_timing` instrumentation like `timings` does, but reads
+    /// the trace through a scanning `Write` that discards everything except
+    /// `iter (N)` events rather than writing a trace file. `false` by default.
+    pub iterations: bool,
 }
 
 /// A prepared, runnable build: a project, the selected plugins, the resolved
@@ -119,6 +127,9 @@ pub struct Build {
     /// numbered trace under `timings` when watching.
     current_timings_target: Mutex<Option<PathBuf>>,
     metadata_two_pass: bool,
+    /// Read only by the instrumentation, which is what the feature gates.
+    #[cfg(feature = "timings")]
+    iterations: bool,
 }
 
 /// The result of [`Build::compile_spine`]: the built spine, the compiled
@@ -285,6 +296,8 @@ impl Build {
             rebuild_index: std::sync::atomic::AtomicUsize::new(0),
             current_timings_target: Mutex::new(None),
             metadata_two_pass: opts.metadata_two_pass,
+            #[cfg(feature = "timings")]
+            iterations: opts.iterations,
         })
     }
 
@@ -853,18 +866,14 @@ impl Build {
                 ..Default::default()
             },
         )?;
-        if self.timings.is_some() {
-            typst_timing::enable();
-        }
+        self.enable_typst_instrumentation();
         // Drained whether or not the compile succeeded: a failed pass's
         // diagnostics are exactly the ones worth rendering.
         let compiled = self.timed(phase::TYPST_COMPILE, Some(plugin.name()), || {
             world.compile_bundle()
         });
         self.diagnostics.lock().extend(world.take_diagnostics());
-        if let Some(path) = self.current_timings_target.lock().clone() {
-            Self::export_timings(&world, &path);
-        }
+        self.report_typst_instrumentation(&world);
         let bundle = compiled?;
         let mut assets: HashSet<String> = HashSet::new();
         let mut meta: HashMap<String, DocumentMeta> = HashMap::new();
@@ -924,11 +933,47 @@ impl Build {
         *self.current_timings_target.lock() = Some(target);
     }
 
+    /// Turn Typst's own instrumentation on, if anything is going to read it.
+    /// `typst_timing::enable()` is process-global and idempotent.
+    #[cfg(feature = "timings")]
+    fn enable_typst_instrumentation(&self) {
+        if self.timings.is_some() || self.iterations {
+            typst_timing::enable();
+        }
+    }
+
+    /// Read whatever Typst's instrumentation recorded during the compile that
+    /// just finished: a trace file, a convergence summary, or both.
+    ///
+    /// `typst_timing::export_json` clears the event buffer, so there is at
+    /// most ONE export per compile — which is why `--iterations` writes the
+    /// `--timings` file itself when both are given, rather than each flag
+    /// exporting for itself.
+    #[cfg(feature = "timings")]
+    fn report_typst_instrumentation(&self, world: &RheoWorld) {
+        let target = self.current_timings_target.lock().clone();
+        if self.iterations {
+            Self::report_convergence(world, target.as_deref());
+        } else if let Some(path) = target {
+            Self::export_timings(world, &path);
+        }
+    }
+
+    /// Both halves above, in a build with the `timings` feature compiled out.
+    /// Nothing can ask for instrumentation — the flags that would are not
+    /// registered — so there is nothing to enable and nothing to read.
+    #[cfg(not(feature = "timings"))]
+    fn enable_typst_instrumentation(&self) {}
+
+    #[cfg(not(feature = "timings"))]
+    fn report_typst_instrumentation(&self, _world: &RheoWorld) {}
+
     /// Write the `typst-timing` trace recorded during the just-finished
     /// compile to `path`, as Chrome-tracing JSON. A failure to create or
     /// write the file is a warning, not a build error — this is a debug
     /// artifact, and a build that succeeds except for its instrumentation has
     /// succeeded.
+    #[cfg(feature = "timings")]
     fn export_timings(world: &RheoWorld, path: &Path) {
         let file = match std::fs::File::create(path) {
             Ok(file) => file,
@@ -942,6 +987,46 @@ impl Build {
             resolve_timing_span(world, raw).unwrap_or_else(|| ("unknown".to_string(), 0))
         }) {
             warn!(path = %path.display(), error = %e, "failed to write timings trace");
+        }
+    }
+
+    /// Report the just-finished compile's introspection-convergence
+    /// iterations as one INFO line — see [`crate::diagnostics::convergence`].
+    /// Reads the `typst_timing` trace through a scanning `Write` that never
+    /// materializes it; `timings_target`, when set, tees the same pass to
+    /// that file, since `export_json` can only be called once per compile.
+    /// Prints nothing when the compile recorded no `iter (N)` events, which
+    /// only happens if instrumentation wasn't actually enabled.
+    #[cfg(feature = "timings")]
+    fn report_convergence(world: &RheoWorld, timings_target: Option<&Path>) {
+        use crate::diagnostics::convergence::ConvergenceScanner;
+
+        let tee = timings_target.and_then(|path| match std::fs::File::create(path) {
+            Ok(file) => Some(Box::new(std::io::BufWriter::new(file)) as Box<dyn std::io::Write>),
+            Err(e) => {
+                warn!(path = %path.display(), error = %e, "failed to create timings trace file");
+                None
+            }
+        });
+        // Resolving a span to a file and a line is a lookup per event, and
+        // there are millions of them. Worth paying only when a trace file is
+        // actually being written: the scanner discards every byte of the
+        // `args` object those locations land in.
+        let teeing = tee.is_some();
+        let mut scanner = match tee {
+            Some(tee) => ConvergenceScanner::with_tee(tee),
+            None => ConvergenceScanner::new(),
+        };
+        let export = typst_timing::export_json(&mut scanner, |raw| match teeing {
+            true => resolve_timing_span(world, raw).unwrap_or_else(|| ("unknown".to_string(), 0)),
+            false => (String::new(), 0),
+        });
+        if let Err(e) = export {
+            warn!(error = %e, "failed to scan convergence-iteration timings");
+            return;
+        }
+        if let Some(line) = scanner.finish() {
+            info!("{line}");
         }
     }
 
@@ -1552,6 +1637,7 @@ fn ensure_output_dir(dir: &Path, plugin_name: &str) -> Result<()> {
 /// Turn a `typst-timing` raw span into the `(file, line)` pair its JSON trace
 /// records, resolving it off `world`. `None` for a detached span or one whose
 /// source has since gone missing.
+#[cfg(feature = "timings")]
 fn resolve_timing_span(world: &RheoWorld, raw: NonZeroU64) -> Option<(String, u32)> {
     let span = typst::syntax::Span::from_raw(raw);
     let id = span.id()?;

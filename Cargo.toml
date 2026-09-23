@@ -25,11 +25,18 @@ complexity = "warn"
 perf = "warn"
 
 [workspace.dependencies]
-# Internal crates (for convenience in workspace)
-rheo-core = { path = "crates/core", version = "0.6.4" }
-rheo-html = { path = "crates/html", version = "0.6.4" }
-rheo-pdf = { path = "crates/pdf", version = "0.6.4" }
-rheo-epub = { path = "crates/epub", version = "0.6.4" }
+# Internal crates (for convenience in workspace).
+#
+# `default-features = false` is load-bearing and lives HERE because cargo
+# refuses to let an inheriting crate override it. Each internal crate declares
+# its own `timings` feature forwarding to `rheo-core/timings`, so
+# `--no-default-features` on the binary really does compile the instrumentation
+# out; if any of these pulled its default features, one plugin crate would
+# quietly re-enable it for the whole build. See `docs/observability.md`.
+rheo-core = { path = "crates/core", version = "0.6.4", default-features = false }
+rheo-html = { path = "crates/html", version = "0.6.4", default-features = false }
+rheo-pdf = { path = "crates/pdf", version = "0.6.4", default-features = false }
+rheo-epub = { path = "crates/epub", version = "0.6.4", default-features = false }
 
 # Typst dependencies
 typst = "0.15.0"

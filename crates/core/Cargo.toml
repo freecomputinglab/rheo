@@ -11,6 +11,15 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["timings"]
+# Typst's own compile instrumentation, and everything rheo reads out of it:
+# `--timings`, `--iterations`, and the `typst-timing` dependency itself. On by
+# default, because a developer profiling a slow build should not have to
+# rebuild the toolchain first. Off with `--no-default-features`, which is how
+# a binary that only ever publishes is built — see `docs/observability.md`.
+timings = ["dep:typst-timing"]
+
 [dependencies]
 # Typst dependencies
 typst = { workspace = true }
@@ -21,7 +30,7 @@ typst-kit = { workspace = true }
 typst-layout = { workspace = true }
 typst-syntax = { workspace = true }
 typst-bundle = { workspace = true }
-typst-timing = { workspace = true }
+typst-timing = { workspace = true, optional = true }
 comemo = { workspace = true }
 
 # Error handling and diagnostics

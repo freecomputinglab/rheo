@@ -11,6 +11,13 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["timings"]
+# Forwarded, not owned: the instrumentation lives in rheo-core, and this
+# crate pulls it without default features so that `--no-default-features` on
+# the binary is not undone by a plugin re-enabling them.
+timings = ["rheo-core/timings"]
+
 [dependencies]
 # Core
 rheo-core = { workspace = true }
