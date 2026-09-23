@@ -287,7 +287,11 @@ impl RheoWorld {
     /// shape every in-memory-served file (main, overlay, the metadata
     /// module) needs.
     fn cache_source(&self, id: FileId, text: String, map: SourceMap) -> Source {
-        let source = Source::new(id, text);
+        // Through the content-addressed parse cache rather than `Source::new`:
+        // a world is built fresh per compile, so `slots` starts empty on every
+        // `watch` rebuild, and re-parsing a vertebra whose moulded text is
+        // byte-for-byte what it was is what that costs.
+        let source = crate::parser::cache::source(id, text);
         self.slots.lock().entry(id).or_insert_with(|| FileSlot {
             source: Some(source.clone()),
             file: None,
