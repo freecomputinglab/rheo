@@ -66,6 +66,10 @@ pub struct BuildOptions {
     /// this path, as Chrome-tracing JSON. A read-only debug artifact for
     /// finding the dominant sub-step inside a slow compile. `None` by default.
     pub timings: Option<PathBuf>,
+    /// Set by `watch` only: `timings` names a directory that gets one numbered
+    /// trace per rebuild (`rebuild-000.json`, ...) rather than the single file
+    /// a one-shot `rheo compile` writes. `false` for `compile`.
+    pub timings_per_rebuild: bool,
     /// `--metadata-two-pass`: opt in to gated two-pass metadata resolution
     /// (see [`Build::compile_bundle_once`]) — recovers a title set inside a
     /// bounded code block for cross-vertebra reads (`metadata-of`, `@handle`)
@@ -103,6 +107,17 @@ pub struct Build {
     inputs: HashMap<String, String>,
     emit_bundle_source: bool,
     timings: Option<PathBuf>,
+    timings_per_rebuild: bool,
+    /// Assigns each rebuild's number under `timings_per_rebuild`; unused
+    /// otherwise. Set by [`Build::begin_rebuild_timings`], read back by the
+    /// same call's `devserver` half so the two share one number.
+    rebuild_index: std::sync::atomic::AtomicUsize,
+    /// This rebuild's resolved export target, stashed by
+    /// [`Build::begin_rebuild_timings`] so every plugin's
+    /// [`Build::compile_bundle_once`] call within it writes to the same
+    /// place — the file itself for a one-shot compile, or that rebuild's
+    /// numbered trace under `timings` when watching.
+    current_timings_target: Mutex<Option<PathBuf>>,
     metadata_two_pass: bool,
 }
 
@@ -266,6 +281,9 @@ impl Build {
             inputs,
             emit_bundle_source: opts.emit_bundle_source,
             timings: opts.timings,
+            timings_per_rebuild: opts.timings_per_rebuild,
+            rebuild_index: std::sync::atomic::AtomicUsize::new(0),
+            current_timings_target: Mutex::new(None),
             metadata_two_pass: opts.metadata_two_pass,
         })
     }
@@ -844,8 +862,8 @@ impl Build {
             world.compile_bundle()
         });
         self.diagnostics.lock().extend(world.take_diagnostics());
-        if let Some(path) = &self.timings {
-            Self::export_timings(&world, path);
+        if let Some(path) = self.current_timings_target.lock().clone() {
+            Self::export_timings(&world, &path);
         }
         let bundle = compiled?;
         let mut assets: HashSet<String> = HashSet::new();
@@ -870,6 +888,40 @@ impl Build {
             files,
             bundle,
         })
+    }
+
+    /// Resolve and stash this rebuild's timings export target, before its
+    /// plugins compile, so every [`Build::compile_bundle_once`] call within
+    /// the same rebuild writes to the same place.
+    ///
+    /// A one-shot `rheo compile` (`timings_per_rebuild` false) writes straight
+    /// to `self.timings`, unchanged from before this existed. A `watch`
+    /// session treats `self.timings` as a directory and numbers a trace per
+    /// rebuild — `rebuild-000.json`, `rebuild-001.json`, ... — assigning the
+    /// next number from `rebuild_index` on the ordinary [`Build::run`] half of
+    /// a rebuild (`devserver` false) and reusing that same number, suffixed,
+    /// for the `--open` dev-server's extra [`Build::compile_for_watch`] half
+    /// (`devserver` true) — the two are one rebuild, not two.
+    fn begin_rebuild_timings(&self, devserver: bool) {
+        let Some(dir_or_file) = &self.timings else {
+            *self.current_timings_target.lock() = None;
+            return;
+        };
+        let target = if self.timings_per_rebuild {
+            use std::sync::atomic::Ordering;
+            let idx = if devserver {
+                self.rebuild_index.load(Ordering::Relaxed).saturating_sub(1)
+            } else {
+                self.rebuild_index.fetch_add(1, Ordering::Relaxed)
+            };
+            if let Err(e) = std::fs::create_dir_all(dir_or_file) {
+                warn!(path = %dir_or_file.display(), error = %e, "failed to create timings trace directory");
+            }
+            dir_or_file.join(rebuild_trace_filename(idx, devserver))
+        } else {
+            dir_or_file.clone()
+        };
+        *self.current_timings_target.lock() = Some(target);
     }
 
     /// Write the `typst-timing` trace recorded during the just-finished
@@ -959,6 +1011,10 @@ impl Build {
         else {
             return Ok(None);
         };
+
+        // Reuses the rebuild number `run()` just assigned — this is that same
+        // rebuild's dev-server half, not a rebuild of its own.
+        self.begin_rebuild_timings(true);
 
         let default_section = PluginSection::default();
         let content_dir = resolve_effective_content_dir(&self.project);
@@ -1203,6 +1259,11 @@ impl Build {
 
         let mut results = CompilationResults::new();
         let default_section = PluginSection::default();
+
+        // Resolved once per rebuild, ahead of every plugin's own compile, so
+        // they all write the same rebuild's trace rather than each claiming a
+        // number of its own.
+        self.begin_rebuild_timings(false);
 
         // CLEARED FIRST, so a `watch` session's summary describes the rebuild
         // the reader just waited for rather than the session's running total.
@@ -1498,6 +1559,18 @@ fn resolve_timing_span(world: &RheoWorld, raw: NonZeroU64) -> Option<(String, u3
     let range = typst::WorldExt::range(world, span)?;
     let line = source.lines().byte_to_line(range.start)?;
     Some((format!("{id:?}"), line as u32 + 1))
+}
+
+/// The file name for one rebuild's numbered timings trace, under
+/// `Build::begin_rebuild_timings`'s directory mode: `rebuild-000.json`, then
+/// `rebuild-001.json`, ...; `devserver` suffixes the `--open` dev-server's
+/// extra compile for the same rebuild number, e.g. `rebuild-000-devserver.json`.
+fn rebuild_trace_filename(idx: usize, devserver: bool) -> String {
+    if devserver {
+        format!("rebuild-{idx:03}-devserver.json")
+    } else {
+        format!("rebuild-{idx:03}.json")
+    }
 }
 
 /// A project marrow file's text, with the project-relative display path it
@@ -2184,5 +2257,24 @@ mod tests {
         let selected = plugins_for_formats(&["pdf".into(), "epub".into()], all);
         let names: Vec<&str> = selected.iter().map(|p| p.name()).collect();
         assert_eq!(names, vec!["pdf", "epub"]);
+    }
+
+    #[test]
+    fn test_rebuild_trace_filename_numbers_and_pads() {
+        assert_eq!(rebuild_trace_filename(0, false), "rebuild-000.json");
+        assert_eq!(rebuild_trace_filename(1, false), "rebuild-001.json");
+        assert_eq!(rebuild_trace_filename(23, false), "rebuild-023.json");
+    }
+
+    #[test]
+    fn test_rebuild_trace_filename_devserver_suffix_shares_the_number() {
+        assert_eq!(
+            rebuild_trace_filename(0, true),
+            "rebuild-000-devserver.json"
+        );
+        assert_eq!(
+            rebuild_trace_filename(1, true),
+            "rebuild-001-devserver.json"
+        );
     }
 }
