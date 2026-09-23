@@ -77,7 +77,7 @@ pub trait SyntaxSite: Sized {
     fn collect(source: &Source) -> Vec<Self> {
         let root = parse_source(source);
         let mut out = Vec::new();
-        walk_tree(source, &root, 0, WalkCtx::default(), &mut |s, n, o, c| {
+        walk_tree(source, root, 0, WalkCtx::default(), &mut |s, n, o, c| {
             Self::visit(s, n, o, c, &mut out);
             Self::MAX_SITES.is_none_or(|max| out.len() < max)
         });
@@ -90,12 +90,18 @@ pub trait SyntaxSite: Sized {
     }
 }
 
-/// Parse `source` into a syntax tree. The one parse seam in this module, so the
-/// once-only guarantee can be observed in tests.
-pub(super) fn parse_source(source: &Source) -> SyntaxNode {
+/// The syntax tree for `source`: the one it already parsed when it was
+/// constructed, not a second parse of the same text. The one tree seam in this
+/// module, so the once-only guarantee can be observed in tests.
+///
+/// Reusing it is what makes the once-only guarantee true rather than merely
+/// documented. Parse is the costly step, this runs per vertebra during spine
+/// building and per file during the package-import scan, and re-parsing here
+/// doubled the cost of every one of them on every build.
+pub(super) fn parse_source(source: &Source) -> &SyntaxNode {
     #[cfg(test)]
     PARSE_COUNT.with(|c| c.set(c.get() + 1));
-    typst::syntax::parse(source.text())
+    source.root()
 }
 
 /// Depth-first walk from `node` (first byte at `offset`), invoking `visit` on
