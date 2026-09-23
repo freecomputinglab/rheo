@@ -238,7 +238,17 @@ fn build_watch_command(plugins: &[Box<dyn FormatPlugin>]) -> Command {
             .action(ArgAction::SetTrue)
             .help("Open output in appropriate viewer (HTML opens in browser with live reload)"),
     );
-    add_format_flags(add_build_flags(cmd), plugins)
+    let cmd = add_format_flags(add_build_flags(cmd), plugins);
+    // `--timings` is declared once in `add_build_flags` so `compile` and
+    // `watch` cannot drift on the flag itself, but a rebuild is not a single
+    // compile the way `compile` is: `watch` writes one numbered trace per
+    // rebuild into a directory rather than one file, so its own value name
+    // and help text say so.
+    cmd.mut_arg(arg::TIMINGS, |a| {
+        a.value_name("OUTPUT_DIR").help(
+            "Write Typst's own compilation timings to one JSON trace per rebuild in this directory (experimental)",
+        )
+    })
 }
 
 fn build_clean_command() -> Command {
@@ -545,6 +555,17 @@ impl BuildArgs {
             emit_bundle_source: self.emit_bundle_source,
             metadata_two_pass: self.metadata_two_pass,
             timings: self.timings.clone(),
+            timings_per_rebuild: false,
+        }
+    }
+
+    /// [`Self::build_options`], but for a `watch` session: `--timings` names a
+    /// directory that gets one numbered trace per rebuild rather than the
+    /// single file a one-shot `rheo compile` writes.
+    fn watch_build_options(&self) -> BuildOptions {
+        BuildOptions {
+            timings_per_rebuild: true,
+            ..self.build_options()
         }
     }
 }
@@ -619,7 +640,7 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
     let mut build = prepare_build(
         &args.path,
         args.config.as_deref(),
-        args.build_options(),
+        args.watch_build_options(),
         plugins,
     )?;
 
@@ -682,7 +703,7 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
                     match prepare_build(
                         &args.path,
                         args.config.as_deref(),
-                        args.build_options(),
+                        args.watch_build_options(),
                         all_plugins(),
                     ) {
                         Ok(new_build) => {
