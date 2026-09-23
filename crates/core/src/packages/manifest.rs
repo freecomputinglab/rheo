@@ -1,6 +1,5 @@
 use crate::config::PluginAssets;
 use crate::packages::PackageResolver;
-use crate::parser::ImportInfo;
 use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
 use crate::reticulate::{MarrowSource, SpineScan};
 use crate::{Result, RheoError};
@@ -8,7 +7,6 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tracing::{debug, warn};
-use typst::syntax::Source;
 use typst::syntax::package::PackageSpec;
 
 /// Build the standard Typst package search directories:
@@ -31,6 +29,13 @@ pub fn typst_package_search_dirs(extra: Option<&Path>) -> Vec<PathBuf> {
 /// Scans project .typ files for package imports (those starting with '@').
 /// Returns deduplicated import path strings in encounter order.
 /// Unreadable files are logged via `tracing::warn!` and skipped.
+///
+/// Every file is still read, because a file's imports are a function of its
+/// bytes and nothing cheaper proves those bytes unchanged; only the parse and
+/// the walk go through [`crate::parser::cache`]. A `watch` rebuild scans this
+/// project's files *and* every `.typ` of every package it imports, so on
+/// waterline's rookery that is ~650 files whose answer differs for at most
+/// the one the author just saved.
 pub fn scan_project_package_imports(typ_files: &[PathBuf]) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
@@ -42,8 +47,7 @@ pub fn scan_project_package_imports(typ_files: &[PathBuf]) -> Vec<String> {
                 continue;
             }
         };
-        let source = Source::detached(content);
-        for path in ImportInfo::package_paths(&source) {
+        for path in crate::parser::cache::package_paths(&content) {
             if seen.insert(path.clone()) {
                 result.push(path);
             }

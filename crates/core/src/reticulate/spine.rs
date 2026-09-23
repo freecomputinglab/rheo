@@ -18,7 +18,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::warn;
-use typst::syntax::Source;
 
 // ── Directory scan: SpineScan ────────────────────────────────────────────────
 
@@ -405,9 +404,10 @@ impl VirtualSpine {
                     .to_string();
                 let rel_path = to_forward_slash(file.strip_prefix(project_root).unwrap_or(file));
 
-                let source_obj = Source::detached(&source);
-                let extracted = parser::extract_nodes(&source_obj);
-                let sites = extracted.labels;
+                // Through the content-addressed cache: a `watch` rebuild
+                // re-harvests every vertebra in the spine, and only the
+                // edited one's bytes differ.
+                let sites = parser::cache::extracted(&source).labels;
 
                 // Title is purely path-derived (filename, title-cased). The
                 // real authored title (e.g. via `#set document(title: ...)`,
