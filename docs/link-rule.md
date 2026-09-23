@@ -49,6 +49,33 @@ converged.
 Do not reach for this rule when chasing a convergence warning; find which
 `query` is being fed.
 
+## A native `#outline()` fails the build outright
+
+`std.outline()` over headings does not work in a rheo project that exports
+multi-page HTML. This is not a convergence warning to shrug off: compilation
+exits non-zero.
+
+```
+error: failed to determine link anchor
+```
+
+**The cause is upstream.** `std.outline()` links to a heading by its Typst
+`Location`, not a label or a string. `rheo-link-rule` in `typ/rheo.typ` handles
+`label`- and string-typed destinations only and returns anything else
+untouched — deliberate, not a bug. A `Location`-typed destination falls
+straight through to upstream `typst-bundle` 0.15.0's own page-and-anchor
+resolver, which never settles on a page path for it across Typst's five
+convergence attempts: `none` on every run but the last, by which point the
+anchor is already required.
+
+A heading outline is therefore not available in multi-page HTML output today.
+Anything built on explicit labels rather than generated heading links still
+works.
+
+The "find which `query` is being fed" advice above does not apply to this
+failure — there is no `query` involved; the outline's links come straight out
+of Typst's own outline machinery.
+
 ## The `rheo-page:` URL scheme
 
 A page minted from a `.marrow.typ` is addressed by handle through a reserved URL
