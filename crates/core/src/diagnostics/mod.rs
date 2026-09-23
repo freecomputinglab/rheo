@@ -6,6 +6,10 @@
 //! when it chooses. A library user can therefore obtain an error without rheo
 //! writing to their terminal behind their back.
 
+/// Reading Typst's convergence iterations out of its own instrumentation.
+/// Compiled out with the `timings` feature — see `docs/observability.md`.
+#[cfg(feature = "timings")]
+pub mod convergence;
 pub mod error;
 pub mod report;
 pub mod results;
