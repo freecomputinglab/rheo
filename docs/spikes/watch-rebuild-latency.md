@@ -178,11 +178,19 @@ little changed. What varies is what each costs:
 | iter (4) | 3.35s | 0.274s | 0.168s |
 | iter (5) | 0.15s | 0.205s | 0.135s |
 
-So **iteration count is a cold-build problem and blast radius is the
-incremental one.** Comemo is doing a great deal of work here — 68,688 spans on
-a warm rebuild against 17.7M cold — but it re-runs `html document` for all
-2,694 page-iterations regardless, and that is 1.5s of CPU across 12 threads,
-or the bulk of the 565ms wall.
+The share is the same either way — the loop wraps all the rendering, so it is
+~94% of the compile cold and warm both. What differs is the shape: cold, the
+first two passes are the expensive ones; warm, they are nearly free and the
+last three carry everything. **Iteration count is therefore a lever on the
+per-edit number too, not only the cold one** — see lead 5 below, which
+corrects an earlier reading of this table.
+
+Comemo is doing a great deal of work inside those passes — 68,688 spans on a
+warm rebuild against 17.7M cold, and only 300 `html block fragment` re-renders
+against 67,850 — but it still runs `html document` for all 2,694
+page-iterations, 1.5s of CPU across 12 threads. That is the fixed cost of
+carrying 812 pages through the loop, and it is what makes the pass count the
+thing worth attacking.
 
 ## Candidate optimisations — leads, ranked by per-edit latency removed
 
@@ -199,10 +207,39 @@ or the bulk of the 565ms wall.
    half-written file. Not filed; this is a knob, not a defect.
 4. **Skipping the recompile for an asset-only change.** Sized at 67ms and
    needing a correctness guard. Explicitly **not** filed — see above.
-5. **The convergence loop.** Not a lead for the incremental case at all: the
-   five iterations cost 0.53s of 565ms warm, and cutting one would save
-   ~0.15s, against ~3.3s cold. The instrument for reading iteration count
-   cheaply is filed as `wl-summarises-typst-s-convergence-5acf3cf6`.
+5. **Converging in fewer passes.** Read off `--iterations` on three
+   consecutive cheap rebuilds, the loop is 514 / 492 / 461ms of compiles of
+   545 / 525 / 495ms — **94% of a warm compile, the same share it is of a cold
+   one.** And warm the passes are lopsided the other way from cold: iter(1)
+   and iter(2) together are ~50ms, while 3, 4 and 5 are ~170 / ~150 / ~120ms.
+
+   So a document that converged in two passes would compile in ~50ms instead
+   of ~490ms, taking a cheap rebuild from 635ms to about its 204ms floor.
+   That is the largest single lever left on the per-edit number — larger than
+   anything else in this list — and it is the same fix as the ~3.3s cold win.
+   What it needs is the thing neither spike has established: *which*
+   introspection is still unstable after four passes. `--iterations` makes
+   that bisectable a rebuild at a time rather than a 2.5 GB trace at a time.
+
+6. **Splitting the bundle into several, partitioned by reference.** Tested and
+   **rejected for a rookery.** Narrowing this project's spine to one tree
+   produced `label <idea:a-comparison-of-elm-and-react> does not exist in the
+   document` — a weeknote referencing a blog post's idea — and excluding the
+   two weeknotes that caused it produced eight further dangling references
+   from other pages to *their* ideas. The `@idea:` graph has no small cut.
+
+   Two things make this a dead end rather than a hard problem. A reference
+   crossing a partition is a **hard compile error**, not a degraded link, so
+   partitioning has to be conservative to the point of being useless here.
+   And the win would be bounded anyway: comemo already prunes a cheap
+   rebuild's re-rendering to 300 block fragments out of the 67,850 a cold
+   build does, so a partition would not be reducing re-rendered content — it
+   would only be shrinking the fixed cost of carrying 812 pages through the
+   loop, which lead 5 addresses directly and without the correctness risk.
+
+   Where it *would* be sound is a project with no cross-page references at
+   all — a plain rheo book with an ordered spine and nothing from
+   `@rookery/core`. Not filed: no such project is currently slow.
 
 ## What this does not tell us
 
