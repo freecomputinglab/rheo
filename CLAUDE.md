@@ -95,14 +95,15 @@ releases = "freecomputinglab/rookery"  # <owner>/<repo>, or a URL template
 
 [packages.rheo]                        # overrides the built-in @rheo
 repo = "https://github.com/freecomputinglab/rheo-packages"  # any URL git accepts
-branch = "feat-x"                      # or tag = "...", or rev = "<sha>"
+branch = "dev"                         # or tag = "...", or rev = "<sha>"
 subdir = ""                            # optional path prefix inside the repo
+packages = ["contents-panel"]          # only these; the rest of @rheo stays on releases
 
 [packages.demo]                        # resolves from a directory on disk
 path = "../pkgs"                       # a package's own working tree, read in place
 ```
 
-**`[packages.<namespace>]`** declares where one namespace comes from. Set exactly one of `repo`, `releases` or `path` — switching a project between a release, a branch and a local directory is an explicit edit, not a precedence rule.
+**`[packages.<namespace>]`** declares where one namespace comes from. Set exactly one of `repo`, `releases` or `path` — switching a project between a release, a branch and a local directory is an explicit edit, not a precedence rule. An optional `packages` list limits the table to those package names; every other package in the namespace resolves exactly as if the table were absent.
 
 - `releases` takes an `<owner>/<repo>` shorthand (detected by having no scheme), expanded to GitHub's download base, or a full URL template containing both `{name}` and `{version}` for any other forge. Assets are `<name>-<version>.tar.gz` under the tag `<name>-<version>`.
 - `repo` takes any URL the `git` binary accepts — https, ssh, or a local path. `branch` (default `main`), `tag` and `rev` select the ref; when more than one is set the precedence is `rev`, then `tag`, then `branch`, and the losing keys are warned about rather than silently dropped. `subdir` (default empty) is a path prefix inside the repository, so `@<ns>/<name>:<version>` lives at `<subdir>/<name>/<version>/`.
