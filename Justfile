@@ -12,3 +12,6 @@ install:
 
 watch:
   cargo watch -x "build --profile local-dev"
+
+perf-watch *args:
+  scripts/perf/watch-bench.sh {{args}}
