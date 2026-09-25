@@ -3,7 +3,9 @@
 //! Without this table `@rheo` resolves from its built-in releases host and every
 //! other namespace goes to Typst universe. A table entry replaces that for one
 //! namespace: a repository checked out at a ref, a different releases host, or
-//! a directory on disk.
+//! a directory on disk. An entry may further name the `packages` it applies to;
+//! every other package in that namespace keeps resolving as if the table were
+//! absent.
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -138,6 +140,47 @@ pub enum NamespaceSource {
     Path(PathSource),
 }
 
+/// A `[packages.<ns>]` table: its source, and optionally which packages in the
+/// namespace it applies to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamespaceEntry {
+    pub source: NamespaceSource,
+    /// `None` applies the source to every package in the namespace — the
+    /// default, and the whole behaviour before this field existed. `Some`
+    /// limits it to these names; every other package in the namespace resolves
+    /// as if the table were absent.
+    pub(crate) only: Option<Vec<String>>,
+}
+
+impl NamespaceEntry {
+    /// Build an entry directly, bypassing TOML parsing — for a test that hand
+    /// constructs a `[packages.<ns>]` table's parsed shape.
+    pub fn new(source: NamespaceSource, only: Option<Vec<String>>) -> Self {
+        Self { source, only }
+    }
+
+    /// Whether `name` resolves through this entry's source rather than falling
+    /// through to the namespace's default.
+    pub fn applies_to(&self, name: &str) -> bool {
+        match &self.only {
+            None => true,
+            Some(names) => names.iter().any(|n| n == name),
+        }
+    }
+
+    /// The `packages` key this entry was given, if any — for a caller that
+    /// needs to carry the list itself rather than ask `applies_to` per name.
+    pub fn only(&self) -> Option<&Vec<String>> {
+        self.only.as_ref()
+    }
+
+    /// Anchor whatever part of this entry's source is a relative path against
+    /// the config file's own directory. Only a [`PathSource`] has one.
+    pub fn anchor_to(&mut self, base_dir: &Path) {
+        self.source.anchor_to(base_dir);
+    }
+}
+
 /// The `[packages.<ns>]` keys as written, before the one-of and ref-precedence
 /// rules are applied.
 #[derive(Debug, Deserialize)]
@@ -149,6 +192,7 @@ struct NamespaceSourceRaw {
     tag: Option<String>,
     rev: Option<String>,
     subdir: Option<String>,
+    packages: Option<Vec<String>>,
 }
 
 fn reject<T>(namespace: &str, message: impl Display) -> Result<T, toml::de::Error> {
@@ -169,7 +213,7 @@ impl NamespaceSource {
     /// Parse the whole `[packages]` table, validating each namespace.
     pub(super) fn parse_table(
         value: toml::Value,
-    ) -> Result<HashMap<String, NamespaceSource>, toml::de::Error> {
+    ) -> Result<HashMap<String, NamespaceEntry>, toml::de::Error> {
         let raw: HashMap<String, NamespaceSourceRaw> = value.try_into()?;
         raw.into_iter()
             .map(|(namespace, entry)| {
@@ -178,10 +222,47 @@ impl NamespaceSource {
             .collect()
     }
 
+    /// Validate the `packages` key: the list of package names this table's
+    /// source is limited to, or `None` when the key is absent.
+    fn only(
+        namespace: &str,
+        packages: Option<Vec<String>>,
+    ) -> Result<Option<Vec<String>>, toml::de::Error> {
+        let Some(packages) = packages else {
+            return Ok(None);
+        };
+        if packages.is_empty() {
+            return reject(
+                namespace,
+                "`packages` lists which packages this table applies to; an empty list applies \
+                 it to none — remove the table instead",
+            );
+        }
+        let mut seen = std::collections::HashSet::new();
+        for name in &packages {
+            if !typst_syntax::is_ident(name) {
+                return reject(
+                    namespace,
+                    format!(
+                        "`packages` names `{name}`, which is not a valid package name: letters, \
+                         digits, `_` and `-`, not starting with a digit"
+                    ),
+                );
+            }
+            if !seen.insert(name.as_str()) {
+                return reject(
+                    namespace,
+                    format!("`packages` names `{name}` more than once"),
+                );
+            }
+        }
+        Ok(Some(packages))
+    }
+
     fn from_raw(
         namespace: &str,
         raw: NamespaceSourceRaw,
-    ) -> Result<NamespaceSource, toml::de::Error> {
+    ) -> Result<NamespaceEntry, toml::de::Error> {
         // The key has to survive `parse_namespace` in an import spec, so an
         // invalid one must fail here rather than much later as an unresolvable
         // import that never names the config as the cause.
@@ -196,6 +277,8 @@ impl NamespaceSource {
             );
         }
 
+        let only = Self::only(namespace, raw.packages)?;
+
         let ref_keys = [
             ("branch", raw.branch.as_ref()),
             ("tag", raw.tag.as_ref()),
@@ -203,7 +286,7 @@ impl NamespaceSource {
             ("subdir", raw.subdir.as_ref()),
         ];
 
-        match (raw.repo, raw.releases, raw.path) {
+        let source = match (raw.repo, raw.releases, raw.path) {
             (Some(_), Some(_), _) | (Some(_), _, Some(_)) | (_, Some(_), Some(_)) => reject(
                 namespace,
                 "set exactly one of `repo` (a repository at a ref), `releases` (a releases host) \
@@ -256,7 +339,9 @@ impl NamespaceSource {
                     subdir: Self::subdir(namespace, raw.subdir)?,
                 }))
             }
-        }
+        }?;
+
+        Ok(NamespaceEntry { source, only })
     }
 
     fn releases(namespace: &str, value: String) -> Result<ReleasesSource, toml::de::Error> {
@@ -377,13 +462,17 @@ mod tests {
         RheoConfig::try_from(raw)
     }
 
-    fn source(rest: &str, namespace: &str) -> NamespaceSource {
+    fn entry(rest: &str, namespace: &str) -> NamespaceEntry {
         parse(rest)
             .expect("parse failed")
             .packages
             .get(namespace)
             .expect("namespace absent")
             .clone()
+    }
+
+    fn source(rest: &str, namespace: &str) -> NamespaceSource {
+        entry(rest, namespace).source
     }
 
     fn error(rest: &str) -> String {
@@ -592,6 +681,53 @@ mod tests {
         assert!(
             msg.contains("[packages.ns]") && msg.contains("{version}"),
             "error should name the missing placeholder, got: {msg}",
+        );
+    }
+
+    /// The worked example from the docs: a `packages` key limits the table's
+    /// source to the named packages, and every other package in the namespace
+    /// is untouched.
+    #[test]
+    fn packages_key_limits_which_names_apply() {
+        let e = entry(
+            "[packages.rheo]\nrepo = \"u\"\npackages = [\"contents-panel\"]",
+            "rheo",
+        );
+        assert!(e.applies_to("contents-panel"));
+        assert!(!e.applies_to("justify"));
+    }
+
+    #[test]
+    fn no_packages_key_applies_to_every_name() {
+        let e = entry("[packages.ns]\nrepo = \"u\"", "ns");
+        assert!(e.applies_to("anything"));
+        assert!(e.applies_to("something-else"));
+    }
+
+    #[test]
+    fn empty_packages_list_is_rejected() {
+        let msg = error("[packages.ns]\nrepo = \"u\"\npackages = []");
+        assert!(
+            msg.contains("[packages.ns]") && msg.contains("`packages`"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn duplicate_package_name_is_rejected() {
+        let msg = error("[packages.ns]\nrepo = \"u\"\npackages = [\"a\", \"a\"]");
+        assert!(
+            msg.contains("[packages.ns]") && msg.contains("more than once"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn invalid_package_name_is_rejected() {
+        let msg = error("[packages.ns]\nrepo = \"u\"\npackages = [\"bad name\"]");
+        assert!(
+            msg.contains("[packages.ns]") && msg.contains("not a valid package name"),
+            "{msg}"
         );
     }
 }

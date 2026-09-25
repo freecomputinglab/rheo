@@ -9,7 +9,9 @@ pub mod packages;
 pub mod retired;
 
 pub use manifest_version::ManifestVersion;
-pub use packages::{GitRef, NamespaceSource, PathSource, ReleasesSource, RepoSource};
+pub use packages::{
+    GitRef, NamespaceEntry, NamespaceSource, PathSource, ReleasesSource, RepoSource,
+};
 use retired::warn_on_retired_keys;
 pub use retired::{RETIRED_BINDINGS, RETIRED_KEYS, RetiredBinding, RetiredKey};
 
@@ -350,7 +352,7 @@ pub struct RheoConfig {
     /// from its built-in releases host, everything else from Typst universe. An
     /// entry for `rheo` overrides the built-in, which is how a project tests a
     /// branch of rheo-packages.
-    pub packages: HashMap<String, NamespaceSource>,
+    pub packages: HashMap<String, NamespaceEntry>,
 
     /// Unrecognized top-level scalar keys (e.g. a retired `marrow_prologue`),
     /// captured so [`warn_on_retired_keys`] can warn on one still set in an
@@ -1395,7 +1397,8 @@ mod tests {
         .unwrap();
 
         let config = RheoConfig::load_from_path(&config_path).expect("load failed");
-        let NamespaceSource::Path(source) = config.packages.get("ns").expect("namespace absent")
+        let NamespaceSource::Path(source) =
+            &config.packages.get("ns").expect("namespace absent").source
         else {
             panic!("expected a path source");
         };
@@ -1416,7 +1419,8 @@ mod tests {
         .unwrap();
 
         let config = RheoConfig::load_from_path(&config_path).expect("load failed");
-        let NamespaceSource::Path(source) = config.packages.get("ns").expect("namespace absent")
+        let NamespaceSource::Path(source) =
+            &config.packages.get("ns").expect("namespace absent").source
         else {
             panic!("expected a path source");
         };
