@@ -346,8 +346,8 @@ impl Build {
         let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
         let mut package_roots: Vec<PathBuf> = packages
             .source_roots()
-            .filter(|(namespace, _)| resolver.is_path_backed(namespace))
-            .map(|(_, root)| root.to_path_buf())
+            .filter(|(namespace, name, _)| resolver.is_path_backed(namespace, name))
+            .map(|(_, _, root)| root.to_path_buf())
             .collect();
 
         for plugin in &self.plugins {
@@ -2164,7 +2164,7 @@ mod tests {
     /// gated on whether the package happens to declare an asset block.
     #[test]
     fn test_watch_asset_spec_watches_path_backed_package_without_assets() {
-        use crate::config::{NamespaceSource, PathSource};
+        use crate::config::{NamespaceEntry, NamespaceSource, PathSource};
         use crate::project::ProjectConfig;
 
         let dir = tempfile::tempdir().expect("tempdir");
@@ -2194,10 +2194,13 @@ mod tests {
                 formats: vec!["html".to_string()],
                 packages: HashMap::from([(
                     "demo".to_string(),
-                    NamespaceSource::Path(PathSource {
-                        root: root.join("pkgs"),
-                        subdir: String::new(),
-                    }),
+                    NamespaceEntry::new(
+                        NamespaceSource::Path(PathSource {
+                            root: root.join("pkgs"),
+                            subdir: String::new(),
+                        }),
+                        None,
+                    ),
                 )]),
                 ..Default::default()
             },

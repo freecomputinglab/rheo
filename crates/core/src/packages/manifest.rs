@@ -146,7 +146,7 @@ fn resolve_package(
     search_dirs: &[PathBuf],
 ) -> Option<ResolvedPackage> {
     let (namespace, name, version) = parse_package_spec(spec)?;
-    if !resolver.is_configured(namespace) {
+    if !resolver.is_configured(namespace, name) {
         return find_package_in_dirs(spec, search_dirs);
     }
     let parsed = PackageSpec::from_str(spec).ok()?;
@@ -420,7 +420,7 @@ impl PackageIndex {
                 let source_mode = pkg
                     .namespace
                     .as_deref()
-                    .is_some_and(|ns| resolver.is_source_backed(ns));
+                    .is_some_and(|ns| resolver.is_source_backed(ns, &pkg.name));
                 Some(IndexEntry {
                     spec: spec.clone(),
                     pkg,
@@ -446,16 +446,18 @@ impl PackageIndex {
             .collect()
     }
 
-    /// Every resolved package's namespace and source directory, independent of
-    /// whether it declares any `[tool.rheo.*]` assets — unlike
+    /// Every resolved package's namespace, name and source directory,
+    /// independent of whether it declares any `[tool.rheo.*]` assets — unlike
     /// [`manifest_assets`](Self::manifest_assets), which only ever sees a
     /// package that declares one. The watcher needs this wider view: a
     /// `path`-backed package's tree must be watched whether or not it ships an
-    /// asset block.
-    pub fn source_roots(&self) -> impl Iterator<Item = (&str, &Path)> {
+    /// asset block. The name rides along because a `packages` key limits a
+    /// table to some names in its namespace, not the whole namespace.
+    pub fn source_roots(&self) -> impl Iterator<Item = (&str, &str, &Path)> {
         self.resolved.iter().filter_map(|entry| {
             Some((
                 entry.pkg.namespace.as_deref()?,
+                entry.pkg.name.as_str(),
                 entry.pkg.source_root.as_path(),
             ))
         })
@@ -605,7 +607,7 @@ pub fn prewarm_packages(import_paths: &[String], resolver: &PackageResolver) {
         // `[packages.rheo]` overrides the built-in `@rheo` in both places. A
         // divergence between them is a package that compiles from one source and
         // prewarms from another.
-        if !resolver.is_prewarmable(&spec.namespace) {
+        if !resolver.is_prewarmable(spec.namespace.as_str(), spec.name.as_str()) {
             continue;
         }
         if let Err(e) = resolver.obtain(&spec) {
@@ -1169,27 +1171,30 @@ css_stylesheet = "style.css"
     /// compile-time fetch.
     #[test]
     fn prewarm_does_not_skip_a_configured_namespace() {
-        use crate::config::{GitRef, NamespaceSource, RepoSource};
+        use crate::config::{GitRef, NamespaceEntry, NamespaceSource, RepoSource};
 
         let mut sources = std::collections::HashMap::new();
         sources.insert(
             "rookery".to_string(),
-            NamespaceSource::Repo(RepoSource {
-                url: "https://example.invalid/rookery".to_string(),
-                git_ref: GitRef::Branch("main".to_string()),
-                subdir: String::new(),
-            }),
+            NamespaceEntry::new(
+                NamespaceSource::Repo(RepoSource {
+                    url: "https://example.invalid/rookery".to_string(),
+                    git_ref: GitRef::Branch("main".to_string()),
+                    subdir: String::new(),
+                }),
+                None,
+            ),
         );
         let resolver = PackageResolver::new(&sources);
 
         assert!(
-            resolver.is_prewarmable("rookery"),
+            resolver.is_prewarmable("rookery", "anything"),
             "a configured namespace must be warmed"
         );
-        assert!(resolver.is_prewarmable("preview"));
-        assert!(resolver.is_prewarmable("rheo"));
+        assert!(resolver.is_prewarmable("preview", "anything"));
+        assert!(resolver.is_prewarmable("rheo", "anything"));
         assert!(
-            !resolver.is_prewarmable("local"),
+            !resolver.is_prewarmable("local", "anything"),
             "an unconfigured namespace is still skipped"
         );
     }
@@ -1198,16 +1203,51 @@ css_stylesheet = "style.css"
     /// it — the ordering `path_for_id` and pre-warm must agree on.
     #[test]
     fn a_configured_rheo_namespace_overrides_the_built_in() {
-        use crate::config::{NamespaceSource, ReleasesSource};
+        use crate::config::{NamespaceEntry, NamespaceSource, ReleasesSource};
 
         let mut sources = std::collections::HashMap::new();
         sources.insert(
             "rheo".to_string(),
-            NamespaceSource::Releases(ReleasesSource::Base("https://example.invalid".to_string())),
+            NamespaceEntry::new(
+                NamespaceSource::Releases(ReleasesSource::Base(
+                    "https://example.invalid".to_string(),
+                )),
+                None,
+            ),
         );
         let resolver = PackageResolver::new(&sources);
-        assert!(resolver.is_configured("rheo"));
-        assert!(resolver.is_prewarmable("rheo"));
+        assert!(resolver.is_configured("rheo", "anything"));
+        assert!(resolver.is_prewarmable("rheo", "anything"));
+    }
+
+    /// A `packages` key limits a table to the names it lists: the rest of the
+    /// namespace resolves as if the table were absent, so a source-backed
+    /// package cannot drag its whole namespace's other packages along with it.
+    #[test]
+    fn packages_key_limits_source_backing_to_named_packages() {
+        use crate::config::{GitRef, NamespaceEntry, NamespaceSource, RepoSource};
+
+        let mut sources = std::collections::HashMap::new();
+        sources.insert(
+            "rheo".to_string(),
+            NamespaceEntry::new(
+                NamespaceSource::Repo(RepoSource {
+                    url: "https://example.invalid/rheo-packages".to_string(),
+                    git_ref: GitRef::Branch("dev".to_string()),
+                    subdir: String::new(),
+                }),
+                Some(vec!["contents-panel".to_string()]),
+            ),
+        );
+        let resolver = PackageResolver::new(&sources);
+
+        assert!(resolver.is_source_backed("rheo", "contents-panel"));
+        assert!(!resolver.is_source_backed("rheo", "justify"));
+        assert!(!resolver.is_configured("rheo", "justify"));
+        assert!(
+            resolver.is_prewarmable("rheo", "justify"),
+            "the built-in @rheo default still applies to an unnamed package"
+        );
     }
 
     /// An index over one package living at `<base>/testns/testpkg/0.1.0`.
