@@ -70,6 +70,7 @@
             # Temporary dev tools for comparison
             pandoc
             just
+            hyperfine
             # calibre # first example of ebook-convert command
             # fish # was needed for Justfile scripts in early phases, shouldn't be relevant now
           ] ++ [
