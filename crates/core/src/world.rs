@@ -3,7 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::config::RESERVED_INPUT_KEY;
+use crate::build::Ligaments;
+use crate::config::{RESERVED_INPUT_KEY, RESERVED_LIGAMENTS_INPUT_KEY};
 use crate::diagnostics::DiagnosticReport;
 use crate::packages::PackageResolver;
 use crate::reticulate::VertebraInjection;
@@ -27,35 +28,46 @@ use typst_library::foundations::Duration;
 
 /// Build sys.inputs Dict for Typst compilation.
 ///
-/// Two sources. `rheo-context` is rheo's own, carrying the spine and the output
-/// format (which is surfaced ONLY via `rheo-context.target`, read by the
-/// injected `target()` polyfill and the `rheo.typ` helpers — there is no
-/// separate `rheo-target` key). `user_inputs` is whatever the project asked for
-/// via `rheo.toml [inputs]` and `--input KEY=VALUE`, which is how a build script
-/// parameterises a compile — Typst has no environment access, so `sys.inputs` is
-/// the only channel there is. `@rheo/rookery`'s `exclude-tags` is the first
-/// consumer.
+/// Three sources. `rheo-context` is rheo's own, carrying the spine and the
+/// output format (which is surfaced ONLY via `rheo-context.target`, read by
+/// the injected `target()` polyfill and the `rheo.typ` helpers — there is no
+/// separate `rheo-target` key). `ligaments` is the previous compile's
+/// harvested [`Ligaments`] (see `crate::build::Ligaments`), fed back so a
+/// narrower compile that skips a vertebra can still answer a cross-vertebra
+/// read that vertebra would normally answer — absent entirely, not an empty
+/// dict, when no `Ligaments` is supplied (the ordinary case today).
+/// `user_inputs` is whatever the project asked for via `rheo.toml [inputs]`
+/// and `--input KEY=VALUE`, which is how a build script parameterises a
+/// compile — Typst has no environment access, so `sys.inputs` is the only
+/// channel there is. `@rheo/rookery`'s `exclude-tags` is the first consumer.
 ///
 /// EVERY USER VALUE IS A STRING, with no coercion. `typst compile --input` hands
 /// Typst a string, so rheo must too, or a package written against one spelling
-/// misbehaves under the other.
+/// misbehaves under the other. `rheo-context`/`rheo-ligaments` are the
+/// exception, carrying native Typst values rather than strings — a waterline
+/// spike found `json.encode`/`json(bytes(..))` silently turns a `datetime`
+/// into its `repr()` string form, so neither is ever JSON-encoded.
 ///
-/// `rheo-context` is inserted LAST, so it cannot be displaced by a user key even
-/// if a caller of this library bypasses the CLI's own rejection of
-/// [`RESERVED_INPUT_KEY`].
+/// `rheo-context` and `rheo-ligaments` are inserted LAST, so neither can be
+/// displaced by a user key even if a caller of this library bypasses the
+/// CLI's own rejection of [`RESERVED_INPUT_KEY`]/[`RESERVED_LIGAMENTS_INPUT_KEY`].
 fn build_inputs(
     rheo_context: Option<&TypstLiteral>,
     user_inputs: &HashMap<String, String>,
+    ligaments: Option<&Ligaments>,
 ) -> Dict {
     let mut dict = Dict::new();
     for (key, value) in user_inputs {
-        if key == RESERVED_INPUT_KEY {
+        if key == RESERVED_INPUT_KEY || key == RESERVED_LIGAMENTS_INPUT_KEY {
             continue;
         }
         dict.insert(key.as_str().into(), Value::Str(value.as_str().into()));
     }
     if let Some(ctx) = rheo_context {
         dict.insert(RESERVED_INPUT_KEY.into(), ctx.to_value());
+    }
+    if let Some(ligaments) = ligaments {
+        dict.insert(RESERVED_LIGAMENTS_INPUT_KEY.into(), ligaments.to_value());
     }
     dict
 }
@@ -107,9 +119,15 @@ pub struct WorldSpec {
     pub rheo_context: Arc<HashMap<String, VertebraInjection>>,
     /// The file-independent context seeded onto `sys.inputs.rheo-context`.
     pub global_context: Option<TypstLiteral>,
+    /// A previous compile's harvested ligaments, seeded onto
+    /// `sys.inputs.rheo-ligaments` when present. `None` leaves the key
+    /// entirely absent — the ordinary case today, since nothing yet narrows
+    /// which vertebrae compile.
+    pub ligaments: Option<Ligaments>,
     /// Project-supplied `sys.inputs` keys, from `rheo.toml [inputs]` and
     /// `--input KEY=VALUE`. Values are always strings. A key equal to
-    /// [`RESERVED_INPUT_KEY`] is ignored rather than honoured.
+    /// [`RESERVED_INPUT_KEY`] or [`RESERVED_LIGAMENTS_INPUT_KEY`] is ignored
+    /// rather than honoured.
     pub user_inputs: HashMap<String, String>,
     /// Extra font directories to scan. Ignored when `fonts` is set — that store
     /// was scanned with these directories already.
@@ -178,6 +196,7 @@ impl RheoWorld {
             .with_inputs(build_inputs(
                 spec.global_context.as_ref(),
                 &spec.user_inputs,
+                spec.ligaments.as_ref(),
             ))
             .build();
 
@@ -772,14 +791,87 @@ mod tests {
             ("spine".to_string(), TypstLiteral::Array(vec![])),
             ("target".to_string(), TypstLiteral::str("html")),
         ]);
-        let dict = build_inputs(Some(&ctx), &HashMap::new());
+        let dict = build_inputs(Some(&ctx), &HashMap::new(), None);
         assert!(dict.contains("rheo-context"));
         // The deprecated top-level key is gone; format lives in rheo-context.target.
         assert!(!dict.contains("rheo-target"));
+        // No ligaments supplied: the key is genuinely absent, not an empty dict.
+        assert!(!dict.contains("rheo-ligaments"));
 
-        let empty = build_inputs(None, &HashMap::new());
+        let empty = build_inputs(None, &HashMap::new(), None);
         assert!(!empty.contains("rheo-context"));
         assert!(!empty.contains("rheo-target"));
+    }
+
+    /// A native dict inserted under `RESERVED_LIGAMENTS_INPUT_KEY` survives
+    /// intact — including a `datetime` value staying a real `datetime` rather
+    /// than becoming a string, which is the one correctness-critical property
+    /// of feeding ligaments back as a native Typst value instead of JSON (see
+    /// `build_inputs`'s doc comment).
+    #[test]
+    fn build_inputs_round_trips_native_ligaments_value_including_datetime() {
+        use crate::build::{Ligaments, VertebraLigaments};
+        use crate::reticulate::handle::Handle;
+        use std::collections::HashMap as StdHashMap;
+        use typst::foundations::Datetime;
+
+        let date = Datetime::from_ymd(2024, 1, 1).unwrap();
+        let mut per_page = StdHashMap::new();
+        per_page.insert(
+            Handle::new("chapters:intro"),
+            VertebraLigaments {
+                attaches: vec![("tag:post".to_string(), Value::Datetime(date))],
+                binds: Default::default(),
+            },
+        );
+        let ligaments = Ligaments { per_page };
+
+        let dict = build_inputs(None, &HashMap::new(), Some(&ligaments));
+        assert!(dict.contains(RESERVED_LIGAMENTS_INPUT_KEY));
+        let Value::Dict(top) = dict.at(RESERVED_LIGAMENTS_INPUT_KEY.into(), None).unwrap() else {
+            panic!("rheo-ligaments must be a dict");
+        };
+        let Value::Dict(attaches) = top.get("attaches").unwrap().clone() else {
+            panic!("attaches must be a dict");
+        };
+        let Value::Array(pairs) = attaches.get("tag:post").unwrap().clone() else {
+            panic!("tag:post must be an array");
+        };
+        assert_eq!(pairs.len(), 1);
+        let Value::Dict(pair) = pairs.as_slice().first().unwrap().clone() else {
+            panic!("pair must be a dict");
+        };
+        assert_eq!(
+            pair.get("page").unwrap().clone(),
+            Value::Str("chapters:intro".into())
+        );
+        assert_eq!(pair.get("value").unwrap().clone(), Value::Datetime(date));
+    }
+
+    /// Absent the whole key means "no ligaments supplied" — callers must be
+    /// able to tell that from "ligaments supplied but nothing attached".
+    #[test]
+    fn build_inputs_omits_ligaments_key_when_none_supplied() {
+        let dict = build_inputs(None, &HashMap::new(), None);
+        assert!(!dict.contains(RESERVED_LIGAMENTS_INPUT_KEY));
+    }
+
+    /// A user key named `rheo-ligaments` is ignored, not honoured — the same
+    /// protection `rheo-context` already gets.
+    #[test]
+    fn build_inputs_protects_rheo_ligaments_from_user_override() {
+        use crate::build::Ligaments;
+
+        let mut hostile = HashMap::new();
+        hostile.insert(
+            RESERVED_LIGAMENTS_INPUT_KEY.to_string(),
+            "forged".to_string(),
+        );
+        let dict = build_inputs(None, &hostile, Some(&Ligaments::default()));
+        assert_ne!(
+            dict.at(RESERVED_LIGAMENTS_INPUT_KEY.into(), None).unwrap(),
+            Value::Str("forged".into()),
+        );
     }
 
     /// Project-supplied inputs reach `sys.inputs` as STRINGS, and cannot displace
@@ -797,7 +889,7 @@ mod tests {
         );
         user.insert("empty-is-fine".to_string(), String::new());
 
-        let dict = build_inputs(Some(&ctx), &user);
+        let dict = build_inputs(Some(&ctx), &user, None);
         assert_eq!(
             dict.at("rookery-exclude".into(), None).unwrap(),
             Value::Str("private,protected".into()),
@@ -812,7 +904,7 @@ mod tests {
         // that key must still be rheo's own dict, never the user's string.
         let mut hostile = HashMap::new();
         hostile.insert(RESERVED_INPUT_KEY.to_string(), "forged".to_string());
-        let dict = build_inputs(Some(&ctx), &hostile);
+        let dict = build_inputs(Some(&ctx), &hostile, None);
         assert_ne!(
             dict.at(RESERVED_INPUT_KEY.into(), None).unwrap(),
             Value::Str("forged".into()),
@@ -820,7 +912,7 @@ mod tests {
 
         // With no rheo context at all it is simply absent — a user key cannot
         // conjure one into being either.
-        let dict = build_inputs(None, &hostile);
+        let dict = build_inputs(None, &hostile, None);
         assert!(!dict.contains(RESERVED_INPUT_KEY));
     }
 
@@ -955,6 +1047,206 @@ mod tests {
         world
             .compile_bundle()
             .expect("rheo-metadata must be callable from marrow scope");
+    }
+
+    /// `rheo-metadata-impl` falls back to the ligament-harvested beacon dict
+    /// when the live `query(label("rheo-meta:" + handle))` finds nothing —
+    /// the shape of a narrower compile that skipped the queried vertebra
+    /// entirely. Only `second` compiles here; `intro` has no `#document` at
+    /// all, so its beacon dict comes purely from `WorldSpec::ligaments`.
+    #[test]
+    fn rheo_metadata_falls_back_to_ligaments_when_live_beacon_absent() {
+        use crate::build::{Ligaments, VertebraLigaments};
+        use crate::reticulate::handle::Handle;
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let mut source_overlay = HashMap::new();
+        source_overlay.insert("content/second.typ".to_string(), "= Second\n".to_string());
+
+        let mut rheo_context = HashMap::new();
+        rheo_context.insert(
+            "content/second.typ".to_string(),
+            VertebraInjection {
+                generated: format!(
+                    "{}\n\n{}",
+                    TypstStmt::MetadataHelper,
+                    TypstStmt::ContextBinding {
+                        handle: "second".into()
+                    }
+                ),
+                project_prelude: None,
+                epilogue: String::new(),
+            },
+        );
+
+        let mut beacon_value = Dict::new();
+        beacon_value.insert("handle".into(), Value::Str("intro".into()));
+        beacon_value.insert("title".into(), Value::Str("Intro Title".into()));
+        let mut per_page = HashMap::new();
+        per_page.insert(
+            Handle::new("intro"),
+            VertebraLigaments {
+                attaches: vec![("rheo-meta:intro".to_string(), Value::Dict(beacon_value))],
+                binds: Default::default(),
+            },
+        );
+        let ligaments = Ligaments { per_page };
+
+        let main = r#"
+#document("second.html", format: "html")[
+  #include "content/second.typ"
+]
+
+#context { assert(rheo-metadata("intro").title == "Intro Title") }
+"#
+        .to_string();
+
+        let world = RheoWorld::new_for_bundle(
+            root,
+            main,
+            WorldSpec {
+                source_overlay: Arc::new(source_overlay),
+                rheo_context: Arc::new(rheo_context),
+                format_name: Some("html".to_string()),
+                ligaments: Some(ligaments),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        world.compile_bundle().expect(
+            "rheo-metadata must fall back to the ligament-harvested beacon dict \
+             when the live query finds nothing",
+        );
+    }
+
+    /// `rheo-ligament-get` returns `none` when `rheo-ligaments` is absent
+    /// from `sys.inputs` entirely — the ordinary compile today, since
+    /// nothing yet supplies `WorldSpec::ligaments`.
+    #[test]
+    fn rheo_ligament_get_returns_none_without_ligaments_input() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let main = r#"#assert(rheo-ligament-get("tag:post") == none)"#.to_string();
+        let world = RheoWorld::new_for_bundle(
+            root,
+            main,
+            WorldSpec {
+                format_name: Some("html".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        world
+            .compile_bundle()
+            .expect("rheo-ligament-get must return none with no ligaments supplied");
+    }
+
+    /// With ligaments supplied, `rheo-ligament-get` tells "nothing attached
+    /// this key" (an empty array) from "the key was attached" (the right
+    /// `(page, value)` pairs) — the `none`-vs-empty-array distinction is
+    /// load-bearing (see the bird's decision 4).
+    #[test]
+    fn rheo_ligament_get_distinguishes_unknown_key_from_known_key() {
+        use crate::build::{Ligaments, VertebraLigaments};
+        use crate::reticulate::handle::Handle;
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let mut per_page = HashMap::new();
+        per_page.insert(
+            Handle::new("a"),
+            VertebraLigaments {
+                attaches: vec![("tag:post".to_string(), Value::Str("A".into()))],
+                binds: Default::default(),
+            },
+        );
+        let ligaments = Ligaments { per_page };
+
+        let main = r#"
+#assert(rheo-ligament-get("unknown-key") == ())
+#let pairs = rheo-ligament-get("tag:post")
+#assert(pairs.len() == 1)
+#assert(pairs.first().page == "a")
+#assert(pairs.first().value == "A")
+"#
+        .to_string();
+        let world = RheoWorld::new_for_bundle(
+            root,
+            main,
+            WorldSpec {
+                format_name: Some("html".to_string()),
+                ligaments: Some(ligaments),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        world.compile_bundle().expect(
+            "rheo-ligament-get must return an empty array for an unknown key and the right \
+             pairs for a known one",
+        );
+    }
+
+    /// Regression for decision 6 of `rh-index-backed-cross-vertebra-reads`:
+    /// `rheo-link-rule` resolves a cross-vertebra href purely from
+    /// `_rheo-handles()` (`sys.inputs.rheo-context.spine-flat`), which lists
+    /// the WHOLE spine regardless of which vertebrae actually compiled this
+    /// time — so it needs no ligaments to build the right href for a handle
+    /// that is not otherwise part of this compile. No ligaments are supplied
+    /// here at all. If this ever fails, that means the recon assumption
+    /// behind skipping ligament-based link resolution was wrong — this bird
+    /// does not add that mechanism (see its Non-goals).
+    #[test]
+    fn rheo_link_rule_resolves_handle_absent_from_this_compile() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let global_context = TypstLiteral::Dict(vec![
+            ("ext".to_string(), TypstLiteral::str("html")),
+            (
+                "spine-flat".to_string(),
+                TypstLiteral::Array(vec![
+                    TypstLiteral::Dict(vec![
+                        ("handle".to_string(), TypstLiteral::str("a")),
+                        ("path".to_string(), TypstLiteral::str("content/a.typ")),
+                    ]),
+                    TypstLiteral::Dict(vec![
+                        ("handle".to_string(), TypstLiteral::str("b")),
+                        ("path".to_string(), TypstLiteral::str("content/b.typ")),
+                    ]),
+                ]),
+            ),
+        ]);
+
+        // "a" is listed in spine-flat but never compiled in this bundle at
+        // all (no #document for it anywhere in `main`) — the shape of a
+        // narrower compile that skipped it.
+        let main = r#"
+#assert(rheo-link-rule("b")(link(<a>)[A]) == link("./a.html")[A])
+"#
+        .to_string();
+
+        let world = RheoWorld::new_for_bundle(
+            root,
+            main,
+            WorldSpec {
+                global_context: Some(global_context),
+                format_name: Some("html".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        world.compile_bundle().expect(
+            "rheo-link-rule must resolve a handle absent from this compile using spine-flat \
+             alone, with no ligaments involved",
+        );
     }
 
     /// The companion `rheo-metadata-all()` — marrow-scope only (never in the

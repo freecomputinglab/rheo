@@ -15,7 +15,9 @@
 
 use crate::reticulate::handle::Handle;
 use crate::synth::typst_literal::{TypstLiteral, escape_typst_content};
-use crate::util::constants::{METADATA_MODULE_PATH, RHEO_TEMPLATE_MODULE_PATH};
+use crate::util::constants::{
+    METADATA_MODULE_PATH, RESERVED_LIGAMENT_LABEL_PREFIX, RHEO_TEMPLATE_MODULE_PATH,
+};
 use std::fmt;
 
 /// A synthesized top-level Typst statement, rendered via [`fmt::Display`].
@@ -231,9 +233,11 @@ impl fmt::Display for TypstStmt {
             }
             TypstStmt::MetadataBeacon { handle } => write!(
                 f,
-                "#context [#metadata((handle: {handle_lit}, title: document.title, author: document.author, description: document.description, keywords: document.keywords, date: document.date)) <{label}>]",
+                "#context [#metadata((handle: {handle_lit}, title: document.title, author: document.author, description: document.description, keywords: document.keywords, date: document.date)) <{label}>\n#metadata((page: {handle_lit}, key: {ligament_key_lit}, value: (handle: {handle_lit}, title: document.title, author: document.author, description: document.description, keywords: document.keywords, date: document.date))) <{ligament_label}attach>]",
                 handle_lit = quote(handle),
                 label = handle.meta_label(),
+                ligament_key_lit = quote(handle.meta_label()),
+                ligament_label = RESERVED_LIGAMENT_LABEL_PREFIX,
             ),
             TypstStmt::StateUpdate { key, value } => {
                 write!(f, "#state({}).update({})", quote(key), value.serialize())
@@ -349,7 +353,8 @@ mod tests {
         };
         assert_eq!(
             stmt.to_string(),
-            "#context [#metadata((handle: \"chapters:intro\", title: document.title, author: document.author, description: document.description, keywords: document.keywords, date: document.date)) <rheo-meta:chapters:intro>]"
+            "#context [#metadata((handle: \"chapters:intro\", title: document.title, author: document.author, description: document.description, keywords: document.keywords, date: document.date)) <rheo-meta:chapters:intro>\n\
+             #metadata((page: \"chapters:intro\", key: \"rheo-meta:chapters:intro\", value: (handle: \"chapters:intro\", title: document.title, author: document.author, description: document.description, keywords: document.keywords, date: document.date))) <rheo-ligament:attach>]"
         );
     }
 

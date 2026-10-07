@@ -135,6 +135,14 @@ pub struct Build {
     /// to be queried by a caller (a later compile pass, a sibling bird's
     /// `sys.inputs` feed).
     ligaments: Mutex<Ligaments>,
+    /// A previous compile's harvest, set by [`Build::set_incoming_ligaments`]
+    /// and fed onto `sys.inputs.rheo-ligaments` by every
+    /// [`Build::compile_bundle_once`] call thereafter — the feed-back half of
+    /// the mechanism [`Self::ligaments`] is the harvesting half of. `None`
+    /// (the default) leaves `rheo-ligaments` absent from `sys.inputs`
+    /// entirely. Nothing in this build narrows which vertebrae compile based
+    /// on it — that is a sibling bird's job.
+    incoming_ligaments: Mutex<Option<Ligaments>>,
     /// Read only by the instrumentation, which is what the feature gates.
     #[cfg(feature = "timings")]
     iterations: bool,
@@ -194,6 +202,49 @@ pub struct VertebraLigaments {
 #[derive(Debug, Clone, Default)]
 pub struct Ligaments {
     pub per_page: HashMap<Handle, VertebraLigaments>,
+}
+
+impl Ligaments {
+    /// The native Typst value fed back onto `sys.inputs.rheo-ligaments` (see
+    /// `crate::world::build_inputs` and `docs/contract.md`'s "Ligaments"
+    /// section): `(attaches: (<key>: ((page: <handle>, value: <v>), ...), ...))`
+    /// — one entry per attached key, each a list of `(page, value)` pairs,
+    /// since more than one vertebra may attach the same key. Bound keys are
+    /// NOT part of this value; they stay Rust-side only, for a future
+    /// compile-narrowing bird to read back from [`Build::ligaments`] directly.
+    ///
+    /// Built as a native `Dict`/`Array`/`Str`, never through
+    /// `TypstLiteral`'s string-serializing path or JSON: a waterline spike
+    /// found both silently turn a `datetime` value into its `repr()` string
+    /// form, which this must not do to an attach's opaque value.
+    pub fn to_value(&self) -> typst::foundations::Value {
+        use typst::foundations::{Array, Dict, Value};
+
+        let mut by_key: std::collections::BTreeMap<&str, Vec<Value>> = Default::default();
+        for (handle, vertebra) in &self.per_page {
+            for (key, value) in &vertebra.attaches {
+                let mut pair = Dict::new();
+                pair.insert("page".into(), Value::Str(handle.to_string().into()));
+                pair.insert("value".into(), value.clone());
+                by_key
+                    .entry(key.as_str())
+                    .or_default()
+                    .push(Value::Dict(pair));
+            }
+        }
+
+        let mut attaches = Dict::new();
+        for (key, pairs) in by_key {
+            attaches.insert(
+                key.into(),
+                Value::Array(pairs.into_iter().collect::<Array>()),
+            );
+        }
+
+        let mut top = Dict::new();
+        top.insert("attaches".into(), Value::Dict(attaches));
+        Value::Dict(top)
+    }
 }
 
 /// The result of [`Build::resolve_spine_scan`]: the merged spine config's
@@ -312,6 +363,8 @@ impl Build {
         // (the CLI in `parse_inputs`, the config in its `TryFrom`), and
         // `build_inputs` refuses it a third time — a library caller can construct
         // `WorldSpec` directly, so the last line of defence lives there.
+        // `config::RESERVED_LIGAMENTS_INPUT_KEY` is merged and guarded the
+        // same way, at all three of the same sites.
         let mut inputs = project.config.inputs.clone();
         inputs.extend(opts.inputs);
 
@@ -331,6 +384,7 @@ impl Build {
             current_timings_target: Mutex::new(None),
             metadata_two_pass: opts.metadata_two_pass,
             ligaments: Mutex::new(Ligaments::default()),
+            incoming_ligaments: Mutex::new(None),
             #[cfg(feature = "timings")]
             iterations: opts.iterations,
         })
@@ -482,6 +536,14 @@ impl Build {
     /// consumed once.
     pub fn ligaments(&self) -> Ligaments {
         self.ligaments.lock().clone()
+    }
+
+    /// Supply a previous compile's harvest to feed onto
+    /// `sys.inputs.rheo-ligaments` for every compile from here on, until the
+    /// next call. Nothing calls this today — it exists for a sibling bird
+    /// that narrows a `watch` rebuild to feed back the last full harvest.
+    pub fn set_incoming_ligaments(&self, ligaments: Ligaments) {
+        *self.incoming_ligaments.lock() = Some(ligaments);
     }
 
     /// Run `f`, logging and accumulating how long it took under `phase`.
@@ -917,6 +979,7 @@ impl Build {
                 fonts: Some(self.fonts()),
                 user_inputs: self.inputs.clone(),
                 packages: Some(Arc::clone(resolver)),
+                ligaments: self.incoming_ligaments.lock().clone(),
                 ..Default::default()
             },
         )?;
@@ -2557,6 +2620,11 @@ mod tests {
         build.run().expect("run build");
         let index = build.ligaments();
 
+        // Every OnePerVertebra page also attaches its own `rheo-meta:<handle>`
+        // ligament, dogfooding the beacon dict for the metadata-fallback path
+        // (see `crates/core/src/typ/metadata.typ`'s `rheo-metadata-impl`) —
+        // filtered out here since this test is about the project's OWN
+        // package-minted key, not rheo's own.
         let a = index
             .per_page
             .get(&Handle::new("a"))
@@ -2565,6 +2633,7 @@ mod tests {
             a.attaches
                 .iter()
                 .map(|(k, _)| k.as_str())
+                .filter(|k| *k != "rheo-meta:a")
                 .collect::<Vec<_>>(),
             vec!["tag:post"]
         );
@@ -2578,6 +2647,7 @@ mod tests {
             b.attaches
                 .iter()
                 .map(|(k, _)| k.as_str())
+                .filter(|k| *k != "rheo-meta:b")
                 .collect::<Vec<_>>(),
             vec!["tag:post"]
         );
@@ -2628,10 +2698,21 @@ mod tests {
         build.run().expect("run build");
         let index = build.ligaments();
 
-        assert!(
-            index.per_page.is_empty(),
+        // `a`'s own `rheo-meta:a` dogfooded ligament is expected here — only
+        // the orphaned marrow-prologue attach (page `none`) must be dropped.
+        let a = index
+            .per_page
+            .get(&Handle::new("a"))
+            .expect("page a harvested its own rheo-meta ligament");
+        assert_eq!(
+            a.attaches
+                .iter()
+                .map(|(k, _)| k.as_str())
+                .collect::<Vec<_>>(),
+            vec!["rheo-meta:a"],
             "the missing-page node should be dropped, not attributed to any page: {:?}",
             index.per_page
         );
+        assert_eq!(index.per_page.len(), 1);
     }
 }
