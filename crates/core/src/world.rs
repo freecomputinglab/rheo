@@ -1149,7 +1149,7 @@ mod tests {
     /// With ligaments supplied, `rheo-ligament-get` tells "nothing attached
     /// this key" (an empty array) from "the key was attached" (the right
     /// `(page, value)` pairs) — the `none`-vs-empty-array distinction is
-    /// load-bearing (see the bird's decision 4).
+    /// load-bearing.
     #[test]
     fn rheo_ligament_get_distinguishes_unknown_key_from_known_key() {
         use crate::build::{Ligaments, VertebraLigaments};
@@ -1193,15 +1193,13 @@ mod tests {
         );
     }
 
-    /// Regression for decision 6 of `rh-index-backed-cross-vertebra-reads`:
     /// `rheo-link-rule` resolves a cross-vertebra href purely from
     /// `_rheo-handles()` (`sys.inputs.rheo-context.spine-flat`), which lists
     /// the WHOLE spine regardless of which vertebrae actually compiled this
     /// time — so it needs no ligaments to build the right href for a handle
     /// that is not otherwise part of this compile. No ligaments are supplied
-    /// here at all. If this ever fails, that means the recon assumption
-    /// behind skipping ligament-based link resolution was wrong — this bird
-    /// does not add that mechanism (see its Non-goals).
+    /// here at all, and link resolution does not consult them: the handle
+    /// list alone is enough.
     #[test]
     fn rheo_link_rule_resolves_handle_absent_from_this_compile() {
         let tmp = TempDir::new().unwrap();

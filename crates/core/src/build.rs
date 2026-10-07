@@ -131,21 +131,76 @@ pub struct Build {
     /// The ligaments harvested from the most recently compiled bundle (see
     /// [`harvest_ligaments`]) — overwritten after every [`Build::compile_spine`]
     /// call, so a `watch` session's long-lived `Build` always holds the latest
-    /// harvest. Nothing in this build reads it back into a compile; it exists
-    /// to be queried by a caller (a later compile pass, a sibling bird's
-    /// `sys.inputs` feed).
+    /// harvest. [`Build::narrow_one_plugin`] reads this back directly to seed
+    /// and update its dependent-set chase.
     ligaments: Mutex<Ligaments>,
     /// A previous compile's harvest, set by [`Build::set_incoming_ligaments`]
     /// and fed onto `sys.inputs.rheo-ligaments` by every
     /// [`Build::compile_bundle_once`] call thereafter — the feed-back half of
     /// the mechanism [`Self::ligaments`] is the harvesting half of. `None`
     /// (the default) leaves `rheo-ligaments` absent from `sys.inputs`
-    /// entirely. Nothing in this build narrows which vertebrae compile based
-    /// on it — that is a sibling bird's job.
+    /// entirely. This only supplies the Typst-side cross-vertebra read; which
+    /// vertebrae actually get recompiled is decided separately, from
+    /// [`Self::ligaments`] (see [`Build::narrow_one_plugin`]).
     incoming_ligaments: Mutex<Option<Ligaments>>,
+    /// Set once this `Build` has completed a successful [`Build::run`] —
+    /// gates [`Build::rebuild`]'s narrowed-compile path: "no cached
+    /// ligaments" and "first build of a session" are the same condition,
+    /// since `self.ligaments` only ever holds a real harvest after a build
+    /// has actually happened.
+    has_built: std::sync::atomic::AtomicBool,
     /// Read only by the instrumentation, which is what the feature gates.
     #[cfg(feature = "timings")]
     iterations: bool,
+}
+
+/// Fraction of the spine's vertebra count beyond which a narrowed rebuild's
+/// dependent set abandons the narrowed path for a full rebuild instead — see
+/// [`Build::rebuild`] and [`Build::narrow_one_plugin`].
+const NARROWED_REBUILD_DEPENDENT_FRACTION: f64 = 0.25;
+
+/// Which path a [`Build::rebuild`] call took, named only for the one INFO
+/// line it logs (`narrowed: ...` / `full rebuild: ...`) — an external monitor
+/// greps for these two literal prefixes, so the shapes are fixed.
+enum RebuildPath {
+    Narrowed { rounds: usize, handles: Vec<Handle> },
+    Full { reason: String },
+}
+
+impl RebuildPath {
+    fn log(&self) {
+        match self {
+            RebuildPath::Narrowed { rounds, handles } => {
+                let names = handles
+                    .iter()
+                    .map(Handle::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                info!(
+                    "narrowed: {} vertebra(e) in {rounds} round(s) — {names}",
+                    handles.len()
+                );
+            }
+            RebuildPath::Full { reason } => info!("full rebuild: {reason}"),
+        }
+    }
+}
+
+/// Where a changed path falls, resolved by [`Build::dispatch_decision`]: a
+/// spine vertebra source (narrowable), or anything else (always falls back
+/// to a full rebuild).
+enum RebuildDecision {
+    Narrow(HashSet<Handle>),
+    Full(String),
+}
+
+/// Result of [`Build::narrow_one_plugin`]'s fixpoint loop: it either settled
+/// (naming every handle recompiled, across every round), or a round's
+/// dependent set crossed decision 6's threshold and the whole rebuild must
+/// fall back to a full one instead.
+enum NarrowOutcome {
+    Fixpoint { rounds: usize, handles: Vec<Handle> },
+    ThresholdExceeded(String),
 }
 
 /// The result of [`Build::compile_spine`]: the built spine, the compiled
@@ -210,8 +265,8 @@ impl Ligaments {
     /// section): `(attaches: (<key>: ((page: <handle>, value: <v>), ...), ...))`
     /// — one entry per attached key, each a list of `(page, value)` pairs,
     /// since more than one vertebra may attach the same key. Bound keys are
-    /// NOT part of this value; they stay Rust-side only, for a future
-    /// compile-narrowing bird to read back from [`Build::ligaments`] directly.
+    /// NOT part of this value; they stay Rust-side only — [`Build::narrow_one_plugin`]
+    /// reads them back from [`Build::ligaments`] directly to build the dependent set.
     ///
     /// Built as a native `Dict`/`Array`/`Str`, never through
     /// `TypstLiteral`'s string-serializing path or JSON: a waterline spike
@@ -385,6 +440,7 @@ impl Build {
             metadata_two_pass: opts.metadata_two_pass,
             ligaments: Mutex::new(Ligaments::default()),
             incoming_ligaments: Mutex::new(None),
+            has_built: std::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "timings")]
             iterations: opts.iterations,
         })
@@ -540,8 +596,8 @@ impl Build {
 
     /// Supply a previous compile's harvest to feed onto
     /// `sys.inputs.rheo-ligaments` for every compile from here on, until the
-    /// next call. Nothing calls this today — it exists for a sibling bird
-    /// that narrows a `watch` rebuild to feed back the last full harvest.
+    /// next call. Called by [`Build::compile_bundle_subset`] on each round of
+    /// a narrowed rebuild, to feed back the last full harvest.
     pub fn set_incoming_ligaments(&self, ligaments: Ligaments) {
         *self.incoming_ligaments.lock() = Some(ligaments);
     }
@@ -1685,7 +1741,453 @@ impl Build {
         }
 
         info!("compilation complete");
+        self.has_built
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(results)
+    }
+
+    /// Recompile after a `watch` edit, narrowing to a single vertebra (plus
+    /// its ligament-bound dependents) when it's safe to, and falling back to
+    /// [`Build::run`] otherwise. See [`Build::dispatch_decision`] for when
+    /// narrowing is allowed and [`Build::narrow_one_plugin`] for how a
+    /// changed key propagates to its dependents.
+    ///
+    /// `changed_paths` is the watcher's relevant changed-file set for this
+    /// batch (content and asset paths alike — the dispatch below decides
+    /// which it is). An empty set (should not happen from the watch loop)
+    /// behaves exactly like a full rebuild.
+    pub fn rebuild(&self, changed_paths: &[PathBuf]) -> Result<CompilationResults> {
+        if self.project.typ_files.is_empty() {
+            return Err(RheoError::project_config("no .typ files found in project"));
+        }
+        if changed_paths.is_empty() {
+            return self.run();
+        }
+
+        let content_dir = resolve_effective_content_dir(&self.project);
+        let default_section = PluginSection::default();
+        let (packages, package_resolver) = self.timed(phase::PACKAGES, None, || {
+            let resolver = self.package_resolver();
+            let package_imports = crate::packages::scan_transitive_package_imports(
+                &self.project.typ_files,
+                &resolver,
+            );
+            let packages =
+                prewarm_and_resolve(&package_imports, self.auto_detects_packages(), &resolver)?;
+            Ok::<_, RheoError>((packages, resolver))
+        })?;
+
+        let warm = self.has_built.load(std::sync::atomic::Ordering::Relaxed);
+
+        // Resolve every plugin's spine (a directory scan — no Typst compile
+        // yet) and decide whether this change set narrows for it. The first
+        // plugin that cannot narrow sends the WHOLE rebuild to the full path,
+        // rather than mixing a narrowed compile for one plugin with a full
+        // one for another in the same rebuild.
+        struct Plan<'a> {
+            plugin: &'a dyn FormatPlugin,
+            ctx: PluginAssetContext<'a>,
+            spine: VirtualSpine,
+            changed: HashSet<Handle>,
+        }
+
+        let mut plans: Vec<Plan> = Vec::with_capacity(self.plugins.len());
+        let mut fallback: Option<String> = None;
+
+        for plugin in &self.plugins {
+            let ctx =
+                self.plugin_asset_context(plugin.as_ref(), &packages, &default_section, true)?;
+            let scan = self.resolve_spine_scan(plugin.as_ref(), ctx.section, &content_dir)?;
+            let marrow_ctx =
+                self.resolve_marrow(plugin.as_ref(), ctx.section, &content_dir, &packages)?;
+            let virtual_spine = self.build_virtual_spine(
+                scan.scan,
+                scan.layout,
+                scan.title,
+                scan.prelude,
+                marrow_ctx.marrow,
+                marrow_ctx.marrow_prologue,
+            )?;
+
+            if fallback.is_some() {
+                continue;
+            }
+
+            match Self::dispatch_decision(
+                &virtual_spine,
+                changed_paths,
+                &self.project.root,
+                warm,
+                self.project.config.narrowed_rebuilds_enabled(),
+            ) {
+                RebuildDecision::Narrow(changed) => plans.push(Plan {
+                    plugin: plugin.as_ref(),
+                    ctx,
+                    spine: virtual_spine,
+                    changed,
+                }),
+                RebuildDecision::Full(reason) => fallback = Some(reason),
+            }
+        }
+
+        if let Some(reason) = fallback {
+            RebuildPath::Full {
+                reason: reason.clone(),
+            }
+            .log();
+            return self.run();
+        }
+
+        let mut results = CompilationResults::new();
+        let mut max_rounds = 0usize;
+        let mut all_recompiled: Vec<Handle> = Vec::new();
+
+        for plan in &plans {
+            match self.narrow_one_plugin(
+                plan.plugin,
+                &plan.ctx,
+                &plan.spine,
+                &plan.changed,
+                &package_resolver,
+            )? {
+                NarrowOutcome::Fixpoint { rounds, handles } => {
+                    max_rounds = max_rounds.max(rounds);
+                    for h in handles {
+                        if !all_recompiled.contains(&h) {
+                            all_recompiled.push(h);
+                        }
+                    }
+                    results.record_success(plan.plugin.name());
+                }
+                NarrowOutcome::ThresholdExceeded(reason) => {
+                    RebuildPath::Full { reason }.log();
+                    return self.run();
+                }
+            }
+        }
+
+        RebuildPath::Narrowed {
+            rounds: max_rounds,
+            handles: all_recompiled,
+        }
+        .log();
+
+        Ok(results)
+    }
+
+    /// Classify `changed_paths` against `virtual_spine`: `[watch] narrow` must be
+    /// opted into (`narrow_enabled`) — OFF BY DEFAULT, since rheo cannot know
+    /// whether a project's packages read cross-vertebra data without going
+    /// through ligaments, and narrowing by default would silently gut a page
+    /// for any project that doesn't. Beyond that: every path must resolve to
+    /// a spine vertebra `.typ` source, ligaments must already be cached
+    /// (`warm`), and the layout must be `OnePerVertebra` (a `SingleCombined`
+    /// bundle has no subset to narrow to). Any other case falls back to a
+    /// full rebuild, with the reason named.
+    fn dispatch_decision(
+        virtual_spine: &VirtualSpine,
+        changed_paths: &[PathBuf],
+        project_root: &Path,
+        warm: bool,
+        narrow_enabled: bool,
+    ) -> RebuildDecision {
+        if !narrow_enabled {
+            return RebuildDecision::Full(
+                "narrowed compiles not enabled ([watch] narrow = false)".to_string(),
+            );
+        }
+        if !matches!(virtual_spine.layout, SpineLayout::OnePerVertebra { .. }) {
+            return RebuildDecision::Full(
+                "combined (non-per-vertebra) layout has no narrowed-compile path".to_string(),
+            );
+        }
+        if !warm {
+            return RebuildDecision::Full(
+                "no cached ligaments yet (first build of this session)".to_string(),
+            );
+        }
+
+        let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        let prelude_path = virtual_spine
+            .vertebra_prelude
+            .as_ref()
+            .map(|p| canon(&project_root.join(&p.path)));
+        let marrow_paths: HashSet<PathBuf> = virtual_spine
+            .marrow
+            .iter()
+            .chain(&virtual_spine.marrow_prologue)
+            .map(|m| canon(&project_root.join(&m.origin)))
+            .collect();
+
+        let mut handles = HashSet::new();
+        for path in changed_paths {
+            let changed = canon(path);
+            if prelude_path.as_deref() == Some(changed.as_path()) {
+                return RebuildDecision::Full(format!("spine prelude changed: {}", path.display()));
+            }
+            if marrow_paths.contains(&changed) {
+                return RebuildDecision::Full(format!("marrow changed: {}", path.display()));
+            }
+            let vertebra = virtual_spine
+                .vertebrae
+                .iter()
+                .find(|v| canon(&project_root.join(&v.rel_path)) == changed);
+            match vertebra {
+                Some(v) => {
+                    handles.insert(v.handle.clone());
+                }
+                None => {
+                    return RebuildDecision::Full(format!(
+                        "non-vertebra file changed: {}",
+                        path.display()
+                    ));
+                }
+            }
+        }
+        if handles.is_empty() {
+            return RebuildDecision::Full("no vertebra source in change set".to_string());
+        }
+        RebuildDecision::Narrow(handles)
+    }
+
+    /// Run one plugin's narrowed-compile fixpoint loop (decisions 4-6):
+    /// compile the changed handles, harvest, diff attaches against the
+    /// cached ligaments to find which bound keys moved, compile the
+    /// dependents, repeat until a round finds nothing new. Returns the
+    /// total round count and every handle recompiled across every round on
+    /// success, or a fallback reason (decision 6's threshold) that aborts
+    /// the WHOLE rebuild to a full one.
+    #[allow(clippy::too_many_arguments)]
+    fn narrow_one_plugin(
+        &self,
+        plugin: &dyn FormatPlugin,
+        ctx: &PluginAssetContext<'_>,
+        virtual_spine: &VirtualSpine,
+        changed: &HashSet<Handle>,
+        package_resolver: &Arc<crate::packages::PackageResolver>,
+    ) -> Result<NarrowOutcome> {
+        let total_vertebrae = virtual_spine.vertebrae.len();
+        let threshold = (total_vertebrae as f64 * NARROWED_REBUILD_DEPENDENT_FRACTION).floor();
+
+        let mut cached = self.ligaments();
+        let mut round_handles = changed.clone();
+        let mut seen: HashSet<Handle> = HashSet::new();
+        let mut order: Vec<Handle> = Vec::new();
+        let mut rounds = 0usize;
+
+        loop {
+            rounds += 1;
+            for h in &round_handles {
+                if seen.insert(h.clone()) {
+                    order.push(h.clone());
+                }
+            }
+
+            let (pass, harvested) = self.compile_bundle_subset(
+                plugin,
+                virtual_spine,
+                &round_handles,
+                cached.clone(),
+                package_resolver,
+            )?;
+
+            self.write_subset_outputs(plugin, ctx, virtual_spine, pass)?;
+
+            let mut changed_keys: HashSet<String> = HashSet::new();
+            for handle in &round_handles {
+                let old = cached.per_page.get(handle).cloned().unwrap_or_default();
+                let new = harvested.per_page.get(handle).cloned().unwrap_or_default();
+                changed_keys.extend(Self::diff_attach_keys(&old.attaches, &new.attaches));
+                if new.attaches.is_empty() && new.binds.is_empty() {
+                    cached.per_page.remove(handle);
+                } else {
+                    cached.per_page.insert(handle.clone(), new);
+                }
+            }
+
+            *self.ligaments.lock() = cached.clone();
+
+            if changed_keys.is_empty() {
+                return Ok(NarrowOutcome::Fixpoint {
+                    rounds,
+                    handles: order,
+                });
+            }
+
+            let dependents: HashSet<Handle> = cached
+                .per_page
+                .iter()
+                .filter(|(h, _)| !seen.contains(*h))
+                .filter(|(_, lig)| lig.binds.iter().any(|k| changed_keys.contains(k)))
+                .map(|(h, _)| h.clone())
+                .collect();
+
+            if dependents.is_empty() {
+                return Ok(NarrowOutcome::Fixpoint {
+                    rounds,
+                    handles: order,
+                });
+            }
+            if dependents.len() as f64 > threshold {
+                return Ok(NarrowOutcome::ThresholdExceeded(format!(
+                    "dependent set ({} vertebra(e)) exceeded the {:.0}% narrowed-rebuild threshold",
+                    dependents.len(),
+                    NARROWED_REBUILD_DEPENDENT_FRACTION * 100.0
+                )));
+            }
+
+            round_handles = dependents;
+        }
+    }
+
+    /// The set of keys whose attached values differ between `old` and `new`
+    /// — added, removed, or changed (multiset comparison per key, since one
+    /// page may attach the same key more than once). Decision 4's "a changed
+    /// set means a key was added, removed, or its value changed."
+    fn diff_attach_keys(
+        old: &[(String, typst::foundations::Value)],
+        new: &[(String, typst::foundations::Value)],
+    ) -> HashSet<String> {
+        fn group(
+            items: &[(String, typst::foundations::Value)],
+        ) -> HashMap<&str, Vec<&typst::foundations::Value>> {
+            let mut m: HashMap<&str, Vec<&typst::foundations::Value>> = HashMap::new();
+            for (k, v) in items {
+                m.entry(k.as_str()).or_default().push(v);
+            }
+            m
+        }
+        fn multiset_eq(a: &[&typst::foundations::Value], b: &[&typst::foundations::Value]) -> bool {
+            if a.len() != b.len() {
+                return false;
+            }
+            let mut used = vec![false; b.len()];
+            'outer: for x in a {
+                for (i, y) in b.iter().enumerate() {
+                    if !used[i] && x == y {
+                        used[i] = true;
+                        continue 'outer;
+                    }
+                }
+                return false;
+            }
+            true
+        }
+
+        let old_g = group(old);
+        let new_g = group(new);
+        let keys: HashSet<&str> = old_g.keys().chain(new_g.keys()).copied().collect();
+        keys.into_iter()
+            .filter(|key| {
+                let a = old_g.get(key).map(Vec::as_slice).unwrap_or(&[]);
+                let b = new_g.get(key).map(Vec::as_slice).unwrap_or(&[]);
+                !multiset_eq(a, b)
+            })
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Compile only `subset` of `virtual_spine` (marrow still spliced in
+    /// full), feeding `incoming` onto `sys.inputs.rheo-ligaments`, and
+    /// harvest the result. The shared step behind every round of
+    /// [`Build::narrow_one_plugin`].
+    fn compile_bundle_subset(
+        &self,
+        plugin: &dyn FormatPlugin,
+        virtual_spine: &VirtualSpine,
+        subset: &HashSet<Handle>,
+        incoming: Ligaments,
+        resolver: &Arc<crate::packages::PackageResolver>,
+    ) -> Result<(CompiledBundlePass, Ligaments)> {
+        let moulded = virtual_spine.mould_subset(subset);
+        let rheo_context = virtual_spine.vertebra_injections();
+        let reset_footnotes = self
+            .project
+            .config
+            .plugin_section(plugin.name())
+            .reset_footnotes
+            .get();
+        let moulded_bundle = MouldedBundle {
+            main: moulded.main,
+            main_map: moulded.main_map,
+            sources: Arc::new(moulded.sources),
+            rheo_context: Arc::new(rheo_context),
+            bundle_source: None,
+            reset_footnotes,
+        };
+
+        self.set_incoming_ligaments(incoming);
+
+        let target = plugin.rheo_target();
+        let ext = target.map(|_| plugin.extension());
+        let pass = self.compile_bundle_once(
+            plugin,
+            &moulded_bundle,
+            virtual_spine.global_context(FormatContext {
+                target,
+                ext,
+                reset_footnotes,
+                title_overrides: &HashMap::new(),
+            }),
+            resolver,
+        )?;
+
+        let known_handles: HashSet<Handle> = virtual_spine
+            .vertebrae
+            .iter()
+            .map(|v| v.handle.clone())
+            .collect();
+        let harvested = Self::harvest_ligaments(&pass.bundle, &known_handles);
+        Ok((pass, harvested))
+    }
+
+    /// Flatten and write one narrowed-compile round's outputs. Writes ONLY
+    /// the files this round produced (decision 3) — no copy-glob pass, no
+    /// build-dir wipe, nothing else on disk is touched.
+    fn write_subset_outputs(
+        &self,
+        plugin: &dyn FormatPlugin,
+        ctx: &PluginAssetContext<'_>,
+        virtual_spine: &VirtualSpine,
+        pass: CompiledBundlePass,
+    ) -> Result<()> {
+        let (outputs, mut asset_files) = flatten_bundle_outputs(
+            pass.files,
+            &pass.assets,
+            virtual_spine,
+            plugin.typst_format(),
+            &pass.meta,
+        );
+        ContentTransclusion::rewrite_assets(&outputs, &mut asset_files)?;
+        let (asset_files, control) = ControlAssets::extract(asset_files)?;
+
+        if !plugin.embeds_bundle_assets() {
+            for (path, bytes) in &asset_files {
+                let dest = ctx.output_dir.join(path);
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        RheoError::io(e, format!("creating directory for asset {path}"))
+                    })?;
+                }
+                std::fs::write(&dest, bytes.as_slice())
+                    .map_err(|e| RheoError::io(e, format!("writing asset {path}")))?;
+            }
+        }
+
+        let plugin_ctx = PluginContext {
+            output_dir: &ctx.output_dir,
+            config: ctx.section,
+            page: crate::plugins::PageAssets {
+                assets: &ctx.resolved,
+                head_fragment: control.head_fragment.as_deref(),
+            },
+            bundle: crate::plugins::BundleInputs {
+                project: &self.project,
+                spine: virtual_spine,
+                assets: &asset_files,
+            },
+        };
+        plugin.compile(plugin_ctx, &outputs)
     }
 }
 
@@ -2609,7 +3111,7 @@ mod tests {
     /// `rheo-ligament-bind` calls harvest into a `Ligaments` that groups
     /// attaches and binds correctly per page — including `tag:post`,
     /// attached by both `a` and `b` (a key may be attached by more than one
-    /// vertebra; see the bird's "one-to-many relation" note).
+    /// vertebra; see [`VertebraLigaments`]'s one-to-many relation note).
     #[test]
     fn test_harvest_ligaments_groups_attaches_and_binds_per_page() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -2714,5 +3216,351 @@ mod tests {
             index.per_page
         );
         assert_eq!(index.per_page.len(), 1);
+    }
+
+    // ── Single-vertebra compile under watch: dispatch table, fixpoint
+    // propagation, bind-only no-propagation, and threshold fallback ────────
+
+    /// A minimal two-vertebra `OnePerVertebra` spine with a vertebra prelude
+    /// and a marrow epilogue, for [`Build::dispatch_decision`] unit tests.
+    /// Vertebra sources are written to real files under `root` so
+    /// `canonicalize()` resolves them the same way a real project's would.
+    fn dispatch_test_spine(root: &Path) -> VirtualSpine {
+        use crate::reticulate::spine::Vertebra;
+
+        std::fs::create_dir_all(root.join("content")).expect("create content dir");
+        std::fs::write(root.join("content/a.typ"), "= A\n").expect("write a.typ");
+        std::fs::write(root.join("content/b.typ"), "= B\n").expect("write b.typ");
+        std::fs::write(root.join("content/prelude.typ"), "").expect("write prelude");
+        std::fs::write(root.join("content/.marrow.typ"), "").expect("write marrow");
+
+        let vertebra = |name: &str| Vertebra {
+            rel_path: format!("content/{name}.typ"),
+            output_path: format!("{name}.html"),
+            handle: Handle::new(name),
+            extra_handles: vec![],
+            emit_handle: true,
+            title: name.to_string(),
+            source: String::new(),
+            synthesized: false,
+        };
+        VirtualSpine {
+            vertebrae: vec![vertebra("a"), vertebra("b")],
+            layout: SpineLayout::OnePerVertebra {
+                ext: "html".into(),
+                format: "html".into(),
+            },
+            tree: vec![],
+            title: None,
+            vertebra_prelude: Some(SpinePrelude {
+                path: "content/prelude.typ".to_string(),
+                text: String::new(),
+            }),
+            marrow: vec![MarrowSource {
+                origin: "content/.marrow.typ".to_string(),
+                text: String::new(),
+            }],
+            marrow_prologue: Vec::new(),
+        }
+    }
+
+    /// Decision 2's full table: `[watch] narrow` disabled (the default)
+    /// always falls back, whatever changed; with it enabled, a
+    /// vertebra-source change with cached ligaments narrows to exactly that
+    /// vertebra's handle, while a prelude, marrow, or non-vertebra change, a
+    /// cold session, or a combined layout each still fall back to a full
+    /// rebuild, naming why.
+    #[test]
+    fn dispatch_decision_table() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let spine = dispatch_test_spine(root);
+
+        // narrow disabled (the default) -> full, regardless of everything else.
+        match Build::dispatch_decision(&spine, &[root.join("content/b.typ")], root, true, false) {
+            RebuildDecision::Full(reason) => {
+                assert!(
+                    reason.contains("not enabled") && reason.contains("narrow"),
+                    "got: {reason}"
+                );
+            }
+            RebuildDecision::Narrow(_) => panic!("narrow disabled must never narrow"),
+        }
+
+        // Vertebra source + warm + narrow enabled -> narrow to that one handle.
+        match Build::dispatch_decision(&spine, &[root.join("content/b.typ")], root, true, true) {
+            RebuildDecision::Narrow(handles) => {
+                assert_eq!(handles, HashSet::from([Handle::new("b")]));
+            }
+            RebuildDecision::Full(reason) => panic!("expected narrow, got full: {reason}"),
+        }
+
+        // Cold session (no cached ligaments yet) -> full, whatever changed.
+        match Build::dispatch_decision(&spine, &[root.join("content/b.typ")], root, false, true) {
+            RebuildDecision::Full(reason) => assert!(
+                reason.contains("first build") || reason.contains("cached"),
+                "got: {reason}"
+            ),
+            RebuildDecision::Narrow(_) => panic!("a cold session must never narrow"),
+        }
+
+        // Spine prelude changed -> full, naming the prelude.
+        match Build::dispatch_decision(
+            &spine,
+            &[root.join("content/prelude.typ")],
+            root,
+            true,
+            true,
+        ) {
+            RebuildDecision::Full(reason) => assert!(reason.contains("prelude"), "got: {reason}"),
+            RebuildDecision::Narrow(_) => panic!("a prelude change must never narrow"),
+        }
+
+        // Marrow changed -> full, naming marrow.
+        match Build::dispatch_decision(
+            &spine,
+            &[root.join("content/.marrow.typ")],
+            root,
+            true,
+            true,
+        ) {
+            RebuildDecision::Full(reason) => assert!(reason.contains("marrow"), "got: {reason}"),
+            RebuildDecision::Narrow(_) => panic!("a marrow change must never narrow"),
+        }
+
+        // A non-vertebra file (rheo.toml, a stylesheet, package code) -> full.
+        match Build::dispatch_decision(&spine, &[root.join("rheo.toml")], root, true, true) {
+            RebuildDecision::Full(reason) => {
+                assert!(reason.contains("non-vertebra"), "got: {reason}");
+            }
+            RebuildDecision::Narrow(_) => panic!("a non-vertebra change must never narrow"),
+        }
+
+        // A combined (e.g. PDF) layout never narrows, even for a vertebra change.
+        let mut combined = dispatch_test_spine(root);
+        combined.layout = SpineLayout::SingleCombined {
+            output_name: "book.pdf".to_string(),
+            format: "pdf".to_string(),
+        };
+        match Build::dispatch_decision(&combined, &[root.join("content/b.typ")], root, true, true) {
+            RebuildDecision::Full(reason) => assert!(reason.contains("combined"), "got: {reason}"),
+            RebuildDecision::Narrow(_) => panic!("a combined layout must never narrow"),
+        }
+    }
+
+    /// Writes `root/content/<name>.typ` with `body`, for the narrowed-rebuild
+    /// end-to-end tests below. Mirrors [`build_ligaments_project`] but for an
+    /// arbitrary vertebra count.
+    fn write_vertebra(root: &Path, name: &str, body: &str) {
+        std::fs::create_dir_all(root.join("content")).expect("create content dir");
+        std::fs::write(root.join(format!("content/{name}.typ")), body)
+            .expect("write vertebra source");
+    }
+
+    /// `[watch] narrow = true` — these end-to-end tests exercise the
+    /// narrowed path on purpose, unlike a real project's default-off config.
+    fn ligaments_project(root: &Path, names: &[&str]) -> crate::project::ProjectConfig {
+        crate::project::ProjectConfig {
+            name: "test".to_string(),
+            root: root.to_path_buf(),
+            config: crate::RheoConfig {
+                content_dir: Some("content".to_string()),
+                formats: vec!["html".to_string()],
+                watch: Some(crate::config::WatchConfig { narrow: true }),
+                ..Default::default()
+            },
+            typ_files: names
+                .iter()
+                .map(|n| root.join(format!("content/{n}.typ")))
+                .collect(),
+            mode: ProjectMode::Directory,
+            config_path: None,
+        }
+    }
+
+    /// Invalidation (decision 4): `b` attaches `k`, `a` binds `k`; six filler
+    /// vertebrae keep the spine large enough that `a`'s one dependent stays
+    /// under decision 6's threshold. Editing `b`'s attached value recompiles
+    /// `b`, finds `k` changed, and recompiles `a` in a second round — every
+    /// filler vertebra is left alone.
+    #[test]
+    fn rebuild_propagates_through_a_changed_attach_to_its_binder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+        write_vertebra(
+            root,
+            "a",
+            "#import \"/typ/rheo.typ\": rheo-ligament-bind\n#rheo-ligament-bind(\"k\")\n= A\n",
+        );
+        write_vertebra(
+            root,
+            "b",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [X])\n= B\n",
+        );
+        for filler in ["c", "d", "e", "f", "g", "h"] {
+            write_vertebra(root, filler, &format!("= {filler}\n"));
+        }
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![plugin],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        // Edit b's attached value.
+        write_vertebra(
+            root,
+            "b",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [Y])\n= B\n",
+        );
+        build
+            .rebuild(&[root.join("content/b.typ")])
+            .expect("narrowed rebuild");
+
+        let count = |path: &str| {
+            captured
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(p, _, _)| p == path)
+                .count()
+        };
+        assert_eq!(count("a.html"), 2, "a must be recompiled as b's dependent");
+        assert_eq!(count("b.html"), 2, "b itself must be recompiled");
+        for filler in ["c", "d", "e", "f", "g", "h"] {
+            assert_eq!(
+                count(&format!("{filler}.html")),
+                1,
+                "{filler} must be untouched by the narrowed rebuild"
+            );
+        }
+    }
+
+    /// Bind-only (decision 5): editing `a` to add a NEW bind, with its own
+    /// attached set unchanged, must recompile only `a` — never `b`, even
+    /// though `b` attaches the very key `a` newly binds to.
+    #[test]
+    fn rebuild_bind_only_edit_propagates_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c"];
+
+        write_vertebra(root, "a", "= A\n");
+        write_vertebra(
+            root,
+            "b",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"tag:post\", [X])\n= B\n",
+        );
+        write_vertebra(root, "c", "= C\n");
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![plugin],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        // a gains a bind to a key it never attaches to; its own attach set
+        // (empty) is unchanged.
+        write_vertebra(
+            root,
+            "a",
+            "#import \"/typ/rheo.typ\": rheo-ligament-bind\n\
+             #rheo-ligament-bind(\"tag:post\")\n= A\n",
+        );
+        build
+            .rebuild(&[root.join("content/a.typ")])
+            .expect("narrowed rebuild");
+
+        let count = |path: &str| {
+            captured
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(p, _, _)| p == path)
+                .count()
+        };
+        assert_eq!(count("a.html"), 2, "a itself must be recompiled");
+        assert_eq!(count("b.html"), 1, "a bind-only edit must not recompile b");
+        assert_eq!(count("c.html"), 1, "c must be untouched");
+    }
+
+    /// Threshold fallback (decision 6): `src` attaches `k`; four of five
+    /// other vertebrae bind it, crossing the `1/4` threshold
+    /// (`floor(6 * 0.25) == 1`, and 4 dependents > 1). The whole rebuild
+    /// must abandon the narrowed path for a full one — proven by `z`, which
+    /// binds and attaches nothing, getting recompiled too (only a full
+    /// rebuild would ever touch it).
+    #[test]
+    fn rebuild_falls_back_to_full_when_dependents_cross_the_threshold() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["src", "d1", "d2", "d3", "d4", "z"];
+
+        write_vertebra(
+            root,
+            "src",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [X])\n= Src\n",
+        );
+        for d in ["d1", "d2", "d3", "d4"] {
+            write_vertebra(
+                root,
+                d,
+                &format!(
+                    "#import \"/typ/rheo.typ\": rheo-ligament-bind\n#rheo-ligament-bind(\"k\")\n= {d}\n"
+                ),
+            );
+        }
+        write_vertebra(root, "z", "= Z\n");
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![plugin],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        write_vertebra(
+            root,
+            "src",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [Y])\n= Src\n",
+        );
+        build
+            .rebuild(&[root.join("content/src.typ")])
+            .expect("rebuild falling back to full");
+
+        let count = |path: &str| {
+            captured
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(p, _, _)| p == path)
+                .count()
+        };
+        assert_eq!(
+            count("z.html"),
+            2,
+            "z is untouched by any narrowed path; a count of 2 proves a full rebuild ran"
+        );
     }
 }

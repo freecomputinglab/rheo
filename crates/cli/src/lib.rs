@@ -669,6 +669,18 @@ fn compile_and_report(build: &Build) -> Result<rheo_core::CompilationResults> {
     results
 }
 
+/// `Build::rebuild` and render whatever it reported — the `watch` loop's
+/// `compile_and_report`, narrowed. `changed_paths` is the watcher's relevant
+/// changed-file set for this debounced batch.
+fn rebuild_and_report(
+    build: &Build,
+    changed_paths: &[PathBuf],
+) -> Result<rheo_core::CompilationResults> {
+    let results = build.rebuild(changed_paths);
+    diagnostics::render(&build.take_diagnostics());
+    results
+}
+
 /// Compile a fresh VirtualFs for the dev server and push it, then optionally
 /// reload connected browsers with the given `kind`. The initial `--open` push
 /// has nothing to reload yet (the browser is only just being launched), so it
@@ -747,9 +759,9 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
         &asset_spec,
         move |event| {
             match event {
-                WatchEvent::FilesChanged { assets } => {
+                WatchEvent::FilesChanged { assets, paths } => {
                     info!("files changed, recompiling");
-                    if compile_and_report(&build).is_ok()
+                    if rebuild_and_report(&build, &paths).is_ok()
                         && let Some(server) = &server
                     {
                         update_dev_server(

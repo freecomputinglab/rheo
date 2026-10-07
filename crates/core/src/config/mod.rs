@@ -21,10 +21,9 @@ pub use retired::{RETIRED_BINDINGS, RETIRED_KEYS, RetiredBinding, RetiredKey};
 pub const RESERVED_INPUT_KEY: &str = "rheo-context";
 
 /// The other `sys.inputs` key rheo owns: the previous compile's harvested
-/// ligaments (see the "Ligament harvest" bird, `rh-label-index-harvest-5e1bcf90`,
-/// and `crate::build::Ligaments`), fed back so a narrower compile that skips a
-/// vertebra can still answer a cross-vertebra read that vertebra would
-/// normally answer. Rejected the same way, and for the same reason, as
+/// ligaments (see `crate::build::Ligaments`), fed back so a narrower compile
+/// that skips a vertebra can still answer a cross-vertebra read that vertebra
+/// would normally answer. Rejected the same way, and for the same reason, as
 /// [`RESERVED_INPUT_KEY`].
 pub const RESERVED_LIGAMENTS_INPUT_KEY: &str = "rheo-ligaments";
 
@@ -77,6 +76,21 @@ pub struct MarrowConfig {
     pub file: Option<String>,
     #[serde(default)]
     pub position: MarrowPosition,
+}
+
+/// `[watch]` table: `rheo watch` behaviour knobs.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct WatchConfig {
+    /// Opt in to `Build::rebuild`'s narrowed-compile path (recompiling only
+    /// the edited vertebra, plus any ligament-bound dependent, instead of
+    /// the whole bundle). `false` by default — rheo cannot know whether a
+    /// project's packages read cross-vertebra data *without* going through
+    /// ligaments, and narrowing by default would silently gut a page for any
+    /// project that doesn't. Only safe when every package reading across
+    /// vertebrae does so through `rheo-ligaments`/`rheo-ligament-get`. See
+    /// `docs/contract.md`'s "Ligaments" section.
+    #[serde(default)]
+    pub narrow: bool,
 }
 
 /// One format's resolved spine knobs: every field already merged over the
@@ -335,6 +349,10 @@ pub struct RheoConfig {
     /// package's contribution or vice versa — both are inlined.
     pub marrow: Option<MarrowConfig>,
 
+    /// `[watch]` — `rheo watch` behaviour knobs; `None` behaves exactly as
+    /// an empty table would (narrowed compiles off).
+    pub watch: Option<WatchConfig>,
+
     /// `[inputs]` — project-declared `sys.inputs` keys for the Typst compile.
     ///
     /// Typst has no environment access, so `sys.inputs` is the only channel by
@@ -406,6 +424,7 @@ impl Default for RheoConfig {
             plugin_sections: HashMap::new(),
             spine: None,
             marrow: None,
+            watch: None,
             inputs: HashMap::new(),
             packages: HashMap::new(),
             extra: toml::Table::new(),
@@ -488,6 +507,17 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             ),
             _ => None,
         };
+        // Pulled out the same way as `marrow`, for the same reason: left in
+        // `extra` it becomes a phantom plugin section named `watch`.
+        let watch: Option<WatchConfig> = match raw.extra.get("watch") {
+            Some(toml::Value::Table(_)) => Some(
+                raw.extra
+                    .remove("watch")
+                    .expect("just matched")
+                    .try_into()?,
+            ),
+            _ => None,
+        };
         let mut plugin_sections = HashMap::new();
         let mut extra = toml::Table::new();
         for (key, value) in raw.extra {
@@ -530,6 +560,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             plugin_sections,
             spine,
             marrow,
+            watch,
             inputs,
             packages,
             extra,
@@ -619,6 +650,12 @@ impl RheoConfig {
             self.marrow.as_ref().map(|m| m.position),
             Some(MarrowPosition::Prologue)
         )
+    }
+
+    /// `[watch] narrow` — opt-in for `Build::rebuild`'s narrowed-compile
+    /// path. `false` when unset (no `[watch]` table at all).
+    pub fn narrowed_rebuilds_enabled(&self) -> bool {
+        self.watch.as_ref().is_some_and(|w| w.narrow)
     }
 
     /// Resolve content_dir against the project root, if configured.
@@ -836,6 +873,23 @@ mod tests {
         let config = parse(&versioned_toml("[marrow]\nfile = \"bundle-root.typ\"\n"));
         assert_eq!(config.marrow_file(), "bundle-root.typ");
         assert!(config.marrow_is_epilogue());
+    }
+
+    /// `[watch] narrow` defaults to `false` (no `[watch]` table at all, or
+    /// one present without the key), and is only `true` when set explicitly.
+    #[test]
+    fn test_watch_narrow_defaults_false_and_honors_explicit_true() {
+        let config = parse(&versioned_toml(""));
+        assert!(!config.narrowed_rebuilds_enabled());
+
+        let config = parse(&versioned_toml("[watch]\n"));
+        assert!(!config.narrowed_rebuilds_enabled());
+
+        let config = parse(&versioned_toml("[watch]\nnarrow = true\n"));
+        assert!(config.narrowed_rebuilds_enabled());
+
+        let config = parse(&versioned_toml("[watch]\nnarrow = false\n"));
+        assert!(!config.narrowed_rebuilds_enabled());
     }
 
     /// The retired top-level `marrow` filename override and

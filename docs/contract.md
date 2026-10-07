@@ -164,8 +164,8 @@ label namespace" below, which applies identically to this prefix.
 The harvest drops — never hard-errors on — a node whose `page`/`key` is
 missing or non-string, or whose `page` doesn't name a vertebra in the current
 spine; one warning covers a whole harvest run, not each dropped node. The
-harvested ligaments still do not yet narrow which vertebrae compile — that is
-a sibling bird's job — but they ARE now fed back into a later compile, below.
+harvested ligaments narrow which vertebrae recompile under `watch`
+(`Build::narrow_one_plugin`) and are fed back into that later compile, below.
 
 ### Feeding ligaments back through `sys.inputs`
 
@@ -186,8 +186,8 @@ rejected from `rheo.toml [inputs]` and `--input` the same way, and for the
 same reason, as `rheo-context`.
 
 The dict's shape, as Typst sees it, groups every attach by key across every
-page (bound keys are NOT included — they stay Rust-side only, for a future
-compile-narrowing bird to read directly off `Build::ligaments()`):
+page (bound keys are NOT included — they stay Rust-side only, read directly
+off `Build::ligaments()` by `Build::narrow_one_plugin`):
 
 ```typst
 (attaches: (
@@ -228,6 +228,35 @@ there.
 already resolves purely from `_rheo-handles()` (`sys.inputs.rheo-context.spine-flat`,
 a static list present even on a narrowed compile), so it builds the right
 href for a vertebra outside the current compile with no ligaments involved.
+
+### `[watch] narrow` — narrowed recompiles under `rheo watch`
+
+`rheo.toml`'s `[watch] narrow` (`crates/core/src/config/mod.rs`, `WatchConfig`)
+opts a project into `Build::rebuild`'s narrowed-compile path: an edit to one
+spine vertebra under `rheo watch` recompiles only that vertebra, plus any
+other vertebra whose bound keys were invalidated by what changed, instead of
+the whole bundle — the cached ligaments from the last compile are fed back in
+(as above) so cross-vertebra reads still resolve. **`false` by default.**
+
+This is only safe for a project whose packages read cross-vertebra data
+*exclusively* through ligaments (`rheo-ligament-attach`/`rheo-ligament-bind`/
+`rheo-ligament-get`, or the raw `sys.inputs.rheo-ligaments` shape package code
+reads). A package that instead queries the live bundle directly — e.g. a
+Typst `query()` over every vertebra's own introspection state, rather than
+reading what another vertebra attached — sees only the narrowed subset on a
+narrowed compile, and silently produces a page missing cross-vertebra content
+it would otherwise have included. rheo cannot detect this from the outside,
+which is why narrowing is opt-in rather than on by default: turn it on only
+once every package the project uses is known to route its cross-vertebra
+reads through ligaments.
+
+```toml
+[watch]
+narrow = true
+```
+
+Disabled (absent, or `narrow = false`), every `rheo watch` rebuild compiles
+the whole bundle, exactly as before this mechanism existed.
 
 ## Metadata helpers (`crates/core/src/typ/metadata.typ`)
 
