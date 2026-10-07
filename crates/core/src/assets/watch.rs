@@ -114,7 +114,10 @@ const DEBOUNCE_POLL: Duration = Duration::from_millis(50);
 pub enum WatchEvent {
     /// Source files or assets changed, trigger recompilation. `assets` is true
     /// when a changed path was one the browser caches under an unchanged URL.
-    FilesChanged { assets: bool },
+    /// `paths` is every relevant path in this debounced batch (`Content` and
+    /// `Asset` alike) — a narrowed rebuild (`Build::rebuild`) reads it to
+    /// decide whether the batch is exactly spine vertebra sources.
+    FilesChanged { assets: bool, paths: Vec<PathBuf> },
     /// Config file changed, need to reload ProjectConfig
     ConfigChanged,
 }
@@ -234,6 +237,10 @@ where
     // `DEBOUNCE_MAX` has something to measure from. `None` means nothing is
     // pending, and is therefore the "anything to do?" test.
     let mut first_event_time: Option<std::time::Instant> = None;
+    // Every relevant path seen across the WHOLE batch (not just the latest
+    // notify event) — `Build::rebuild` needs the complete changed-file set to
+    // decide whether a batch is exactly spine vertebra sources.
+    let mut batch_paths: Vec<PathBuf> = Vec::new();
 
     info!("watching for changes (press Ctrl+C to stop)");
 
@@ -260,6 +267,7 @@ where
 
                         if !relevant.is_empty() {
                             debug!(paths = ?relevant, "detected file changes");
+                            batch_paths.extend(relevant.iter().map(|p| p.to_path_buf()));
                             last_event_time = std::time::Instant::now();
                             first_event_time.get_or_insert(last_event_time);
                         }
@@ -294,6 +302,7 @@ where
             } else {
                 WatchEvent::FilesChanged {
                     assets: assets_changed,
+                    paths: std::mem::take(&mut batch_paths),
                 }
             };
 

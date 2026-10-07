@@ -31,6 +31,26 @@ when the live beacon query finds nothing. `rheo-ligaments` is newly reserved
 alongside `rheo-context`, rejected the same way from both `rheo.toml
 [inputs]` and `--input`. See `docs/contract.md`'s "Ligaments" section.
 
+## `rheo watch` can now recompile a single vertebra instead of the whole bundle (opt-in)
+
+Set `[watch] narrow = true` in `rheo.toml` and editing one spine vertebra
+under `rheo watch` recompiles only that vertebra, plus any other vertebra
+whose bound keys were invalidated by what changed — the cached ligaments
+from the last compile are fed back in so cross-vertebra reads still
+resolve. A changed attach propagates to its binders in further narrowed
+rounds until nothing new changes (a fixpoint); a bind-only edit propagates
+nothing. Any other change — a prelude, marrow, `rheo.toml`, package code, a
+non-vertebra file, or the first build of a session with no cached ligaments
+yet — still does a full rebuild, as does a narrowed round whose dependent
+set grows past a quarter of the spine. Each rebuild logs which path it took.
+
+**`false` by default, and only safe once every package the project uses
+reads cross-vertebra data through ligaments** (`rheo-ligament-attach`/
+`rheo-ligament-bind`/`rheo-ligament-get`) rather than querying the live
+bundle directly — a package that does the latter would silently see only
+the narrowed subset and produce a page missing cross-vertebra content. See
+`docs/contract.md`'s "`[watch] narrow`" section.
+
 # 0.6.4 — user-visible changes
 
 ## `rheo watch` patches the page on a content edit, and a package must opt in

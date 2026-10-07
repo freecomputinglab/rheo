@@ -645,7 +645,23 @@ impl VirtualSpine {
 
     /// Build the structured `BundleSource` representation of this spine.
     pub fn bundle_source(&self) -> BundleSource {
+        self.bundle_source_filtered(None)
+    }
+
+    /// Build the structured `BundleSource` for only `subset` of vertebrae —
+    /// marrow is still spliced in full regardless (see
+    /// [`crate::reticulate::mould::VirtualSpine::mould_subset`]).
+    pub fn bundle_source_subset(&self, subset: &std::collections::HashSet<Handle>) -> BundleSource {
+        self.bundle_source_filtered(Some(subset))
+    }
+
+    fn bundle_source_filtered(
+        &self,
+        subset: Option<&std::collections::HashSet<Handle>>,
+    ) -> BundleSource {
         use crate::reticulate::bundle_source::{BundleAnchor, BundleDocument, BundleSegment};
+
+        let included = |v: &Vertebra| subset.is_none_or(|s| s.contains(&v.handle));
 
         // A vertebra's handle anchors: the canonical `<handle>` (when emitted) plus
         // the `<handle.typ>` escape aliases. Emitted before the vertebra's include so
@@ -669,6 +685,7 @@ impl VirtualSpine {
             SpineLayout::OnePerVertebra { format, .. } => self
                 .vertebrae
                 .iter()
+                .filter(|v| included(v))
                 .map(|v| BundleDocument {
                     output_path: v.output_path.clone(),
                     format: format.clone(),
@@ -694,7 +711,12 @@ impl VirtualSpine {
                     // Combined PDF is one document with no cross-vertebra link
                     // rule; the handle is unused.
                     handle: Handle::default(),
-                    segments: self.vertebrae.iter().map(segment_for).collect(),
+                    segments: self
+                        .vertebrae
+                        .iter()
+                        .filter(|v| included(v))
+                        .map(segment_for)
+                        .collect(),
                 }]
             }
         };
