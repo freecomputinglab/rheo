@@ -20,6 +20,14 @@ pub use retired::{RETIRED_BINDINGS, RETIRED_KEYS, RetiredBinding, RetiredKey};
 /// from the real one to every package reading it.
 pub const RESERVED_INPUT_KEY: &str = "rheo-context";
 
+/// The other `sys.inputs` key rheo owns: the previous compile's harvested
+/// ligaments (see the "Ligament harvest" bird, `rh-label-index-harvest-5e1bcf90`,
+/// and `crate::build::Ligaments`), fed back so a narrower compile that skips a
+/// vertebra can still answer a cross-vertebra read that vertebra would
+/// normally answer. Rejected the same way, and for the same reason, as
+/// [`RESERVED_INPUT_KEY`].
+pub const RESERVED_LIGAMENTS_INPUT_KEY: &str = "rheo-ligaments";
+
 /// A `bool` config key whose absence means `DEFAULT` — one type for every
 /// "unset means this" toggle, in place of an `Option<bool>` field paired with
 /// its own `unwrap_or` accessor.
@@ -450,6 +458,14 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
                 "[inputs] may not set `{RESERVED_INPUT_KEY}`: rheo owns that key, which \
                  carries the spine and the output format that every package reads. Choose \
                  another name, e.g. a package-prefixed one like `rookery-exclude`.",
+            )));
+        }
+        if inputs.contains_key(RESERVED_LIGAMENTS_INPUT_KEY) {
+            return Err(serde::de::Error::custom(format!(
+                "[inputs] may not set `{RESERVED_LIGAMENTS_INPUT_KEY}`: rheo owns that key, \
+                 which carries the previous compile's harvested ligaments that every package \
+                 reads. Choose another name, e.g. a package-prefixed one like \
+                 `rookery-exclude`.",
             )));
         }
         // Pulled out before the plugin-section loop for the same reason `inputs`
@@ -1364,6 +1380,24 @@ mod tests {
         let err = RheoConfig::try_from(raw).expect_err("the reserved key must fail");
         assert!(
             err.to_string().contains("rheo-context"),
+            "error should name the reserved key, got: {err}",
+        );
+    }
+
+    /// `rheo-ligaments` is rheo's other reserved key, rejected the same way and
+    /// for the same reason as `rheo-context`.
+    #[test]
+    fn test_inputs_rejects_reserved_ligaments_key() {
+        let raw: RheoConfigRaw = toml::from_str(&versioned_toml(
+            r#"
+        [inputs]
+        rheo-ligaments = "forged"
+    "#,
+        ))
+        .expect("raw parse should succeed");
+        let err = RheoConfig::try_from(raw).expect_err("the reserved key must fail");
+        assert!(
+            err.to_string().contains("rheo-ligaments"),
             "error should name the reserved key, got: {err}",
         );
     }

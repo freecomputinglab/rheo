@@ -7,6 +7,8 @@
 // handle, a fallback title — live here; only the logic that is the same for
 // every vertebra does.
 
+#import "/typ/rheo.typ": rheo-ligament-get
+
 // A vertebra's title, harvested Rust-side from the compiled bundle's own
 // resolved DocumentInfo and fed back in as sys.inputs.rheo-context's
 // title-overrides array (VirtualSpine::global_context) -- present only on the
@@ -38,14 +40,38 @@
 // so Rust decides per-handle whether `rheo-title-override` applies (a
 // beacon-vs-DocumentInfo mismatch it alone can detect) rather than Typst
 // guessing from "title" being absent here.
+//
+// Drops the same uninteresting fields (`handle`, `none`/`auto`, empty
+// arrays) a beacon's own published dict carries whichever source answered —
+// the live query or the ligaments fallback below -- so a caller sees one
+// shape either way.
+#let _rheo-beacon-fields(dict) = {
+  let out = (:)
+  for (k, v) in dict {
+    if k == "handle" or v == none or v == auto { continue }
+    if type(v) == array and v.len() == 0 { continue }
+    out.insert(k, v)
+  }
+  out
+}
+
 #let rheo-metadata-impl(handle) = {
   let found = query(label("rheo-meta:" + handle))
-  let out = (:)
-  if found.len() > 0 {
-    for (k, v) in found.first().value {
-      if k == "handle" or v == none or v == auto { continue }
-      if type(v) == array and v.len() == 0 { continue }
-      out.insert(k, v)
+  let out = if found.len() > 0 {
+    _rheo-beacon-fields(found.first().value)
+  } else {
+    // No live beacon — this vertebra may simply not have run this compile.
+    // Fall back to its ligament-harvested beacon dict (rheo's own metadata
+    // beacon is emitted as a `rheo-meta:<handle>` ligament attach alongside
+    // the beacon itself, see TypstStmt::MetadataBeacon), when ligaments were
+    // supplied this compile at all -- `none` here means they were not, and
+    // the empty-dict result below is unchanged from before this fallback
+    // existed.
+    let ligament-pairs = rheo-ligament-get("rheo-meta:" + handle)
+    if ligament-pairs != none and ligament-pairs.len() > 0 {
+      _rheo-beacon-fields(ligament-pairs.first().value)
+    } else {
+      (:)
     }
   }
   let title-override = rheo-title-override(handle)

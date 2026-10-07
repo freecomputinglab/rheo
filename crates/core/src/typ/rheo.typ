@@ -110,6 +110,24 @@
   #metadata((page: if page != none { page } else { state("rheo-handle").get() }, key: key)) <rheo-ligament:bind>
 ]
 
+// Reads a previous compile's harvested ligaments back from
+// `sys.inputs.rheo-ligaments` — the feed-back half of the protocol above,
+// fed by `crates/core/src/world.rs`'s `build_inputs` (see docs/contract.md's
+// "Ligaments" section). Project code only: package code cannot import this
+// file, so a package reads the raw `sys.inputs.at("rheo-ligaments", default:
+// none)` shape directly instead.
+//
+// Returns `none` when `rheo-ligaments` is absent from `sys.inputs` entirely
+// (no ligaments were supplied this compile — the ordinary case today), vs.
+// an empty array when ligaments were supplied but `key` was never attached.
+// That distinction is load-bearing: `none` means "fall back to a live
+// query", an empty array means "ligaments answered and found nothing".
+#let rheo-ligament-get(key) = {
+  let ligaments = sys.inputs.at("rheo-ligaments", default: none)
+  if ligaments == none { return none }
+  ligaments.at("attaches", default: (:)).at(key, default: ())
+}
+
 // Wraps document() with the per-document init a spine vertebra gets for free,
 // and installs rheo-link-rule — which it must: the bundle source applies that
 // rule per #document and knows nothing about a page minted here. The #show sits

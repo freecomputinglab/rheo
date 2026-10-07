@@ -164,8 +164,70 @@ label namespace" below, which applies identically to this prefix.
 The harvest drops — never hard-errors on — a node whose `page`/`key` is
 missing or non-string, or whose `page` doesn't name a vertebra in the current
 spine; one warning covers a whole harvest run, not each dropped node. The
-harvested ligaments are not yet fed back into a compile through `sys.inputs`,
-and they do not yet narrow which vertebrae compile.
+harvested ligaments still do not yet narrow which vertebrae compile — that is
+a sibling bird's job — but they ARE now fed back into a later compile, below.
+
+### Feeding ligaments back through `sys.inputs`
+
+A previous compile's harvest can be fed into a later, narrower one (one that
+skips re-evaluating every vertebra) so a cross-vertebra read can still be
+answered even when the vertebra that would normally answer it did not run
+this time. The caller supplies a `crate::build::Ligaments` via
+`WorldSpec::ligaments` (`crates/core/src/world.rs`); `build_inputs` seeds it
+onto the reserved `sys.inputs.rheo-ligaments` key
+(`RESERVED_LIGAMENTS_INPUT_KEY`, `crates/core/src/config/mod.rs`) as a
+**native Typst dictionary** — never JSON, since `json.encode`/`json(bytes(..))`
+silently turn a `datetime` value into its `repr()` string form, which would
+corrupt any attached value of that type. Absent a `Ligaments` to feed (the
+ordinary case today), the key is left entirely absent from `sys.inputs` —
+not an empty dict — so a reader can tell "no ligaments were supplied" from
+"ligaments were supplied but nothing was attached". `rheo-ligaments` is
+rejected from `rheo.toml [inputs]` and `--input` the same way, and for the
+same reason, as `rheo-context`.
+
+The dict's shape, as Typst sees it, groups every attach by key across every
+page (bound keys are NOT included — they stay Rust-side only, for a future
+compile-narrowing bird to read directly off `Build::ligaments()`):
+
+```typst
+(attaches: (
+  "<key>": ((page: "<handle>", value: <any>), ..),
+  ..,
+))
+```
+
+**Project code** reads it back with `rheo-ligament-get(key)`
+(`crates/core/src/typ/rheo.typ`, visible the same way
+`rheo-ligament-attach`/`rheo-ligament-bind` are): `none` when
+`rheo-ligaments` is absent from `sys.inputs` entirely, otherwise the array of
+`(page, value)` pairs attached under `key` — possibly empty, when ligaments
+were supplied but nothing was attached under that key. That `none`-vs-empty
+distinction is load-bearing, the same way it is for the whole key's absence.
+
+**Package code** cannot import `rheo.typ`, so it reads the same value
+directly off the raw `sys.inputs` shape:
+
+```typst
+sys.inputs.at("rheo-ligaments", default: none)
+  .at("attaches", default: (:))
+  .at("<key>", default: ())
+```
+
+rheo dogfoods this for its own metadata beacon: each vertebra's beacon is
+also emitted as a `rheo-meta:<handle>` ligament attach (alongside the beacon
+itself — see `TypstStmt::MetadataBeacon`,
+`crates/core/src/synth/typst_source.rs`), with the beacon's own dict as the
+value. `rheo-metadata(handle)`'s underlying `rheo-metadata-impl`
+(`crates/core/src/typ/metadata.typ`) falls back to this ligament when the
+live `query(label("rheo-meta:" + handle))` finds nothing — the vertebra
+absent from this narrower compile — instead of returning `(:)`. An ordinary
+full compile is unaffected either way, since the live query always succeeds
+there.
+
+`rheo-link-rule`'s cross-vertebra href resolution needs none of this: it
+already resolves purely from `_rheo-handles()` (`sys.inputs.rheo-context.spine-flat`,
+a static list present even on a narrowed compile), so it builds the right
+href for a vertebra outside the current compile with no ligaments involved.
 
 ## Metadata helpers (`crates/core/src/typ/metadata.typ`)
 
