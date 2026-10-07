@@ -8,9 +8,10 @@
 //! main plus each vertebra's rewritten body, ready to hand to the Cast stage
 //! (Typst bundle compilation).
 
+use super::handle::Handle;
 use super::spine::{Vertebra, VirtualSpine};
 use crate::synth::source_map::SourceMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 /// A decided edit at a syntax site: replace the bytes at [`range`](Self::range)
@@ -101,9 +102,27 @@ impl VirtualSpine {
     /// A vertebra with no rewrites is omitted from `sources` and served from
     /// disk unchanged. With no producers wired, `sources` is empty (identity).
     pub fn mould(&self) -> SpineMould {
-        let (main, main_map) = self.bundle_source().render();
+        self.mould_filtered(None)
+    }
+
+    /// Mould only `subset` of vertebrae into the bundle main — the
+    /// narrowed-compile path used by [`crate::build::Build::rebuild`]. Marrow is
+    /// still spliced in full (see [`VirtualSpine::bundle_source_subset`]);
+    /// only which vertebrae get their own `#document` block narrows.
+    pub fn mould_subset(&self, subset: &HashSet<Handle>) -> SpineMould {
+        self.mould_filtered(Some(subset))
+    }
+
+    fn mould_filtered(&self, subset: Option<&HashSet<Handle>>) -> SpineMould {
+        let (main, main_map) = match subset {
+            Some(s) => self.bundle_source_subset(s).render(),
+            None => self.bundle_source().render(),
+        };
         let mut sources = HashMap::new();
         for vertebra in &self.vertebrae {
+            if subset.is_some_and(|s| !s.contains(&vertebra.handle)) {
+                continue;
+            }
             if let Some(body) = vertebra.mould() {
                 sources.insert(vertebra.rel_path.clone(), body);
             }
@@ -119,6 +138,56 @@ impl VirtualSpine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reticulate::bundle_source::MarrowSource;
+    use crate::reticulate::spine::SpineLayout;
+
+    /// Three vertebrae plus a marrow epilogue, for [`VirtualSpine::mould_subset`].
+    fn three_vertebra_spine() -> VirtualSpine {
+        let vertebra = |name: &str| Vertebra {
+            rel_path: format!("content/{name}.typ"),
+            output_path: format!("{name}.html"),
+            handle: Handle::new(name),
+            extra_handles: vec![],
+            emit_handle: true,
+            title: name.to_string(),
+            source: format!("= {name}\n"),
+            synthesized: false,
+        };
+        VirtualSpine {
+            vertebrae: vec![vertebra("a"), vertebra("b"), vertebra("c")],
+            layout: SpineLayout::OnePerVertebra {
+                ext: "html".into(),
+                format: "html".into(),
+            },
+            tree: vec![],
+            title: None,
+            vertebra_prelude: None,
+            marrow: vec![MarrowSource {
+                origin: "content/.marrow.typ".to_string(),
+                text: "#let fed = 1".to_string(),
+            }],
+            marrow_prologue: Vec::new(),
+        }
+    }
+
+    /// Moulding a subset includes only the chosen vertebrae's `#include`s,
+    /// but marrow is spliced regardless.
+    #[test]
+    fn mould_subset_includes_only_the_chosen_vertebrae_plus_marrow() {
+        let spine = three_vertebra_spine();
+        let subset: HashSet<Handle> = [Handle::new("b")].into_iter().collect();
+
+        let moulded = spine.mould_subset(&subset);
+
+        assert!(moulded.main.contains("content/b.typ"));
+        assert!(!moulded.main.contains("content/a.typ"));
+        assert!(!moulded.main.contains("content/c.typ"));
+        assert!(
+            moulded.main.contains("fed"),
+            "marrow must still be spliced for a subset compile: {}",
+            moulded.main
+        );
+    }
 
     /// A rewrite that replaces its span with a fixed string.
     struct Replace {
