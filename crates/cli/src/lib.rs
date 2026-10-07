@@ -247,6 +247,16 @@ fn parse_inputs(sub: &ArgMatches) -> Result<HashMap<String, String>> {
                 ),
             });
         }
+        if key == rheo_core::config::RESERVED_LIGAMENTS_INPUT_KEY {
+            return Err(RheoError::ProjectConfig {
+                message: format!(
+                    "--input {key}=... is reserved: rheo owns the `{key}` key, which \
+                     carries the previous compile's harvested ligaments that every package \
+                     reads. Choose another name, e.g. a package-prefixed one like \
+                     `rookery-exclude`."
+                ),
+            });
+        }
         map.insert(key.to_string(), value.to_string());
     }
     Ok(map)
@@ -840,6 +850,32 @@ fn run_migrate(sub: &ArgMatches) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Builds just enough of a `Command` to exercise `parse_inputs` without
+    /// the rest of `compile`/`watch`'s flag set.
+    fn input_only_command() -> Command {
+        Command::new("test").arg(
+            Arg::new(arg::INPUT)
+                .long(arg::INPUT)
+                .value_name("KEY=VALUE")
+                .action(ArgAction::Append),
+        )
+    }
+
+    /// `--input rheo-ligaments=...` is rejected the same way, and for the
+    /// same reason, as `--input rheo-context=...` — rheo owns both keys.
+    #[test]
+    fn test_parse_inputs_rejects_reserved_ligaments_key() {
+        let cmd = input_only_command();
+        let matches = cmd
+            .try_get_matches_from(["test", "--input", "rheo-ligaments=forged"])
+            .unwrap();
+        let err = parse_inputs(&matches).expect_err("the reserved key must fail");
+        assert!(
+            err.to_string().contains("rheo-ligaments"),
+            "error should name the reserved key, got: {err}",
+        );
+    }
 
     #[test]
     fn test_all_plugins_contains_three_formats() {

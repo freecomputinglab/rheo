@@ -1,3 +1,36 @@
+# Unreleased — user-visible changes
+
+## A package can now attach ligaments, harvested after every compile
+
+A package can now record, per vertebra, the keys it attaches and the keys it
+binds to — the **ligaments** — by emitting `#metadata((page:, key:, value:))`
+under `<rheo-ligament:attach>` and `#metadata((page:, key:))` under
+`<rheo-ligament:bind>`. Project code can use the `rheo-ligament-attach(key,
+value)` and `rheo-ligament-bind(key)` helpers instead. rheo harvests the
+ligaments after every bundle compile and never interprets what a key means;
+joining one page's binds against another's attaches is left to whoever minted
+the keys. The `rheo-ligament:` label prefix is newly reserved: a label on it
+written in a vertebra's own source is now a hard build error, the same way
+`rheo-meta:` already is. See `docs/contract.md`'s "Ligaments" section for the
+full protocol.
+
+## Ligaments can now be fed back into a compile, and rheo dogfoods them for its own metadata
+
+A previous compile's harvested ligaments can now be fed back onto
+`sys.inputs.rheo-ligaments` as a native Typst dictionary, so a cross-vertebra
+read can still be answered even when the vertebra that would normally answer
+it did not run this compile. Project code reads it with the new
+`rheo-ligament-get(key)`, which returns `none` when no ligaments were
+supplied at all, or the array of `(page, value)` pairs attached under `key`
+(possibly empty) when they were. Package code reads the same value directly
+off `sys.inputs.at("rheo-ligaments", default: none)`, since package code
+cannot import rheo's own `rheo.typ`. rheo now dogfoods this for its own
+metadata beacon: each vertebra's beacon is also attached as a
+`rheo-meta:<handle>` ligament, and `rheo-metadata(handle)` falls back to it
+when the live beacon query finds nothing. `rheo-ligaments` is newly reserved
+alongside `rheo-context`, rejected the same way from both `rheo.toml
+[inputs]` and `--input`. See `docs/contract.md`'s "Ligaments" section.
+
 # 0.6.4 — user-visible changes
 
 ## `rheo watch` patches the page on a content edit, and a package must opt in

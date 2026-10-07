@@ -91,6 +91,43 @@
   }
 }
 
+// Ligaments protocol: a package calls these to record the keys a page
+// attaches and the keys it binds to, under the reserved `rheo-ligament:`
+// label prefix (RESERVED_LIGAMENT_LABEL_PREFIX,
+// crates/core/src/util/constants.rs), harvested Rust-side after every
+// compile (crates/core/src/build.rs) into the dependency graph documented in
+// docs/contract.md's "Ligaments" section. rheo itself never interprets a
+// key — that's for whichever package minted it. `page` defaults to the
+// calling vertebra's own handle (state("rheo-handle"), set by
+// rheo-page-init above), read via #context, but takes an explicit `page:`
+// override for marrow code, which runs outside any vertebra's own context
+// and so has no state to read.
+#let rheo-ligament-attach(key, value, page: none) = context [
+  #metadata((page: if page != none { page } else { state("rheo-handle").get() }, key: key, value: value)) <rheo-ligament:attach>
+]
+
+#let rheo-ligament-bind(key, page: none) = context [
+  #metadata((page: if page != none { page } else { state("rheo-handle").get() }, key: key)) <rheo-ligament:bind>
+]
+
+// Reads a previous compile's harvested ligaments back from
+// `sys.inputs.rheo-ligaments` — the feed-back half of the protocol above,
+// fed by `crates/core/src/world.rs`'s `build_inputs` (see docs/contract.md's
+// "Ligaments" section). Project code only: package code cannot import this
+// file, so a package reads the raw `sys.inputs.at("rheo-ligaments", default:
+// none)` shape directly instead.
+//
+// Returns `none` when `rheo-ligaments` is absent from `sys.inputs` entirely
+// (no ligaments were supplied this compile — the ordinary case today), vs.
+// an empty array when ligaments were supplied but `key` was never attached.
+// That distinction is load-bearing: `none` means "fall back to a live
+// query", an empty array means "ligaments answered and found nothing".
+#let rheo-ligament-get(key) = {
+  let ligaments = sys.inputs.at("rheo-ligaments", default: none)
+  if ligaments == none { return none }
+  ligaments.at("attaches", default: (:)).at(key, default: ())
+}
+
 // Wraps document() with the per-document init a spine vertebra gets for free,
 // and installs rheo-link-rule — which it must: the bundle source applies that
 // rule per #document and knows nothing about a page minted here. The #show sits
