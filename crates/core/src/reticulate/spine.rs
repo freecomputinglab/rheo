@@ -12,7 +12,10 @@ use crate::reticulate::document_meta::DocumentTitle;
 use crate::reticulate::handle::Handle;
 use crate::synth::typst_source::{TypstBlock, TypstStmt};
 use crate::util::path::to_forward_slash;
-use crate::{MARROW_FILE, MARROW_RESERVED_FILES, RESERVED_META_LABEL_PREFIX, Result, RheoError};
+use crate::{
+    MARROW_FILE, MARROW_RESERVED_FILES, RESERVED_LIGAMENT_LABEL_PREFIX, RESERVED_META_LABEL_PREFIX,
+    Result, RheoError,
+};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -429,24 +432,30 @@ impl VirtualSpine {
                     DocumentTitle::to_readable_name(&stem)
                 };
 
-                // The `rheo-meta:` namespace is reserved for the synthesized
-                // per-vertebra metadata beacon (`TypstStmt::MetadataBeacon`).
-                // Unlike the escape-collision check below (which only fires on
-                // an actual collision), any authored label squatting on this
-                // prefix is always a hard error — there is no useful silent
-                // fallback, and it doesn't matter whether the label happens to
-                // match a real beacon handle in this project.
-                if let Some(offending) = sites
-                    .definitions
-                    .iter()
-                    .find(|d| d.name.starts_with(RESERVED_META_LABEL_PREFIX))
-                {
-                    return Err(RheoError::invalid_data(format!(
-                        "{}: label <{}> uses the reserved `{}` prefix, which rheo uses internally for per-vertebra document metadata",
-                        file.display(),
-                        offending.name,
-                        RESERVED_META_LABEL_PREFIX
-                    )));
+                // The `rheo-meta:` and `rheo-ligament:` namespaces are
+                // reserved for, respectively, the synthesized per-vertebra
+                // metadata beacon (`TypstStmt::MetadataBeacon`) and the
+                // ligaments protocol (`rheo-ligament-attach`/
+                // `rheo-ligament-bind` in `crates/core/src/typ/rheo.typ`,
+                // harvested by `crate::build::Build`). Unlike the
+                // escape-collision check below (which only fires on an actual
+                // collision), any authored label squatting on either prefix
+                // is always a hard error — there is no useful silent
+                // fallback, and it doesn't matter whether the label happens
+                // to match something real in this project.
+                for reserved in [RESERVED_META_LABEL_PREFIX, RESERVED_LIGAMENT_LABEL_PREFIX] {
+                    if let Some(offending) = sites
+                        .definitions
+                        .iter()
+                        .find(|d| d.name.starts_with(reserved))
+                    {
+                        return Err(RheoError::invalid_data(format!(
+                            "{}: label <{}> uses the reserved `{}` prefix, which rheo uses internally",
+                            file.display(),
+                            offending.name,
+                            reserved
+                        )));
+                    }
                 }
 
                 user_labels.extend(sites.definitions.iter().map(|d| d.name.clone()));
@@ -1341,6 +1350,37 @@ mod tests {
                 );
             }
             Ok(_) => panic!("expected reserved meta-label prefix error"),
+        }
+    }
+
+    #[test]
+    fn reserved_ligament_label_prefix_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let content = root.join("content");
+        fs::create_dir_all(&content).unwrap();
+        // intro.typ hand-authors a label squatting on the reserved ligaments namespace.
+        fs::write(
+            content.join("intro.typ"),
+            "#let x = 1 <rheo-ligament:attach>\n",
+        )
+        .unwrap();
+
+        let files = vec![content.join("intro.typ")];
+        let layout = SpineLayout::OnePerVertebra {
+            ext: "html".into(),
+            format: "html".into(),
+        };
+        let result = VirtualSpine::build(SpineScan::flat(&files, &content), root, layout);
+        match result {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("intro.typ") && msg.contains("rheo-ligament:attach"),
+                    "error should name both file and label: {msg}"
+                );
+            }
+            Ok(_) => panic!("expected reserved ligament-label prefix error"),
         }
     }
 

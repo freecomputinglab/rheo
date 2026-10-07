@@ -123,6 +123,50 @@ the vertebra's own `#set document(...)` is *omitted* from the dict entirely
 is omitted too, not returned as `()`. Combined PDF emits no beacon at all —
 `rheo-metadata(handle)` returns `(:)` there, unconditionally.
 
+## Ligaments
+
+A package records, per vertebra, the keys it ATTACHES (each paired with an
+opaque Typst value) and the keys it BINDS to — the **ligaments**, harvested
+Rust-side after every bundle compile (`crates/core/src/build.rs`,
+`harvest_ligaments`). Joining one page's binds against another's attaches
+gives a dependency edge between them (A depends on B when A binds to a key B
+attaches). rheo never interprets a key — a package (rookery, say) decides
+that `"tag:post"` or `"backlinks:etal"` is meaningful; rheo only harvests the
+pairs. A key may be attached by more than one vertebra, which is how a
+package expresses a one-to-many relation (tags, backlinks).
+
+Two fixed-shape `#metadata` labels carry the protocol, under the reserved
+`rheo-ligament:` prefix (`RESERVED_LIGAMENT_LABEL_PREFIX`,
+`crates/core/src/util/constants.rs`):
+
+```typst
+#metadata((page: "<handle>", key: "<key>", value: <any>)) <rheo-ligament:attach>
+#metadata((page: "<handle>", key: "<key>")) <rheo-ligament:bind>
+```
+
+A package emits these two shapes directly: package code cannot import
+rheo's virtual `/typ/rheo.typ`, so it reads its page from
+`state("rheo-handle").get()` inside a `context` and writes the `#metadata`
+itself. Code inside the project has two convenience functions in
+`crates/core/src/typ/rheo.typ`, visible without an import at bundle root
+(marrow scope) and from a vertebra after
+`#import "/typ/rheo.typ": rheo-ligament-attach, rheo-ligament-bind`:
+
+| Helper | Signature | Notes |
+| --- | --- | --- |
+| `rheo-ligament-attach` | `(key, value, page: none) => content` | `page` defaults to `state("rheo-handle").get()` (the calling vertebra's own handle); pass `page:` explicitly from marrow, which runs outside any vertebra's own context. |
+| `rheo-ligament-bind` | `(key, page: none) => content` | Same `page` default/override as `rheo-ligament-attach`. |
+
+An authored label on the `rheo-ligament:` prefix is a hard build error, the
+same as the `rheo-meta:` beacon namespace above — see "Reserved `rheo-meta:`
+label namespace" below, which applies identically to this prefix.
+
+The harvest drops — never hard-errors on — a node whose `page`/`key` is
+missing or non-string, or whose `page` doesn't name a vertebra in the current
+spine; one warning covers a whole harvest run, not each dropped node. The
+harvested ligaments are not yet fed back into a compile through `sys.inputs`,
+and they do not yet narrow which vertebrae compile.
+
 ## Metadata helpers (`crates/core/src/typ/metadata.typ`)
 
 | Helper | Signature | Scope | Notes |
