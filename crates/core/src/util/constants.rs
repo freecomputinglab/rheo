@@ -35,6 +35,15 @@ pub const CONTROL_ASSET_PREFIX: &str = ".rheo/";
 /// see [`crate::reticulate::spine::VirtualSpine::build`].
 pub const RESERVED_META_LABEL_PREFIX: &str = "rheo-meta:";
 
+/// Prefix reserved for the ligaments protocol — a package's
+/// `rheo-ligament-attach`/`rheo-ligament-bind` calls (`crates/core/src/typ/rheo.typ`)
+/// emit `#metadata(..)<rheo-ligament:attach>`/`<rheo-ligament:bind>` elements
+/// under this prefix, harvested per compile by [`crate::build::Build`]. See
+/// `docs/contract.md`'s "Ligaments" section for the full shape. An
+/// author-authored label starting with this prefix is a hard build error, the
+/// same as [`RESERVED_META_LABEL_PREFIX`].
+pub const RESERVED_LIGAMENT_LABEL_PREFIX: &str = "rheo-ligament:";
+
 /// Project-root-relative path `RheoWorld` serves `typ/metadata.typ` under, for
 /// the `#import "/<METADATA_MODULE_PATH>": ...` statements
 /// [`crate::synth::typst_source::TypstStmt`]'s metadata-helper variants render.

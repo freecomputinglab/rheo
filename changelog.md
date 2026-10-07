@@ -1,3 +1,19 @@
+# Unreleased — user-visible changes
+
+## A package can now attach ligaments, harvested after every compile
+
+A package can now record, per vertebra, the keys it attaches and the keys it
+binds to — the **ligaments** — by emitting `#metadata((page:, key:, value:))`
+under `<rheo-ligament:attach>` and `#metadata((page:, key:))` under
+`<rheo-ligament:bind>`. Project code can use the `rheo-ligament-attach(key,
+value)` and `rheo-ligament-bind(key)` helpers instead. rheo harvests the
+ligaments after every bundle compile and never interprets what a key means;
+joining one page's binds against another's attaches is left to whoever minted
+the keys. The `rheo-ligament:` label prefix is newly reserved: a label on it
+written in a vertebra's own source is now a hard build error, the same way
+`rheo-meta:` already is. See `docs/contract.md`'s "Ligaments" section for the
+full protocol.
+
 # 0.6.4 — user-visible changes
 
 ## `rheo watch` patches the page on a content edit, and a package must opt in

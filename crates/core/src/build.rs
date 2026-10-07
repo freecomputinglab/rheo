@@ -21,7 +21,7 @@ use crate::reticulate::handle::Handle;
 use crate::reticulate::spine::{FormatContext, SpineLayout, SpinePrelude, SpineScan, VirtualSpine};
 use crate::transclude::{ContentTransclusion, ControlAssetKind, ControlAssets};
 use crate::world::RheoWorld;
-use crate::{Result, RheoError};
+use crate::{RESERVED_LIGAMENT_LABEL_PREFIX, Result, RheoError};
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 #[cfg(feature = "timings")]
@@ -32,6 +32,7 @@ use std::time::Instant;
 use tracing::{debug, error, info, warn};
 #[cfg(feature = "timings")]
 use typst::World as _;
+use typst::foundations::NativeElement as _;
 use typst::introspection::Introspector as _;
 use typst::model::Document as _;
 use typst_kit::fonts::FontStore;
@@ -127,6 +128,13 @@ pub struct Build {
     /// numbered trace under `timings` when watching.
     current_timings_target: Mutex<Option<PathBuf>>,
     metadata_two_pass: bool,
+    /// The ligaments harvested from the most recently compiled bundle (see
+    /// [`harvest_ligaments`]) — overwritten after every [`Build::compile_spine`]
+    /// call, so a `watch` session's long-lived `Build` always holds the latest
+    /// harvest. Nothing in this build reads it back into a compile; it exists
+    /// to be queried by a caller (a later compile pass, a sibling bird's
+    /// `sys.inputs` feed).
+    ligaments: Mutex<Ligaments>,
     /// Read only by the instrumentation, which is what the feature gates.
     #[cfg(feature = "timings")]
     iterations: bool,
@@ -160,6 +168,32 @@ struct CompiledBundlePass {
     meta: HashMap<String, DocumentMeta>,
     files: typst_bundle::VirtualFs,
     bundle: typst_bundle::Bundle,
+}
+
+/// One vertebra's slice of the harvested [`Ligaments`]: the (key, value)
+/// pairs it attaches and the keys it binds to. A key may appear in more
+/// than one vertebra's `attaches` across the whole set — that's how a
+/// package expresses a one-to-many relation (tags, backlinks) — so `attaches`
+/// here is this page's own contribution, not a merged view.
+#[derive(Debug, Clone, Default)]
+pub struct VertebraLigaments {
+    /// Keys this page attaches, each paired with its opaque Typst value —
+    /// rheo assigns no meaning to either; see `docs/contract.md`'s
+    /// "Ligaments" section.
+    pub attaches: Vec<(String, typst::foundations::Value)>,
+    /// Keys this page binds to.
+    pub binds: std::collections::BTreeSet<String>,
+}
+
+/// The ligaments harvested after a bundle compile (see
+/// [`harvest_ligaments`]): for each vertebra, the keys it attaches and the
+/// keys it binds to, keyed by [`Handle`]. Joining one page's `binds`
+/// against another's `attaches` gives a dependency edge between them — rheo
+/// only harvests the pairs, it never interprets what a key means. See
+/// `docs/contract.md`'s "Ligaments" section.
+#[derive(Debug, Clone, Default)]
+pub struct Ligaments {
+    pub per_page: HashMap<Handle, VertebraLigaments>,
 }
 
 /// The result of [`Build::resolve_spine_scan`]: the merged spine config's
@@ -296,6 +330,7 @@ impl Build {
             rebuild_index: std::sync::atomic::AtomicUsize::new(0),
             current_timings_target: Mutex::new(None),
             metadata_two_pass: opts.metadata_two_pass,
+            ligaments: Mutex::new(Ligaments::default()),
             #[cfg(feature = "timings")]
             iterations: opts.iterations,
         })
@@ -439,6 +474,14 @@ impl Build {
     /// for.
     pub fn take_timing(&self) -> BuildTiming {
         std::mem::take(&mut self.timing.lock())
+    }
+
+    /// The ligaments harvested from the most recently compiled bundle — see
+    /// [`Ligaments`]. A clone, not a drain: unlike diagnostics and timing,
+    /// this is meant to still be there for the next caller to read, not
+    /// consumed once.
+    pub fn ligaments(&self) -> Ligaments {
+        self.ligaments.lock().clone()
     }
 
     /// Run `f`, logging and accumulating how long it took under `phase`.
@@ -619,6 +662,17 @@ impl Build {
                 )?;
             }
         }
+
+        // Harvested after every bundle compile, from whichever pass is final
+        // (the gated second pass, when it ran) — overwrites whatever this
+        // `Build` harvested last, since nothing here merges across plugins or
+        // rebuilds. See `Ligaments`.
+        let known_handles: HashSet<Handle> = virtual_spine
+            .vertebrae
+            .iter()
+            .map(|v| v.handle.clone())
+            .collect();
+        *self.ligaments.lock() = Self::harvest_ligaments(&pass.bundle, &known_handles);
 
         Ok(CompiledSpine {
             spine: virtual_spine,
@@ -1053,6 +1107,90 @@ impl Build {
             typst::foundations::Value::Content(c) => Some(c.plain_text()),
             _ => None,
         }
+    }
+
+    /// Harvest the ligaments from a just-compiled bundle: every
+    /// `#metadata(..)` element labelled `<rheo-ligament:attach>` or
+    /// `<rheo-ligament:bind>` (emitted by a package's
+    /// `rheo-ligament-attach`/`rheo-ligament-bind` calls, `crates/core/src/typ/rheo.typ`),
+    /// grouped per page. One query across every metadata element
+    /// (`Selector::Elem(MetadataElem::ELEM, None)`) rather than one query
+    /// per key, since the set of keys a package mints is open-ended and not
+    /// knowable ahead of the query — unlike [`Self::beacon_title_plain_text`],
+    /// which queries one known label.
+    ///
+    /// A node is dropped — never a hard error — when its label isn't one of
+    /// the two reserved shapes, its value isn't a dict, its `page`/`key`
+    /// field is missing or non-string, or `page` doesn't name a vertebra in
+    /// `known_handles`. One warning covers the whole harvest when anything
+    /// was dropped; this never logs per node.
+    fn harvest_ligaments(
+        bundle: &typst_bundle::Bundle,
+        known_handles: &HashSet<Handle>,
+    ) -> Ligaments {
+        let found = bundle
+            .introspector
+            .query(&typst::foundations::Selector::Elem(
+                typst::introspection::MetadataElem::ELEM,
+                None,
+            ));
+
+        let attach_label = format!("{RESERVED_LIGAMENT_LABEL_PREFIX}attach");
+        let bind_label = format!("{RESERVED_LIGAMENT_LABEL_PREFIX}bind");
+        let mut per_page: HashMap<Handle, VertebraLigaments> = HashMap::new();
+        let mut dropped = 0usize;
+
+        for content in found.iter() {
+            let Some(packed) = content.to_packed::<typst::introspection::MetadataElem>() else {
+                continue;
+            };
+            let is_attach = match packed.label() {
+                Some(label) if *label.resolve() == *attach_label => true,
+                Some(label) if *label.resolve() == *bind_label => false,
+                _ => continue,
+            };
+            let typst::foundations::Value::Dict(dict) = &packed.value else {
+                dropped += 1;
+                continue;
+            };
+            let page = match dict.get("page") {
+                Ok(typst::foundations::Value::Str(s)) => s.as_str().to_string(),
+                _ => {
+                    dropped += 1;
+                    continue;
+                }
+            };
+            let handle = Handle::new(page);
+            if !known_handles.contains(&handle) {
+                dropped += 1;
+                continue;
+            }
+            let key = match dict.get("key") {
+                Ok(typst::foundations::Value::Str(s)) => s.as_str().to_string(),
+                _ => {
+                    dropped += 1;
+                    continue;
+                }
+            };
+
+            let entry = per_page.entry(handle).or_default();
+            if is_attach {
+                let value = dict
+                    .get("value")
+                    .ok()
+                    .cloned()
+                    .unwrap_or(typst::foundations::Value::None);
+                entry.attaches.push((key, value));
+            } else {
+                entry.binds.insert(key);
+            }
+        }
+
+        if dropped > 0 {
+            warn!(dropped, "ligaments harvest dropped malformed node(s)");
+        }
+
+        Ligaments { per_page }
     }
 
     /// Resolve `plugin`'s asset context and compile its spine — the "compile
@@ -2364,6 +2502,136 @@ mod tests {
         assert_eq!(
             rebuild_trace_filename(1, true),
             "rebuild-001-devserver.json"
+        );
+    }
+
+    /// Builds a two-vertebra project (`content/a.typ`, `content/b.typ`) ready
+    /// to run through `Build::prepare(..).run()`, for the ligaments harvest
+    /// end-to-end tests below.
+    fn build_ligaments_project(root: &Path) -> crate::project::ProjectConfig {
+        use crate::project::ProjectConfig;
+
+        std::fs::create_dir_all(root.join("content")).expect("create content dir");
+        std::fs::write(
+            root.join("content/a.typ"),
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach, rheo-ligament-bind\n\
+             #rheo-ligament-attach(\"tag:post\", [A])\n\
+             #rheo-ligament-bind(\"tag:post\")\n\
+             = A\n",
+        )
+        .expect("write content/a.typ");
+        std::fs::write(
+            root.join("content/b.typ"),
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"tag:post\", [B])\n\
+             = B\n",
+        )
+        .expect("write content/b.typ");
+
+        ProjectConfig {
+            name: "test".to_string(),
+            root: root.to_path_buf(),
+            config: crate::RheoConfig {
+                content_dir: Some("content".to_string()),
+                formats: vec!["html".to_string()],
+                ..Default::default()
+            },
+            typ_files: vec![root.join("content/a.typ"), root.join("content/b.typ")],
+            mode: ProjectMode::Directory,
+            config_path: None,
+        }
+    }
+
+    /// End-to-end: two vertebrae emitting a mix of `rheo-ligament-attach`/
+    /// `rheo-ligament-bind` calls harvest into a `Ligaments` that groups
+    /// attaches and binds correctly per page — including `tag:post`,
+    /// attached by both `a` and `b` (a key may be attached by more than one
+    /// vertebra; see the bird's "one-to-many relation" note).
+    #[test]
+    fn test_harvest_ligaments_groups_attaches_and_binds_per_page() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let project = build_ligaments_project(dir.path());
+
+        let build =
+            Build::prepare(project, fake_all(), BuildOptions::default()).expect("prepare build");
+        build.run().expect("run build");
+        let index = build.ligaments();
+
+        let a = index
+            .per_page
+            .get(&Handle::new("a"))
+            .expect("page a harvested");
+        assert_eq!(
+            a.attaches
+                .iter()
+                .map(|(k, _)| k.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tag:post"]
+        );
+        assert!(a.binds.contains("tag:post"));
+
+        let b = index
+            .per_page
+            .get(&Handle::new("b"))
+            .expect("page b harvested");
+        assert_eq!(
+            b.attaches
+                .iter()
+                .map(|(k, _)| k.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tag:post"]
+        );
+        assert!(b.binds.is_empty());
+    }
+
+    /// A node whose `page` is missing is dropped silently — the harvest
+    /// neither panics nor hard-errors, and the rest of the set is still
+    /// usable. Hand-authoring the `<rheo-ligament:attach>` label directly is
+    /// rejected at spine-build time (see
+    /// `reserved_ligament_label_prefix_returns_error` in `reticulate::spine`),
+    /// so the only legitimate way to reach a missing `page` is a call with no
+    /// vertebra's handle yet on `state("rheo-handle")` to fall back to —
+    /// marrow spliced as a *prologue* runs at bundle root before any
+    /// vertebra's own `rheo-page-init`, so `state("rheo-handle").get()`
+    /// there still reads its uninitialized default, `none`.
+    #[test]
+    fn test_harvest_ligaments_drops_node_with_missing_page() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("content")).expect("create content dir");
+        std::fs::write(root.join("content/a.typ"), "= A\n").expect("write content/a.typ");
+        std::fs::write(
+            root.join("content/.marrow.typ"),
+            "#rheo-ligament-attach(\"orphan\", [X])\n",
+        )
+        .expect("write marrow");
+
+        let project = crate::project::ProjectConfig {
+            name: "test".to_string(),
+            root: root.to_path_buf(),
+            config: crate::RheoConfig {
+                content_dir: Some("content".to_string()),
+                formats: vec!["html".to_string()],
+                marrow: Some(crate::config::MarrowConfig {
+                    file: None,
+                    position: crate::config::MarrowPosition::Prologue,
+                }),
+                ..Default::default()
+            },
+            typ_files: vec![root.join("content/a.typ")],
+            mode: ProjectMode::Directory,
+            config_path: None,
+        };
+
+        let build =
+            Build::prepare(project, fake_all(), BuildOptions::default()).expect("prepare build");
+        build.run().expect("run build");
+        let index = build.ligaments();
+
+        assert!(
+            index.per_page.is_empty(),
+            "the missing-page node should be dropped, not attributed to any page: {:?}",
+            index.per_page
         );
     }
 }
