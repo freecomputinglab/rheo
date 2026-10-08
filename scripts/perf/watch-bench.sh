@@ -55,6 +55,7 @@ LOGFILE="$TMPROOT/watch.log"
 WATCH_PID=""
 VERTEBRA_FILE=""
 ASSET_FILE=""
+NOTE_FILE=""
 CLEANED_UP=0
 
 cleanup() {
@@ -69,6 +70,9 @@ cleanup() {
 	fi
 	if [[ -n "$ASSET_FILE" && -f "$BACKUP_DIR/asset" ]]; then
 		cp "$BACKUP_DIR/asset" "$ASSET_FILE"
+	fi
+	if [[ -n "$NOTE_FILE" && -f "$BACKUP_DIR/note" ]]; then
+		cp "$BACKUP_DIR/note" "$NOTE_FILE"
 	fi
 	rm -rf "$TMPROOT"
 }
@@ -107,6 +111,15 @@ ASSET_FILE="$(find_asset "$PROJECT")"
 
 cp "$VERTEBRA_FILE" "$BACKUP_DIR/vertebra"
 cp "$ASSET_FILE" "$BACKUP_DIR/asset"
+
+NOTE_FILE_REL="${WATCH_BENCH_NOTE_VERTEBRA:-writing/weeknotes/26w37.typ}"
+NOTE_FILE="$PROJECT/$NOTE_FILE_REL"
+if [[ -f "$NOTE_FILE" ]]; then
+	cp "$NOTE_FILE" "$BACKUP_DIR/note"
+else
+	NOTE_SKIPPED="scenario=note-edit skipped (no such file: $NOTE_FILE)"
+	NOTE_FILE=""
+fi
 
 TODAY="$(date +%Y-%m-%d)"
 
@@ -210,6 +223,11 @@ edit_asset() {
 	: "$run"
 }
 
+edit_note() {
+	local run="$1"
+	echo "// watch-bench note edit $run" >>"$NOTE_FILE"
+}
+
 RESULT_TOUCH="$(run_scenario touch edit_touch)"
 cp "$BACKUP_DIR/vertebra" "$VERTEBRA_FILE"
 
@@ -219,6 +237,13 @@ cp "$BACKUP_DIR/vertebra" "$VERTEBRA_FILE"
 RESULT_ASSET="$(run_scenario asset-edit edit_asset)"
 cp "$BACKUP_DIR/asset" "$ASSET_FILE"
 
+if [[ -n "$NOTE_FILE" ]]; then
+	RESULT_NOTE="$(run_scenario note-edit edit_note)"
+	cp "$BACKUP_DIR/note" "$NOTE_FILE"
+else
+	RESULT_NOTE="$NOTE_SKIPPED"
+fi
+
 kill "$WATCH_PID" 2>/dev/null || true
 wait "$WATCH_PID" 2>/dev/null || true
 WATCH_PID=""
@@ -227,3 +252,4 @@ echo "cold: ${COLD_MS}ms — $COLD_LINE"
 echo "$RESULT_TOUCH"
 echo "$RESULT_VERTEBRA"
 echo "$RESULT_ASSET"
+echo "$RESULT_NOTE"
