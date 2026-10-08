@@ -70,3 +70,28 @@ those paths, drops by about 70ms (~7%) going from 5 passes to 4 — a real but
 modest win on this project, well short of the ~430ms a full pass removed from
 the middle of the loop would suggest, which says most of `vertebra-edit`'s
 cost is elsewhere in the compile.
+
+## Third section: a fourth scenario, `note-edit`
+
+Recorded 2026-10-08. `vertebra-edit`'s `index.typ` mints no notes, so the
+harness never measured the largest per-edit cost on this project: an edit to
+a vertebra that mints one note per `==` section. Added `scenario=note-edit`,
+editing `writing/weeknotes/26w37.typ` the same way `vertebra-edit` edits
+`index.typ` — appending a numbered comment so each run's bytes are new. The
+new line in the output below is `scenario=note-edit`.
+
+```
+watch-bench: project=/tmp/bench-rookery rheo=0.6.4 date=2026-10-08
+watch-bench: vertebra=/tmp/bench-rookery/index.typ asset=/tmp/bench-rookery/static/kermodeStrangeNature2026.slides.pdf
+cold: 37300ms —   37.347625841s  INFO 1768 page(s), 41.0 MB in 37.3s (+2 asset(s)) — typst-compile 36.3s, copy-globs 610ms, plugin-write 136ms
+scenario=touch runs_ms=1800,2500,2400 median_ms=2400
+scenario=vertebra-edit runs_ms=5700,3500,4500 median_ms=4500
+scenario=asset-edit runs_ms=1600,1600,1400 median_ms=1600
+scenario=note-edit runs_ms=15300,17000,14100 median_ms=15300
+```
+
+Page count (1768) and the other three scenarios' shape are up from the
+2026-09-25 section because the rookery itself grew in the meantime; compare
+`note-edit` against future runs, not against `vertebra-edit`'s absolute
+numbers here. Machine load was elevated during this run (another process
+compiling concurrently), so treat every figure in this run as an upper bound.
