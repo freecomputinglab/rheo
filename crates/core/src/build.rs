@@ -1168,6 +1168,8 @@ impl Build {
     /// Reads the `typst_timing` trace through a scanning `Write` that never
     /// materializes it; `timings_target`, when set, tees the same pass to
     /// that file, since `export_json` can only be called once per compile.
+    /// The serialization cost through `export_json` is unavoidable and
+    /// proportional to project size, not something the scanner can optimize.
     /// Prints nothing when the compile recorded no `iter (N)` events, which
     /// only happens if instrumentation wasn't actually enabled.
     #[cfg(feature = "timings")]

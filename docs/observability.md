@@ -60,6 +60,12 @@ where scanning is ~30ms. **`--iterations` is therefore cheap exactly where it
 matters and slow on a cold build** — which is the right way round, since the
 iteration count is what a watch session wants to watch.
 
+On larger projects, the post-compile pass dominates. Waterline (1,783 pages)
+sees `--iterations` add approximately 20 seconds of overhead after the compile,
+and `--timings` produces a 5.7 GB trace file. The overhead is unavoidable:
+typst-timing has no in-memory reader — only `export_json`, which must serialize
+every event to JSON — so the scanner cannot skip the cost.
+
 `just perf-cold` times a cold build instead: N repeats of a fresh `rheo
 compile` over a real project via `hyperfine`, reporting a mean and spread
 rather than a single number, with an optional byte-identity check against a

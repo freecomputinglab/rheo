@@ -187,14 +187,14 @@ fn add_instrumentation_flags(cmd: Command) -> Command {
         Arg::new(arg::TIMINGS)
             .long(arg::TIMINGS)
             .value_name("OUTPUT_JSON")
-            .help("Write Typst's own compilation timings to a JSON trace file (experimental)"),
+            .help("Write Typst's own compilation timings to a JSON trace file (experimental; large trace, slows the compile)"),
     )
     .arg(
         Arg::new(arg::ITERATIONS)
             .long(arg::ITERATIONS)
             .action(ArgAction::SetTrue)
             .help(
-                "Report Typst's introspection-convergence iterations as one INFO line per compile",
+                "Enables Typst instrumentation; slows the compile and adds post-compile overhead proportional to project size. Do not use when timing builds.",
             ),
     )
 }
