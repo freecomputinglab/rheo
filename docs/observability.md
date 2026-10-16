@@ -60,6 +60,14 @@ where scanning is ~30ms. **`--iterations` is therefore cheap exactly where it
 matters and slow on a cold build** — which is the right way round, since the
 iteration count is what a watch session wants to watch.
 
+`just perf-cold` times a cold build instead: N repeats of a fresh `rheo
+compile` over a real project via `hyperfine`, reporting a mean and spread
+rather than a single number, with an optional byte-identity check against a
+reference build. Its timed command carries neither `--timings` nor
+`--iterations` — both enable Typst's instrumentation, and `--iterations`
+specifically costs the most on exactly the cold builds this benchmark exists
+to measure, per the table above — so the numbers it reports are instrumentation-free.
+
 ## Compiling it out: `--no-default-features`
 
 The flags above and the `typst-timing` dependency behind them sit behind a
