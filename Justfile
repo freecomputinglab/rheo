@@ -15,3 +15,6 @@ watch:
 
 perf-watch *args:
   scripts/perf/watch-bench.sh {{args}}
+
+perf-cold *args:
+  scripts/perf/cold-bench.sh {{args}}
