@@ -801,7 +801,7 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
             // long session grows until the machine gives out; see
             // `evict_compile_cache`, which carries the measurements and the
             // reason a one-shot `rheo compile` must NOT call it.
-            evict_compile_cache();
+            evict_compile_cache(build.project().config.watch_cache_size());
             Ok(())
         },
     )

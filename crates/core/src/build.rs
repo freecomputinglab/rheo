@@ -2228,9 +2228,10 @@ impl Build {
 /// took the same session's steady state from 23.6 GB to 41 MB.
 ///
 /// A one-shot `rheo compile` exits straight after its build, so calling this
-/// there is pure cost for a cache nothing will read again.
-pub fn evict_compile_cache() {
-    comemo::evict(10);
+/// there is pure cost for a cache nothing will read again. `max_age` is
+/// `[watch] cache_size`, and `0` empties the cache so every rebuild compiles cold.
+pub fn evict_compile_cache(max_age: usize) {
+    comemo::evict(max_age);
 }
 
 /// Split a compiled bundle's flat path→bytes map into plugin-facing documents
@@ -3368,7 +3369,10 @@ mod tests {
             config: crate::RheoConfig {
                 content_dir: Some("content".to_string()),
                 formats: vec!["html".to_string()],
-                watch: Some(crate::config::WatchConfig { narrow: true }),
+                watch: Some(crate::config::WatchConfig {
+                    narrow: true,
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             typ_files: names

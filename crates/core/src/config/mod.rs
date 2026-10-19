@@ -78,8 +78,15 @@ pub struct MarrowConfig {
     pub position: MarrowPosition,
 }
 
+/// Default cache size: entries unused for this many rebuilds are dropped.
+pub const DEFAULT_WATCH_CACHE_SIZE: usize = 10;
+
+fn default_cache_size() -> usize {
+    DEFAULT_WATCH_CACHE_SIZE
+}
+
 /// `[watch]` table: `rheo watch` behaviour knobs.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct WatchConfig {
     /// Opt in to `Build::rebuild`'s narrowed-compile path (recompiling only
     /// the edited vertebra, plus any ligament-bound dependent, instead of
@@ -91,6 +98,19 @@ pub struct WatchConfig {
     /// `docs/contract.md`'s "Ligaments" section.
     #[serde(default)]
     pub narrow: bool,
+    /// Rebuilds a Typst memo-cache entry survives unused in `rheo watch`
+    /// ([`DEFAULT_WATCH_CACHE_SIZE`] when unset); `0` empties it after every rebuild.
+    #[serde(default = "default_cache_size")]
+    pub cache_size: usize,
+}
+
+impl Default for WatchConfig {
+    fn default() -> Self {
+        Self {
+            narrow: false,
+            cache_size: DEFAULT_WATCH_CACHE_SIZE,
+        }
+    }
 }
 
 /// One format's resolved spine knobs: every field already merged over the
@@ -658,6 +678,13 @@ impl RheoConfig {
         self.watch.as_ref().is_some_and(|w| w.narrow)
     }
 
+    /// `[watch] cache_size`, or [`DEFAULT_WATCH_CACHE_SIZE`] when unset.
+    pub fn watch_cache_size(&self) -> usize {
+        self.watch
+            .as_ref()
+            .map_or(DEFAULT_WATCH_CACHE_SIZE, |w| w.cache_size)
+    }
+
     /// Resolve content_dir against the project root, if configured.
     pub fn resolve_content_dir(&self, base_dir: &Path) -> Option<PathBuf> {
         self.content_dir
@@ -890,6 +917,26 @@ mod tests {
 
         let config = parse(&versioned_toml("[watch]\nnarrow = false\n"));
         assert!(!config.narrowed_rebuilds_enabled());
+    }
+
+    /// `[watch] cache_size` defaults to 10 (no `[watch]` table at all, or one
+    /// present without the key), and can be set to different values to control
+    /// memo cache retention.
+    #[test]
+    fn test_watch_cache_size_defaults_ten_and_honors_explicit_values() {
+        let config = parse(&versioned_toml(""));
+        assert_eq!(config.watch_cache_size(), 10);
+
+        let config = parse(&versioned_toml("[watch]\n"));
+        assert_eq!(config.watch_cache_size(), 10);
+
+        let config = parse(&versioned_toml("[watch]\ncache_size = 0\n"));
+        assert_eq!(config.watch_cache_size(), 0);
+
+        let config = parse(&versioned_toml("[watch]\ncache_size = 3\n"));
+        assert_eq!(config.watch_cache_size(), 3);
+
+        assert_eq!(WatchConfig::default().cache_size, DEFAULT_WATCH_CACHE_SIZE);
     }
 
     /// The retired top-level `marrow` filename override and

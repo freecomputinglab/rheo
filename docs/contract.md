@@ -258,6 +258,25 @@ narrow = true
 Disabled (absent, or `narrow = false`), every `rheo watch` rebuild compiles
 the whole bundle, exactly as before this mechanism existed.
 
+### `[watch] cache_size` — memo cache retention
+
+`rheo.toml`'s `[watch] cache_size` (`crates/core/src/config/mod.rs`, `WatchConfig`)
+controls how many generations of Typst's memo cache are kept between watch rebuilds.
+**Default 10**, which keeps cache entries hit within the last ten rebuilds to make warm
+rebuilds faster. Smaller values flatten memory usage at the cost of slower rebuilds.
+Measured on a 1,800-page project: a warm rebuild was ~9.5s against a ~31.5s cold one,
+while the kept cache grew RSS by ~2 GB per rebuild until it levelled off.
+
+Set `cache_size = 0` to empty the cache after every rebuild in a memory-constrained
+session:
+
+```toml
+[watch]
+cache_size = 0
+```
+
+One-shot `rheo compile` never evicts.
+
 ## Metadata helpers (`crates/core/src/typ/metadata.typ`)
 
 | Helper | Signature | Scope | Notes |

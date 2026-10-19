@@ -51,6 +51,14 @@ bundle directly — a package that does the latter would silently see only
 the narrowed subset and produce a page missing cross-vertebra content. See
 `docs/contract.md`'s "`[watch] narrow`" section.
 
+## `[watch] cache_size` makes the memo cache size configurable
+
+Set `[watch] cache_size = 0` in `rheo.toml` and `rheo watch` clears Typst's
+memo cache after every rebuild. The default is 10 (keep entries unused for the
+last ten rebuilds), which makes a warm rebuild three times faster than a cold
+one at the cost of RSS growing ~2 GB per rebuild until it levels off. Smaller
+values flatten memory footprint at the cost of rebuild speed.
+
 # 0.6.4 — user-visible changes
 
 ## `rheo watch` patches the page on a content edit, and a package must opt in
