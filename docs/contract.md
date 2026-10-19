@@ -183,7 +183,9 @@ ordinary case today), the key is left entirely absent from `sys.inputs` —
 not an empty dict — so a reader can tell "no ligaments were supplied" from
 "ligaments were supplied but nothing was attached". `rheo-ligaments` is
 rejected from `rheo.toml [inputs]` and `--input` the same way, and for the
-same reason, as `rheo-context`.
+same reason, as `rheo-context`. A full compile (`rheo compile`, or a watch
+rebuild that falls back to full) feeds no harvest, because it compiles every
+vertebra live.
 
 The dict's shape, as Typst sees it, groups every attach by key across every
 page (bound keys are NOT included — they stay Rust-side only, read directly

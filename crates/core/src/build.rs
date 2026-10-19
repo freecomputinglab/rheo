@@ -141,7 +141,8 @@ pub struct Build {
     /// (the default) leaves `rheo-ligaments` absent from `sys.inputs`
     /// entirely. This only supplies the Typst-side cross-vertebra read; which
     /// vertebrae actually get recompiled is decided separately, from
-    /// [`Self::ligaments`] (see [`Build::narrow_one_plugin`]).
+    /// [`Self::ligaments`] (see [`Build::narrow_one_plugin`]). [`Build::run`]
+    /// clears it, so it only lives for the narrowed rounds that set it.
     incoming_ligaments: Mutex<Option<Ligaments>>,
     /// Set once this `Build` has completed a successful [`Build::run`] —
     /// gates [`Build::rebuild`]'s narrowed-compile path: "no cached
@@ -1603,6 +1604,10 @@ impl Build {
 
         let mut results = CompilationResults::new();
         let default_section = PluginSection::default();
+
+        // A full compile compiles every vertebra live, so a fed-back harvest
+        // can only be stale.
+        *self.incoming_ligaments.lock() = None;
 
         // Resolved once per rebuild, ahead of every plugin's own compile, so
         // they all write the same rebuild's trace rather than each claiming a
@@ -3567,6 +3572,82 @@ mod tests {
             count("z.html"),
             2,
             "z is untouched by any narrowed path; a count of 2 proves a full rebuild ran"
+        );
+    }
+
+    /// Full fallback (delete b's file): a narrowed rebuild populates
+    /// `incoming_ligaments`, but a full rebuild (triggered when a non-vertebra
+    /// file changes) must clear it so the full compile feeds no stale harvest
+    /// into Typst.
+    #[test]
+    fn rebuild_full_fallback_clears_the_incoming_harvest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+        write_vertebra(
+            root,
+            "a",
+            "#import \"/typ/rheo.typ\": rheo-ligament-bind\n#rheo-ligament-bind(\"k\")\n= A\n",
+        );
+        write_vertebra(
+            root,
+            "b",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [X])\n= B\n",
+        );
+        for filler in ["c", "d", "e", "f", "g", "h"] {
+            write_vertebra(root, filler, &format!("= {filler}\n"));
+        }
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![plugin],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        // Edit b's attached value and run a narrowed rebuild to populate
+        // incoming_ligaments.
+        write_vertebra(
+            root,
+            "b",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [Y])\n= B\n",
+        );
+        build
+            .rebuild(&[root.join("content/b.typ")])
+            .expect("narrowed rebuild");
+
+        // After the narrowed rebuild, incoming_ligaments should be populated.
+        assert!(
+            build.incoming_ligaments.lock().is_some(),
+            "incoming_ligaments must be populated after a narrowed rebuild"
+        );
+
+        // Delete b's file and call rebuild. dispatch_decision will return
+        // Full("non-vertebra file changed: ...") and rebuild will call run(),
+        // which must clear incoming_ligaments.
+        std::fs::remove_file(root.join("content/b.typ")).expect("delete b.typ");
+        build
+            .rebuild(&[root.join("content/b.typ")])
+            .expect("full rebuild after deletion");
+
+        // After the full fallback, incoming_ligaments must be cleared.
+        assert!(
+            build.incoming_ligaments.lock().is_none(),
+            "incoming_ligaments must be cleared by Build::run"
+        );
+
+        // Also verify that b's handle is not in the ligaments.per_page map.
+        let b_handle = Handle::new("b");
+        let ligaments = build.ligaments.lock();
+        assert!(
+            !ligaments.per_page.contains_key(&b_handle),
+            "b's handle must not be in ligaments.per_page after its deletion"
         );
     }
 }
