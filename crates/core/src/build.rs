@@ -2103,7 +2103,7 @@ impl Build {
         plugin: &dyn FormatPlugin,
         virtual_spine: &VirtualSpine,
         subset: &HashSet<Handle>,
-        incoming: Ligaments,
+        mut incoming: Ligaments,
         resolver: &Arc<crate::packages::PackageResolver>,
     ) -> Result<(CompiledBundlePass, Ligaments)> {
         let moulded = virtual_spine.mould_subset(subset);
@@ -2122,6 +2122,9 @@ impl Build {
             bundle_source: None,
             reset_footnotes,
         };
+
+        // A recompiled page answers for itself live, so its fed copy can only be stale.
+        incoming.per_page.retain(|h, _| !subset.contains(h));
 
         self.set_incoming_ligaments(incoming);
 
@@ -2500,6 +2503,7 @@ fn resolve_font_dirs(project: &ProjectConfig, cli_font_dirs: &[PathBuf]) -> Resu
 mod tests {
     use super::*;
     use std::sync::Mutex;
+    use typst::foundations::Repr;
 
     /// What `Build::run` handed the plugin for each output: its path, its
     /// resolved title, and its compiled bytes as text. `CastVertebra` itself is
@@ -3454,6 +3458,93 @@ mod tests {
                 "{filler} must be untouched by the narrowed rebuild"
             );
         }
+    }
+
+    /// Round 2 of a narrowed rebuild must not include the pages compiled in
+    /// that round in its own fed ligaments, to avoid resurrecting stale data a
+    /// page just removed. Page `b` attaches `k`; page `a` binds `k`. After
+    /// editing `b`'s attach value and rebuilding, round 1 compiles `b` with
+    /// the old harvest fed in, then round 2 compiles `a` with round 1's
+    /// harvest fed. The feed left in `incoming_ligaments` must contain `b`'s
+    /// new value but NOT a stale copy of `a` from `cached`.
+    #[test]
+    fn rebuild_round_feed_omits_the_recompiled_pages_own_ligaments() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c", "d"];
+
+        write_vertebra(
+            root,
+            "a",
+            "#import \"/typ/rheo.typ\": rheo-ligament-bind\n#rheo-ligament-bind(\"k\")\n= A\n",
+        );
+        write_vertebra(
+            root,
+            "b",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [X])\n= B\n",
+        );
+        for filler in ["c", "d"] {
+            write_vertebra(root, filler, &format!("= {filler}\n"));
+        }
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![plugin],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        // Edit b's attached value.
+        write_vertebra(
+            root,
+            "b",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [Y])\n= B\n",
+        );
+        build
+            .rebuild(&[root.join("content/b.typ")])
+            .expect("narrowed rebuild");
+
+        // After the narrowed rebuild, incoming_ligaments should contain round
+        // 2's feed (compiled for a, the binder). It must contain b's new value
+        // but NOT a stale copy of a itself.
+        let ligaments = build
+            .incoming_ligaments
+            .lock()
+            .clone()
+            .expect("ligaments must be populated after rebuild");
+
+        let a_handle = Handle::new("a");
+        let b_handle = Handle::new("b");
+
+        // a must NOT be in the feed (it is being compiled in round 2).
+        assert!(
+            !ligaments.per_page.contains_key(&a_handle),
+            "a must not appear in round 2's fed ligaments"
+        );
+
+        // b must be in the feed with its new value.
+        assert!(
+            ligaments.per_page.contains_key(&b_handle),
+            "b must appear in round 2's fed ligaments"
+        );
+        let b_lig = &ligaments.per_page[&b_handle];
+        let k_values: Vec<_> = b_lig
+            .attaches
+            .iter()
+            .filter(|(key, _)| key == "k")
+            .map(|(_, v)| v)
+            .collect();
+        assert_eq!(k_values.len(), 1, "b must have exactly one attach for k");
+        assert_eq!(
+            k_values[0].repr(),
+            "[Y]",
+            "b's k value must be the new value [Y]"
+        );
     }
 
     /// Bind-only (decision 5): editing `a` to add a NEW bind, with its own

@@ -185,7 +185,9 @@ not an empty dict — so a reader can tell "no ligaments were supplied" from
 rejected from `rheo.toml [inputs]` and `--input` the same way, and for the
 same reason, as `rheo-context`. A full compile (`rheo compile`, or a watch
 rebuild that falls back to full) feeds no harvest, because it compiles every
-vertebra live.
+vertebra live. The fed harvest never includes the pages being compiled in that
+pass, so a merge that prefers live data cannot resurrect something an edited
+page removed.
 
 The dict's shape, as Typst sees it, groups every attach by key across every
 page (bound keys are NOT included — they stay Rust-side only, read directly
