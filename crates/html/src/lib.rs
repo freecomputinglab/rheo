@@ -42,6 +42,22 @@ impl ServerHandle for HtmlServerHandle {
             *arc.write().await = Some(vfs);
         });
     }
+    fn forget_virtual_paths(&self, paths: &[String]) {
+        let arc = self.vfs_arc.clone();
+        let paths = paths.to_vec();
+        self.runtime.spawn(async move {
+            if let Some(vfs) = arc.write().await.as_mut() {
+                forget_paths(vfs, &paths);
+            }
+        });
+    }
+}
+
+/// Drop every entry whose relative path is in `paths`, so the dev server
+/// falls through to disk for them instead of serving a stale in-memory copy.
+fn forget_paths(vfs: &mut typst_bundle::VirtualFs, paths: &[String]) {
+    let drop: HashSet<&str> = paths.iter().map(String::as_str).collect();
+    vfs.retain(|vpath, _| !drop.contains(vpath.get_with_slash().trim_start_matches('/')));
 }
 
 pub struct HtmlPlugin;
@@ -242,6 +258,37 @@ impl LiveReload for HtmlPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forget_paths_drops_only_named_entries() {
+        use typst::foundations::Bytes;
+        use typst::syntax::VirtualPath;
+
+        let mut vfs = typst_bundle::VirtualFs::default();
+        vfs.insert(
+            VirtualPath::new("a.html").expect("valid virtual path"),
+            Bytes::new(b"a".to_vec()),
+        );
+        vfs.insert(
+            VirtualPath::new("b.html").expect("valid virtual path"),
+            Bytes::new(b"b".to_vec()),
+        );
+        vfs.insert(
+            VirtualPath::new("style.css").expect("valid virtual path"),
+            Bytes::new(b"css".to_vec()),
+        );
+
+        forget_paths(&mut vfs, &["b.html".to_string()]);
+
+        let remaining: HashSet<String> = vfs
+            .keys()
+            .map(|p| p.get_with_slash().trim_start_matches('/').to_string())
+            .collect();
+        assert_eq!(
+            remaining,
+            HashSet::from(["a.html".to_string(), "style.css".to_string()])
+        );
+    }
 
     /// The site-wide head fragment (populated by `ControlAssets::extract` from
     /// a bundle-root `.rheo/head.html` control asset, before the plugin ever

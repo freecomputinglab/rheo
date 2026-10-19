@@ -30,6 +30,9 @@ pub trait ServerHandle: Send + Sync {
     fn reload(&self, kind: ReloadKind);
     /// Push a new in-memory file system to the server (no-op by default).
     fn update_virtual_fs(&self, _vfs: typst_bundle::VirtualFs) {}
+    /// Drop these relative paths from the in-memory file system so the
+    /// server serves them from disk instead (no-op by default).
+    fn forget_virtual_paths(&self, _paths: &[String]) {}
 }
 
 /// Handle returned by FormatPlugin::open() for managing the opened resource

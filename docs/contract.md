@@ -262,6 +262,10 @@ narrow = true
 Disabled (absent, or `narrow = false`), every `rheo watch` rebuild compiles
 the whole bundle, exactly as before this mechanism existed.
 
+Under `rheo watch --open`, a narrowed rebuild does not recompile the bundle
+for the dev server; the server serves the rewritten pages from the build
+directory.
+
 ### `[watch] cache_size` — memo cache retention
 
 `rheo.toml`'s `[watch] cache_size` (`crates/core/src/config/mod.rs`, `WatchConfig`)

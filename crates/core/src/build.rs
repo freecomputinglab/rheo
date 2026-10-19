@@ -144,6 +144,11 @@ pub struct Build {
     /// [`Self::ligaments`] (see [`Build::narrow_one_plugin`]). [`Build::run`]
     /// clears it, so it only lives for the narrowed rounds that set it.
     incoming_ligaments: Mutex<Option<Ligaments>>,
+    /// The relative output paths the last [`Build::rebuild`] wrote when it
+    /// took the narrowed path, for the watch server to drop from its
+    /// in-memory `VirtualFs` so it serves them from disk instead. `None`
+    /// after a full build.
+    narrowed_outputs: Mutex<Option<Vec<String>>>,
     /// Set once this `Build` has completed a successful [`Build::run`] —
     /// gates [`Build::rebuild`]'s narrowed-compile path: "no cached
     /// ligaments" and "first build of a session" are the same condition,
@@ -196,11 +201,15 @@ enum RebuildDecision {
 }
 
 /// Result of [`Build::narrow_one_plugin`]'s fixpoint loop: it either settled
-/// (naming every handle recompiled, across every round), or a round's
-/// dependent set crossed decision 6's threshold and the whole rebuild must
-/// fall back to a full one instead.
+/// (naming every handle recompiled and every output path written, across
+/// every round), or a round's dependent set crossed decision 6's threshold
+/// and the whole rebuild must fall back to a full one instead.
 enum NarrowOutcome {
-    Fixpoint { rounds: usize, handles: Vec<Handle> },
+    Fixpoint {
+        rounds: usize,
+        handles: Vec<Handle>,
+        written: Vec<String>,
+    },
     ThresholdExceeded(String),
 }
 
@@ -441,6 +450,7 @@ impl Build {
             metadata_two_pass: opts.metadata_two_pass,
             ligaments: Mutex::new(Ligaments::default()),
             incoming_ligaments: Mutex::new(None),
+            narrowed_outputs: Mutex::new(None),
             has_built: std::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "timings")]
             iterations: opts.iterations,
@@ -601,6 +611,13 @@ impl Build {
     /// a narrowed rebuild, to feed back the last full harvest.
     pub fn set_incoming_ligaments(&self, ligaments: Ligaments) {
         *self.incoming_ligaments.lock() = Some(ligaments);
+    }
+
+    /// Take the relative output paths the last [`Build::rebuild`] wrote when
+    /// it took the narrowed path, leaving `None`. `None` after a full build
+    /// (including every fallback from a narrowed attempt).
+    pub fn take_narrowed_outputs(&self) -> Option<Vec<String>> {
+        self.narrowed_outputs.lock().take()
     }
 
     /// Run `f`, logging and accumulating how long it took under `phase`.
@@ -1767,6 +1784,7 @@ impl Build {
         if self.project.typ_files.is_empty() {
             return Err(RheoError::project_config("no .typ files found in project"));
         }
+        *self.narrowed_outputs.lock() = None;
         if changed_paths.is_empty() {
             return self.run();
         }
@@ -1848,6 +1866,7 @@ impl Build {
         let mut results = CompilationResults::new();
         let mut max_rounds = 0usize;
         let mut all_recompiled: Vec<Handle> = Vec::new();
+        let mut all_written: Vec<String> = Vec::new();
 
         for plan in &plans {
             match self.narrow_one_plugin(
@@ -1857,11 +1876,20 @@ impl Build {
                 &plan.changed,
                 &package_resolver,
             )? {
-                NarrowOutcome::Fixpoint { rounds, handles } => {
+                NarrowOutcome::Fixpoint {
+                    rounds,
+                    handles,
+                    written,
+                } => {
                     max_rounds = max_rounds.max(rounds);
                     for h in handles {
                         if !all_recompiled.contains(&h) {
                             all_recompiled.push(h);
+                        }
+                    }
+                    for path in written {
+                        if !all_written.contains(&path) {
+                            all_written.push(path);
                         }
                     }
                     results.record_success(plan.plugin.name());
@@ -1872,6 +1900,8 @@ impl Build {
                 }
             }
         }
+
+        *self.narrowed_outputs.lock() = Some(all_written);
 
         RebuildPath::Narrowed {
             rounds: max_rounds,
@@ -1981,6 +2011,7 @@ impl Build {
         let mut seen: HashSet<Handle> = HashSet::new();
         let mut order: Vec<Handle> = Vec::new();
         let mut rounds = 0usize;
+        let mut written: Vec<String> = Vec::new();
 
         loop {
             rounds += 1;
@@ -1998,7 +2029,11 @@ impl Build {
                 package_resolver,
             )?;
 
-            self.write_subset_outputs(plugin, ctx, virtual_spine, pass)?;
+            for path in self.write_subset_outputs(plugin, ctx, virtual_spine, pass)? {
+                if !written.contains(&path) {
+                    written.push(path);
+                }
+            }
 
             let mut changed_keys: HashSet<String> = HashSet::new();
             for handle in &round_handles {
@@ -2018,6 +2053,7 @@ impl Build {
                 return Ok(NarrowOutcome::Fixpoint {
                     rounds,
                     handles: order,
+                    written,
                 });
             }
 
@@ -2033,6 +2069,7 @@ impl Build {
                 return Ok(NarrowOutcome::Fixpoint {
                     rounds,
                     handles: order,
+                    written,
                 });
             }
             if dependents.len() as f64 > threshold {
@@ -2153,14 +2190,16 @@ impl Build {
 
     /// Flatten and write one narrowed-compile round's outputs. Writes ONLY
     /// the files this round produced (decision 3) — no copy-glob pass, no
-    /// build-dir wipe, nothing else on disk is touched.
+    /// build-dir wipe, nothing else on disk is touched. Returns the relative
+    /// output path of every file written this round, for
+    /// [`Build::narrowed_outputs`].
     fn write_subset_outputs(
         &self,
         plugin: &dyn FormatPlugin,
         ctx: &PluginAssetContext<'_>,
         virtual_spine: &VirtualSpine,
         pass: CompiledBundlePass,
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
         let (outputs, mut asset_files) = flatten_bundle_outputs(
             pass.files,
             &pass.assets,
@@ -2170,6 +2209,8 @@ impl Build {
         );
         ContentTransclusion::rewrite_assets(&outputs, &mut asset_files)?;
         let (asset_files, control) = ControlAssets::extract(asset_files)?;
+
+        let mut written: Vec<String> = outputs.iter().map(|o| o.output_path.clone()).collect();
 
         if !plugin.embeds_bundle_assets() {
             for (path, bytes) in &asset_files {
@@ -2182,6 +2223,7 @@ impl Build {
                 std::fs::write(&dest, bytes.as_slice())
                     .map_err(|e| RheoError::io(e, format!("writing asset {path}")))?;
             }
+            written.extend(asset_files.iter().map(|(path, _)| path.clone()));
         }
 
         let plugin_ctx = PluginContext {
@@ -2197,7 +2239,8 @@ impl Build {
                 assets: &asset_files,
             },
         };
-        plugin.compile(plugin_ctx, &outputs)
+        plugin.compile(plugin_ctx, &outputs)?;
+        Ok(written)
     }
 }
 
@@ -3458,6 +3501,103 @@ mod tests {
                 "{filler} must be untouched by the narrowed rebuild"
             );
         }
+    }
+
+    /// A narrowed rebuild must report every relative output path it wrote,
+    /// across all its rounds, so the watch server can drop exactly those
+    /// from its in-memory `VirtualFs`. A full build leaves it `None`, and
+    /// the field is drained on read.
+    #[test]
+    fn rebuild_narrowed_reports_written_outputs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+        write_vertebra(
+            root,
+            "a",
+            "#import \"/typ/rheo.typ\": rheo-ligament-bind\n#rheo-ligament-bind(\"k\")\n= A\n",
+        );
+        write_vertebra(
+            root,
+            "b",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [X])\n= B\n",
+        );
+        for filler in ["c", "d", "e", "f", "g", "h"] {
+            write_vertebra(root, filler, &format!("= {filler}\n"));
+        }
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![plugin],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        assert_eq!(
+            build.take_narrowed_outputs(),
+            None,
+            "a full build reports no narrowed outputs"
+        );
+
+        write_vertebra(
+            root,
+            "b",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [Y])\n= B\n",
+        );
+        build
+            .rebuild(&[root.join("content/b.typ")])
+            .expect("narrowed rebuild");
+
+        let written = build
+            .take_narrowed_outputs()
+            .expect("a narrowed rebuild reports its written outputs");
+        assert!(written.contains(&"b.html".to_string()), "{written:?}");
+        assert!(written.contains(&"a.html".to_string()), "{written:?}");
+
+        assert_eq!(
+            build.take_narrowed_outputs(),
+            None,
+            "the field is drained on read"
+        );
+    }
+
+    /// A rebuild that falls back to a full build (here: a non-vertebra path
+    /// in the change set) must leave `narrowed_outputs` `None`, so the watch
+    /// loop takes the ordinary dev-server recompile path.
+    #[test]
+    fn rebuild_full_fallback_reports_no_outputs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b"];
+
+        write_vertebra(root, "a", "= A\n");
+        write_vertebra(root, "b", "= B\n");
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![plugin],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        build
+            .rebuild(&[root.join("not-a-vertebra.txt")])
+            .expect("falls back to a full rebuild");
+
+        assert_eq!(
+            build.take_narrowed_outputs(),
+            None,
+            "a full fallback must leave no narrowed outputs"
+        );
     }
 
     /// Round 2 of a narrowed rebuild must not include the pages compiled in

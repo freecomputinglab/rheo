@@ -761,14 +761,23 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
             match event {
                 WatchEvent::FilesChanged { assets, paths } => {
                     info!("files changed, recompiling");
-                    if rebuild_and_report(&build, &paths).is_ok()
-                        && let Some(server) = &server
-                    {
-                        update_dev_server(
-                            &mut build,
-                            server.as_ref(),
-                            Some(ReloadKind::for_assets_changed(assets)),
-                        );
+                    if rebuild_and_report(&build, &paths).is_ok() {
+                        let narrowed = build.take_narrowed_outputs();
+                        if let Some(server) = &server {
+                            match narrowed {
+                                Some(written) => {
+                                    server.forget_virtual_paths(&written);
+                                    server.reload(ReloadKind::for_assets_changed(assets));
+                                }
+                                None => {
+                                    update_dev_server(
+                                        &mut build,
+                                        server.as_ref(),
+                                        Some(ReloadKind::for_assets_changed(assets)),
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
                 WatchEvent::ConfigChanged => {
