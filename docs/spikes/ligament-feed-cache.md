@@ -1,5 +1,9 @@
 # Spike: does a changing ligament feed drive the narrowed-rebuild cost
 
+> Read with "What this changes about the verdict above", further down: the
+> `frozen` runs below produced a wrong search index, so their cost is not an
+> achievable target.
+
 **Verdict: yes, twice over. Feed churn costs a narrowed rebuild in two separate
 ways, and a stable feed removes both. First, cache misses: the same single
 edited vertebra compiles in 6.6–7.4s when the fed value differs from the last
@@ -90,38 +94,105 @@ which can only happen if that value is derived from the fed ligaments. The
 comment-only edit, which changes no content at all, comes in cheaper again
 (1.2–1.6s), approaching a fully cached no-op.
 
-## Open question: what feeds back into the harvest
+## Answer: what changes between rebuilds
 
-Which of `@rookery/core`'s attaches (`idea:<id>`, `ideas`, `tag:*`,
-`backlinks:*` in `state.typ`'s `_idea-ligaments`) carries a value computed
-from `sys.inputs.rheo-ligaments`, and which pages bind it so that
-`cycle-25-26`, `cycle-26-27` and `index` recompile after a prose edit? If an
-attach is derived from the merged registry rather than the page's own notes,
-narrowed rebuilds cascade on every edit whatever the delivery channel, so this
-is worth answering before or alongside the delivery redesign.
+Instrumented `narrow_one_plugin` and `rebuild` (`crates/core/src/build.rs`) to
+log every `(handle, key)` whose cached attach value moved, both within a
+rebuild's own fixpoint rounds and across one rebuild to the next, and ran the
+same three-edit series against `/tmp/feedspike-waterline-rookery` with a
+fresh `--release` binary. The instrumentation was temporary and is gone from
+the tree; this section reports what it showed.
 
-## Conclusion
+**Exactly two keys change on a prose-only edit, and they are always the
+same two**, for whichever paper is edited:
 
-The competing explanation from `docs/spikes/narrowed-rebuild-profile.md` —
-that the cost is unavoidable per-compile, registry-sized rookery work
-(`_reg-final()`'s merge, `@rookery/search`'s corpus pass) — does not hold on
-its own here: the exact same registry, the exact same rookery packages, and
-the exact same narrowed subset cost ~17.5–21s when the fed ligament value
-differs between compiles and ~2.6–2.9s when it does not. The two spikes are
-not in conflict — that prior spike never varied feed stability, so it
-correctly priced the registry-sized work as the cost *given* that the feed
-always differs, which is what happens today. This spike adds the other axis:
-hold the feed still, and most of that cost disappears, because the fed value
-sits inside `sys.inputs`, which comemo hashes as one unit — any difference,
-however irrelevant to what a given page reads, invalidates every memoised
-evaluation that touches it, rebuilding the registry merge and the search
-corpus from scratch regardless of whether anything they'd actually read
-changed.
+- `idea-body:idea:<id>` — the note's `raw` body, attached separately from
+  everything else (`_idea-ligaments`, `@rookery/core`'s `state.typ`, the
+  `_attach(_LIG-IDEA-BODY + id, rec.at("raw", ...), ...)` call). This is
+  deliberate: it is the one attach a prose edit is SUPPOSED to move. `idea:<id>`
+  and `ideas` — the note's other fields — did not change in any run: `_idea-ligaments`
+  removes `raw` and `body` from the record before attaching it under those keys,
+  and nothing else about the note moved.
+- `search-row:idea:<id>` — NOT a core attach. It belongs to `@rookery/search`'s
+  own bundle-root marrow (`search/0.1.1/.marrow.typ`), which attaches
+  `(body: row.body, tokens: toks.at(i))` under this key for every note, to
+  skip re-tokenizing a note whose body comes out byte-identical to what was
+  cached (`_cached-tokens`, read back via `_lig-get`). `row.body` is a
+  plain-text rendering of the note's flattened body — it contains the same
+  "Word count: N." line the paper's own template prints, and N changed with
+  every edit (one appended sentence moved it from 6190 to 6194, 6194 to 6198,
+  and so on across the three runs on the same paper). So this key, too, moves
+  on every prose edit, for a reason entirely outside `@rookery/core`: the
+  search index cache keys itself on the note's rendered body text, not a
+  separate "did the prose change" signal.
 
-This makes the parked design bird — feeding ligaments without invalidating the
-whole library, e.g. by making `_reg-final()`/the search corpus read a
-narrower, independently-memoized slice of `sys.inputs` rather than the whole
-value, or building the merge once per compile from a stable handle rather than
-re-deriving it from `sys.inputs` on every `_reg-final()` call — the change
-most likely to pay off: feed churn, not registry size, is the lever a cache
-fix can actually pull.
+**Both pages that attach them change every edit, so both costs are paid every
+edit.** Measured identically across three edits to `ends-of-theory` and once
+to a different paper (`cybernetic-conjecture`): the edited handle is the only
+one whose `idea-body:`/`search-row:` pair moves in round 1, and the SAME three
+pages always recompile in round 2 — `index`, `nest:jobs:cycle-25-26`,
+`nest:jobs:cycle-26-27` — regardless of which paper was touched. That
+repetition across two different edited papers is itself the finding: these
+three pages bind something true of every paper (most plausibly a tag-selector
+window or transclusion over the whole `papers` tag, binding `idea-body:<id>`
+for every paper id up front), not something specific to `ends-of-theory`.
+Neither `search-row:*` key is ever found in a `binds` list — nothing reads it
+back through a Typst-visible API, so it causes no cascade on its own — but
+`@rookery/search`'s own corpus-wide weighting pass (`_compress-ranked` in
+`search/0.1.1/src/corpus.typ`, called from the `.marrow.typ` shown above) runs
+over every note's tokens on every round that recompiles ANY note, because that
+file is bundle-root marrow and rheo splices marrow in full on every narrowed
+round (`compile_bundle_subset`'s own doc comment: "marrow still spliced in
+full"). One row's token list differing is enough to change `_compress-ranked`'s
+memo key, so this pass reruns from scratch — THIS is why round 1 never
+compiles warm today: it is not that round 1 is unavoidably registry-sized
+work, it is that the search corpus pass's memo key depends on literally every
+note's cached tokens, and the edited note's `search-row:` always misses.
+
+This also explains the earlier `frozen`/`perturb` results directly. Freezing
+the fed value stops `_lig-get(_LIG-SEARCH-ROW + row.id)` from ever returning a
+new value for the edited note either (since the feed, not the live
+recompile, is what the OTHER rows see, and the one row that recompiles live
+answers for itself) — `toks` ends up identical to the previous call, comemo's
+memo hits, and `_compress-ranked` is skipped. `perturb`'s synthetic attach on
+an uncompiled handle does not touch `search-row:*` or `idea-body:*` at all,
+yet still sustains the full cost, because `sys.inputs` is hashed as one
+value: ANY difference anywhere in the fed `Ligaments`, however irrelevant to
+what a page reads, invalidates every memoised Typst call that touches
+`sys.inputs`, not only the ones that would actually produce a different
+result.
+
+## What this changes about the verdict above
+
+The verdict at the top of this document read `frozen`'s 2.6–2.7s round 1 as the
+price of a cache hit. It is not one. Under `frozen`, `@rookery/search` reads the
+edited note's `search-row` back from the stale feed and reuses last build's
+tokens and body, so that round produced a WRONG search index, and its cost is a
+lower bound for a build nobody wants rather than a target. What the trace shows
+instead:
+
+- **For repeated edits to one page, today's feed is already stable.** Only the
+  edited page's own attaches move, and rheo already drops those from the feed it
+  hands that page's round. Round 1's 6.6–7.4s is real recomputation:
+  `@rookery/search`'s corpus-wide `_compress-ranked` pass reruns because one
+  note's tokens really changed. A stable-feed redesign would help only when
+  successive edits land on different pages.
+- **Round 2 is partly an over-bind in the site, not in rheo or rookery.** `index`
+  binds every note's body legitimately: its search `filter-panel` renders and
+  searches each row's body text. But `cycle-25-26` and `cycle-26-27` reach every
+  body through waterline's own `#cfps` (`rookery/_lib/template.typ`), whose outer
+  `ideas-view(all => ...)` is unfiltered and leaves `body:` at its default
+  `true`. The cfp tables never read a body. `body: false` on both of its
+  `ideas-view` calls is the switch `@rookery/core`'s `data.typ` provides for
+  exactly this ("a listing page (titles, tags, dates — never prose)").
+
+## Recommendation
+
+1. Pass `body: false` to both `ideas-view` calls in waterline's `#cfps`, so a
+   prose edit stops recompiling the two cycle pages.
+2. Price `@rookery/search`'s corpus pass on a one-note change. If each row's
+   compressed terms can be cached per note (they already ride on `search-row`)
+   and only the corpus-wide weighting recomputed, round 1 shrinks to the edited
+   page plus that weighting. That needs its own spike.
+3. Leave the stable-feed redesign parked until edits that alternate between
+   pages are measured to matter.
