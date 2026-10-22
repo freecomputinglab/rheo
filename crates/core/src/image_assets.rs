@@ -104,9 +104,75 @@ pub const IMAGE_PLACEHOLDER_RULE: typst::foundations::ShowFn<ImageElem> = |elem,
     Ok(out)
 };
 
+/// Rewrites every `src="rheo-asset:/<path>"` placeholder in `text` to a URL
+/// relative to the page at `page_path`, and returns the project paths it
+/// found (deduplicated, no leading slash) so the caller can publish them as
+/// files. `None` when `text` carries no placeholder.
+///
+/// Plain string search: the HTML Typst emits always double-quotes attribute
+/// values, so a placeholder is always `src="` + [`PLACEHOLDER_SCHEME`] + a
+/// path + `"`.
+pub fn resolve_placeholders(text: &str, page_path: &str) -> Option<(String, Vec<String>)> {
+    let needle = format!("src=\"{PLACEHOLDER_SCHEME}/");
+    if !text.contains(&needle) {
+        return None;
+    }
+
+    let prefix = crate::html_dom::depth_prefix(page_path);
+    let mut out = String::with_capacity(text.len());
+    let mut paths: Vec<String> = Vec::new();
+    let mut rest = text;
+
+    while let Some(pos) = rest.find(&needle) {
+        out.push_str(&rest[..pos]);
+        let after = &rest[pos + needle.len()..];
+        let Some(end) = after.find('"') else {
+            // No closing quote: malformed, keep the remainder verbatim.
+            out.push_str(&rest[pos..]);
+            rest = "";
+            break;
+        };
+        let path = &after[..end];
+        if !paths.iter().any(|p| p == path) {
+            paths.push(path.to_string());
+        }
+        out.push_str("src=\"");
+        out.push_str(&prefix);
+        out.push_str(path);
+        out.push('"');
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+
+    Some((out, paths))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_placeholders_rewrites_relative_to_depth() {
+        let text = concat!(
+            r#"<img src="rheo-asset:/img/a.png">"#,
+            r#"<img src="rheo-asset:/img/b.png">"#,
+            r#"<img src="rheo-asset:/img/a.png">"#,
+        );
+
+        let (rewritten, paths) =
+            resolve_placeholders(text, "index.html").expect("placeholders found");
+        assert!(rewritten.contains(r#"src="img/a.png""#));
+        assert!(rewritten.contains(r#"src="img/b.png""#));
+        assert_eq!(
+            paths,
+            vec!["img/a.png".to_string(), "img/b.png".to_string()]
+        );
+
+        let (rewritten, _) = resolve_placeholders(text, "a/b/c.html").expect("placeholders found");
+        assert!(rewritten.contains(r#"src="../../img/a.png""#));
+
+        assert!(resolve_placeholders("<p>no images</p>", "index.html").is_none());
+    }
 
     #[test]
     fn is_web_native_accepts_browser_formats() {

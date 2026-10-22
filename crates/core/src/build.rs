@@ -3512,9 +3512,9 @@ mod tests {
         }
     }
 
-    /// `[html] image_assets = true` replaces an inlined base64 `src` with a
-    /// `rheo-asset:` placeholder naming the image's project path; off (the
-    /// default) keeps the stock base64.
+    /// `[html] image_assets` (default on) replaces an inlined base64 `src`
+    /// with a `rheo-asset:` placeholder naming the image's project path;
+    /// explicit `false` keeps the stock base64.
     #[test]
     fn image_assets_emits_placeholder_for_html() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -3527,15 +3527,7 @@ mod tests {
         )
         .expect("write svg");
 
-        let mut project_on = ligaments_project(root, &["a"]);
-        project_on.config.plugin_sections.insert(
-            "html".to_string(),
-            crate::config::PluginSection {
-                image_assets: true.into(),
-                ..Default::default()
-            },
-        );
-        let html_on = run_capturing(project_on).html("a.html");
+        let html_on = run_capturing(ligaments_project(root, &["a"])).html("a.html");
         assert!(
             html_on.contains(r#"src="rheo-asset:/content/img/a.svg""#),
             "got: {html_on}"
@@ -3543,7 +3535,15 @@ mod tests {
         assert!(html_on.contains(r#"width="4""#), "got: {html_on}");
         assert!(!html_on.contains("data:image"), "got: {html_on}");
 
-        let html_off = run_capturing(ligaments_project(root, &["a"])).html("a.html");
+        let mut project_off = ligaments_project(root, &["a"]);
+        project_off.config.plugin_sections.insert(
+            "html".to_string(),
+            crate::config::PluginSection {
+                image_assets: false.into(),
+                ..Default::default()
+            },
+        );
+        let html_off = run_capturing(project_off).html("a.html");
         assert!(html_off.contains("data:image/svg+xml"), "got: {html_off}");
     }
 

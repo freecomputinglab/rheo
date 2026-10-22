@@ -492,7 +492,7 @@ impl CopyGlobs {
 /// modification time at or after `src`'s. `std::fs::copy` does not preserve
 /// the source's mtime, so a fresh copy is always newer than its source. Any
 /// metadata error returns `false`, so the caller copies as before.
-fn dest_is_current(src: &Path, dest: &Path) -> bool {
+pub fn dest_is_current(src: &Path, dest: &Path) -> bool {
     let (Ok(src_meta), Ok(dest_meta)) = (src.metadata(), dest.metadata()) else {
         return false;
     };

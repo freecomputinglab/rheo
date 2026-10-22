@@ -321,9 +321,10 @@ pub struct PluginSection {
     pub reset_footnotes: Flag<true>,
 
     /// Publish project images as files and link them instead of inlining
-    /// base64 (`[html]` only; ignored for other formats).
+    /// base64 (`[html]` only; ignored for other formats). Default on; set
+    /// `false` to restore full inlining.
     #[serde(default)]
-    pub image_assets: Flag<false>,
+    pub image_assets: Flag<true>,
 
     /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
     /// `fonts` for HTML; `identifier`, `date` for EPUB).
@@ -837,16 +838,16 @@ mod tests {
     }
 
     #[test]
-    fn test_image_assets_defaults_false_and_honors_true_per_format() {
-        // No [html] section at all -> default section, defaults to false.
+    fn test_image_assets_defaults_true_and_honors_false_per_format() {
+        // No [html] section at all -> default section, defaults to true.
         let config = parse(&versioned_toml(r#"formats = ["html"]"#));
-        assert!(!config.plugin_section("html").image_assets.get());
-
-        // Explicit true on [html] is honored, and is per-format: [epub] still
-        // defaults to false.
-        let config = parse(&versioned_toml("[html]\nimage_assets = true\n[epub]\n"));
         assert!(config.plugin_section("html").image_assets.get());
-        assert!(!config.plugin_section("epub").image_assets.get());
+
+        // Explicit false on [html] is honored, and is per-format: [epub] still
+        // defaults to true.
+        let config = parse(&versioned_toml("[html]\nimage_assets = false\n[epub]\n"));
+        assert!(!config.plugin_section("html").image_assets.get());
+        assert!(config.plugin_section("epub").image_assets.get());
     }
 
     #[test]

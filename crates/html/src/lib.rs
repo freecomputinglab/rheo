@@ -162,6 +162,11 @@ impl FormatPlugin for HtmlPlugin {
         // cores. The directories above are the only ordering requirement, which
         // is why they are a separate pass.
         //
+        // Every project image path a page's placeholders name, gathered
+        // across the parallel loop below so it can be copied once after —
+        // several pages commonly reference the same image.
+        let image_paths: std::sync::Mutex<HashSet<String>> = std::sync::Mutex::new(HashSet::new());
+
         // `try_fold`/`try_reduce` rather than `for_each`: a write error must
         // still be returned, and the first one is enough.
         let (written, unchanged) = outputs
@@ -171,6 +176,14 @@ impl FormatPlugin for HtmlPlugin {
                 // The same finishing the dev server serves, so `rheo watch` and
                 // `rheo compile` never disagree about a page's `<head>`.
                 let page = ctx.page.page(&output.output_path, &html_string);
+                if let Some((_, paths)) =
+                    rheo_core::image_assets::resolve_placeholders(&html_string, &output.output_path)
+                {
+                    image_paths
+                        .lock()
+                        .expect("image_paths mutex poisoned")
+                        .extend(paths);
+                }
                 let html_string = self.rewrite_page(&page)?.unwrap_or(html_string);
 
                 let out_path = ctx.output_dir.join(&output.output_path);
@@ -213,6 +226,29 @@ impl FormatPlugin for HtmlPlugin {
             })
             .try_reduce(|| (0, 0), |a, b| Ok((a.0 + b.0, a.1 + b.1)))?;
 
+        // Publish each referenced project image once, at its project-root-
+        // relative path — the same place a `[[html.assets]] copy` glob would
+        // put it, and unaffected by `content_dir`. Skipped when the copy
+        // already there is current, so a watch rebuild does not re-copy
+        // every image on every pass.
+        for path in image_paths
+            .into_inner()
+            .expect("image_paths mutex poisoned")
+        {
+            let src = ctx.bundle.project.root.join(&path);
+            let dest = ctx.output_dir.join(&path);
+            if rheo_core::assets::dest_is_current(&src, &dest) {
+                continue;
+            }
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    RheoError::io(e, format!("creating image output directory {:?}", parent))
+                })?;
+            }
+            std::fs::copy(&src, &dest)
+                .map_err(|e| RheoError::io(e, format!("copying image {:?} to {:?}", src, dest)))?;
+        }
+
         // ONE LINE, and on a watch rebuild it is the most useful one there is:
         // "written=3 unchanged=357" says immediately whether an edit reached the
         // pages it was supposed to reach.
@@ -229,6 +265,11 @@ impl LiveReload for HtmlPlugin {
         if !page.path.ends_with(".html") {
             return Ok(None);
         }
+
+        let resolved = rheo_core::image_assets::resolve_placeholders(page.text, page.path);
+        let text = resolved
+            .as_ref()
+            .map_or(page.text, |(text, _)| text.as_str());
 
         let built_paths = |name| {
             page.assets
@@ -251,7 +292,15 @@ impl LiveReload for HtmlPlugin {
 
         let css = rheo_core::html_dom::depth_relative_refs(&css_paths, page.path);
         let js = rheo_core::html_dom::depth_relative_scripts(&js_scripts, page.path);
-        rheo_core::html_dom::HtmlDom::apply_head_mutations(page.text, &css, &js, page.head_fragment)
+        let mutated = rheo_core::html_dom::HtmlDom::apply_head_mutations(
+            text,
+            &css,
+            &js,
+            page.head_fragment,
+        )?;
+        // A page whose only change is its images still needs rewriting, even
+        // when the head mutations found nothing to do.
+        Ok(mutated.or_else(|| resolved.map(|(text, _)| text)))
     }
 }
 
@@ -419,6 +468,31 @@ mod tests {
         }
     }
 
+    /// A page whose only change is a placeholder image still gets rewritten,
+    /// relative to its own depth.
+    #[test]
+    fn test_rewrite_page_resolves_image_placeholders() {
+        use std::collections::HashMap;
+
+        let assets: HashMap<&'static str, Vec<rheo_core::Asset>> = HashMap::new();
+
+        let page = ServedPage {
+            path: "sub/page.html",
+            text: r#"<html><head><title>t</title></head><body><img src="rheo-asset:/img/a.png"></body></html>"#,
+            assets: &assets,
+            head_fragment: None,
+        };
+
+        let rewritten = HtmlPlugin
+            .rewrite_page(&page)
+            .expect("rewrite succeeds")
+            .expect("an .html page with a placeholder is rewritten");
+        assert!(
+            rewritten.contains(r#"src="../img/a.png""#),
+            "image src not resolved relative to page depth:\n{rewritten}"
+        );
+    }
+
     /// The dev-server path serves what the on-disk path writes: core compiles
     /// into memory, then hands each page to this plugin's [`LiveReload`], so a
     /// `<rheo-head>` wrapper is hoisted and the build's stylesheet is linked in
@@ -471,5 +545,81 @@ mod tests {
         let head_end = html.find("</head>").expect("has head");
         let meta_pos = html.find("name=\"x\"").expect("meta present");
         assert!(meta_pos < head_end, "meta not hoisted into head:\n{html}");
+    }
+
+    /// A full on-disk build publishes a referenced project image as a file,
+    /// once, at its project-root-relative path, and links it relative to the
+    /// page with no `rheo-asset:` placeholder left behind. A second build
+    /// leaves the copy's mtime alone, since `dest_is_current` sees nothing
+    /// changed. Lives here (not `rheo-core`) because the rewrite and copy
+    /// both happen inside `HtmlPlugin`, which `rheo-core` cannot depend on.
+    #[test]
+    fn image_assets_publishes_files_once() {
+        use rheo_core::project::{ProjectConfig, ProjectMode};
+        use rheo_core::{Build, BuildOptions, RheoConfig};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("content/img")).expect("create content/img dir");
+        std::fs::write(root.join("content/a.typ"), "#image(\"img/a.svg\")\n")
+            .expect("write content/a.typ");
+        std::fs::write(
+            root.join("content/img/a.svg"),
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"></svg>"#,
+        )
+        .expect("write svg");
+
+        let make_project = || ProjectConfig {
+            name: "test".to_string(),
+            root: root.to_path_buf(),
+            config: RheoConfig {
+                content_dir: Some("content".to_string()),
+                formats: vec![PLUGIN_NAME.to_string()],
+                ..Default::default()
+            },
+            typ_files: vec![root.join("content/a.typ")],
+            mode: ProjectMode::Directory,
+            config_path: None,
+        };
+
+        let plugin: Box<dyn FormatPlugin> = Box::new(HtmlPlugin);
+        Build::prepare(make_project(), vec![plugin], BuildOptions::default())
+            .expect("prepare build")
+            .run()
+            .expect("run build");
+
+        let html_path = root.join("build/html/a.html");
+        let html = std::fs::read_to_string(&html_path).expect("read a.html");
+        assert!(
+            html.contains(r#"src="content/img/a.svg""#),
+            "image src not resolved:\n{html}"
+        );
+        assert!(
+            !html.contains("rheo-asset:"),
+            "placeholder left in:\n{html}"
+        );
+
+        let image_path = root.join("build/html/content/img/a.svg");
+        let first_copy_mtime = image_path
+            .metadata()
+            .expect("copied image exists")
+            .modified()
+            .expect("mtime");
+
+        // Run again: the copy is already current, so it is left untouched.
+        let plugin: Box<dyn FormatPlugin> = Box::new(HtmlPlugin);
+        Build::prepare(make_project(), vec![plugin], BuildOptions::default())
+            .expect("prepare build")
+            .run()
+            .expect("run build");
+        let second_copy_mtime = image_path
+            .metadata()
+            .expect("copied image still exists")
+            .modified()
+            .expect("mtime");
+        assert_eq!(
+            first_copy_mtime, second_copy_mtime,
+            "image was re-copied on an unchanged rebuild"
+        );
     }
 }
