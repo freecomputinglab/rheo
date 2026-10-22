@@ -282,11 +282,18 @@ impl Ligaments {
     /// `TypstLiteral`'s string-serializing path or JSON: a waterline spike
     /// found both silently turn a `datetime` value into its `repr()` string
     /// form, which this must not do to an attach's opaque value.
+    ///
+    /// Pages are visited in ascending handle order, so equal ligaments always
+    /// produce an equal (and equally hashed) value regardless of `per_page`'s
+    /// `HashMap` iteration order.
     pub fn to_value(&self) -> typst::foundations::Value {
         use typst::foundations::{Array, Dict, Value};
 
+        let mut pages: Vec<(&Handle, &VertebraLigaments)> = self.per_page.iter().collect();
+        pages.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
+
         let mut by_key: std::collections::BTreeMap<&str, Vec<Value>> = Default::default();
-        for (handle, vertebra) in &self.per_page {
+        for (handle, vertebra) in pages {
             for (key, value) in &vertebra.attaches {
                 let mut pair = Dict::new();
                 pair.insert("page".into(), Value::Str(handle.to_string().into()));
@@ -2546,7 +2553,7 @@ fn resolve_font_dirs(project: &ProjectConfig, cli_font_dirs: &[PathBuf]) -> Resu
 mod tests {
     use super::*;
     use std::sync::Mutex;
-    use typst::foundations::Repr;
+    use typst::foundations::{Repr, Value};
 
     /// What `Build::run` handed the plugin for each output: its path, its
     /// resolved title, and its compiled bytes as text. `CastVertebra` itself is
@@ -3209,6 +3216,68 @@ mod tests {
             vec!["tag:post"]
         );
         assert!(b.binds.is_empty());
+    }
+
+    /// `Ligaments::to_value` lists each key's `(page, value)` pairs in
+    /// ascending handle order, so two `Ligaments` built from the same pages
+    /// but inserted into `per_page` (a `HashMap`) in different orders still
+    /// produce an equal — and equally hashed — value. A `HashMap` may
+    /// happen to iterate both in the same order regardless, so this also
+    /// asserts the shared key's pairs come out in ascending-handle order
+    /// directly: that assertion is what actually fails without the sort in
+    /// `to_value`.
+    #[test]
+    fn to_value_is_independent_of_insertion_order() {
+        fn vertebra(key: &str, value: &str) -> VertebraLigaments {
+            VertebraLigaments {
+                attaches: vec![(key.to_string(), Value::Str(value.into()))],
+                binds: Default::default(),
+            }
+        }
+
+        let pages = [
+            (Handle::new("a"), vertebra("tag:post", "A")),
+            (Handle::new("b"), vertebra("tag:post", "B")),
+            (Handle::new("c"), vertebra("tag:other", "C")),
+        ];
+
+        let mut forward = Ligaments::default();
+        for (handle, vertebra) in pages.iter().cloned() {
+            forward.per_page.insert(handle, vertebra);
+        }
+
+        let mut reverse = Ligaments::default();
+        for (handle, vertebra) in pages.iter().rev().cloned() {
+            reverse.per_page.insert(handle, vertebra);
+        }
+
+        let a = forward.to_value();
+        let b = reverse.to_value();
+        assert_eq!(a, b);
+        assert_eq!(typst::utils::hash128(&a), typst::utils::hash128(&b));
+
+        let Value::Dict(top) = &a else {
+            panic!("expected top-level dict");
+        };
+        let Value::Dict(attaches) = top.get("attaches").expect("attaches key") else {
+            panic!("expected attaches dict");
+        };
+        let Value::Array(post) = attaches.get("tag:post").expect("tag:post key") else {
+            panic!("expected tag:post array");
+        };
+        let pages_in_order: Vec<String> = post
+            .iter()
+            .map(|pair| {
+                let Value::Dict(pair) = pair else {
+                    panic!("expected pair dict");
+                };
+                let Value::Str(page) = pair.get("page").expect("page key") else {
+                    panic!("expected page str");
+                };
+                page.to_string()
+            })
+            .collect();
+        assert_eq!(pages_in_order, vec!["a", "b"]);
     }
 
     /// A node whose `page` is missing is dropped silently — the harvest
