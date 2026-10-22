@@ -1065,6 +1065,13 @@ impl Build {
                 user_inputs: self.inputs.clone(),
                 packages: Some(Arc::clone(resolver)),
                 ligaments: self.incoming_ligaments.lock().clone(),
+                image_assets: plugin.name() == "html"
+                    && self
+                        .project
+                        .config
+                        .plugin_section(plugin.name())
+                        .image_assets
+                        .get(),
                 ..Default::default()
             },
         )?;
@@ -3514,6 +3521,41 @@ mod tests {
             mode: ProjectMode::Directory,
             config_path: None,
         }
+    }
+
+    /// `[html] image_assets` (default on) replaces an inlined base64 `src`
+    /// with a `rheo-asset:` placeholder naming the image's project path;
+    /// explicit `false` keeps the stock base64.
+    #[test]
+    fn image_assets_emits_placeholder_for_html() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        write_vertebra(root, "a", "#image(\"img/a.svg\")\n");
+        std::fs::create_dir_all(root.join("content/img")).expect("create img dir");
+        std::fs::write(
+            root.join("content/img/a.svg"),
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"></svg>"#,
+        )
+        .expect("write svg");
+
+        let html_on = run_capturing(ligaments_project(root, &["a"])).html("a.html");
+        assert!(
+            html_on.contains(r#"src="rheo-asset:/content/img/a.svg""#),
+            "got: {html_on}"
+        );
+        assert!(html_on.contains(r#"width="4""#), "got: {html_on}");
+        assert!(!html_on.contains("data:image"), "got: {html_on}");
+
+        let mut project_off = ligaments_project(root, &["a"]);
+        project_off.config.plugin_sections.insert(
+            "html".to_string(),
+            crate::config::PluginSection {
+                image_assets: false.into(),
+                ..Default::default()
+            },
+        );
+        let html_off = run_capturing(project_off).html("a.html");
+        assert!(html_off.contains("data:image/svg+xml"), "got: {html_off}");
     }
 
     /// Invalidation (decision 4): `b` attaches `k`, `a` binds `k`; six filler
