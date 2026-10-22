@@ -4,6 +4,7 @@ pub mod compile;
 pub mod config;
 pub mod diagnostics;
 pub mod html_dom;
+pub mod image_assets;
 pub mod output;
 pub mod packages;
 pub mod parser;
