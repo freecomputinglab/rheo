@@ -7,6 +7,13 @@ A combined PDF is now named after its spine title (`[pdf.spine] title`, else
 "Kermode_Dissertation_C0"` builds `Kermode_Dissertation_C0.pdf`. A `/` or `\`
 in the title becomes `-`. With no title set, the project name still names it.
 
+## HTML output now publishes project images as files
+
+HTML output now publishes project images as files and links them relative to
+each page instead of inlining base64. PDF images, images from packages, and
+images made from bytes are still inlined. `[html] image_assets = false`
+restores full inlining.
+
 ## A package can now attach ligaments, harvested after every compile
 
 A package can now record, per vertebra, the keys it attaches and the keys it

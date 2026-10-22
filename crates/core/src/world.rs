@@ -24,7 +24,8 @@ use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
 use typst_kit::fonts::FontStore;
 use typst_library::Feature;
-use typst_library::foundations::Duration;
+use typst_library::foundations::{Duration, Target};
+use typst_library::visualize::ImageElem;
 
 /// Build sys.inputs Dict for Typst compilation.
 ///
@@ -138,6 +139,9 @@ pub struct WorldSpec {
     /// The per-build package resolver. `None` builds a default one, which routes
     /// exactly as rheo did before namespaces were configurable.
     pub packages: Option<Arc<PackageResolver>>,
+    /// Swap Typst's HTML image rule for one that emits `rheo-asset:`
+    /// placeholders; the HTML plugin only.
+    pub image_assets: bool,
 }
 
 /// A simple World implementation for rheo compilation.
@@ -191,7 +195,7 @@ impl RheoWorld {
     /// Assemble a world once `root` and `main` are resolved — the part both
     /// constructors below share.
     fn assemble(root: PathBuf, main: FileId, spec: WorldSpec) -> Self {
-        let library = Library::builder()
+        let mut library = Library::builder()
             .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
             .with_inputs(build_inputs(
                 spec.global_context.as_ref(),
@@ -199,6 +203,11 @@ impl RheoWorld {
                 spec.ligaments.as_ref(),
             ))
             .build();
+
+        if spec.image_assets {
+            let rules = &mut library.rules;
+            rules.replace::<ImageElem>(Target::Html, crate::image_assets::IMAGE_PLACEHOLDER_RULE);
+        }
 
         Self {
             root,
