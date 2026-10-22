@@ -488,6 +488,23 @@ impl CopyGlobs {
     }
 }
 
+/// True if `dest` is already an up-to-date copy of `src`: same length, and a
+/// modification time at or after `src`'s. `std::fs::copy` does not preserve
+/// the source's mtime, so a fresh copy is always newer than its source. Any
+/// metadata error returns `false`, so the caller copies as before.
+fn dest_is_current(src: &Path, dest: &Path) -> bool {
+    let (Ok(src_meta), Ok(dest_meta)) = (src.metadata(), dest.metadata()) else {
+        return false;
+    };
+    if src_meta.len() != dest_meta.len() {
+        return false;
+    }
+    let (Ok(src_mtime), Ok(dest_mtime)) = (src_meta.modified(), dest_meta.modified()) else {
+        return false;
+    };
+    dest_mtime >= src_mtime
+}
+
 /// Walk `source_root` and copy every file matching a compiled copy-glob into
 /// `plugin_output_dir` (optionally under `dest_prefix`).
 ///
@@ -547,6 +564,9 @@ fn copy_glob_patterns(
                 "copy glob overwrites existing bundle output"
             );
             clobbered.push(dest.clone());
+        } else if dest_is_current(path, &dest) {
+            debug!(src = %path.display(), dest = %dest.display(), "copy skipped, destination current");
+            continue;
         }
         std::fs::copy(path, &dest).map_err(|e| RheoError::AssetCopy {
             source: path.to_path_buf(),
@@ -1570,5 +1590,89 @@ mod tests {
         assert!(clobbered.is_empty());
         let written = std::fs::read(output_dir.join("logo.png")).unwrap();
         assert_eq!(written, b"copy-wins");
+    }
+
+    #[test]
+    fn test_copy_globs_skips_current_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::write(project_root.join("logo.png"), b"copy-wins").unwrap();
+
+        let resolver = AssetResolver::new(project_root, &output_dir);
+        resolver
+            .copy_globs(&["logo.png".into()], project_root, None, &HashSet::new())
+            .unwrap();
+
+        // Same length as "copy-wins" but different content, and a newer
+        // mtime by virtue of being written after the copy above.
+        std::fs::write(output_dir.join("logo.png"), b"manual-ok").unwrap();
+
+        resolver
+            .copy_globs(&["logo.png".into()], project_root, None, &HashSet::new())
+            .unwrap();
+
+        let written = std::fs::read(output_dir.join("logo.png")).unwrap();
+        assert_eq!(
+            written, b"manual-ok",
+            "an up-to-date destination should not be recopied"
+        );
+    }
+
+    #[test]
+    fn test_copy_globs_recopies_changed_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::write(project_root.join("logo.png"), b"copy-wins").unwrap();
+
+        let resolver = AssetResolver::new(project_root, &output_dir);
+        resolver
+            .copy_globs(&["logo.png".into()], project_root, None, &HashSet::new())
+            .unwrap();
+
+        // A different length so the destination can no longer look current.
+        std::fs::write(project_root.join("logo.png"), b"a-new-and-longer-source").unwrap();
+
+        resolver
+            .copy_globs(&["logo.png".into()], project_root, None, &HashSet::new())
+            .unwrap();
+
+        let written = std::fs::read(output_dir.join("logo.png")).unwrap();
+        assert_eq!(written, b"a-new-and-longer-source");
+    }
+
+    #[test]
+    fn test_copy_globs_recopies_over_bundle_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+        let output_dir = dir.path().join("build/html");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        std::fs::write(project_root.join("logo.png"), b"copy-wins").unwrap();
+
+        let resolver = AssetResolver::new(project_root, &output_dir);
+        resolver
+            .copy_globs(&["logo.png".into()], project_root, None, &HashSet::new())
+            .unwrap();
+
+        // Same length, different content, and a newer mtime — would look
+        // current if not for being a bundle output.
+        std::fs::write(output_dir.join("logo.png"), b"manual-ok").unwrap();
+
+        let bundle_outputs: HashSet<PathBuf> = HashSet::from([output_dir.join("logo.png")]);
+        resolver
+            .copy_globs(&["logo.png".into()], project_root, None, &bundle_outputs)
+            .unwrap();
+
+        let written = std::fs::read(output_dir.join("logo.png")).unwrap();
+        assert_eq!(
+            written, b"copy-wins",
+            "a bundle output must still be overwritten even if it looks current"
+        );
     }
 }
