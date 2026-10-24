@@ -74,6 +74,55 @@ reference build. Its timed command carries neither `--timings` nor
 specifically costs the most on exactly the cold builds this benchmark exists
 to measure, per the table above — so the numbers it reports are instrumentation-free.
 
+## Watch events
+
+`rheo watch --events <FILE>` appends one JSON line per watch-session event to
+FILE, flushed after every line so a reader tailing the file sees it at once.
+It is a file because stdout carries user-facing output and stderr carries
+`tracing`; JSON in either would corrupt it. Field order is fixed and there are
+no spaces, so a consumer may match on prefixes.
+
+```
+{"event":"server_ready","url":"http://localhost:3001"}
+{"event":"build_finished","initial":true,"ok":true,"kind":"full","ms":1234}
+{"event":"build_finished","initial":false,"ok":false,"kind":"full","ms":87,"error":"..."}
+```
+
+To know the session is ready, wait for the first `build_finished` line with
+`"initial":true`. Under `--open` a `server_ready` line always precedes it.
+
+`ms` is rheo's own measurement of the build, from the start of the compile to
+the moment its output is on disk and, when a dev server exists, the in-memory
+files have been pushed to it. It excludes the watcher's debounce, which runs
+before the build starts, and (for the initial build) the browser launch. `kind`
+is always `"full"` for now. `error` appears only when `ok` is `false`.
+
+### Rebuilding on request
+
+`rheo watch --trigger stdin` turns off the filesystem watcher and its debounce.
+Nothing but standard input starts a build, so a harness can edit a file, ask
+for one rebuild, and read one `build_finished` line back. `--trigger fs` is the
+default.
+
+One command per line, surrounding whitespace trimmed, blank lines ignored:
+
+```
+rebuild
+rebuild content/a.typ content/b.typ
+```
+
+Each `rebuild` line produces exactly one rebuild, and so exactly one
+`build_finished` event under `--events`. The paths are optional and tell rheo
+what changed, classified as the watcher would: `rheo.toml` reloads the
+project, a declared asset makes a live-reload browser navigate rather than
+morph. Relative paths resolve against the project root. A path that is
+irrelevant to the build or missing is logged and the rebuild still happens.
+Paths are separated by single spaces, so paths containing spaces are not
+supported.
+
+Any other line is logged as a warning and starts no build. End of input ends
+the session and rheo exits.
+
 ## Compiling it out: `--no-default-features`
 
 The flags above and the `typst-timing` dependency behind them sit behind a

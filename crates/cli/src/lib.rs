@@ -1,6 +1,7 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use events::{BuildKind, EventSink, WatchReport};
 use rheo_core::OpenHandle;
-use rheo_core::assets::watch::{WatchEvent, watch_project};
+use rheo_core::assets::watch::{WatchEvent, watch_project, watch_stdin};
 use rheo_core::build::{Build, BuildOptions, evict_compile_cache, resolve_build_dir};
 use rheo_core::config::manifest_version;
 use rheo_core::output::OutputConfig;
@@ -15,6 +16,7 @@ use tracing::{debug, info, warn};
 pub mod logging;
 
 mod diagnostics;
+mod events;
 mod migrate;
 mod reporter;
 
@@ -40,6 +42,8 @@ mod arg {
     #[cfg(feature = "timings")]
     pub const ITERATIONS: &str = "iterations";
     pub const OPEN: &str = "open";
+    pub const EVENTS: &str = "events";
+    pub const TRIGGER: &str = "trigger";
     pub const PACKAGES: &str = "packages";
     pub const QUIET: &str = "quiet";
     pub const VERBOSE: &str = "verbose";
@@ -278,6 +282,21 @@ fn build_watch_command(plugins: &[Box<dyn FormatPlugin>]) -> Command {
             .long(arg::OPEN)
             .action(ArgAction::SetTrue)
             .help("Open output in appropriate viewer (HTML opens in browser with live reload)"),
+    )
+    .arg(
+        Arg::new(arg::EVENTS)
+            .long(arg::EVENTS)
+            .value_name("FILE")
+            .value_parser(clap::value_parser!(PathBuf))
+            .help("Append one JSON line per watch event (server ready, build finished) to FILE"),
+    )
+    .arg(
+        Arg::new(arg::TRIGGER)
+            .long(arg::TRIGGER)
+            .value_name("MODE")
+            .value_parser(["fs", "stdin"])
+            .default_value("fs")
+            .help("What triggers a rebuild: filesystem changes, or `rebuild` lines on stdin"),
     );
     let cmd = add_format_flags(add_build_flags(cmd), plugins);
     watch_timings_help(cmd)
@@ -706,9 +725,21 @@ fn update_dev_server(build: &mut Build, server: &dyn ServerHandle, reload: Optio
     }
 }
 
+fn build_finished(initial: bool, ms: u128, result: Result<()>) -> WatchReport {
+    WatchReport::BuildFinished {
+        initial,
+        ok: result.is_ok(),
+        kind: BuildKind::Full,
+        ms,
+        error: result.err().map(|e| e.to_string()),
+    }
+}
+
 fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()> {
     let args = BuildArgs::from_matches(sub, &plugins)?;
     let open = sub.get_flag(arg::OPEN);
+    let stdin_trigger = sub.get_one::<String>(arg::TRIGGER).map(String::as_str) == Some("stdin");
+    let mut events = EventSink::open(sub.get_one::<PathBuf>(arg::EVENTS).map(PathBuf::as_path))?;
 
     let mut build = prepare_build(
         &args.path,
@@ -718,9 +749,12 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
     )?;
 
     // Initial compilation (best-effort; watch continues on failure)
-    if let Err(e) = compile_and_report(&build) {
+    let initial_start = std::time::Instant::now();
+    let initial_result = compile_and_report(&build).map(|_| ());
+    if let Err(e) = &initial_result {
         warn!(error = %e, "initial compilation failed");
     }
+    let mut initial_ms = initial_start.elapsed().as_millis();
 
     // Open outputs if --open requested; resolve at most one server handle for
     // live reload (only the HTML plugin ever returns OpenHandle::Server).
@@ -729,7 +763,12 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
         for plugin in build.plugins() {
             let out_dir = build.output_config().dir_for_plugin(plugin.name());
             match plugin.open(&out_dir, plugin.name()) {
-                Ok(OpenHandle::Server(handle)) if server.is_none() => server = Some(handle),
+                Ok(OpenHandle::Server(handle)) if server.is_none() => {
+                    events.emit(&WatchReport::ServerReady {
+                        url: handle.url().to_string(),
+                    });
+                    server = Some(handle);
+                }
                 Ok(_) => {}
                 Err(e) => warn!(error = %e, plugin = plugin.name(), "failed to open"),
             }
@@ -739,9 +778,12 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
         // compile_for_watch() reuses comemo-cached Typst state from build.run(),
         // so this second compile is near-instant.
         if let Some(server) = &server {
+            let t = std::time::Instant::now();
             update_dev_server(&mut build, server.as_ref(), None);
+            initial_ms += t.elapsed().as_millis();
         }
     }
+    events.emit(&build_finished(true, initial_ms, initial_result));
 
     let watch_project_cfg = build.project().clone();
     let build_dir_canonical = build
@@ -754,69 +796,91 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
     // hands the watcher a fresh spec.
     let asset_spec = build.watch_asset_spec();
 
-    watch_project(
-        &watch_project_cfg,
-        &build_dir_canonical,
-        asset_spec,
-        move |event| {
-            let mut refreshed = None;
-            match event {
-                WatchEvent::FilesChanged { assets, paths } => {
-                    info!("files changed, recompiling");
-                    if rebuild_and_report(&build, &paths).is_ok() {
-                        let narrowed = build.take_narrowed_outputs();
-                        if let Some(server) = &server {
-                            match narrowed {
-                                Some(written) => {
-                                    server.forget_virtual_paths(&written);
-                                    server.reload(ReloadKind::for_assets_changed(assets));
-                                }
-                                None => {
-                                    update_dev_server(
-                                        &mut build,
-                                        server.as_ref(),
-                                        Some(ReloadKind::for_assets_changed(assets)),
-                                    );
-                                }
+    let on_event = move |event| {
+        let mut refreshed = None;
+        match event {
+            WatchEvent::FilesChanged { assets, paths } => {
+                info!("files changed, recompiling");
+                let start = std::time::Instant::now();
+                let result = rebuild_and_report(&build, &paths).map(|_| ());
+                if result.is_ok() {
+                    let narrowed = build.take_narrowed_outputs();
+                    if let Some(server) = &server {
+                        match narrowed {
+                            Some(written) => {
+                                server.forget_virtual_paths(&written);
+                                server.reload(ReloadKind::for_assets_changed(assets));
                             }
-                        }
-                    }
-                }
-                WatchEvent::ConfigChanged => {
-                    info!("config changed, reloading");
-                    match prepare_build(
-                        &args.path,
-                        args.config.as_deref(),
-                        args.watch_build_options(),
-                        all_plugins(),
-                    ) {
-                        Ok(new_build) => {
-                            build = new_build;
-                            refreshed = Some(build.watch_asset_spec());
-                            if compile_and_report(&build).is_ok()
-                                && let Some(server) = &server
-                            {
+                            None => {
                                 update_dev_server(
                                     &mut build,
                                     server.as_ref(),
-                                    Some(ReloadKind::Reload),
+                                    Some(ReloadKind::for_assets_changed(assets)),
                                 );
                             }
                         }
-                        Err(e) => warn!(error = %e, "failed to reload config"),
                     }
                 }
+                events.emit(&build_finished(false, start.elapsed().as_millis(), result));
             }
-            // AFTER the rebuild, not before, and for both arms — this is the
-            // only thing that bounds a watch session's memory. Typst's memo
-            // cache is global and never shrinks by itself, so without this a
-            // long session grows until the machine gives out; see
-            // `evict_compile_cache`, which carries the measurements and the
-            // reason a one-shot `rheo compile` must NOT call it.
-            evict_compile_cache(build.project().config.watch_cache_size());
-            Ok(refreshed)
-        },
-    )
+            WatchEvent::ConfigChanged => {
+                info!("config changed, reloading");
+                let start = std::time::Instant::now();
+                let result = match prepare_build(
+                    &args.path,
+                    args.config.as_deref(),
+                    args.watch_build_options(),
+                    all_plugins(),
+                ) {
+                    Ok(new_build) => {
+                        build = new_build;
+                        refreshed = Some(build.watch_asset_spec());
+                        let result = compile_and_report(&build).map(|_| ());
+                        if result.is_ok()
+                            && let Some(server) = &server
+                        {
+                            update_dev_server(
+                                &mut build,
+                                server.as_ref(),
+                                Some(ReloadKind::Reload),
+                            );
+                        }
+                        result
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "failed to reload config");
+                        Err(e)
+                    }
+                };
+                events.emit(&build_finished(false, start.elapsed().as_millis(), result));
+            }
+        }
+        // AFTER the rebuild, not before, and for both arms — this is the
+        // only thing that bounds a watch session's memory. Typst's memo
+        // cache is global and never shrinks by itself, so without this a
+        // long session grows until the machine gives out; see
+        // `evict_compile_cache`, which carries the measurements and the
+        // reason a one-shot `rheo compile` must NOT call it.
+        evict_compile_cache(build.project().config.watch_cache_size());
+        Ok(refreshed)
+    };
+
+    if stdin_trigger {
+        info!("reading rebuild requests from stdin");
+        watch_stdin(
+            &watch_project_cfg,
+            &build_dir_canonical,
+            asset_spec,
+            on_event,
+        )
+    } else {
+        watch_project(
+            &watch_project_cfg,
+            &build_dir_canonical,
+            asset_spec,
+            on_event,
+        )
+    }
 }
 
 fn run_compile(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()> {
