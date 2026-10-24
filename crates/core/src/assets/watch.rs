@@ -137,16 +137,17 @@ pub enum WatchEvent {
 /// produces; the ceiling keeps a steady stream of writes from postponing the
 /// rebuild forever.
 ///
-/// The asset spec is captured once at startup. A `rheo.toml` change triggers a
-/// full reload but does not re-derive the spec, so a project that adds a brand
-/// new asset or package mid-session may need the watch to be restarted before
-/// edits to those new files are picked up.
+/// The asset spec is replaced whenever the callback returns one, which
+/// `rheo watch` does on every config reload. The watcher then registers new
+/// package roots and drops stale ones, so an asset or package added to
+/// `rheo.toml` mid-session is picked up without a restart.
 ///
 /// # Arguments
 /// * `project` - Project configuration with source files
 /// * `build_dir` - Canonicalized build directory path to exclude from watching
 /// * `asset_spec` - Resolved asset sources / package roots to treat as relevant
-/// * `callback` - Function called when files change, receives WatchEvent
+/// * `callback` - Function called when files change, receives WatchEvent.
+///   `Ok(Some(spec))` replaces the asset spec; `Ok(None)` leaves it unchanged
 ///
 /// # Returns
 /// * `Ok(())` when watching stops gracefully (e.g., Ctrl+C)
@@ -154,11 +155,11 @@ pub enum WatchEvent {
 pub fn watch_project<F>(
     project: &ProjectConfig,
     build_dir: &Path,
-    asset_spec: &WatchAssetSpec,
+    mut asset_spec: WatchAssetSpec,
     mut callback: F,
 ) -> Result<()>
 where
-    F: FnMut(WatchEvent) -> Result<()>,
+    F: FnMut(WatchEvent) -> Result<Option<WatchAssetSpec>>,
 {
     let (tx, rx) = channel();
 
@@ -196,9 +197,13 @@ where
     // package-declared assets also trigger rebuilds. A failure here is not fatal:
     // the package cache may be read-only or large, and the rest of the watch
     // should still work.
+    let mut watched_roots: Vec<PathBuf> = Vec::new();
     for root in asset_spec.package_roots() {
         match watcher.watch(root, RecursiveMode::Recursive) {
-            Ok(()) => debug!(path = %root.display(), "watching package asset root"),
+            Ok(()) => {
+                debug!(path = %root.display(), "watching package asset root");
+                watched_roots.push(root.to_path_buf());
+            }
             Err(e) => {
                 warn!(error = %e, path = %root.display(), "failed to watch package asset root")
             }
@@ -256,7 +261,7 @@ where
                         // Filter events to only relevant files (.typ files, rheo.toml, assets)
                         let mut relevant: Vec<&Path> = Vec::new();
                         for path in &event.paths {
-                            match classify(path, project, build_dir, asset_spec) {
+                            match classify(path, project, build_dir, &asset_spec) {
                                 Some(Relevance::Config) => config_changed = true,
                                 Some(Relevance::Asset) => assets_changed = true,
                                 Some(Relevance::Content) => {}
@@ -306,8 +311,31 @@ where
                 }
             };
 
-            if let Err(e) = callback(event) {
-                warn!(error = %e, "compilation failed, continuing to watch");
+            match callback(event) {
+                Ok(Some(spec)) => {
+                    let wanted = spec.package_roots().to_vec();
+                    let (to_watch, to_unwatch) = package_root_changes(&watched_roots, &wanted);
+                    for root in to_unwatch {
+                        if let Err(e) = watcher.unwatch(&root) {
+                            debug!(error = %e, path = %root.display(), "failed to unwatch package asset root");
+                        }
+                        watched_roots.retain(|r| r != &root);
+                    }
+                    for root in to_watch {
+                        match watcher.watch(&root, RecursiveMode::Recursive) {
+                            Ok(()) => {
+                                debug!(path = %root.display(), "watching package asset root");
+                                watched_roots.push(root);
+                            }
+                            Err(e) => {
+                                warn!(error = %e, path = %root.display(), "failed to watch package asset root")
+                            }
+                        }
+                    }
+                    asset_spec = spec;
+                }
+                Ok(None) => {}
+                Err(e) => warn!(error = %e, "compilation failed, continuing to watch"),
             }
 
             // Reset for the next batch of changes.
@@ -318,6 +346,22 @@ where
     }
 
     Ok(())
+}
+
+/// Diff the package roots currently watched against the wanted set, returning
+/// `(to_watch, to_unwatch)`.
+fn package_root_changes(watched: &[PathBuf], wanted: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let to_watch = wanted
+        .iter()
+        .filter(|w| !watched.contains(w))
+        .cloned()
+        .collect();
+    let to_unwatch = watched
+        .iter()
+        .filter(|w| !wanted.contains(w))
+        .cloned()
+        .collect();
+    (to_watch, to_unwatch)
 }
 
 /// Why a changed path matters to the build.
@@ -411,6 +455,15 @@ fn same_file(a: &Path, b: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_package_root_changes() {
+        let p = |s: &str| PathBuf::from(s);
+        let (w, u) = package_root_changes(&[p("a"), p("b")], &[p("b"), p("c")]);
+        assert_eq!((w, u), (vec![p("c")], vec![p("a")]));
+        let (w, u) = package_root_changes(&[p("a")], &[p("a")]);
+        assert!(w.is_empty() && u.is_empty());
+    }
+
     use super::*;
     use std::fs;
     use tempfile::TempDir;
