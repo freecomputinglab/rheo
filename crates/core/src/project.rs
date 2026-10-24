@@ -160,6 +160,21 @@ impl ProjectConfig {
         })
     }
 
+    /// The project's `.typ` files as they are on disk now. `typ_files` is the
+    /// snapshot taken at load; a `watch` session outlives it as files come and go.
+    pub fn current_typ_files(&self) -> Result<Vec<PathBuf>> {
+        match self.mode {
+            ProjectMode::SingleFile => Ok(self.typ_files.clone()),
+            ProjectMode::Directory => {
+                let search_dir = self
+                    .config
+                    .resolve_content_dir(&self.root)
+                    .unwrap_or_else(|| self.root.clone());
+                SpineScan::typ_files(&search_dir)
+            }
+        }
+    }
+
     /// The nearest `rheo.toml` at or above `dir`, within
     /// [`CONFIG_SEARCH_DEPTH`] levels.
     fn search_upwards_for_config(dir: &Path) -> Option<PathBuf> {
@@ -305,5 +320,30 @@ mod tests {
 
         let project = ProjectConfig::from_path(temp.path(), None).unwrap();
         assert!(project.config.spine_for_plugin("pdf").is_none());
+    }
+
+    #[test]
+    fn current_typ_files_tracks_deletions_and_additions() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("a.typ"), "= A").unwrap();
+        fs::write(temp.path().join("b.typ"), "= B").unwrap();
+        let project = ProjectConfig::from_path(temp.path(), None).unwrap();
+
+        fs::remove_file(temp.path().join("a.typ")).unwrap();
+        fs::write(temp.path().join("c.typ"), "= C").unwrap();
+
+        let names = |files: Vec<PathBuf>| {
+            let mut names: Vec<String> = files
+                .iter()
+                .map(|f| f.file_name().unwrap().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        assert_eq!(
+            names(project.current_typ_files().unwrap()),
+            vec!["b.typ", "c.typ"]
+        );
+        assert_eq!(names(project.typ_files.clone()), vec!["a.typ", "b.typ"]);
     }
 }
