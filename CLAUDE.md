@@ -218,7 +218,7 @@ The prelude's own text is inlined verbatim into every vertebra, so its cost is p
 
 The retired `vertebrae` glob-list key (pre-0.5.0) is no longer read; `rheo migrate` converts an old inclusion-filter `vertebrae` list into an equivalent `exclude`.
 
-PDF combines its spine into a single document by default; HTML and EPUB always produce per-page outputs. A `merge` key left in an old `rheo.toml` has no effect and warns on every build; `rheo migrate` reports and removes it.
+PDF combines its spine into a single document by default, named after the spine `title` (`[pdf.spine]`, else `[spine]`; any `/` or `\` becomes `-`) or, when unset, the project directory; HTML and EPUB always produce per-page outputs. A `merge` key left in an old `rheo.toml` has no effect and warns on every build; `rheo migrate` reports and removes it.
 
 ## Marrow-authored derived artifacts
 
