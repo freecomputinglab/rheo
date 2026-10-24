@@ -1,5 +1,12 @@
 # Unreleased — user-visible changes
 
+## A combined PDF is now named after its spine title
+
+A combined PDF is now named after its spine title (`[pdf.spine] title`, else
+`[spine] title`) instead of always the project directory, so `title =
+"Kermode_Dissertation_C0"` builds `Kermode_Dissertation_C0.pdf`. A `/` or `\`
+in the title becomes `-`. With no title set, the project name still names it.
+
 ## HTML output now publishes project images as files
 
 HTML output now publishes project images as files and links them relative to

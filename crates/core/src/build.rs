@@ -849,7 +849,12 @@ impl Build {
             self.project.config.spine.as_ref(),
         );
 
-        let layout = spine_layout_for(plugin.spine_layout_kind(), plugin, &self.project.name);
+        let layout = spine_layout_for(
+            plugin.spine_layout_kind(),
+            plugin,
+            &self.project.name,
+            spine.title.as_deref(),
+        );
 
         let scan = match self.project.mode {
             ProjectMode::SingleFile => {
