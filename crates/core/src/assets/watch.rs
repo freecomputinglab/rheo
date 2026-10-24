@@ -229,23 +229,14 @@ where
         }
     }
 
-    // `config_changed`: `rheo.toml` changed, needs a full project reload rather
-    // than a recompile. `assets_changed`: a changed path was a `Relevance::Asset`
-    // (declared asset, copy glob, or font) — the browser holds its old bytes
-    // under an unchanged URL, so the callback must navigate rather than morph.
-    // `first_event_time` below is already set by ANY relevant change, so it is
-    // the "anything pending?" gate; these two only pick WHICH event to send.
-    let mut config_changed = false;
-    let mut assets_changed = false;
+    // `first_event_time` below is set by ANY relevant change, so it is the
+    // "anything pending?" gate; `batch` only picks WHICH event to send.
+    let mut batch = Batch::default();
     let mut last_event_time = std::time::Instant::now();
     // Set on the FIRST change of a batch and cleared when that batch fires, so
     // `DEBOUNCE_MAX` has something to measure from. `None` means nothing is
     // pending, and is therefore the "anything to do?" test.
     let mut first_event_time: Option<std::time::Instant> = None;
-    // Every relevant path seen across the WHOLE batch (not just the latest
-    // notify event) — `Build::rebuild` needs the complete changed-file set to
-    // decide whether a batch is exactly spine vertebra sources.
-    let mut batch_paths: Vec<PathBuf> = Vec::new();
 
     info!("watching for changes (press Ctrl+C to stop)");
 
@@ -262,9 +253,7 @@ where
                         let mut relevant: Vec<&Path> = Vec::new();
                         for path in &event.paths {
                             match classify(path, project, build_dir, &asset_spec) {
-                                Some(Relevance::Config) => config_changed = true,
-                                Some(Relevance::Asset) => assets_changed = true,
-                                Some(Relevance::Content) => {}
+                                Some(r) => batch.note(r, path.clone()),
                                 None => continue,
                             }
                             relevant.push(path);
@@ -272,7 +261,6 @@ where
 
                         if !relevant.is_empty() {
                             debug!(paths = ?relevant, "detected file changes");
-                            batch_paths.extend(relevant.iter().map(|p| p.to_path_buf()));
                             last_event_time = std::time::Instant::now();
                             first_event_time.get_or_insert(last_event_time);
                         }
@@ -299,17 +287,7 @@ where
         if let Some(first) = first_event_time
             && (last_event_time.elapsed() >= DEBOUNCE_QUIET || first.elapsed() >= DEBOUNCE_MAX)
         {
-            // A config change subsumes a file change — reloading the project
-            // recompiles it anyway — so one batch is one event whatever else
-            // changed alongside `rheo.toml`.
-            let event = if config_changed {
-                WatchEvent::ConfigChanged
-            } else {
-                WatchEvent::FilesChanged {
-                    assets: assets_changed,
-                    paths: std::mem::take(&mut batch_paths),
-                }
-            };
+            let event = batch.event();
 
             match callback(event) {
                 Ok(Some(spec)) => {
@@ -339,8 +317,7 @@ where
             }
 
             // Reset for the next batch of changes.
-            config_changed = false;
-            assets_changed = false;
+            batch = Batch::default();
             first_event_time = None;
         }
     }
@@ -362,6 +339,92 @@ fn package_root_changes(watched: &[PathBuf], wanted: &[PathBuf]) -> (Vec<PathBuf
         .cloned()
         .collect();
     (to_watch, to_unwatch)
+}
+
+/// Rebuild once per `rebuild [<path>...]` line on stdin, with no filesystem
+/// watcher and no debounce. Ends when stdin does. See [`parse_request`].
+pub fn watch_stdin<F>(
+    project: &ProjectConfig,
+    build_dir: &Path,
+    mut asset_spec: WatchAssetSpec,
+    mut callback: F,
+) -> Result<()>
+where
+    F: FnMut(WatchEvent) -> Result<Option<WatchAssetSpec>>,
+{
+    use std::io::BufRead;
+
+    for line in std::io::stdin().lock().lines() {
+        let line = line.map_err(|e| crate::RheoError::file_watcher(e.into(), "reading stdin"))?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some(paths) = parse_request(line) else {
+            warn!(line, "unrecognised request, expected `rebuild [<path>...]`");
+            continue;
+        };
+
+        let mut batch = Batch::default();
+        for path in paths {
+            let path = project.root.join(path);
+            match classify(&path, project, build_dir, &asset_spec) {
+                Some(r) => batch.note(r, path),
+                None => warn!(path = %path.display(), "path is not relevant to the build"),
+            }
+        }
+
+        match callback(batch.event()) {
+            Ok(Some(spec)) => asset_spec = spec,
+            Ok(None) => {}
+            Err(e) => warn!(error = %e, "compilation failed, continuing to watch"),
+        }
+    }
+
+    info!("stdin closed");
+    Ok(())
+}
+
+/// The paths of a `rebuild [<path>...]` line, or `None` for any other line.
+fn parse_request(line: &str) -> Option<Vec<&str>> {
+    let mut words = line.split_whitespace();
+    (words.next()? == "rebuild").then(|| words.collect())
+}
+
+/// What one batch of changed paths amounts to.
+#[derive(Default)]
+struct Batch {
+    /// `rheo.toml` changed: needs a full project reload rather than a recompile.
+    config: bool,
+    /// A changed path was a declared asset, copy glob or font: the browser holds
+    /// its old bytes under an unchanged URL, so it must navigate rather than morph.
+    assets: bool,
+    /// Every relevant path in the batch, see [`WatchEvent::FilesChanged`].
+    paths: Vec<PathBuf>,
+}
+
+impl Batch {
+    fn note(&mut self, r: Relevance, path: PathBuf) {
+        self.paths.push(path);
+        match r {
+            Relevance::Config => self.config = true,
+            Relevance::Asset => self.assets = true,
+            Relevance::Content => {}
+        }
+    }
+
+    /// A config change subsumes a file change, since reloading the project
+    /// recompiles it anyway.
+    fn event(&mut self) -> WatchEvent {
+        if self.config {
+            WatchEvent::ConfigChanged
+        } else {
+            WatchEvent::FilesChanged {
+                assets: self.assets,
+                paths: std::mem::take(&mut self.paths),
+            }
+        }
+    }
 }
 
 /// Why a changed path matters to the build.
@@ -472,6 +535,34 @@ mod tests {
     fn dir_project(temp: &TempDir) -> ProjectConfig {
         fs::write(temp.path().join("doc.typ"), "#heading[Test]").unwrap();
         ProjectConfig::from_path(temp.path(), None).unwrap()
+    }
+
+    #[test]
+    fn parse_request_lines() {
+        assert_eq!(parse_request("rebuild"), Some(vec![]));
+        assert_eq!(
+            parse_request("rebuild a.typ b.typ"),
+            Some(vec!["a.typ", "b.typ"])
+        );
+        assert_eq!(parse_request("  rebuild a.typ  "), Some(vec!["a.typ"]));
+        assert_eq!(parse_request(""), None);
+        assert_eq!(parse_request("nonsense"), None);
+    }
+
+    #[test]
+    fn batch_event_precedence() {
+        let mut b = Batch::default();
+        assert!(matches!(
+            b.event(),
+            WatchEvent::FilesChanged { assets: false, .. }
+        ));
+        b.note(Relevance::Asset, PathBuf::from("a.css"));
+        assert!(matches!(
+            b.event(),
+            WatchEvent::FilesChanged { assets: true, .. }
+        ));
+        b.note(Relevance::Config, PathBuf::from("rheo.toml"));
+        assert!(matches!(b.event(), WatchEvent::ConfigChanged));
     }
 
     fn empty_spec() -> WatchAssetSpec {
