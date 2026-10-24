@@ -162,7 +162,8 @@ pub struct Build {
 
 /// Fraction of the spine's vertebra count beyond which a narrowed rebuild's
 /// dependent set abandons the narrowed path for a full rebuild instead — see
-/// [`Build::rebuild`] and [`Build::narrow_one_plugin`].
+/// [`Build::rebuild`] and [`Build::narrow_one_plugin`]. Never less than one
+/// dependent.
 const NARROWED_REBUILD_DEPENDENT_FRACTION: f64 = 0.25;
 
 /// Rounds a narrowed rebuild may run before it gives up and rebuilds in full.
@@ -2021,7 +2022,9 @@ impl Build {
         package_resolver: &Arc<crate::packages::PackageResolver>,
     ) -> Result<NarrowOutcome> {
         let total_vertebrae = virtual_spine.vertebrae.len();
-        let threshold = (total_vertebrae as f64 * NARROWED_REBUILD_DEPENDENT_FRACTION).floor();
+        let threshold = (total_vertebrae as f64 * NARROWED_REBUILD_DEPENDENT_FRACTION)
+            .floor()
+            .max(1.0);
 
         let mut cached = self.ligaments();
         let mut round_handles = changed.clone();
@@ -3999,6 +4002,65 @@ mod tests {
             count("z.html"),
             2,
             "z is untouched by any narrowed path; a count of 2 proves a full rebuild ran"
+        );
+    }
+
+    /// A three-page spine floors the threshold to zero; it is clamped to one,
+    /// so a lone dependent still narrows. `z` stays at one write.
+    #[test]
+    fn rebuild_narrows_to_one_dependent_on_a_tiny_spine() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "src", "z"];
+
+        write_vertebra(
+            root,
+            "a",
+            "#import \"/typ/rheo.typ\": rheo-ligament-bind\n#rheo-ligament-bind(\"k\")\n= A\n",
+        );
+        write_vertebra(
+            root,
+            "src",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [X])\n= Src\n",
+        );
+        write_vertebra(root, "z", "= Z\n");
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![plugin],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        write_vertebra(
+            root,
+            "src",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [Y])\n= Src\n",
+        );
+        build
+            .rebuild(&[root.join("content/src.typ")])
+            .expect("narrowed rebuild");
+
+        let count = |path: &str| {
+            captured
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(p, _, _)| p == path)
+                .count()
+        };
+        assert_eq!(count("src.html"), 2, "src itself must be recompiled");
+        assert_eq!(count("a.html"), 2, "the lone dependent must be recompiled");
+        assert_eq!(
+            count("z.html"),
+            1,
+            "z must be untouched; 2 would mean a full rebuild"
         );
     }
 
