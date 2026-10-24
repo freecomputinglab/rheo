@@ -501,8 +501,12 @@ impl Build {
     pub fn watch_asset_spec(&self) -> crate::assets::watch::WatchAssetSpec {
         let default_section = PluginSection::default();
         let resolver = self.package_resolver();
+        let typ_files = self
+            .project
+            .current_typ_files()
+            .unwrap_or_else(|_| self.project.typ_files.clone());
         let packages = PackageIndex::resolved(
-            &crate::packages::scan_transitive_package_imports(&self.project.typ_files, &resolver),
+            &crate::packages::scan_transitive_package_imports(&typ_files, &resolver),
             &resolver,
         );
 
@@ -1383,7 +1387,8 @@ impl Build {
     ///
     /// Returns `None` when the HTML plugin is not selected.
     pub fn compile_for_watch(&self) -> Result<Option<typst_bundle::VirtualFs>> {
-        if self.project.typ_files.is_empty() {
+        let typ_files = self.project.current_typ_files()?;
+        if typ_files.is_empty() {
             return Err(RheoError::project_config("no .typ files found in project"));
         }
 
@@ -1415,10 +1420,8 @@ impl Build {
             .unwrap_or(&default_section);
         let (packages, package_resolver) = self.timed(phase::PACKAGES, None, || {
             let resolver = self.package_resolver();
-            let package_imports = crate::packages::scan_transitive_package_imports(
-                &self.project.typ_files,
-                &resolver,
-            );
+            let package_imports =
+                crate::packages::scan_transitive_package_imports(&typ_files, &resolver);
             let packages = prewarm_and_resolve(
                 &package_imports,
                 plugin_section.auto_detect_packages.get(),
@@ -1638,7 +1641,8 @@ impl Build {
     /// format fails, the failure is logged and an error is returned (the CLI maps
     /// this to a non-zero exit).
     pub fn run(&self) -> Result<CompilationResults> {
-        if self.project.typ_files.is_empty() {
+        let typ_files = self.project.current_typ_files()?;
+        if typ_files.is_empty() {
             return Err(RheoError::project_config("no .typ files found in project"));
         }
 
@@ -1665,10 +1669,8 @@ impl Build {
         // shared across every plugin in this build.
         let packages = self.timed(phase::PACKAGES, None, || {
             let resolver = self.package_resolver();
-            let package_imports = crate::packages::scan_transitive_package_imports(
-                &self.project.typ_files,
-                &resolver,
-            );
+            let package_imports =
+                crate::packages::scan_transitive_package_imports(&typ_files, &resolver);
             let packages =
                 prewarm_and_resolve(&package_imports, self.auto_detects_packages(), &resolver)?;
             Ok::<_, RheoError>((packages, resolver))
@@ -1804,7 +1806,8 @@ impl Build {
     /// which it is). An empty set (should not happen from the watch loop)
     /// behaves exactly like a full rebuild.
     pub fn rebuild(&self, changed_paths: &[PathBuf]) -> Result<CompilationResults> {
-        if self.project.typ_files.is_empty() {
+        let typ_files = self.project.current_typ_files()?;
+        if typ_files.is_empty() {
             return Err(RheoError::project_config("no .typ files found in project"));
         }
         *self.narrowed_outputs.lock() = None;
@@ -1816,10 +1819,8 @@ impl Build {
         let default_section = PluginSection::default();
         let (packages, package_resolver) = self.timed(phase::PACKAGES, None, || {
             let resolver = self.package_resolver();
-            let package_imports = crate::packages::scan_transitive_package_imports(
-                &self.project.typ_files,
-                &resolver,
-            );
+            let package_imports =
+                crate::packages::scan_transitive_package_imports(&typ_files, &resolver);
             let packages =
                 prewarm_and_resolve(&package_imports, self.auto_detects_packages(), &resolver)?;
             Ok::<_, RheoError>((packages, resolver))
