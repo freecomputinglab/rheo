@@ -750,14 +750,16 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
         .canonicalize()
         .unwrap_or_else(|_| build.output_config().base.clone());
     // Capture the asset sources to watch (declared assets, copy globs, package
-    // roots) once, before `build` is moved into the change callback.
+    // roots) before `build` is moved into the change callback; a config reload
+    // hands the watcher a fresh spec.
     let asset_spec = build.watch_asset_spec();
 
     watch_project(
         &watch_project_cfg,
         &build_dir_canonical,
-        &asset_spec,
+        asset_spec,
         move |event| {
+            let mut refreshed = None;
             match event {
                 WatchEvent::FilesChanged { assets, paths } => {
                     info!("files changed, recompiling");
@@ -790,6 +792,7 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
                     ) {
                         Ok(new_build) => {
                             build = new_build;
+                            refreshed = Some(build.watch_asset_spec());
                             if compile_and_report(&build).is_ok()
                                 && let Some(server) = &server
                             {
@@ -811,7 +814,7 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
             // `evict_compile_cache`, which carries the measurements and the
             // reason a one-shot `rheo compile` must NOT call it.
             evict_compile_cache(build.project().config.watch_cache_size());
-            Ok(())
+            Ok(refreshed)
         },
     )
 }
