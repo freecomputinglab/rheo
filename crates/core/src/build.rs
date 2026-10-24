@@ -165,6 +165,9 @@ pub struct Build {
 /// [`Build::rebuild`] and [`Build::narrow_one_plugin`].
 const NARROWED_REBUILD_DEPENDENT_FRACTION: f64 = 0.25;
 
+/// Rounds a narrowed rebuild may run before it gives up and rebuilds in full.
+const NARROWED_REBUILD_MAX_ROUNDS: usize = 8;
+
 /// Which path a [`Build::rebuild`] call took, named only for the one INFO
 /// line it logs (`narrowed: ...` / `full rebuild: ...`) — an external monitor
 /// greps for these two literal prefixes, so the shapes are fixed.
@@ -2029,6 +2032,11 @@ impl Build {
 
         loop {
             rounds += 1;
+            if rounds > NARROWED_REBUILD_MAX_ROUNDS {
+                return Ok(NarrowOutcome::ThresholdExceeded(format!(
+                    "narrowed rebuild did not settle within {NARROWED_REBUILD_MAX_ROUNDS} rounds"
+                )));
+            }
             for h in &round_handles {
                 if seen.insert(h.clone()) {
                     order.push(h.clone());
@@ -2074,7 +2082,7 @@ impl Build {
             let dependents: HashSet<Handle> = cached
                 .per_page
                 .iter()
-                .filter(|(h, _)| !seen.contains(*h))
+                .filter(|(h, _)| !round_handles.contains(*h))
                 .filter(|(_, lig)| lig.binds.iter().any(|k| changed_keys.contains(k)))
                 .map(|(h, _)| h.clone())
                 .collect();
@@ -3611,6 +3619,83 @@ mod tests {
                 1,
                 "{filler} must be untouched by the narrowed rebuild"
             );
+        }
+    }
+
+    /// `x` and `y` bind each other's attached values. Editing `x` changes
+    /// `kx` (round 1), which changes `ky` from `y` (round 2), which `x` binds
+    /// and so recompiles in round 3 even though round 1 already compiled it.
+    #[test]
+    fn rebuild_recompiles_a_bind_cycle_until_it_settles() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["x", "y", "c", "d", "e", "f", "g", "h"];
+
+        let x = |v: &str| {
+            format!(
+                "#import \"/typ/rheo.typ\": rheo-ligament-attach, rheo-ligament-bind, rheo-ligament-get\n\
+                 = X\n\
+                 #rheo-ligament-attach(\"kx\", \"{v}\")\n\
+                 #rheo-ligament-bind(\"ky\")\n\
+                 #context {{\n\
+                 let live = query(label(\"rheo-ligament:attach\")).filter(m => m.value.key == \"ky\").map(m => m.value.value)\n\
+                 let stored = rheo-ligament-get(\"ky\")\n\
+                 let extra = if stored == none {{ () }} else {{ stored.map(p => p.value).filter(v => not live.contains(v)) }}\n\
+                 [X sees: #(live + extra).join(\", \")]\n\
+                 }}\n"
+            )
+        };
+        write_vertebra(root, "x", &x("x1"));
+        write_vertebra(
+            root,
+            "y",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach, rheo-ligament-bind, rheo-ligament-get\n\
+             = Y\n\
+             #rheo-ligament-bind(\"kx\")\n\
+             #context {\n\
+             let live = query(label(\"rheo-ligament:attach\")).filter(m => m.value.key == \"kx\").map(m => m.value.value)\n\
+             let stored = rheo-ligament-get(\"kx\")\n\
+             let extra = if stored == none { () } else { stored.map(p => p.value).filter(v => not live.contains(v)) }\n\
+             let vals = live + extra\n\
+             rheo-ligament-attach(\"ky\", \"y-of-\" + if vals.len() > 0 { vals.first() } else { \"?\" })\n\
+             }\n",
+        );
+        for filler in ["c", "d", "e", "f", "g", "h"] {
+            write_vertebra(root, filler, &format!("= {filler}\n"));
+        }
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![plugin],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        write_vertebra(root, "x", &x("x2"));
+        build
+            .rebuild(&[root.join("content/x.typ")])
+            .expect("narrowed rebuild");
+
+        let count = |path: &str| {
+            captured
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(p, _, _)| p == path)
+                .count()
+        };
+        assert_eq!(
+            count("x.html"),
+            3,
+            "x recompiles in round 3 for y's new key"
+        );
+        assert_eq!(count("y.html"), 2, "y recompiles once as x's dependent");
+        for filler in ["c", "d", "e", "f", "g", "h"] {
+            assert_eq!(count(&format!("{filler}.html")), 1, "{filler} untouched");
         }
     }
 
