@@ -38,6 +38,12 @@ See [TESTING.md](TESTING.md) for more test commands and options.
 cargo fmt && cargo clippy -- -D warnings
 ```
 
+**Browser testing is always in Chrome** (`chromium` on this machine), never
+Firefox or whatever the desktop default is. `--open` goes through the
+`webbrowser` crate, which honours `$BROWSER`, so run it as
+`BROWSER=chromium cargo run -- watch <path> --open`; any other check of
+served HTML (screenshots, devtools, headless runs) uses `chromium` too.
+
 ## rheo.toml
 
 ```toml
