@@ -95,7 +95,9 @@ To know the session is ready, wait for the first `build_finished` line with
 the moment its output is on disk and, when a dev server exists, the in-memory
 files have been pushed to it. It excludes the watcher's debounce, which runs
 before the build starts, and (for the initial build) the browser launch. `kind`
-is always `"full"` for now. `error` appears only when `ok` is `false`.
+is `"narrowed"` when the rebuild compiled only the changed pages (see
+`[watch] narrow`) and `"full"` otherwise. Under `--timings` each narrowed round
+writes its own `rebuild-NNN.json`. `error` appears only when `ok` is `false`.
 
 ### Rebuilding on request
 

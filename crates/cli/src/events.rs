@@ -9,12 +9,14 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildKind {
     Full,
+    Narrowed,
 }
 
 impl BuildKind {
     fn as_str(self) -> &'static str {
         match self {
             BuildKind::Full => "full",
+            BuildKind::Narrowed => "narrowed",
         }
     }
 }
@@ -132,6 +134,21 @@ mod tests {
         assert_eq!(
             finished(false, false, 87, Some("boom")).to_json_line(),
             r#"{"event":"build_finished","initial":false,"ok":false,"kind":"full","ms":87,"error":"boom"}"#
+        );
+    }
+
+    #[test]
+    fn narrowed_line_shape() {
+        let report = WatchReport::BuildFinished {
+            initial: false,
+            ok: true,
+            kind: BuildKind::Narrowed,
+            ms: 12,
+            error: None,
+        };
+        assert_eq!(
+            report.to_json_line(),
+            r#"{"event":"build_finished","initial":false,"ok":true,"kind":"narrowed","ms":12}"#
         );
     }
 

@@ -2158,6 +2158,7 @@ impl Build {
                 }
             }
 
+            self.begin_rebuild_timings(false);
             let (pass, harvested) = self.compile_bundle_subset(
                 plugin,
                 virtual_spine,

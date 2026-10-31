@@ -725,11 +725,11 @@ fn update_dev_server(build: &mut Build, server: &dyn ServerHandle, reload: Optio
     }
 }
 
-fn build_finished(initial: bool, ms: u128, result: Result<()>) -> WatchReport {
+fn build_finished(initial: bool, kind: BuildKind, ms: u128, result: Result<()>) -> WatchReport {
     WatchReport::BuildFinished {
         initial,
         ok: result.is_ok(),
-        kind: BuildKind::Full,
+        kind,
         ms,
         error: result.err().map(|e| e.to_string()),
     }
@@ -783,7 +783,12 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
             initial_ms += t.elapsed().as_millis();
         }
     }
-    events.emit(&build_finished(true, initial_ms, initial_result));
+    events.emit(&build_finished(
+        true,
+        BuildKind::Full,
+        initial_ms,
+        initial_result,
+    ));
 
     let watch_project_cfg = build.project().clone();
     let build_dir_canonical = build
@@ -803,25 +808,35 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
                 info!("files changed, recompiling");
                 let start = std::time::Instant::now();
                 let result = rebuild_and_report(&build, &paths).map(|_| ());
-                if result.is_ok() {
-                    let narrowed = build.take_narrowed_outputs();
-                    if let Some(server) = &server {
-                        match narrowed {
-                            Some(written) => {
-                                server.forget_virtual_paths(&written);
-                                server.reload(ReloadKind::for_assets_changed(assets));
-                            }
-                            None => {
-                                update_dev_server(
-                                    &mut build,
-                                    server.as_ref(),
-                                    Some(ReloadKind::for_assets_changed(assets)),
-                                );
-                            }
+                let narrowed = build.take_narrowed_outputs();
+                let kind = if narrowed.is_some() {
+                    BuildKind::Narrowed
+                } else {
+                    BuildKind::Full
+                };
+                if result.is_ok()
+                    && let Some(server) = &server
+                {
+                    match narrowed {
+                        Some(written) => {
+                            server.forget_virtual_paths(&written);
+                            server.reload(ReloadKind::for_assets_changed(assets));
+                        }
+                        None => {
+                            update_dev_server(
+                                &mut build,
+                                server.as_ref(),
+                                Some(ReloadKind::for_assets_changed(assets)),
+                            );
                         }
                     }
                 }
-                events.emit(&build_finished(false, start.elapsed().as_millis(), result));
+                events.emit(&build_finished(
+                    false,
+                    kind,
+                    start.elapsed().as_millis(),
+                    result,
+                ));
             }
             WatchEvent::ConfigChanged => {
                 info!("config changed, reloading");
@@ -852,7 +867,12 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
                         Err(e)
                     }
                 };
-                events.emit(&build_finished(false, start.elapsed().as_millis(), result));
+                events.emit(&build_finished(
+                    false,
+                    BuildKind::Full,
+                    start.elapsed().as_millis(),
+                    result,
+                ));
             }
         }
         // AFTER the rebuild, not before, and for both arms — this is the
