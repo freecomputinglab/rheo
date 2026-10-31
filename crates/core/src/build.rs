@@ -7,7 +7,7 @@
 
 use crate::assets::AssetResolver;
 use crate::compile::export_bundle;
-use crate::config::PluginSection;
+use crate::config::{NarrowMode, PluginSection};
 use crate::diagnostics::DiagnosticReport;
 use crate::diagnostics::results::CompilationResults;
 use crate::diagnostics::timing::{BuildTiming, phase};
@@ -158,6 +158,8 @@ pub struct Build {
     /// Vertebra handles each plugin's last full compile built, by plugin name;
     /// a rescanned spine with a different set stales every page's `rheo-context()`.
     spine_handles: Mutex<HashMap<String, HashSet<Handle>>>,
+    /// `[watch] narrow = "auto"`'s per-session edit history.
+    auto_narrow: Mutex<AutoNarrow>,
     /// Read only by the instrumentation, which is what the feature gates.
     #[cfg(feature = "timings")]
     iterations: bool,
@@ -195,6 +197,57 @@ impl RebuildPath {
                 );
             }
             RebuildPath::Full { reason } => info!("full rebuild: {reason}"),
+        }
+    }
+}
+
+/// `[watch] narrow = "auto"`: a narrowed rebuild is only worth it when no
+/// round runs with a changed ligament feed, since each such round misses
+/// Typst's memo cache and costs about a full build. A changed page whose
+/// attaches nobody binds narrows; one that others bind narrows only once its
+/// last edit is known to have left its attaches unchanged.
+#[derive(Debug, Default)]
+struct AutoNarrow {
+    last_edit_changed_attaches: HashMap<Handle, bool>,
+}
+
+impl AutoNarrow {
+    /// The full-rebuild reason naming one changed page that may not narrow,
+    /// or `None` when every page in `changed` may.
+    fn blocker(&self, changed: &HashSet<Handle>, cached: &Ligaments) -> Option<String> {
+        changed.iter().find_map(|h| {
+            let keys = &cached.per_page.get(h)?.attaches;
+            let binders = cached
+                .per_page
+                .iter()
+                .filter(|(other, lig)| {
+                    *other != h && keys.iter().any(|(k, _)| lig.binds.contains(k))
+                })
+                .count();
+            let why = match (binders, self.last_edit_changed_attaches.get(h)) {
+                (0, _) | (_, Some(false)) => return None,
+                (_, Some(true)) => "its last edit changed them",
+                (_, None) => "it has no edit history yet",
+            };
+            Some(format!(
+                "auto: {h} attaches keys {binders} page(s) bind, and {why}"
+            ))
+        })
+    }
+
+    /// Remember, per page in `changed`, whether its attaches moved between
+    /// `before` and `after` this rebuild.
+    fn record(&mut self, changed: &HashSet<Handle>, before: &Ligaments, after: &Ligaments) {
+        let attaches = |lig: &Ligaments, h| {
+            lig.per_page
+                .get(h)
+                .map(|v| v.attaches.clone())
+                .unwrap_or_default()
+        };
+        for h in changed {
+            let diff = Build::diff_attach_keys(&attaches(before, h), &attaches(after, h));
+            self.last_edit_changed_attaches
+                .insert(h.clone(), !diff.is_empty());
         }
     }
 }
@@ -467,6 +520,7 @@ impl Build {
             narrowed_outputs: Mutex::new(None),
             has_built: std::sync::atomic::AtomicBool::new(false),
             spine_handles: Mutex::new(HashMap::new()),
+            auto_narrow: Mutex::new(AutoNarrow::default()),
             #[cfg(feature = "timings")]
             iterations: opts.iterations,
         })
@@ -1911,12 +1965,32 @@ impl Build {
             }
         }
 
+        let auto = (fallback.is_none() && self.project.config.narrow_mode() == NarrowMode::Auto)
+            .then(|| {
+                let changed: HashSet<Handle> = plans
+                    .iter()
+                    .flat_map(|p| p.changed.iter().cloned())
+                    .collect();
+                (changed, self.ligaments())
+            });
+        if let Some((changed, cached)) = &auto {
+            fallback = self.auto_narrow.lock().blocker(changed, cached);
+        }
+        let learn = |results: CompilationResults| {
+            if let Some((changed, before)) = &auto {
+                self.auto_narrow
+                    .lock()
+                    .record(changed, before, &self.ligaments());
+            }
+            results
+        };
+
         if let Some(reason) = fallback {
             RebuildPath::Full {
                 reason: reason.clone(),
             }
             .log();
-            return self.run();
+            return self.run().map(learn);
         }
 
         let mut results = CompilationResults::new();
@@ -1952,7 +2026,7 @@ impl Build {
                 }
                 NarrowOutcome::ThresholdExceeded(reason) => {
                     RebuildPath::Full { reason }.log();
-                    return self.run();
+                    return self.run().map(learn);
                 }
             }
         }
@@ -1965,7 +2039,7 @@ impl Build {
         }
         .log();
 
-        Ok(results)
+        Ok(learn(results))
     }
 
     /// Classify `changed_paths` against `virtual_spine`: `[watch] narrow` must be
@@ -3283,6 +3357,52 @@ mod tests {
     /// directly: that assertion is what actually fails without the sort in
     /// `to_value`.
     #[test]
+    fn auto_narrow_blocks_bound_pages_until_an_edit_leaves_attaches_unchanged() {
+        fn ligaments(x_value: &str) -> Ligaments {
+            let mut lig = Ligaments::default();
+            lig.per_page.insert(
+                Handle::new("x"),
+                VertebraLigaments {
+                    attaches: vec![("kx".into(), Value::Str(x_value.into()))],
+                    binds: Default::default(),
+                },
+            );
+            lig.per_page.insert(
+                Handle::new("y"),
+                VertebraLigaments {
+                    attaches: vec![],
+                    binds: ["kx".to_string()].into(),
+                },
+            );
+            lig.per_page.insert(
+                Handle::new("post"),
+                VertebraLigaments {
+                    attaches: vec![("kp".into(), Value::Str("p".into()))],
+                    binds: Default::default(),
+                },
+            );
+            lig
+        }
+        let x: HashSet<Handle> = [Handle::new("x")].into();
+        let post: HashSet<Handle> = [Handle::new("post")].into();
+        let (v1, v2) = (ligaments("x1"), ligaments("x2"));
+        let mut auto = AutoNarrow::default();
+
+        assert_eq!(auto.blocker(&post, &v1), None);
+        let reason = auto.blocker(&x, &v1).expect("no history blocks");
+        assert!(reason.contains("no edit history"), "{reason}");
+
+        auto.record(&x, &v1, &v1);
+        assert!(!auto.last_edit_changed_attaches[&Handle::new("x")]);
+        assert_eq!(auto.blocker(&x, &v1), None);
+
+        auto.record(&x, &v1, &v2);
+        assert!(auto.last_edit_changed_attaches[&Handle::new("x")]);
+        let reason = auto.blocker(&x, &v2).expect("changed attaches block");
+        assert!(reason.contains("last edit changed them"), "{reason}");
+    }
+
+    #[test]
     fn to_value_is_independent_of_insertion_order() {
         fn vertebra(key: &str, value: &str) -> VertebraLigaments {
             VertebraLigaments {
@@ -3547,7 +3667,7 @@ mod tests {
                 content_dir: Some("content".to_string()),
                 formats: vec!["html".to_string()],
                 watch: Some(crate::config::WatchConfig {
-                    narrow: true,
+                    narrow: NarrowMode::On,
                     ..Default::default()
                 }),
                 ..Default::default()

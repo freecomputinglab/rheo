@@ -65,6 +65,12 @@ bundle directly — a package that does the latter would silently see only
 the narrowed subset and produce a page missing cross-vertebra content. See
 `docs/contract.md`'s "`[watch] narrow`" section.
 
+`[watch] narrow = "auto"` narrows only where narrowing is likely to be
+faster: an edit to a page whose attached keys other pages bind rebuilds in
+full until an edit to that page has been seen to leave its attaches
+unchanged, since a round with a changed ligament feed runs cold. The history
+is per watch session.
+
 ## `[watch] cache_size` makes the memo cache size configurable
 
 Set `[watch] cache_size = 0` in `rheo.toml` and `rheo watch` clears Typst's

@@ -85,6 +85,37 @@ fn default_cache_size() -> usize {
     DEFAULT_WATCH_CACHE_SIZE
 }
 
+/// `[watch] narrow`: whether `Build::rebuild` takes its narrowed-compile path.
+/// Written as `false`, `true`, or `"auto"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NarrowMode {
+    #[default]
+    Off,
+    On,
+    /// Narrow, except for an edit that could change a value other pages bind
+    /// and whose page's last edit did — see `crate::build::AutoNarrow`.
+    Auto,
+}
+
+impl<'de> Deserialize<'de> for NarrowMode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bool(bool),
+            Str(String),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Bool(false) => Ok(Self::Off),
+            Raw::Bool(true) => Ok(Self::On),
+            Raw::Str(s) if s == "auto" => Ok(Self::Auto),
+            Raw::Str(s) => Err(serde::de::Error::custom(format!(
+                "[watch] narrow must be true, false or \"auto\", not \"{s}\""
+            ))),
+        }
+    }
+}
+
 /// `[watch]` table: `rheo watch` behaviour knobs.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WatchConfig {
@@ -97,7 +128,7 @@ pub struct WatchConfig {
     /// vertebrae does so through `rheo-ligaments`/`rheo-ligament-get`. See
     /// `docs/contract.md`'s "Ligaments" section.
     #[serde(default)]
-    pub narrow: bool,
+    pub narrow: NarrowMode,
     /// Rebuilds a Typst memo-cache entry survives unused in `rheo watch`
     /// ([`DEFAULT_WATCH_CACHE_SIZE`] when unset); `0` empties it after every rebuild.
     #[serde(default = "default_cache_size")]
@@ -107,7 +138,7 @@ pub struct WatchConfig {
 impl Default for WatchConfig {
     fn default() -> Self {
         Self {
-            narrow: false,
+            narrow: NarrowMode::Off,
             cache_size: DEFAULT_WATCH_CACHE_SIZE,
         }
     }
@@ -681,7 +712,12 @@ impl RheoConfig {
     /// `[watch] narrow` — opt-in for `Build::rebuild`'s narrowed-compile
     /// path. `false` when unset (no `[watch]` table at all).
     pub fn narrowed_rebuilds_enabled(&self) -> bool {
-        self.watch.as_ref().is_some_and(|w| w.narrow)
+        self.narrow_mode() != NarrowMode::Off
+    }
+
+    /// `[watch] narrow`, or [`NarrowMode::Off`] when unset.
+    pub fn narrow_mode(&self) -> NarrowMode {
+        self.watch.as_ref().map(|w| w.narrow).unwrap_or_default()
     }
 
     /// `[watch] cache_size`, or [`DEFAULT_WATCH_CACHE_SIZE`] when unset.
@@ -936,6 +972,22 @@ mod tests {
 
         let config = parse(&versioned_toml("[watch]\nnarrow = false\n"));
         assert!(!config.narrowed_rebuilds_enabled());
+    }
+
+    #[test]
+    fn test_watch_narrow_parses_bool_or_auto() {
+        for (value, mode) in [
+            ("false", NarrowMode::Off),
+            ("true", NarrowMode::On),
+            ("\"auto\"", NarrowMode::Auto),
+        ] {
+            let config = parse(&versioned_toml(&format!("[watch]\nnarrow = {value}\n")));
+            assert_eq!(config.narrow_mode(), mode);
+        }
+        assert!(parse(&versioned_toml("[watch]\nnarrow = \"auto\"\n")).narrowed_rebuilds_enabled());
+
+        let err = toml::from_str::<WatchConfig>("narrow = \"sometimes\"\n").unwrap_err();
+        assert!(err.to_string().contains("true, false or \"auto\""), "{err}");
     }
 
     /// `[watch] cache_size` defaults to 10 (no `[watch]` table at all, or one

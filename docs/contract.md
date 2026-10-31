@@ -262,6 +262,25 @@ narrow = true
 Disabled (absent, or `narrow = false`), every `rheo watch` rebuild compiles
 the whole bundle, exactly as before this mechanism existed.
 
+`narrow = "auto"` narrows only the edits a narrowed rebuild is likely to make
+faster. A narrowed round whose ligament feed changed misses Typst's memo
+cache and costs about as much as a full rebuild, and every page binding a
+changed key adds another such round. So under `"auto"`, an edited page whose
+attached keys no other page binds narrows (one round at worst); one whose
+attached keys some page binds narrows only once its previous edit is known
+to have left its attaches unchanged, and otherwise rebuilds in full, logging
+`full rebuild: auto: <handle> attaches keys <n> page(s) bind, and ...`. Each
+rebuild records, for every edited page, whether its attaches changed — a
+full rebuild harvests ligaments too, so a page sent to full still learns
+that its edits stopped changing them. That history lives for one watch
+session and resets when `rheo.toml` reloads. `"auto"` carries the same
+correctness caveat as `true`.
+
+Known limit: the rule assumes a changed ligament feed makes a round cold.
+Once feeding ligaments stops invalidating Typst's cache, attach-changing
+rounds become cheap and `"auto"` turns too conservative; it should be
+revisited then.
+
 Under `rheo watch --open`, a narrowed rebuild does not recompile the bundle
 for the dev server; the server serves the rewritten pages from the build
 directory.
