@@ -2344,7 +2344,9 @@ impl Build {
             plugin.typst_format(),
             &pass.meta,
         );
-        ContentTransclusion::rewrite_assets(&outputs, &mut asset_files)?;
+        ContentTransclusion::rewrite_assets_with_fallback(&outputs, &mut asset_files, |page| {
+            std::fs::read_to_string(ctx.output_dir.join(page)).ok()
+        })?;
         let (asset_files, control) = ControlAssets::extract(asset_files)?;
 
         let mut written: Vec<String> = outputs.iter().map(|o| o.output_path.clone()).collect();
