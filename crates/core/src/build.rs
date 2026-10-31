@@ -155,6 +155,9 @@ pub struct Build {
     /// since `self.ligaments` only ever holds a real harvest after a build
     /// has actually happened.
     has_built: std::sync::atomic::AtomicBool,
+    /// Vertebra handles each plugin's last full compile built, by plugin name;
+    /// a rescanned spine with a different set stales every page's `rheo-context()`.
+    spine_handles: Mutex<HashMap<String, HashSet<Handle>>>,
     /// Read only by the instrumentation, which is what the feature gates.
     #[cfg(feature = "timings")]
     iterations: bool,
@@ -463,6 +466,7 @@ impl Build {
             incoming_ligaments: Mutex::new(None),
             narrowed_outputs: Mutex::new(None),
             has_built: std::sync::atomic::AtomicBool::new(false),
+            spine_handles: Mutex::new(HashMap::new()),
             #[cfg(feature = "timings")]
             iterations: opts.iterations,
         })
@@ -1374,6 +1378,15 @@ impl Build {
         let ctx = self.plugin_asset_context(plugin, packages, default_section, true)?;
         let spine =
             self.compile_spine(plugin, ctx.section, content_dir, packages, package_resolver)?;
+        self.spine_handles.lock().insert(
+            plugin.name().to_string(),
+            spine
+                .spine
+                .vertebrae
+                .iter()
+                .map(|v| v.handle.clone())
+                .collect(),
+        );
         Ok(PluginCompile { ctx, spine })
     }
 
@@ -1863,6 +1876,19 @@ impl Build {
                     "{} assembles the whole spine into one file; no narrowed path",
                     plugin.name()
                 ));
+            }
+            if fallback.is_none()
+                && let Some(built) = self.spine_handles.lock().get(plugin.name())
+            {
+                let now: HashSet<&Handle> =
+                    virtual_spine.vertebrae.iter().map(|v| &v.handle).collect();
+                let added = now.iter().filter(|h| !built.contains(**h)).count();
+                let removed = built.iter().filter(|h| !now.contains(h)).count();
+                if added + removed > 0 {
+                    fallback = Some(format!(
+                        "spine changed: {added} page(s) added, {removed} removed"
+                    ));
+                }
             }
             if fallback.is_some() {
                 continue;
@@ -3853,6 +3879,39 @@ mod tests {
             None,
             "a whole-spine plugin must take the full path"
         );
+    }
+
+    /// A page added to the spine stales every other page's `rheo-context()`,
+    /// so the rebuild goes full rather than narrowing to the new page.
+    #[test]
+    fn rebuild_new_vertebra_forces_full_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+        for n in names {
+            write_vertebra(root, n, &format!("= {n}\n"));
+        }
+
+        let captured = Arc::new(Captured::default());
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![Box::new(CapturingPlugin(captured.clone())) as Box<dyn FormatPlugin>],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        write_vertebra(root, "z", "= Z\n");
+        build
+            .rebuild(&[root.join("content/z.typ")])
+            .expect("rebuild");
+
+        assert_eq!(
+            build.take_narrowed_outputs(),
+            None,
+            "a new page must go full"
+        );
+        captured.title("z.html");
     }
 
     /// Round 2 of a narrowed rebuild must not include the pages compiled in
