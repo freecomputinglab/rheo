@@ -42,6 +42,10 @@ impl FormatPlugin for EpubPlugin {
         SpineLayoutKind::OnePerVertebra
     }
 
+    fn assembles_whole_spine(&self) -> bool {
+        true
+    }
+
     /// A marrow asset() has no page to sit beside inside the EPUB's own output
     /// directory — the container is the only place it can usefully land.
     fn embeds_bundle_assets(&self) -> bool {

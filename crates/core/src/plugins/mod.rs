@@ -396,6 +396,12 @@ pub trait FormatPlugin: Send + Sync {
         SpineLayoutKind::OnePerVertebra
     }
 
+    /// Whether this plugin assembles one artifact from every vertebra's output at
+    /// once, so it cannot be handed only the vertebrae a narrowed rebuild recompiled.
+    fn assembles_whole_spine(&self) -> bool {
+        false
+    }
+
     /// Typst export target emitted as the `format:` argument of `#document(…)`.
     ///
     /// Distinct from `extension()` (output filename / `@ref` anchor). Override when

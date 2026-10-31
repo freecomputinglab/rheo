@@ -1858,6 +1858,12 @@ impl Build {
                 marrow_ctx.marrow_prologue,
             )?;
 
+            if fallback.is_none() && plugin.assembles_whole_spine() {
+                fallback = Some(format!(
+                    "{} assembles the whole spine into one file; no narrowed path",
+                    plugin.name()
+                ));
+            }
             if fallback.is_some() {
                 continue;
             }
@@ -3802,6 +3808,50 @@ mod tests {
             build.take_narrowed_outputs(),
             None,
             "a full fallback must leave no narrowed outputs"
+        );
+    }
+
+    /// A plugin that assembles one artifact from the whole spine sends even an
+    /// otherwise-narrowable rebuild down the full path.
+    #[test]
+    fn rebuild_whole_spine_plugin_forces_full_path() {
+        struct Assembling;
+        impl FormatPlugin for Assembling {
+            fn name(&self) -> &'static str {
+                "html"
+            }
+            fn assembles_whole_spine(&self) -> bool {
+                true
+            }
+            fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[CastVertebra]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+        for n in names {
+            write_vertebra(root, n, &format!("= {n}\n"));
+        }
+
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![Box::new(Assembling) as Box<dyn FormatPlugin>],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        write_vertebra(root, "b", "= B2\n");
+        build
+            .rebuild(&[root.join("content/b.typ")])
+            .expect("rebuild");
+
+        assert_eq!(
+            build.take_narrowed_outputs(),
+            None,
+            "a whole-spine plugin must take the full path"
         );
     }
 
