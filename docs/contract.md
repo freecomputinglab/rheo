@@ -175,47 +175,36 @@ answered even when the vertebra that would normally answer it did not run
 this time. The caller supplies a `crate::build::Ligaments` via
 `WorldSpec::ligaments` (`crates/core/src/world.rs`); `build_inputs` seeds it
 onto the reserved `sys.inputs.rheo-ligaments` key
-(`RESERVED_LIGAMENTS_INPUT_KEY`, `crates/core/src/config/mod.rs`) as a
-**native Typst dictionary** — never JSON, since `json.encode`/`json(bytes(..))`
-silently turn a `datetime` value into its `repr()` string form, which would
-corrupt any attached value of that type. Absent a `Ligaments` to feed (the
-ordinary case today), the key is left entirely absent from `sys.inputs` —
-not an empty dict — so a reader can tell "no ligaments were supplied" from
-"ligaments were supplied but nothing was attached". `rheo-ligaments` is
-rejected from `rheo.toml [inputs]` and `--input` the same way, and for the
-same reason, as `rheo-context`. A full compile (`rheo compile`, or a watch
-rebuild that falls back to full) feeds no harvest, because it compiles every
-vertebra live. The fed harvest never includes the pages being compiled in that
-pass, so a merge that prefers live data cannot resurrect something an edited
-page removed.
+(`RESERVED_LIGAMENTS_INPUT_KEY`, `crates/core/src/config/mod.rs`) as an
+**opaque native `ligaments` value** (`crates/core/src/ligament_store.rs`) —
+never JSON, since `json.encode`/`json(bytes(..))` silently turn a `datetime`
+value into its `repr()` string form, which would corrupt any attached value of
+that type. The value is present on EVERY compile, so the library hashes the
+same across full and narrowed ones; a compile with no ligaments to feed (a
+full build) gets an inactive one. `rheo-ligaments` is rejected from
+`rheo.toml [inputs]` and `--input` the same way, and for the same reason, as
+`rheo-context`. The fed harvest never includes the pages being compiled in
+that pass, so a merge that prefers live data cannot resurrect something an
+edited page removed.
 
-The dict's shape, as Typst sees it, groups every attach by key across every
-page (bound keys are NOT included — they stay Rust-side only, read directly
-off `Build::ligaments()` by `Build::narrow_one_plugin`):
+Its contents are reachable only through one method, `get(key)`, which returns
+the array of `(page, value)` pairs attached under `key` — possibly empty,
+when ligaments were supplied but nothing was attached — or `none` when the
+compile has no ligaments (a full build). That `none`-vs-empty distinction is
+load-bearing. Going through `get` is what limits invalidation: it records a
+dependency on that one key, so a change to another key reuses the Typst work
+that never read it. The value hashes as a constant for the same reason.
 
 ```typst
-(attaches: (
-  "<key>": ((page: "<handle>", value: <any>), ..),
-  ..,
-))
+sys.inputs.at("rheo-ligaments", default: none).get("<key>")
 ```
 
-**Project code** reads it back with `rheo-ligament-get(key)`
+**Project code** reads it with `rheo-ligament-get(key)`
 (`crates/core/src/typ/rheo.typ`, visible the same way
-`rheo-ligament-attach`/`rheo-ligament-bind` are): `none` when
-`rheo-ligaments` is absent from `sys.inputs` entirely, otherwise the array of
-`(page, value)` pairs attached under `key` — possibly empty, when ligaments
-were supplied but nothing was attached under that key. That `none`-vs-empty
-distinction is load-bearing, the same way it is for the whole key's absence.
-
-**Package code** cannot import `rheo.typ`, so it reads the same value
-directly off the raw `sys.inputs` shape:
-
-```typst
-sys.inputs.at("rheo-ligaments", default: none)
-  .at("attaches", default: (:))
-  .at("<key>", default: ())
-```
+`rheo-ligament-attach`/`rheo-ligament-bind` are), which wraps exactly that.
+**Package code** cannot import `rheo.typ`, so it calls `.get(key)` on the
+`sys.inputs` value directly. Bound keys are NOT part of the value; they stay
+Rust-side, read off `Build::ligaments()` by `Build::narrow_one_plugin`.
 
 rheo dogfoods this for its own metadata beacon: each vertebra's beacon is
 also emitted as a `rheo-meta:<handle>` ligament attach (alongside the beacon

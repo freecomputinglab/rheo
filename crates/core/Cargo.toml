@@ -29,6 +29,7 @@ typst-library = { workspace = true }
 typst-kit = { workspace = true }
 typst-layout = { workspace = true }
 typst-syntax = { workspace = true }
+typst-utils = { workspace = true }
 typst-bundle = { workspace = true }
 typst-timing = { workspace = true, optional = true }
 comemo = { workspace = true }

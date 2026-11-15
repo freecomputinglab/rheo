@@ -5,6 +5,7 @@ pub mod config;
 pub mod diagnostics;
 pub mod html_dom;
 pub mod image_assets;
+pub mod ligament_store;
 pub mod output;
 pub mod packages;
 pub mod parser;

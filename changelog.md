@@ -1,5 +1,12 @@
 # Unreleased — user-visible changes
 
+## `sys.inputs.rheo-ligaments` is now an opaque value read through `.get(key)`
+
+`sys.inputs.rheo-ligaments` is now an opaque `ligaments` value, present on
+every compile, so a change to one key no longer invalidates Typst work that
+never read it. Packages reading `.at("attaches")` must switch to
+`.get(key)`, which returns the `(page, value)` array, or `none` on a full build.
+
 ## A combined PDF is now named after its spine title
 
 A combined PDF is now named after its spine title (`[pdf.spine] title`, else

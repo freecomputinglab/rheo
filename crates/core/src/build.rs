@@ -330,24 +330,21 @@ pub struct Ligaments {
 }
 
 impl Ligaments {
-    /// The native Typst value fed back onto `sys.inputs.rheo-ligaments` (see
-    /// `crate::world::build_inputs` and `docs/contract.md`'s "Ligaments"
-    /// section): `(attaches: (<key>: ((page: <handle>, value: <v>), ...), ...))`
-    /// — one entry per attached key, each a list of `(page, value)` pairs,
-    /// since more than one vertebra may attach the same key. Bound keys are
-    /// NOT part of this value; they stay Rust-side only — [`Build::narrow_one_plugin`]
-    /// reads them back from [`Build::ligaments`] directly to build the dependent set.
+    /// Every attached key's `(page: <handle>, value: <v>)` dicts — one per
+    /// attaching vertebra, since a key may be attached by several. Bound keys
+    /// are NOT included; they stay Rust-side, read back from
+    /// [`Build::ligaments`] to build the dependent set. Feeds
+    /// `crate::ligament_store::LigamentStore` (see `docs/contract.md`'s
+    /// "Ligaments" section).
     ///
-    /// Built as a native `Dict`/`Array`/`Str`, never through
-    /// `TypstLiteral`'s string-serializing path or JSON: a waterline spike
-    /// found both silently turn a `datetime` value into its `repr()` string
-    /// form, which this must not do to an attach's opaque value.
+    /// Values stay native, never routed through `TypstLiteral` or JSON: a
+    /// waterline spike found both turn a `datetime` into its `repr()` string.
     ///
     /// Pages are visited in ascending handle order, so equal ligaments always
-    /// produce an equal (and equally hashed) value regardless of `per_page`'s
+    /// give equal (equally hashed) output regardless of `per_page`'s
     /// `HashMap` iteration order.
-    pub fn to_value(&self) -> typst::foundations::Value {
-        use typst::foundations::{Array, Dict, Value};
+    pub fn by_key(&self) -> std::collections::BTreeMap<&str, Vec<typst::foundations::Value>> {
+        use typst::foundations::{Dict, Value};
 
         let mut pages: Vec<(&Handle, &VertebraLigaments)> = self.per_page.iter().collect();
         pages.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
@@ -364,18 +361,7 @@ impl Ligaments {
                     .push(Value::Dict(pair));
             }
         }
-
-        let mut attaches = Dict::new();
-        for (key, pairs) in by_key {
-            attaches.insert(
-                key.into(),
-                Value::Array(pairs.into_iter().collect::<Array>()),
-            );
-        }
-
-        let mut top = Dict::new();
-        top.insert("attaches".into(), Value::Dict(attaches));
-        Value::Dict(top)
+        by_key
     }
 }
 
@@ -2241,6 +2227,12 @@ impl Build {
     /// — added, removed, or changed (multiset comparison per key, since one
     /// page may attach the same key more than once). Decision 4's "a changed
     /// set means a key was added, removed, or its value changed."
+    ///
+    /// Values compare by `==`, not by hash, on purpose: a page's source is
+    /// re-parsed from scratch on every edit, renumbering every span in it, and
+    /// spans are part of a content value's hash but not of its equality. By
+    /// hash, one sentence edited would mark every key the page attaches as
+    /// changed. The cost is that `==` ignores what a `context` body captured.
     fn diff_attach_keys(
         old: &[(String, typst::foundations::Value)],
         new: &[(String, typst::foundations::Value)],
@@ -3366,14 +3358,14 @@ mod tests {
         assert!(b.binds.is_empty());
     }
 
-    /// `Ligaments::to_value` lists each key's `(page, value)` pairs in
+    /// `Ligaments::by_key` lists each key's `(page, value)` pairs in
     /// ascending handle order, so two `Ligaments` built from the same pages
     /// but inserted into `per_page` (a `HashMap`) in different orders still
     /// produce an equal — and equally hashed — value. A `HashMap` may
     /// happen to iterate both in the same order regardless, so this also
     /// asserts the shared key's pairs come out in ascending-handle order
     /// directly: that assertion is what actually fails without the sort in
-    /// `to_value`.
+    /// `by_key`.
     #[test]
     fn auto_narrow_blocks_bound_pages_until_an_edit_leaves_attaches_unchanged() {
         fn ligaments(x_value: &str) -> Ligaments {
@@ -3421,7 +3413,7 @@ mod tests {
     }
 
     #[test]
-    fn to_value_is_independent_of_insertion_order() {
+    fn by_key_is_independent_of_insertion_order() {
         fn vertebra(key: &str, value: &str) -> VertebraLigaments {
             VertebraLigaments {
                 attaches: vec![(key.to_string(), Value::Str(value.into()))],
@@ -3445,21 +3437,11 @@ mod tests {
             reverse.per_page.insert(handle, vertebra);
         }
 
-        let a = forward.to_value();
-        let b = reverse.to_value();
+        let (a, b) = (forward.by_key(), reverse.by_key());
         assert_eq!(a, b);
         assert_eq!(typst::utils::hash128(&a), typst::utils::hash128(&b));
 
-        let Value::Dict(top) = &a else {
-            panic!("expected top-level dict");
-        };
-        let Value::Dict(attaches) = top.get("attaches").expect("attaches key") else {
-            panic!("expected attaches dict");
-        };
-        let Value::Array(post) = attaches.get("tag:post").expect("tag:post key") else {
-            panic!("expected tag:post array");
-        };
-        let pages_in_order: Vec<String> = post
+        let pages_in_order: Vec<String> = a["tag:post"]
             .iter()
             .map(|pair| {
                 let Value::Dict(pair) = pair else {
@@ -3474,6 +3456,50 @@ mod tests {
         assert_eq!(pages_in_order, vec!["a", "b"]);
     }
 
+    /// A `context` body's closure captures `sys`, so its hash covers
+    /// `sys.inputs`. Feeding a harvest back must not move that hash: the
+    /// store hashes constant, which is what lets a page's own attach settle
+    /// instead of changing on every compile.
+    #[test]
+    fn fed_back_closure_attach_hashes_stably() {
+        use crate::world::{RheoWorld, WorldSpec};
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let main = r#"
+#document("a.html", format: "html")[
+  #rheo-ligament-attach("k", [#context { target() }], page: "a")
+]
+"#;
+        let known: HashSet<Handle> = [Handle::new("a")].into();
+        let harvest = |fed: Option<Ligaments>| {
+            let world = RheoWorld::new_for_bundle(
+                tmp.path(),
+                main.to_string(),
+                WorldSpec {
+                    format_name: Some("html".to_string()),
+                    ligaments: fed,
+                    ..Default::default()
+                },
+            )
+            .expect("world");
+            let bundle = world.compile_bundle().expect("compile");
+            Build::harvest_ligaments(&bundle, &known)
+        };
+        let hashes = |lig: &Ligaments| -> Vec<u128> {
+            lig.per_page[&Handle::new("a")]
+                .attaches
+                .iter()
+                .map(|(_, v)| typst::utils::hash128(v))
+                .collect()
+        };
+
+        let first = harvest(None);
+        assert_eq!(first.per_page[&Handle::new("a")].attaches.len(), 1);
+        let second = harvest(Some(first.clone()));
+        let third = harvest(Some(second.clone()));
+        assert_eq!(hashes(&first), hashes(&second));
+        assert_eq!(hashes(&second), hashes(&third));
+    }
     /// A node whose `page` is missing is dropped silently — the harvest
     /// neither panics nor hard-errors, and the rest of the set is still
     /// usable. Hand-authoring the `<rheo-ligament:attach>` label directly is

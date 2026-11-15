@@ -2679,6 +2679,7 @@ dependencies = [
  "typst-pdf",
  "typst-syntax",
  "typst-timing",
+ "typst-utils",
  "walkdir",
 ]
 

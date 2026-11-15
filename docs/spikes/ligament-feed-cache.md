@@ -196,3 +196,35 @@ instead:
    page plus that weighting. That needs its own spike.
 3. Leave the stable-feed redesign parked until edits that alternate between
    pages are measured to matter.
+
+## After per-key tracking
+
+`sys.inputs.rheo-ligaments` is now an opaque store whose hash is constant; a
+read of key K records a tracked `World::file` call on K's token. Measured on a
+2,395-page copy of waterline's `rookery/` under `rheo watch --trigger stdin`,
+with no edits except where named. `ms` is the whole rebuild; the bracket holds
+each round's typst-compile.
+
+| rebuild | before | after |
+|---|---|---|
+| touch `nest/tidbits.typ` (session's first narrowed compile) | 6,506 (6,338) | 4,601 (4,418) |
+| touch `nest/admin.typ`, never narrowed before | 6,527 (6,353) | 3,729 (3,543) |
+| a never-seen sentence in `c5/1.what-is-a-unit.typ`, 2 rounds | 12,816 (6,689 + 5,881) | 7,936 (4,443 + 3,241) |
+| touch `nest/admin.typ` right after that edit | 7,088 (6,896) | 3,620 (3,434) |
+| a todo appended to `nest/admin.typ`, 2 rounds over 7 pages | 16,017 (2,060 + 13,666) | 12,695 (1,849 + 10,545) |
+
+The todo improves least: it changes rookery's `ideas` aggregate, which every
+registry reader binds, so round 2 recompiles them all. The remaining touch cost
+is the feed still omitting the compiled pages' own entries, so a subset compiled
+for the first time sees per-key values it never has.
+
+Comparing attach values by hash instead of `==` was tried and doubled the prose
+edit (15.5 s, round 2 alone 10.8 s): every edit re-parses its file from scratch
+and renumbers all its spans, which `==` ignores and the hash does not, so every
+key the page attached looked changed and round 2 grew from 1 page to 8.
+
+A no-edit page touch also exposed why a page cannot be fed its own entries
+while the feed is hashed: rheo's injected `target()` polyfill captures `sys`,
+so any closure calling `target()` hashes the whole feed, and an attached body
+holding one (`@rookery/meetings`' timeline rail) re-hashed every compile. The
+constant-hash store removes that.

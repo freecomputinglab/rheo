@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::build::Ligaments;
 use crate::config::{RESERVED_INPUT_KEY, RESERVED_LIGAMENTS_INPUT_KEY};
 use crate::diagnostics::DiagnosticReport;
+use crate::ligament_store::LigamentStore;
 use crate::packages::PackageResolver;
 use crate::reticulate::VertebraInjection;
 use crate::synth::source_injector::SourceInjector;
@@ -33,10 +33,10 @@ use typst_library::visualize::ImageElem;
 /// output format (which is surfaced ONLY via `rheo-context.target`, read by
 /// the injected `target()` polyfill and the `rheo.typ` helpers — there is no
 /// separate `rheo-target` key). `ligaments` is the previous compile's
-/// harvested [`Ligaments`] (see `crate::build::Ligaments`), fed back so a
-/// narrower compile that skips a vertebra can still answer a cross-vertebra
-/// read that vertebra would normally answer — absent entirely, not an empty
-/// dict, when no `Ligaments` is supplied (the ordinary case today).
+/// harvested ligaments, fed back so a narrower compile that skips a vertebra
+/// can still answer a cross-vertebra read that vertebra would normally answer.
+/// It is an opaque [`LigamentStore`] present on EVERY compile (inactive on a
+/// full build), so the library hashes the same across full and narrowed ones.
 /// `user_inputs` is whatever the project asked for via `rheo.toml [inputs]`
 /// and `--input KEY=VALUE`, which is how a build script parameterises a
 /// compile — Typst has no environment access, so `sys.inputs` is the only
@@ -55,7 +55,7 @@ use typst_library::visualize::ImageElem;
 fn build_inputs(
     rheo_context: Option<&TypstLiteral>,
     user_inputs: &HashMap<String, String>,
-    ligaments: Option<&Ligaments>,
+    ligaments: &LigamentStore,
 ) -> Dict {
     let mut dict = Dict::new();
     for (key, value) in user_inputs {
@@ -67,9 +67,10 @@ fn build_inputs(
     if let Some(ctx) = rheo_context {
         dict.insert(RESERVED_INPUT_KEY.into(), ctx.to_value());
     }
-    if let Some(ligaments) = ligaments {
-        dict.insert(RESERVED_LIGAMENTS_INPUT_KEY.into(), ligaments.to_value());
-    }
+    dict.insert(
+        RESERVED_LIGAMENTS_INPUT_KEY.into(),
+        Value::dynamic(ligaments.clone()),
+    );
     dict
 }
 
@@ -124,7 +125,7 @@ pub struct WorldSpec {
     /// `sys.inputs.rheo-ligaments` when present. `None` leaves the key
     /// entirely absent — the ordinary case today, since nothing yet narrows
     /// which vertebrae compile.
-    pub ligaments: Option<Ligaments>,
+    pub ligaments: Option<crate::build::Ligaments>,
     /// Project-supplied `sys.inputs` keys, from `rheo.toml [inputs]` and
     /// `--input KEY=VALUE`. Values are always strings. A key equal to
     /// [`RESERVED_INPUT_KEY`] or [`RESERVED_LIGAMENTS_INPUT_KEY`] is ignored
@@ -149,6 +150,8 @@ pub struct RheoWorld {
     root: PathBuf,
     main: FileId,
     library: LazyHash<Library>,
+    /// The store on `sys.inputs`; `file` answers its token paths.
+    ligaments: LigamentStore,
     /// Shared with every other world of the same build: scanning the system's
     /// fonts is the expensive part of building one, and the result is identical
     /// across a build's plugins and passes.
@@ -195,12 +198,13 @@ impl RheoWorld {
     /// Assemble a world once `root` and `main` are resolved — the part both
     /// constructors below share.
     fn assemble(root: PathBuf, main: FileId, spec: WorldSpec) -> Self {
+        let ligaments = LigamentStore::new(spec.ligaments.as_ref());
         let mut library = Library::builder()
             .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
             .with_inputs(build_inputs(
                 spec.global_context.as_ref(),
                 &spec.user_inputs,
-                spec.ligaments.as_ref(),
+                &ligaments,
             ))
             .build();
 
@@ -213,6 +217,7 @@ impl RheoWorld {
             root,
             main,
             library: LazyHash::new(library),
+            ligaments,
             // A build that compiles several formats scans once and passes the
             // store in; a lone world scans for itself.
             fonts: spec
@@ -584,6 +589,9 @@ impl World for RheoWorld {
     }
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {
+        if let Some(token) = self.ligaments.serve(id) {
+            return Ok(token);
+        }
         if let Some(slot) = self.slots.lock().get(&id)
             && let Some(file) = &slot.file
         {
@@ -675,8 +683,37 @@ impl<'a> Files<'a> for RheoWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::build::{Ligaments, VertebraLigaments};
+    use crate::reticulate::handle::Handle;
     use crate::synth::typst_source::TypstStmt;
     use tempfile::TempDir;
+
+    /// A bundle world compiling `main` with `ligaments` fed back.
+    fn ligament_world(root: &Path, main: String, ligaments: Option<Ligaments>) -> RheoWorld {
+        RheoWorld::new_for_bundle(
+            root,
+            main,
+            WorldSpec {
+                format_name: Some("html".to_string()),
+                ligaments,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    }
+
+    /// One page attaching one key.
+    fn single_attach(page: &str, key: &str, value: Value) -> Ligaments {
+        let mut lig = Ligaments::default();
+        lig.per_page.insert(
+            Handle::new(page),
+            VertebraLigaments {
+                attaches: vec![(key.to_string(), value)],
+                binds: Default::default(),
+            },
+        );
+        lig
+    }
 
     #[test]
     fn serves_moulded_body_overlay_instead_of_disk() {
@@ -800,83 +837,146 @@ mod tests {
             ("spine".to_string(), TypstLiteral::Array(vec![])),
             ("target".to_string(), TypstLiteral::str("html")),
         ]);
-        let dict = build_inputs(Some(&ctx), &HashMap::new(), None);
+        let dict = build_inputs(Some(&ctx), &HashMap::new(), &LigamentStore::new(None));
         assert!(dict.contains("rheo-context"));
         // The deprecated top-level key is gone; format lives in rheo-context.target.
         assert!(!dict.contains("rheo-target"));
-        // No ligaments supplied: the key is genuinely absent, not an empty dict.
-        assert!(!dict.contains("rheo-ligaments"));
+        // The store is present even with no ligaments (inactive).
+        assert!(dict.contains("rheo-ligaments"));
 
-        let empty = build_inputs(None, &HashMap::new(), None);
+        let empty = build_inputs(None, &HashMap::new(), &LigamentStore::new(None));
         assert!(!empty.contains("rheo-context"));
         assert!(!empty.contains("rheo-target"));
     }
 
-    /// A native dict inserted under `RESERVED_LIGAMENTS_INPUT_KEY` survives
-    /// intact — including a `datetime` value staying a real `datetime` rather
-    /// than becoming a string, which is the one correctness-critical property
-    /// of feeding ligaments back as a native Typst value instead of JSON (see
-    /// `build_inputs`'s doc comment).
+    /// A `datetime` attach value stays a real `datetime` through the store —
+    /// the one correctness-critical property of feeding ligaments back as a
+    /// native Typst value instead of JSON (see `build_inputs`'s doc comment).
     #[test]
     fn build_inputs_round_trips_native_ligaments_value_including_datetime() {
-        use crate::build::{Ligaments, VertebraLigaments};
-        use crate::reticulate::handle::Handle;
-        use std::collections::HashMap as StdHashMap;
         use typst::foundations::Datetime;
 
         let date = Datetime::from_ymd(2024, 1, 1).unwrap();
-        let mut per_page = StdHashMap::new();
-        per_page.insert(
-            Handle::new("chapters:intro"),
-            VertebraLigaments {
-                attaches: vec![("tag:post".to_string(), Value::Datetime(date))],
-                binds: Default::default(),
-            },
-        );
-        let ligaments = Ligaments { per_page };
+        let ligaments = single_attach("chapters:intro", "tag:post", Value::Datetime(date));
 
-        let dict = build_inputs(None, &HashMap::new(), Some(&ligaments));
-        assert!(dict.contains(RESERVED_LIGAMENTS_INPUT_KEY));
-        let Value::Dict(top) = dict.at(RESERVED_LIGAMENTS_INPUT_KEY.into(), None).unwrap() else {
-            panic!("rheo-ligaments must be a dict");
-        };
-        let Value::Dict(attaches) = top.get("attaches").unwrap().clone() else {
-            panic!("attaches must be a dict");
-        };
-        let Value::Array(pairs) = attaches.get("tag:post").unwrap().clone() else {
-            panic!("tag:post must be an array");
-        };
-        assert_eq!(pairs.len(), 1);
-        let Value::Dict(pair) = pairs.as_slice().first().unwrap().clone() else {
-            panic!("pair must be a dict");
-        };
-        assert_eq!(
-            pair.get("page").unwrap().clone(),
-            Value::Str("chapters:intro".into())
-        );
-        assert_eq!(pair.get("value").unwrap().clone(), Value::Datetime(date));
+        let dict = build_inputs(None, &HashMap::new(), &LigamentStore::new(Some(&ligaments)));
+        assert!(matches!(
+            dict.at(RESERVED_LIGAMENTS_INPUT_KEY.into(), None).unwrap(),
+            Value::Dyn(_)
+        ));
+
+        let tmp = TempDir::new().unwrap();
+        let main = r#"
+#let pairs = rheo-ligament-get("tag:post")
+#assert(pairs.len() == 1)
+#assert(pairs.first().page == "chapters:intro")
+#assert(type(pairs.first().value) == datetime)
+#assert(pairs.first().value == datetime(year: 2024, month: 1, day: 1))
+"#
+        .to_string();
+        ligament_world(tmp.path(), main, Some(ligaments))
+            .compile_bundle()
+            .expect("datetime must survive the store as a datetime");
     }
 
-    /// Absent the whole key means "no ligaments supplied" — callers must be
-    /// able to tell that from "ligaments supplied but nothing attached".
+    /// No ligaments supplied: the store is still on `sys.inputs`, inactive,
+    /// and `get` answers `none`.
     #[test]
-    fn build_inputs_omits_ligaments_key_when_none_supplied() {
-        let dict = build_inputs(None, &HashMap::new(), None);
-        assert!(!dict.contains(RESERVED_LIGAMENTS_INPUT_KEY));
+    fn build_inputs_keeps_ligaments_key_when_none_supplied() {
+        let dict = build_inputs(None, &HashMap::new(), &LigamentStore::new(None));
+        assert!(dict.contains(RESERVED_LIGAMENTS_INPUT_KEY));
+        let tmp = TempDir::new().unwrap();
+        let world = ligament_world(
+            tmp.path(),
+            r#"#assert(sys.inputs.at("rheo-ligaments").get("k") == none)"#.to_string(),
+            None,
+        );
+        world.compile_bundle().expect("inactive store answers none");
+    }
+
+    /// Two worlds whose ligaments differ in one key's value hash their
+    /// `library()` equally: the store's `Hash` is constant, so one key moving
+    /// cannot invalidate the whole compile.
+    #[test]
+    fn ligament_store_keeps_library_hash_stable() {
+        let tmp = TempDir::new().unwrap();
+        let world = |v: i64| {
+            ligament_world(
+                tmp.path(),
+                String::new(),
+                Some(single_attach("a", "k", Value::Int(v))),
+            )
+        };
+        assert_eq!(
+            typst::utils::hash128(World::library(&world(1))),
+            typst::utils::hash128(World::library(&world(2))),
+        );
+    }
+
+    /// The guard for the whole design: with comemo's cache shared across
+    /// worlds in one process, a changed key must still be seen. `f` is
+    /// memoised, so a stale answer would survive if `get` did not track its
+    /// token read.
+    /// The same guard from inside a `context` block, which compiles with no
+    /// module re-evaluation: a closure memoised in the first world captures
+    /// that world's store, so `get` must answer from the current library's.
+    #[test]
+    fn ligament_store_get_sees_a_changed_key_inside_context() {
+        let tmp = TempDir::new().unwrap();
+        let main = r#"#context { assert(rheo-ligament-get("k").first().value == 1) }"#;
+        let compile = |v: i64| {
+            let lig = single_attach("a", "k", Value::Int(v));
+            ligament_world(tmp.path(), main.to_string(), Some(lig)).compile_bundle()
+        };
+        compile(1).expect("value 1 satisfies the assertion");
+        compile(2).expect_err("stale store served the old value");
+    }
+
+    #[test]
+    fn ligament_store_get_sees_a_changed_key_across_worlds() {
+        use typst::model::Document;
+        use typst_bundle::BundleFile;
+
+        let tmp = TempDir::new().unwrap();
+        let main = r#"
+#let f() = rheo-ligament-get("k").first().value
+#document("o.html", format: "html", title: str(f()))[x]
+"#;
+        let title_for = |v: i64| {
+            let world = ligament_world(
+                tmp.path(),
+                main.to_string(),
+                Some(single_attach("a", "k", Value::Int(v))),
+            );
+            let bundle = world.compile_bundle().unwrap();
+            bundle
+                .files
+                .iter()
+                .find_map(|(_, file)| match file {
+                    BundleFile::Document(doc) => Some(format!("{:?}", doc.info().title)),
+                    _ => None,
+                })
+                .expect("one document")
+        };
+        assert!(title_for(1).contains('1'));
+        let second = title_for(2);
+        assert!(second.contains('2'), "stale cache served: {second}");
     }
 
     /// A user key named `rheo-ligaments` is ignored, not honoured — the same
     /// protection `rheo-context` already gets.
     #[test]
     fn build_inputs_protects_rheo_ligaments_from_user_override() {
-        use crate::build::Ligaments;
-
         let mut hostile = HashMap::new();
         hostile.insert(
             RESERVED_LIGAMENTS_INPUT_KEY.to_string(),
             "forged".to_string(),
         );
-        let dict = build_inputs(None, &hostile, Some(&Ligaments::default()));
+        let dict = build_inputs(
+            None,
+            &hostile,
+            &LigamentStore::new(Some(&Ligaments::default())),
+        );
         assert_ne!(
             dict.at(RESERVED_LIGAMENTS_INPUT_KEY.into(), None).unwrap(),
             Value::Str("forged".into()),
@@ -898,7 +998,7 @@ mod tests {
         );
         user.insert("empty-is-fine".to_string(), String::new());
 
-        let dict = build_inputs(Some(&ctx), &user, None);
+        let dict = build_inputs(Some(&ctx), &user, &LigamentStore::new(None));
         assert_eq!(
             dict.at("rookery-exclude".into(), None).unwrap(),
             Value::Str("private,protected".into()),
@@ -913,7 +1013,7 @@ mod tests {
         // that key must still be rheo's own dict, never the user's string.
         let mut hostile = HashMap::new();
         hostile.insert(RESERVED_INPUT_KEY.to_string(), "forged".to_string());
-        let dict = build_inputs(Some(&ctx), &hostile, None);
+        let dict = build_inputs(Some(&ctx), &hostile, &LigamentStore::new(None));
         assert_ne!(
             dict.at(RESERVED_INPUT_KEY.into(), None).unwrap(),
             Value::Str("forged".into()),
@@ -921,7 +1021,7 @@ mod tests {
 
         // With no rheo context at all it is simply absent — a user key cannot
         // conjure one into being either.
-        let dict = build_inputs(None, &hostile, None);
+        let dict = build_inputs(None, &hostile, &LigamentStore::new(None));
         assert!(!dict.contains(RESERVED_INPUT_KEY));
     }
 
@@ -1065,9 +1165,6 @@ mod tests {
     /// all, so its beacon dict comes purely from `WorldSpec::ligaments`.
     #[test]
     fn rheo_metadata_falls_back_to_ligaments_when_live_beacon_absent() {
-        use crate::build::{Ligaments, VertebraLigaments};
-        use crate::reticulate::handle::Handle;
-
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
@@ -1161,9 +1258,6 @@ mod tests {
     /// load-bearing.
     #[test]
     fn rheo_ligament_get_distinguishes_unknown_key_from_known_key() {
-        use crate::build::{Ligaments, VertebraLigaments};
-        use crate::reticulate::handle::Handle;
-
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 

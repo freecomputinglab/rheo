@@ -114,18 +114,18 @@
 // `sys.inputs.rheo-ligaments` — the feed-back half of the protocol above,
 // fed by `crates/core/src/world.rs`'s `build_inputs` (see docs/contract.md's
 // "Ligaments" section). Project code only: package code cannot import this
-// file, so a package reads the raw `sys.inputs.at("rheo-ligaments", default:
-// none)` shape directly instead.
+// file, so a package reads `sys.inputs.at("rheo-ligaments", default: none)`
+// itself and calls `.get(key)` on it — the value is opaque, and `.get` is what
+// records a dependency on that one key.
 //
-// Returns `none` when `rheo-ligaments` is absent from `sys.inputs` entirely
-// (no ligaments were supplied this compile — the ordinary case today), vs.
+// Returns `none` when this compile carries no ligaments (a full build), vs.
 // an empty array when ligaments were supplied but `key` was never attached.
 // That distinction is load-bearing: `none` means "fall back to a live
 // query", an empty array means "ligaments answered and found nothing".
 #let rheo-ligament-get(key) = {
   let ligaments = sys.inputs.at("rheo-ligaments", default: none)
   if ligaments == none { return none }
-  ligaments.at("attaches", default: (:)).at(key, default: ())
+  ligaments.get(key)
 }
 
 // Wraps document() with the per-document init a spine vertebra gets for free,
