@@ -228,3 +228,29 @@ while the feed is hashed: rheo's injected `target()` polyfill captures `sys`,
 so any closure calling `target()` hashes the whole feed, and an attached body
 holding one (`@rookery/meetings`' timeline rail) re-hashed every compile. The
 constant-hash store removes that.
+
+## After a stable feed
+
+Every narrowed round is now fed the whole cached ligaments, the compiled pages'
+own entries included, and `@rookery/core` drops a recompiled page's stale ids
+itself. Same copy and sequence as "After per-key tracking":
+
+| rebuild | per-key tracking | + stable feed |
+|---|---|---|
+| touch `nest/tidbits.typ` | 4,601 (4,418) | 3,918 (3,787) |
+| touch `nest/admin.typ`, never narrowed before | 3,729 (3,543) | 1,247 (1,114) |
+| a never-seen sentence in `c5/1.what-is-a-unit.typ`, 2 rounds | 7,936 (4,443 + 3,241) | 5,497 (2,172 + 3,108) |
+| touch `nest/admin.typ` right after that edit | 3,620 (3,434) | 1,218 (1,068) |
+| a todo appended to `nest/admin.typ`, 2 rounds | 12,695 (1,849 + 10,545) | 11,422 (1,853 + 9,303) |
+
+Repeated no-edit touches settle at 170–190 ms whichever pages alternate
+(tidbits ×3, admin ×2, tidbits, admin: 5,028, 169, 186, 2,149, 181, 180, 184).
+
+Two rookery details decided the numbers. Filtering stale ids inside every
+`_reg-final()` call, by reading `state("rheo-handle")`, cost every reference
+and window its memoisation (todo: 20.5 s); only listings filter now. And
+`_page-links` counted a page compiled this pass both live and from its fed
+backlinks, which listed a page on a minted note's footer that a full build
+does not; a compiled page now answers live only. With both, a note deleted
+under watch leaves narrowed output differing from a full compile in exactly the
+files it did before this change.

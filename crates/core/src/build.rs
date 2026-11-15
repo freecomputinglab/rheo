@@ -2285,7 +2285,7 @@ impl Build {
         plugin: &dyn FormatPlugin,
         virtual_spine: &VirtualSpine,
         subset: &HashSet<Handle>,
-        mut incoming: Ligaments,
+        incoming: Ligaments,
         resolver: &Arc<crate::packages::PackageResolver>,
     ) -> Result<(CompiledBundlePass, Ligaments)> {
         let moulded = virtual_spine.mould_subset(subset);
@@ -2305,9 +2305,9 @@ impl Build {
             reset_footnotes,
         };
 
-        // A recompiled page answers for itself live, so its fed copy can only be stale.
-        incoming.per_page.retain(|h, _| !subset.contains(h));
-
+        // The feed is the whole cache, whichever pages compile, so the library
+        // hashes the same every round. A recompiled page's fed copy can be
+        // stale; the reader (rookery's `_reg-final`) drops it.
         self.set_incoming_ligaments(incoming);
 
         let target = plugin.rheo_target();
@@ -4132,15 +4132,15 @@ mod tests {
         captured.title("z.html");
     }
 
-    /// Round 2 of a narrowed rebuild must not include the pages compiled in
-    /// that round in its own fed ligaments, to avoid resurrecting stale data a
-    /// page just removed. Page `b` attaches `k`; page `a` binds `k`. After
-    /// editing `b`'s attach value and rebuilding, round 1 compiles `b` with
-    /// the old harvest fed in, then round 2 compiles `a` with round 1's
-    /// harvest fed. The feed left in `incoming_ligaments` must contain `b`'s
-    /// new value but NOT a stale copy of `a` from `cached`.
+    /// A narrowed round feeds the whole cached ligaments, the pages it
+    /// compiles included, so the fed value does not depend on which pages
+    /// compile. Page `b` attaches `k`; page `a` binds `k`. After editing `b`'s
+    /// attach value and rebuilding, round 1 compiles `b`, then round 2
+    /// compiles `a` with round 1's harvest fed. The feed left in
+    /// `incoming_ligaments` must contain `b`'s new value AND `a`'s own entry
+    /// from `cached`.
     #[test]
-    fn rebuild_round_feed_omits_the_recompiled_pages_own_ligaments() {
+    fn rebuild_round_feed_includes_the_recompiled_pages_own_ligaments() {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
         let names = ["a", "b", "c", "d"];
@@ -4183,7 +4183,7 @@ mod tests {
 
         // After the narrowed rebuild, incoming_ligaments should contain round
         // 2's feed (compiled for a, the binder). It must contain b's new value
-        // but NOT a stale copy of a itself.
+        // and a's own cached entry.
         let ligaments = build
             .incoming_ligaments
             .lock()
@@ -4193,10 +4193,10 @@ mod tests {
         let a_handle = Handle::new("a");
         let b_handle = Handle::new("b");
 
-        // a must NOT be in the feed (it is being compiled in round 2).
+        // a is compiled in round 2 yet stays in the feed.
         assert!(
-            !ligaments.per_page.contains_key(&a_handle),
-            "a must not appear in round 2's fed ligaments"
+            ligaments.per_page.contains_key(&a_handle),
+            "a must appear in round 2's fed ligaments"
         );
 
         // b must be in the feed with its new value.

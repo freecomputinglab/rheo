@@ -1,5 +1,13 @@
 # Unreleased — user-visible changes
 
+## A narrowed round feeds the whole cached ligaments
+
+A narrowed round now feeds `sys.inputs.rheo-ligaments` the whole cached
+harvest, including the entries of the pages it recompiles, instead of omitting
+them. The fed value no longer depends on which pages compile, so alternating
+edits between pages stop missing the compile cache. A package must drop the
+compiling page's own stale fed entries itself.
+
 ## `sys.inputs.rheo-ligaments` is now an opaque value read through `.get(key)`
 
 `sys.inputs.rheo-ligaments` is now an opaque `ligaments` value, present on

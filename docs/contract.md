@@ -183,9 +183,11 @@ that type. The value is present on EVERY compile, so the library hashes the
 same across full and narrowed ones; a compile with no ligaments to feed (a
 full build) gets an inactive one. `rheo-ligaments` is rejected from
 `rheo.toml [inputs]` and `--input` the same way, and for the same reason, as
-`rheo-context`. The fed harvest never includes the pages being compiled in
-that pass, so a merge that prefers live data cannot resurrect something an
-edited page removed.
+`rheo-context`. A narrowed round feeds the whole cached harvest, the
+pages it compiles included, so the fed value does not depend on which pages
+compile. A reader must therefore treat a compiling page's own fed entries as
+possibly stale: prefer live data, and drop the compiling page's fed entries
+that it no longer produces.
 
 Its contents are reachable only through one method, `get(key)`, which returns
 the array of `(page, value)` pairs attached under `key` — possibly empty,
