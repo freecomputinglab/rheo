@@ -690,12 +690,14 @@ fn compile_and_report(build: &Build) -> Result<rheo_core::CompilationResults> {
 
 /// `Build::rebuild` and render whatever it reported — the `watch` loop's
 /// `compile_and_report`, narrowed. `changed_paths` is the watcher's relevant
-/// changed-file set for this debounced batch.
+/// changed-file set for this debounced batch; `on_round` is called with each
+/// narrowed round's written paths as soon as they are on disk.
 fn rebuild_and_report(
     build: &Build,
     changed_paths: &[PathBuf],
+    on_round: &mut dyn FnMut(&[String]),
 ) -> Result<rheo_core::CompilationResults> {
-    let results = build.rebuild(changed_paths);
+    let results = build.rebuild_observed(changed_paths, on_round);
     diagnostics::render(&build.take_diagnostics());
     results
 }
@@ -807,7 +809,15 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
             WatchEvent::FilesChanged { assets, paths } => {
                 info!("files changed, recompiling");
                 let start = std::time::Instant::now();
-                let result = rebuild_and_report(&build, &paths).map(|_| ());
+                // Reload after every narrowed round, not once at the end: the
+                // edited page is always in round 1.
+                let result = rebuild_and_report(&build, &paths, &mut |round| {
+                    if let Some(server) = &server {
+                        server.forget_virtual_paths(round);
+                        server.reload(ReloadKind::for_assets_changed(assets));
+                    }
+                })
+                .map(|_| ());
                 let narrowed = build.take_narrowed_outputs();
                 let kind = if narrowed.is_some() {
                     BuildKind::Narrowed
@@ -818,10 +828,8 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
                     && let Some(server) = &server
                 {
                     match narrowed {
-                        Some(written) => {
-                            server.forget_virtual_paths(&written);
-                            server.reload(ReloadKind::for_assets_changed(assets));
-                        }
+                        // Every round already forgot its paths and reloaded.
+                        Some(_) => {}
                         None => {
                             update_dev_server(
                                 &mut build,

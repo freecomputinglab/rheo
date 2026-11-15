@@ -1873,6 +1873,17 @@ impl Build {
     /// which it is). An empty set (should not happen from the watch loop)
     /// behaves exactly like a full rebuild.
     pub fn rebuild(&self, changed_paths: &[PathBuf]) -> Result<CompilationResults> {
+        self.rebuild_observed(changed_paths, &mut |_| {})
+    }
+
+    /// [`Build::rebuild`], reporting progress as it goes. `on_round` receives
+    /// each narrowed round's written output paths, after they are on disk;
+    /// never called on the full path.
+    pub fn rebuild_observed(
+        &self,
+        changed_paths: &[PathBuf],
+        on_round: &mut dyn FnMut(&[String]),
+    ) -> Result<CompilationResults> {
         let typ_files = self.project.current_typ_files()?;
         if typ_files.is_empty() {
             return Err(RheoError::project_config("no .typ files found in project"));
@@ -2005,6 +2016,7 @@ impl Build {
                 &plan.spine,
                 &plan.changed,
                 &package_resolver,
+                on_round,
             )? {
                 NarrowOutcome::Fixpoint {
                     rounds,
@@ -2132,6 +2144,7 @@ impl Build {
         virtual_spine: &VirtualSpine,
         changed: &HashSet<Handle>,
         package_resolver: &Arc<crate::packages::PackageResolver>,
+        on_round: &mut dyn FnMut(&[String]),
     ) -> Result<NarrowOutcome> {
         let total_vertebrae = virtual_spine.vertebrae.len();
         let threshold = (total_vertebrae as f64 * NARROWED_REBUILD_DEPENDENT_FRACTION)
@@ -2167,11 +2180,13 @@ impl Build {
                 package_resolver,
             )?;
 
-            for path in self.write_subset_outputs(plugin, ctx, virtual_spine, pass)? {
-                if !written.contains(&path) {
-                    written.push(path);
+            let this_round_written = self.write_subset_outputs(plugin, ctx, virtual_spine, pass)?;
+            for path in &this_round_written {
+                if !written.contains(path) {
+                    written.push(path.clone());
                 }
             }
+            on_round(&this_round_written);
 
             let mut changed_keys: HashSet<String> = HashSet::new();
             for handle in &round_handles {
@@ -3958,6 +3973,60 @@ mod tests {
             None,
             "a full fallback must leave no narrowed outputs"
         );
+    }
+
+    /// `rebuild_observed` calls `on_round` once per narrowed round, and never
+    /// on the full path.
+    #[test]
+    fn rebuild_observed_reports_each_round() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+        write_vertebra(
+            root,
+            "a",
+            "#import \"/typ/rheo.typ\": rheo-ligament-bind\n#rheo-ligament-bind(\"k\")\n= A\n",
+        );
+        write_vertebra(
+            root,
+            "b",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [X])\n= B\n",
+        );
+        for filler in ["c", "d", "e", "f", "g", "h"] {
+            write_vertebra(root, filler, &format!("= {filler}\n"));
+        }
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![plugin],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        write_vertebra(
+            root,
+            "b",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k\", [Y])\n= B\n",
+        );
+        let mut rounds = 0usize;
+        build
+            .rebuild_observed(&[root.join("content/b.typ")], &mut |_| rounds += 1)
+            .expect("narrowed rebuild");
+        assert_eq!(rounds, 2, "one callback per narrowed round");
+
+        let mut full_rounds = 0usize;
+        build
+            .rebuild_observed(&[root.join("not-a-vertebra.txt")], &mut |_| {
+                full_rounds += 1
+            })
+            .expect("falls back to a full rebuild");
+        assert_eq!(full_rounds, 0, "the full path never calls on_round");
     }
 
     /// A plugin that assembles one artifact from the whole spine sends even an
