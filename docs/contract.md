@@ -313,6 +313,44 @@ Under `rheo watch --open`, a narrowed rebuild does not recompile the bundle
 for the dev server; the server serves the rewritten pages from the build
 directory.
 
+### Minted pages under narrowed rebuilds — `rheo-document(owner:)`
+
+A narrowed rebuild compiles only some vertebrae, so a page that marrow mints
+(`rheo-document`, `crates/core/src/typ/rheo.typ`) is emitted only when the
+data it is minted from is in that compile. A page missing from a narrowed
+compile's output therefore cannot be told apart from a page that belongs to a
+vertebra the rebuild did not compile, and rheo leaves it on disk. A page can
+close that gap by naming its owner:
+
+```typst
+#rheo-document("ideas/" + slug + ".html", owner: rec.origin)[...]
+```
+
+`owner` is a vertebra handle. It emits
+`#metadata((path: path, owner: owner)) <rheo-mint:owner>` inside the minted
+document, which renders nothing. rheo harvests it after every compile and keeps
+path → owner per plugin for the watch session. At the end of a narrowed
+rebuild, rheo deletes every page whose owner the rebuild recompiled and that
+no round of the rebuild emitted. An owner that is not a vertebra handle is
+ignored, which leaves the page unowned.
+
+**The contract:** `owner: h` promises that every compile which compiles `h`
+emits this page for as long as it should exist. It is right for a page minted
+from `h`'s own live data, such as rookery's note pages, which come from the
+notes of the vertebrae this compile saw. It is wrong for a page minted from fed
+(merged) data, such as an index over every vertebra's ligaments: that page
+can stay correct on a compile that does not mint it, and with an owner it
+would be deleted. Leave such a page unowned. An unowned page, or one owned
+by a vertebra the rebuild did not recompile, is never deleted by a narrowed
+rebuild, so a wrong or missing owner leaves a stale page behind rather than
+losing a live one.
+
+Pages a narrowed rebuild writes are also recorded for the next full build,
+which deletes any of them that it no longer emits, owned or not. Neither
+record outlives the watch session, and a one-shot `rheo compile` deletes
+nothing. Under `rheo watch --open`, the dev server forgets a deleted page so
+it stops serving it from memory.
+
 ### `[watch] cache_size` — memo cache retention
 
 `rheo.toml`'s `[watch] cache_size` (`crates/core/src/config/mod.rs`, `WatchConfig`)

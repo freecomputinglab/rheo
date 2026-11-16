@@ -155,11 +155,19 @@
 // rule per #document and knows nothing about a page minted here. The #show sits
 // at the top of the same markup block as #body, which is what scopes it to the
 // rest of that block. See docs/link-rule.md.
-#let rheo-document(path, handle: "", title: [], format: "html", body) = {
+//
+// `owner`, when not none, names the vertebra handle whose compile mints this
+// page. It emits a `<rheo-mint:owner>` metadata (rendering nothing) that lets a
+// narrowed `rheo watch` rebuild delete the page once that vertebra recompiles
+// without minting it. Setting it promises that every compile which compiles
+// `owner` emits this page for as long as it should exist — so never set it on a
+// page minted from fed (merged) data. See docs/contract.md.
+#let rheo-document(path, handle: "", title: [], format: "html", owner: none, body) = {
   document(path, format: format, title: title)[
     #rheo-page-init(handle)
     #show link: rheo-link-rule(handle)
     #body
+    #if owner != none [#metadata((path: path, owner: owner)) <rheo-mint:owner>]
   ]
 }
 

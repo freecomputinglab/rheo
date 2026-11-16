@@ -129,7 +129,7 @@ pub struct Build {
     current_timings_target: Mutex<Option<PathBuf>>,
     metadata_two_pass: bool,
     /// The ligaments harvested from the most recently compiled bundle (see
-    /// [`harvest_ligaments`]) — overwritten after every compile whose pages
+    /// [`Build::harvest`]) — overwritten after every compile whose pages
     /// [`Build::run`] writes, so a `watch` session's long-lived `Build` always holds the latest
     /// harvest. [`Build::narrow_one_plugin`] reads this back directly to seed
     /// and update its dependent-set chase.
@@ -149,10 +149,21 @@ pub struct Build {
     /// in-memory `VirtualFs` so it serves them from disk instead. `None`
     /// after a full build.
     narrowed_outputs: Mutex<Option<Vec<String>>>,
-    /// Per plugin name, the relative output paths its last successful full
-    /// [`Build::run`] wrote; the next full run prunes what drops out of it.
-    /// Narrowed rebuilds neither prune nor update it.
+    /// Per plugin name, the relative page paths written since the last
+    /// successful full [`Build::run`] (which replaces the set with its own);
+    /// the next full run prunes what drops out of it. Every narrowed round
+    /// adds the pages it wrote, so a page first minted by a narrowed rebuild
+    /// is still pruned by the next full run once it disappears.
     written_pages: Mutex<HashMap<String, HashSet<String>>>,
+    /// Per plugin name, minted page path -> the vertebra that declared it
+    /// with `rheo-document(owner:)`. A full run replaces it beside
+    /// `written_pages`; a narrowed rebuild prunes from it and folds its own
+    /// harvest in. See [`Build::prune_narrowed`].
+    mint_owners: Mutex<HashMap<String, MintOwners>>,
+    /// The page paths the last narrowed [`Build::rebuild`] pruned, for the
+    /// watch server to drop from its in-memory `VirtualFs`. Empty after a
+    /// full build.
+    narrowed_pruned: Mutex<Vec<String>>,
     /// Set once this `Build` has completed a successful [`Build::run`] —
     /// gates [`Build::rebuild`]'s narrowed-compile path: "no cached
     /// ligaments" and "first build of a session" are the same condition,
@@ -266,13 +277,15 @@ enum RebuildDecision {
 
 /// Result of [`Build::narrow_one_plugin`]'s fixpoint loop: it either settled
 /// (naming every handle recompiled and every output path written, across
-/// every round), or a round's dependent set crossed decision 6's threshold
-/// and the whole rebuild must fall back to a full one instead.
+/// every round, and the minted pages it pruned), or a round's dependent set
+/// crossed decision 6's threshold and the whole rebuild must fall back to a
+/// full one instead.
 enum NarrowOutcome {
     Fixpoint {
         rounds: usize,
         handles: Vec<Handle>,
         written: Vec<String>,
+        pruned: Vec<String>,
     },
     ThresholdExceeded(String),
 }
@@ -295,6 +308,8 @@ struct CompiledSpine {
     meta: HashMap<String, DocumentMeta>,
     /// This compile's harvest, stored by the caller only if it writes `files`.
     ligaments: Ligaments,
+    /// This compile's minted-page owners, stored like `ligaments`.
+    mint_owners: MintOwners,
 }
 
 /// The result of one [`Build::compile_bundle_once`] call: a single Typst
@@ -325,7 +340,7 @@ pub struct VertebraLigaments {
 }
 
 /// The ligaments harvested after a bundle compile (see
-/// [`harvest_ligaments`]): for each vertebra, the keys it attaches and the
+/// [`Build::harvest`]): for each vertebra, the keys it attaches and the
 /// keys it binds to, keyed by [`Handle`]. Joining one page's `binds`
 /// against another's `attaches` gives a dependency edge between them — rheo
 /// only harvests the pairs, it never interprets what a key means. See
@@ -333,6 +348,20 @@ pub struct VertebraLigaments {
 #[derive(Debug, Clone, Default)]
 pub struct Ligaments {
     pub per_page: HashMap<Handle, VertebraLigaments>,
+}
+
+/// Minted page path (relative, no leading `/`) -> the vertebra that declared
+/// itself the page's owner with `rheo-document(owner:)`, i.e. the
+/// `<rheo-mint:owner>` metadata. Only known vertebra handles are kept.
+type MintOwners = HashMap<String, Handle>;
+
+/// Label of the metadata `rheo-document(owner:)` emits inside a minted page.
+const MINT_OWNER_LABEL: &str = "rheo-mint:owner";
+
+/// Everything [`Build::harvest`] reads off one compiled bundle.
+struct Harvest {
+    ligaments: Ligaments,
+    mint_owners: MintOwners,
 }
 
 impl Ligaments {
@@ -447,6 +476,7 @@ struct PluginRunInputs<'a> {
     outputs: Vec<CastVertebra>,
     asset_files: Vec<(String, typst::foundations::Bytes)>,
     control: ControlAssets,
+    mint_owners: MintOwners,
 }
 
 impl Build {
@@ -511,6 +541,8 @@ impl Build {
             incoming_ligaments: Mutex::new(None),
             narrowed_outputs: Mutex::new(None),
             written_pages: Mutex::new(HashMap::new()),
+            mint_owners: Mutex::new(HashMap::new()),
+            narrowed_pruned: Mutex::new(Vec::new()),
             has_built: std::sync::atomic::AtomicBool::new(false),
             spine_handles: Mutex::new(HashMap::new()),
             auto_narrow: Mutex::new(AutoNarrow::default()),
@@ -684,6 +716,13 @@ impl Build {
     /// (including every fallback from a narrowed attempt).
     pub fn take_narrowed_outputs(&self) -> Option<Vec<String>> {
         self.narrowed_outputs.lock().take()
+    }
+
+    /// Take the relative page paths the last narrowed [`Build::rebuild`]
+    /// deleted because a recompiled vertebra stopped minting them, leaving
+    /// the list empty. Always empty after a full build.
+    pub fn take_narrowed_pruned(&self) -> Vec<String> {
+        std::mem::take(&mut *self.narrowed_pruned.lock())
     }
 
     /// Run `f`, logging and accumulating how long it took under `phase`.
@@ -873,7 +912,10 @@ impl Build {
             .iter()
             .map(|v| v.handle.clone())
             .collect();
-        let ligaments = Self::harvest_ligaments(&pass.bundle, &known_handles);
+        let Harvest {
+            ligaments,
+            mint_owners,
+        } = Self::harvest(&pass.bundle, &known_handles);
 
         Ok(CompiledSpine {
             spine: virtual_spine,
@@ -882,6 +924,7 @@ impl Build {
             bundle_source: moulded.bundle_source,
             meta: pass.meta,
             ligaments,
+            mint_owners,
         })
     }
 
@@ -1341,10 +1384,13 @@ impl Build {
     /// field is missing or non-string, or `page` doesn't name a vertebra in
     /// `known_handles`. One warning covers the whole harvest when anything
     /// was dropped; this never logs per node.
-    fn harvest_ligaments(
-        bundle: &typst_bundle::Bundle,
-        known_handles: &HashSet<Handle>,
-    ) -> Ligaments {
+    ///
+    /// The same pass collects the `<rheo-mint:owner>` metadata
+    /// `rheo-document(owner:)` emits into [`Harvest::mint_owners`]: page path
+    /// (leading `/` trimmed) -> owner. A node whose `path`/`owner` is not a
+    /// string, or whose owner is not in `known_handles`, is skipped, which
+    /// leaves that page unowned — never pruned by a narrowed rebuild.
+    fn harvest(bundle: &typst_bundle::Bundle, known_handles: &HashSet<Handle>) -> Harvest {
         let found = bundle
             .introspector
             .query(&typst::foundations::Selector::Elem(
@@ -1355,6 +1401,7 @@ impl Build {
         let attach_label = format!("{RESERVED_LIGAMENT_LABEL_PREFIX}attach");
         let bind_label = format!("{RESERVED_LIGAMENT_LABEL_PREFIX}bind");
         let mut per_page: HashMap<Handle, VertebraLigaments> = HashMap::new();
+        let mut mint_owners = MintOwners::new();
         let mut dropped = 0usize;
 
         for content in found.iter() {
@@ -1364,6 +1411,19 @@ impl Build {
             let is_attach = match packed.label() {
                 Some(label) if *label.resolve() == *attach_label => true,
                 Some(label) if *label.resolve() == *bind_label => false,
+                Some(label) if *label.resolve() == *MINT_OWNER_LABEL => {
+                    if let typst::foundations::Value::Dict(dict) = &packed.value
+                        && let Ok(typst::foundations::Value::Str(path)) = dict.get("path")
+                        && let Ok(typst::foundations::Value::Str(owner)) = dict.get("owner")
+                    {
+                        let owner = Handle::new(owner.as_str().to_string());
+                        if known_handles.contains(&owner) {
+                            mint_owners
+                                .insert(path.as_str().trim_start_matches('/').to_string(), owner);
+                        }
+                    }
+                    continue;
+                }
                 _ => continue,
             };
             let typst::foundations::Value::Dict(dict) = &packed.value else {
@@ -1407,7 +1467,10 @@ impl Build {
             warn!(dropped, "ligaments harvest dropped malformed node(s)");
         }
 
-        Ligaments { per_page }
+        Harvest {
+            ligaments: Ligaments { per_page },
+            mint_owners,
+        }
     }
 
     /// Resolve `plugin`'s asset context and compile its spine — the "compile
@@ -1619,6 +1682,7 @@ impl Build {
                     bundle_source,
                     meta,
                     ligaments,
+                    mint_owners,
                 },
         } = self.compile_plugin_spine(
             plugin,
@@ -1697,6 +1761,7 @@ impl Build {
             outputs,
             asset_files,
             control,
+            mint_owners,
         })
     }
 
@@ -1745,7 +1810,7 @@ impl Build {
         let content_dir = resolve_effective_content_dir(&self.project);
 
         for plugin in &self.plugins {
-            let prepared = self.prepare_plugin_run(
+            let mut prepared = self.prepare_plugin_run(
                 plugin.as_ref(),
                 &packages,
                 &default_section,
@@ -1809,6 +1874,10 @@ impl Build {
                     if let Some(previous) = previous {
                         prune_stale_pages(&prepared.output_dir, &previous, &current);
                     }
+                    self.mint_owners.lock().insert(
+                        plugin.name().to_string(),
+                        std::mem::take(&mut prepared.mint_owners),
+                    );
                     // Apply copy globs after bundle output is written so that
                     // explicit copy patterns win over any colliding bundle output.
                     self.timed(phase::COPY_GLOBS, Some(plugin.name()), || {
@@ -1899,6 +1968,7 @@ impl Build {
             return Err(RheoError::project_config("no .typ files found in project"));
         }
         *self.narrowed_outputs.lock() = None;
+        self.narrowed_pruned.lock().clear();
         if changed_paths.is_empty() {
             return self.run();
         }
@@ -2018,6 +2088,7 @@ impl Build {
         let mut max_rounds = 0usize;
         let mut all_recompiled: Vec<Handle> = Vec::new();
         let mut all_written: Vec<String> = Vec::new();
+        let mut all_pruned: Vec<String> = Vec::new();
 
         for plan in &plans {
             match self.narrow_one_plugin(
@@ -2032,8 +2103,14 @@ impl Build {
                     rounds,
                     handles,
                     written,
+                    pruned,
                 } => {
                     max_rounds = max_rounds.max(rounds);
+                    for path in pruned {
+                        if !all_pruned.contains(&path) {
+                            all_pruned.push(path);
+                        }
+                    }
                     for h in handles {
                         if !all_recompiled.contains(&h) {
                             all_recompiled.push(h);
@@ -2054,6 +2131,7 @@ impl Build {
         }
 
         *self.narrowed_outputs.lock() = Some(all_written);
+        *self.narrowed_pruned.lock() = all_pruned;
 
         RebuildPath::Narrowed {
             rounds: max_rounds,
@@ -2168,6 +2246,8 @@ impl Build {
         let mut order: Vec<Handle> = Vec::new();
         let mut rounds = 0usize;
         let mut written: Vec<String> = Vec::new();
+        let mut emitted_pages: HashSet<String> = HashSet::new();
+        let mut minted: MintOwners = MintOwners::new();
 
         loop {
             rounds += 1;
@@ -2183,21 +2263,37 @@ impl Build {
             }
 
             self.begin_rebuild_timings(false);
-            let (pass, harvested) = self.compile_bundle_subset(
+            let (
+                pass,
+                Harvest {
+                    ligaments: harvested,
+                    mint_owners,
+                },
+            ) = self.compile_bundle_subset(
                 plugin,
                 virtual_spine,
                 &round_handles,
                 cached.clone(),
                 package_resolver,
             )?;
+            minted.extend(mint_owners);
 
-            let this_round_written = self.write_subset_outputs(
+            let (this_round_written, this_round_pages) = self.write_subset_outputs(
                 plugin,
                 ctx,
                 virtual_spine,
                 pass,
                 equation_style.as_deref(),
             )?;
+            // Every round, not only at the fixpoint: a later round's
+            // `ThresholdExceeded` falls back to a full run, which must still
+            // prune what this round wrote.
+            self.written_pages
+                .lock()
+                .entry(plugin.name().to_string())
+                .or_default()
+                .extend(this_round_pages.iter().cloned());
+            emitted_pages.extend(this_round_pages);
             for path in &this_round_written {
                 if !written.contains(path) {
                     written.push(path.clone());
@@ -2220,10 +2316,12 @@ impl Build {
             *self.ligaments.lock() = cached.clone();
 
             if changed_keys.is_empty() {
+                let pruned = self.prune_narrowed(plugin, ctx, &seen, &emitted_pages, minted);
                 return Ok(NarrowOutcome::Fixpoint {
                     rounds,
                     handles: order,
                     written,
+                    pruned,
                 });
             }
 
@@ -2236,10 +2334,12 @@ impl Build {
                 .collect();
 
             if dependents.is_empty() {
+                let pruned = self.prune_narrowed(plugin, ctx, &seen, &emitted_pages, minted);
                 return Ok(NarrowOutcome::Fixpoint {
                     rounds,
                     handles: order,
                     written,
+                    pruned,
                 });
             }
             if dependents.len() as f64 > threshold {
@@ -2252,6 +2352,48 @@ impl Build {
 
             round_handles = dependents;
         }
+    }
+
+    /// The narrowed rebuild's prune, run once at the fixpoint. `recompiled`
+    /// is R, every handle any round compiled; `emitted` is E, every page any
+    /// round wrote; `minted` is the owners those rounds harvested. Deletes
+    /// { p : owner[p] in R and p not in E } — a page whose owner compiled and
+    /// did not mint it — then folds `minted` in, last writer wins.
+    ///
+    /// A page with no declared owner, or one owned by a vertebra outside R,
+    /// is never touched: a narrowed compile emits only the pages of the
+    /// vertebrae it compiled, so that page's absence says nothing. Returns
+    /// the pruned paths, sorted.
+    fn prune_narrowed(
+        &self,
+        plugin: &dyn FormatPlugin,
+        ctx: &PluginAssetContext<'_>,
+        recompiled: &HashSet<Handle>,
+        emitted: &HashSet<String>,
+        minted: MintOwners,
+    ) -> Vec<String> {
+        let mut all = self.mint_owners.lock();
+        let owners = all.entry(plugin.name().to_string()).or_default();
+        let stale: HashSet<String> = owners
+            .iter()
+            .filter(|(path, owner)| recompiled.contains(*owner) && !emitted.contains(*path))
+            .map(|(path, _)| path.clone())
+            .collect();
+        owners.retain(|path, _| !stale.contains(path));
+        owners.extend(minted);
+        drop(all);
+        if stale.is_empty() {
+            return Vec::new();
+        }
+
+        prune_stale_pages(&ctx.output_dir, &stale, emitted);
+        if let Some(pages) = self.written_pages.lock().get_mut(plugin.name()) {
+            pages.retain(|path| !stale.contains(path));
+        }
+        let mut pruned: Vec<String> = stale.into_iter().collect();
+        pruned.sort();
+        debug!(plugin = plugin.name(), pruned = ?pruned, "pruned minted page(s) a recompiled vertebra stopped minting");
+        pruned
     }
 
     /// The set of keys whose attached values differ between `old` and `new`
@@ -2307,7 +2449,7 @@ impl Build {
         subset: &HashSet<Handle>,
         incoming: Ligaments,
         resolver: &Arc<crate::packages::PackageResolver>,
-    ) -> Result<(CompiledBundlePass, Ligaments)> {
+    ) -> Result<(CompiledBundlePass, Harvest)> {
         let moulded = virtual_spine.mould_subset(subset);
         let rheo_context = virtual_spine.vertebra_injections();
         let reset_footnotes = self
@@ -2349,7 +2491,7 @@ impl Build {
             .iter()
             .map(|v| v.handle.clone())
             .collect();
-        let harvested = Self::harvest_ligaments(&pass.bundle, &known_handles);
+        let harvested = Self::harvest(&pass.bundle, &known_handles);
         Ok((pass, harvested))
     }
 
@@ -2376,7 +2518,8 @@ impl Build {
     /// the files this round produced (decision 3) — no copy-glob pass, no
     /// build-dir wipe, nothing else on disk is touched. Returns the relative
     /// output path of every file written this round, for
-    /// [`Build::narrowed_outputs`].
+    /// [`Build::narrowed_outputs`], and separately the pages among them
+    /// (bundle assets excluded), for `written_pages` and the narrowed prune.
     fn write_subset_outputs(
         &self,
         plugin: &dyn FormatPlugin,
@@ -2384,7 +2527,7 @@ impl Build {
         virtual_spine: &VirtualSpine,
         pass: CompiledBundlePass,
         equation_style: Option<&str>,
-    ) -> Result<Vec<String>> {
+    ) -> Result<(Vec<String>, Vec<String>)> {
         let (mut outputs, mut asset_files) = flatten_bundle_outputs(
             pass.files,
             &pass.assets,
@@ -2405,7 +2548,8 @@ impl Build {
         }
         let (asset_files, control) = ControlAssets::extract(asset_files)?;
 
-        let mut written: Vec<String> = outputs.iter().map(|o| o.output_path.clone()).collect();
+        let pages: Vec<String> = outputs.iter().map(|o| o.output_path.clone()).collect();
+        let mut written = pages.clone();
 
         if !plugin.embeds_bundle_assets() {
             for (path, bytes) in &asset_files {
@@ -2435,7 +2579,7 @@ impl Build {
             },
         };
         plugin.compile(plugin_ctx, &outputs)?;
-        Ok(written)
+        Ok((written, pages))
     }
 }
 
@@ -2601,7 +2745,7 @@ fn prune_stale_pages(output_dir: &Path, previous: &HashSet<String>, current: &Ha
         }
         let file = output_dir.join(rel);
         match std::fs::remove_file(&file) {
-            Ok(()) => debug!(path = %file.display(), "pruned page of a deleted vertebra"),
+            Ok(()) => debug!(path = %file.display(), "pruned stale page"),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
                 warn!(path = %file.display(), error = %e, "could not prune stale page");
@@ -3562,7 +3706,7 @@ mod tests {
             .expect("world");
             let bundle = world.compile_bundle().expect("compile");
             let known: HashSet<Handle> = [Handle::new("a")].into();
-            let mut lig = Build::harvest_ligaments(&bundle, &known);
+            let mut lig = Build::harvest(&bundle, &known).ligaments;
             lig.per_page
                 .remove(&Handle::new("a"))
                 .expect("page a")
@@ -3604,7 +3748,7 @@ mod tests {
             )
             .expect("world");
             let bundle = world.compile_bundle().expect("compile");
-            Build::harvest_ligaments(&bundle, &known)
+            Build::harvest(&bundle, &known).ligaments
         };
         let hashes = |lig: &Ligaments| -> Vec<u128> {
             lig.per_page[&Handle::new("a")]
@@ -4843,5 +4987,144 @@ mod tests {
             !ligaments.per_page.contains_key(&b_handle),
             "b's handle must not be in ligaments.per_page after its deletion"
         );
+    }
+
+    /// A vertebra body that asks the fixture marrow below to mint
+    /// `minted/<name>.html`, claiming it with `owner: <name>` when `owned`.
+    fn minting_vertebra(name: &str, owned: bool) -> String {
+        let owner = if owned {
+            format!("\"{name}\"")
+        } else {
+            "none".to_string()
+        };
+        format!("= {name}\n#metadata((name: \"{name}\", owner: {owner})) <mint-me>\n")
+    }
+
+    /// Builds `names` with a marrow that mints one page per `<mint-me>` it
+    /// finds, the way rookery mints a note page from its live registry: only
+    /// a compiled vertebra's requests are visible, so a narrowed compile
+    /// mints only its own vertebrae's pages. It also mints an unowned
+    /// `minted/index.html` on every compile.
+    fn minting_build(root: &Path, names: &[&str], out: Arc<Mutex<Option<PathBuf>>>) -> Build {
+        std::fs::write(
+            root.join("content/.marrow.typ"),
+            "#import \"/typ/rheo.typ\": rheo-document\n\
+             #context {\n\
+               for m in query(<mint-me>) {\n\
+                 rheo-document(\"minted/\" + m.value.name + \".html\", owner: m.value.owner)[minted]\n\
+               }\n\
+               rheo-document(\"minted/index.html\")[index]\n\
+             }\n",
+        )
+        .expect("write marrow");
+        let build = Build::prepare(
+            ligaments_project(root, names),
+            vec![Box::new(WritingPlugin(out)) as Box<dyn FormatPlugin>],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+        build
+    }
+
+    /// A narrowed rebuild of `a` that no longer mints `a`'s owned page
+    /// deletes it, and reports it for the dev server to forget. `b`'s owned
+    /// page, which this compile does not emit, and the unowned index, which
+    /// it does, both survive.
+    #[test]
+    fn rebuild_narrowed_prunes_a_page_its_owner_stopped_minting() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c"];
+        write_vertebra(root, "a", &minting_vertebra("a", true));
+        write_vertebra(root, "b", &minting_vertebra("b", true));
+        write_vertebra(root, "c", "= c\n");
+        let out = Arc::new(Mutex::new(None));
+        let build = minting_build(root, &names, out);
+        let page = |p: &str| root.join("build/html").join(p);
+        assert!(page("minted/a.html").exists());
+        assert!(page("minted/b.html").exists());
+
+        write_vertebra(root, "a", "= a\n");
+        build
+            .rebuild(&[root.join("content/a.typ")])
+            .expect("narrowed rebuild");
+
+        assert!(
+            build.take_narrowed_outputs().is_some(),
+            "the rebuild must take the narrowed path"
+        );
+        assert_eq!(build.take_narrowed_pruned(), vec!["minted/a.html"]);
+        assert!(!page("minted/a.html").exists(), "a's page must be pruned");
+        assert!(
+            page("minted/b.html").exists(),
+            "b's page is owned outside the rebuild and must survive"
+        );
+        assert!(
+            page("minted/index.html").exists(),
+            "the unowned index must survive"
+        );
+        assert!(page("a.html").exists() && page("b.html").exists());
+    }
+
+    /// A page minted without `owner:` is never pruned by a narrowed rebuild,
+    /// even when the vertebra that requested it stops requesting it: rheo
+    /// cannot tell it from a page of an uncompiled vertebra.
+    #[test]
+    fn rebuild_narrowed_keeps_an_unowned_minted_page() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c"];
+        write_vertebra(root, "a", &minting_vertebra("a", false));
+        write_vertebra(root, "b", "= b\n");
+        write_vertebra(root, "c", "= c\n");
+        let out = Arc::new(Mutex::new(None));
+        let build = minting_build(root, &names, out);
+        let page = |p: &str| root.join("build/html").join(p);
+        assert!(page("minted/a.html").exists());
+
+        write_vertebra(root, "a", "= a\n");
+        build
+            .rebuild(&[root.join("content/a.typ")])
+            .expect("narrowed rebuild");
+
+        assert!(build.take_narrowed_outputs().is_some());
+        assert!(build.take_narrowed_pruned().is_empty());
+        assert!(page("minted/a.html").exists(), "unowned page must survive");
+    }
+
+    /// A page first minted by a narrowed rebuild enters `written_pages`, so
+    /// the next full run prunes it once nothing mints it any more — whether
+    /// or not it declared an owner.
+    #[test]
+    fn run_prunes_a_page_only_a_narrowed_rebuild_minted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c"];
+        for n in names {
+            write_vertebra(root, n, &format!("= {n}\n"));
+        }
+        let out = Arc::new(Mutex::new(None));
+        let build = minting_build(root, &names, out);
+        let page = |p: &str| root.join("build/html").join(p);
+        assert!(!page("minted/a.html").exists());
+
+        write_vertebra(root, "a", &minting_vertebra("a", false));
+        build
+            .rebuild(&[root.join("content/a.typ")])
+            .expect("narrowed rebuild");
+        assert!(build.take_narrowed_outputs().is_some());
+        assert!(
+            page("minted/a.html").exists(),
+            "the narrowed round mints it"
+        );
+
+        write_vertebra(root, "a", "= a\n");
+        build.run().expect("full build");
+        assert!(
+            !page("minted/a.html").exists(),
+            "the full run must prune the page the narrowed rebuild minted"
+        );
+        assert!(page("minted/index.html").exists());
     }
 }

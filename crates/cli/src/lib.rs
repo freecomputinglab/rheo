@@ -835,6 +835,7 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
                 })
                 .map(|_| ());
                 let narrowed = build.take_narrowed_outputs();
+                let pruned = build.take_narrowed_pruned();
                 let kind = if narrowed.is_some() {
                     BuildKind::Narrowed
                 } else {
@@ -844,8 +845,15 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
                     && let Some(server) = &server
                 {
                     match narrowed {
-                        // Every round already forgot its paths and reloaded.
-                        Some(_) => {}
+                        // Every round already forgot its paths and reloaded;
+                        // pages the rebuild pruned at its fixpoint have to be
+                        // forgotten too, or the server keeps serving them.
+                        Some(_) => {
+                            if !pruned.is_empty() {
+                                server.forget_virtual_paths(&pruned);
+                                server.reload(ReloadKind::for_assets_changed(assets));
+                            }
+                        }
                         None => {
                             update_dev_server(
                                 &mut build,

@@ -125,3 +125,19 @@ not HTML-shaped would need that default revisited.
 `state("rheo-handle")` is still published by `rheo-page-init` even though the
 link rule no longer reads it: packages read it (`@rheo/rookery`'s `urls.typ`,
 `outline.typ`, `idea.typ`), so it is part of the contract.
+
+`owner`, a vertebra handle, defaults to `none`. When it is set, `rheo-document`
+emits `#metadata((path: path, owner: owner)) <rheo-mint:owner>` after `body`.
+That is the only way a narrowed `rheo watch` rebuild can delete the page once
+its owner recompiles without minting it. rheo cannot work the owner out for
+itself. `state("rheo-handle")` inside the page is the page's own handle, set by
+`rheo-page-init`, and marrow runs at the bundle root, outside every vertebra,
+so no ambient context names the vertebra whose data minted the page. And since
+a narrowed compile emits only the pages of the vertebrae it compiled, a page
+that is missing from its output may have been deleted or may belong to a
+vertebra outside the compile. Only a declaration tells the two apart. Making
+it in the same call that mints the page means the claim and the page cannot
+drift apart: a minted page always carries its claim, and no claim exists
+without its page. The metadata renders nothing, so full builds are unchanged.
+What `owner:` promises is in `docs/contract.md`, under "Minted pages under
+narrowed rebuilds".

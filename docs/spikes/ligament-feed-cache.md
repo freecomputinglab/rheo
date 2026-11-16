@@ -254,3 +254,17 @@ backlinks, which listed a page on a minted note's footer that a full build
 does not; a compiled page now answers live only. With both, a note deleted
 under watch leaves narrowed output differing from a full compile in exactly the
 files it did before this change.
+
+## Correct narrowing, against a full rebuild
+
+After the narrowed-vs-full fixes (see `narrowed-vs-full.md` and the spikes it led to), a narrowed rebuild's output is byte-identical to a full compile of the same source on this sequence, and timings are compared against `[watch] narrow = false` instead of against earlier narrowed runs. Same 2,395-page copy, rheo `feat/performance` and rookery `dev` as of 2026-11-16, whole-rebuild `ms`:
+
+| rebuild | narrow = true | narrow = false |
+|---|---|---|
+| a never-seen sentence in `c5/1.what-is-a-unit.typ` | 4,464 | 10,776 |
+| a todo appended to `nest/admin.typ` | 9,563 | 17,881 |
+| touch `nest/admin.typ` right after that edit | 644 | 791 |
+| touch `nest/tidbits.typ` / `nest/admin.typ`, no edit | 1,987 / 1,316 | 769 / 756 |
+| pages differing from a full compile afterwards | 0 | 0 |
+
+Real edits narrow 2–2.4× faster. A touch with no edit is the one case a full rebuild wins: nothing changed, so Typst serves the whole compile from its cache, while a narrowed compile is a different, smaller compile that starts colder. Earlier tables in this document compared narrowed runs with each other, before narrowed output was correct; read them as relative, not as the speed of a correct rebuild.
