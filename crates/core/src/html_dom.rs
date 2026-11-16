@@ -12,6 +12,10 @@ use markup5ever_rcdom::{Handle, Node, NodeData, RcDom};
 use std::cell::RefCell;
 use std::fmt::Write as _;
 
+/// Opening of the equation CSS block typst-html emits (`EQUATION_CSS_STYLES`
+/// is crate-private there, so rheo copies it from an existing page instead).
+const EQUATION_STYLE_OPEN: &str = "<style>/* Alignment */";
+
 // ─── Serialization mode and helpers ──────────────────────────────────────────
 
 /// Controls how the DOM is serialized.
@@ -286,6 +290,27 @@ impl HtmlDom {
         if let Some(fragment) = head_fragment {
             dom.append_head_fragment(fragment)?;
         }
+        Ok(Some(dom.serialize()?))
+    }
+
+    /// The `<style>` element typst-html adds to a page's head when the compile
+    /// has any equation, found by its `/* Alignment */` lead-in. Raw-text
+    /// content cannot contain `</style>`, so a substring scan is exact.
+    pub fn equation_style(html: &str) -> Option<&str> {
+        let start = html.find(EQUATION_STYLE_OPEN)?;
+        let len = html[start..].find("</style>")? + "</style>".len();
+        Some(&html[start..start + len])
+    }
+
+    /// Appends `style` (from [`Self::equation_style`]) to the end of `html`'s
+    /// head, where a full build leaves it. `None` when the page already
+    /// carries one, so applying it twice is a no-op.
+    pub fn with_equation_style(html: &str, style: &str) -> Result<Option<String>> {
+        if Self::equation_style(html).is_some() {
+            return Ok(None);
+        }
+        let mut dom = Self::parse(html)?;
+        dom.append_head_fragment(style)?;
         Ok(Some(dom.serialize()?))
     }
 
@@ -1163,6 +1188,19 @@ mod tests {
             before, after,
             "hoist_rheo_head must be a no-op with no <rheo-head>"
         );
+    }
+
+    #[test]
+    fn test_with_equation_style_adds_once() {
+        let style = "<style>/* Alignment */\nmtable { a: b }</style>";
+        let page = "<!DOCTYPE html><html><head><title>T</title></head><body><p>x</p></body></html>";
+        let out = HtmlDom::with_equation_style(page, style)
+            .unwrap()
+            .expect("page without the block gains it");
+        assert_eq!(out.matches("/* Alignment */").count(), 1);
+        assert!(out.contains("<title>T</title><style>/* Alignment */"));
+        assert_eq!(HtmlDom::equation_style(&out), Some(style));
+        assert_eq!(HtmlDom::with_equation_style(&out, style).unwrap(), None);
     }
 
     // append_head_fragment tests (via HtmlDom)

@@ -2137,6 +2137,7 @@ impl Build {
             .floor()
             .max(1.0);
 
+        let equation_style = Self::existing_equation_style(plugin, ctx, virtual_spine);
         let mut cached = self.ligaments();
         let mut round_handles = changed.clone();
         let mut seen: HashSet<Handle> = HashSet::new();
@@ -2166,7 +2167,13 @@ impl Build {
                 package_resolver,
             )?;
 
-            let this_round_written = self.write_subset_outputs(plugin, ctx, virtual_spine, pass)?;
+            let this_round_written = self.write_subset_outputs(
+                plugin,
+                ctx,
+                virtual_spine,
+                pass,
+                equation_style.as_deref(),
+            )?;
             for path in &this_round_written {
                 if !written.contains(path) {
                     written.push(path.clone());
@@ -2322,6 +2329,25 @@ impl Build {
         Ok((pass, harvested))
     }
 
+    /// The equation `<style>` block of the build's existing HTML output, read
+    /// off the first spine page on disk. typst-html emits it on every page of
+    /// a compile that has math anywhere, but a narrowed compile sees only its
+    /// own vertebrae, so the rewritten pages would otherwise lose it.
+    fn existing_equation_style(
+        plugin: &dyn FormatPlugin,
+        ctx: &PluginAssetContext<'_>,
+        spine: &VirtualSpine,
+    ) -> Option<String> {
+        if plugin.typst_format() != TypstFormat::Html {
+            return None;
+        }
+        let page = spine
+            .vertebrae
+            .iter()
+            .find_map(|v| std::fs::read_to_string(ctx.output_dir.join(&v.output_path)).ok())?;
+        crate::html_dom::HtmlDom::equation_style(&page).map(str::to_string)
+    }
+
     /// Flatten and write one narrowed-compile round's outputs. Writes ONLY
     /// the files this round produced (decision 3) — no copy-glob pass, no
     /// build-dir wipe, nothing else on disk is touched. Returns the relative
@@ -2333,8 +2359,9 @@ impl Build {
         ctx: &PluginAssetContext<'_>,
         virtual_spine: &VirtualSpine,
         pass: CompiledBundlePass,
+        equation_style: Option<&str>,
     ) -> Result<Vec<String>> {
-        let (outputs, mut asset_files) = flatten_bundle_outputs(
+        let (mut outputs, mut asset_files) = flatten_bundle_outputs(
             pass.files,
             &pass.assets,
             virtual_spine,
@@ -2344,6 +2371,14 @@ impl Build {
         ContentTransclusion::rewrite_assets_with_fallback(&outputs, &mut asset_files, |page| {
             std::fs::read_to_string(ctx.output_dir.join(page)).ok()
         })?;
+        if let Some(style) = equation_style {
+            for output in outputs.iter_mut().filter(|o| o.format == TypstFormat::Html) {
+                let html = String::from_utf8_lossy(output.bytes.as_slice());
+                if let Some(html) = crate::html_dom::HtmlDom::with_equation_style(&html, style)? {
+                    output.bytes = typst::foundations::Bytes::new(html.into_bytes());
+                }
+            }
+        }
         let (asset_files, control) = ControlAssets::extract(asset_files)?;
 
         let mut written: Vec<String> = outputs.iter().map(|o| o.output_path.clone()).collect();
@@ -4080,6 +4115,58 @@ mod tests {
             })
             .expect("falls back to a full rebuild");
         assert_eq!(full_rounds, 0, "the full path never calls on_round");
+    }
+
+    /// typst-html puts the equation CSS on every page of a compile with math
+    /// anywhere; a narrowed rebuild of a math-free page must keep it.
+    #[test]
+    fn narrowed_rebuild_keeps_equation_css() {
+        struct Writing;
+        impl FormatPlugin for Writing {
+            fn name(&self) -> &'static str {
+                "html"
+            }
+            fn compile(&self, ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
+                for o in outputs {
+                    std::fs::write(ctx.output_dir.join(&o.output_path), o.bytes.as_slice())
+                        .expect("write page");
+                }
+                Ok(())
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+        write_vertebra(root, "a", "= A\n$ x^2 + y^2 $\n");
+        for n in &names[1..] {
+            write_vertebra(root, n, &format!("= {n}\n"));
+        }
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![Box::new(Writing) as Box<dyn FormatPlugin>],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+        let page = |n: &str| {
+            let path = root.join(format!("build/html/{n}.html"));
+            std::fs::read_to_string(path).expect("read page")
+        };
+        assert_eq!(page("b").matches("/* Alignment */").count(), 1);
+
+        write_vertebra(root, "b", "= B2\n");
+        build
+            .rebuild(&[root.join("content/b.typ")])
+            .expect("narrowed rebuild");
+        assert_eq!(
+            build.take_narrowed_outputs(),
+            Some(vec!["b.html".to_string()]),
+            "rebuild must have narrowed"
+        );
+        let b = page("b");
+        assert!(b.contains("B2"), "b.html was rewritten");
+        assert_eq!(b.matches("/* Alignment */").count(), 1);
     }
 
     /// A plugin that assembles one artifact from the whole spine sends even an
