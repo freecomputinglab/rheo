@@ -1,7 +1,7 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use events::{BuildKind, EventSink, WatchReport};
 use rheo_core::OpenHandle;
-use rheo_core::assets::watch::{WatchEvent, watch_project, watch_stdin};
+use rheo_core::assets::watch::{ProjectWatcher, WatchEvent, watch_project, watch_stdin};
 use rheo_core::build::{Build, BuildOptions, evict_compile_cache, resolve_build_dir};
 use rheo_core::config::manifest_version;
 use rheo_core::output::OutputConfig;
@@ -750,6 +750,18 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
         plugins,
     )?;
 
+    let watch_project_cfg = build.project().clone();
+    // Capture the asset sources to watch (declared assets, copy globs, package
+    // roots) before `build` is moved into the change callback; a config reload
+    // hands the watcher a fresh spec.
+    let asset_spec = build.watch_asset_spec();
+    // Before the initial build, so an edit made during it is queued, not lost.
+    let watcher = if stdin_trigger {
+        None
+    } else {
+        Some(ProjectWatcher::start(&watch_project_cfg, &asset_spec)?)
+    };
+
     // Initial compilation (best-effort; watch continues on failure)
     let initial_start = std::time::Instant::now();
     let initial_result = compile_and_report(&build).map(|_| ());
@@ -792,16 +804,11 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
         initial_result,
     ));
 
-    let watch_project_cfg = build.project().clone();
     let build_dir_canonical = build
         .output_config()
         .base
         .canonicalize()
         .unwrap_or_else(|_| build.output_config().base.clone());
-    // Capture the asset sources to watch (declared assets, copy globs, package
-    // roots) before `build` is moved into the change callback; a config reload
-    // hands the watcher a fresh spec.
-    let asset_spec = build.watch_asset_spec();
 
     let on_event = move |event| {
         let mut refreshed = None;
@@ -893,21 +900,23 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
         Ok(refreshed)
     };
 
-    if stdin_trigger {
-        info!("reading rebuild requests from stdin");
-        watch_stdin(
+    match watcher {
+        Some(watcher) => watch_project(
+            watcher,
             &watch_project_cfg,
             &build_dir_canonical,
             asset_spec,
             on_event,
-        )
-    } else {
-        watch_project(
-            &watch_project_cfg,
-            &build_dir_canonical,
-            asset_spec,
-            on_event,
-        )
+        ),
+        None => {
+            info!("reading rebuild requests from stdin");
+            watch_stdin(
+                &watch_project_cfg,
+                &build_dir_canonical,
+                asset_spec,
+                on_event,
+            )
+        }
     }
 }
 

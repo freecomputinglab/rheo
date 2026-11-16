@@ -129,8 +129,8 @@ pub struct Build {
     current_timings_target: Mutex<Option<PathBuf>>,
     metadata_two_pass: bool,
     /// The ligaments harvested from the most recently compiled bundle (see
-    /// [`harvest_ligaments`]) — overwritten after every [`Build::compile_spine`]
-    /// call, so a `watch` session's long-lived `Build` always holds the latest
+    /// [`harvest_ligaments`]) — overwritten after every compile whose pages
+    /// [`Build::run`] writes, so a `watch` session's long-lived `Build` always holds the latest
     /// harvest. [`Build::narrow_one_plugin`] reads this back directly to seed
     /// and update its dependent-set chase.
     ligaments: Mutex<Ligaments>,
@@ -293,6 +293,8 @@ struct CompiledSpine {
     /// Each compiled document's Typst-resolved `DocumentMeta`, keyed by the
     /// same output-path string form as `assets`.
     meta: HashMap<String, DocumentMeta>,
+    /// This compile's harvest, stored by the caller only if it writes `files`.
+    ligaments: Ligaments,
 }
 
 /// The result of one [`Build::compile_bundle_once`] call: a single Typst
@@ -788,6 +790,7 @@ impl Build {
     ///   `.rheo-bundle.typ`; `compile_spine` has no `plugin_output_dir`).
     /// - `meta`: each compiled document's Typst-resolved `DocumentMeta`, keyed
     ///   by the same output-path string form as `assets`.
+    /// - `ligaments`: the final pass's harvest, left for the caller to store.
     fn compile_spine(
         &self,
         plugin: &dyn FormatPlugin,
@@ -863,16 +866,14 @@ impl Build {
             }
         }
 
-        // Harvested after every bundle compile, from whichever pass is final
-        // (the gated second pass, when it ran) — overwrites whatever this
-        // `Build` harvested last, since nothing here merges across plugins or
-        // rebuilds. See `Ligaments`.
+        // Harvested from whichever pass is final (the gated second pass, when
+        // it ran). See `Ligaments`.
         let known_handles: HashSet<Handle> = virtual_spine
             .vertebrae
             .iter()
             .map(|v| v.handle.clone())
             .collect();
-        *self.ligaments.lock() = Self::harvest_ligaments(&pass.bundle, &known_handles);
+        let ligaments = Self::harvest_ligaments(&pass.bundle, &known_handles);
 
         Ok(CompiledSpine {
             spine: virtual_spine,
@@ -880,6 +881,7 @@ impl Build {
             assets: pass.assets,
             bundle_source: moulded.bundle_source,
             meta: pass.meta,
+            ligaments,
         })
     }
 
@@ -1616,6 +1618,7 @@ impl Build {
                     assets,
                     bundle_source,
                     meta,
+                    ligaments,
                 },
         } = self.compile_plugin_spine(
             plugin,
@@ -1624,6 +1627,10 @@ impl Build {
             content_dir,
             package_resolver,
         )?;
+        // Only the compile whose pages reach disk harvests: the ligaments must
+        // describe the build directory, or a later edit reads as unchanged.
+        // Overwrites rather than merges, across plugins and rebuilds alike.
+        *self.ligaments.lock() = ligaments;
 
         // Read-only debug artifact — never read back as an input. Written
         // under the plugin's build-dir output, which the watcher already
@@ -3929,6 +3936,88 @@ mod tests {
                 "{filler} must be untouched by the narrowed rebuild"
             );
         }
+    }
+
+    /// The dev server's in-memory compile reads sources from disk but writes no
+    /// pages, so it must not overwrite the ligaments `run()` harvested: an edit
+    /// landing between the two would read as already harvested, and its own
+    /// rebuild would find `k` unchanged and leave `a` stale.
+    #[test]
+    fn compile_for_watch_keeps_run_s_ligaments() {
+        use crate::plugins::{LiveReload, ServedPage};
+
+        struct Live(Arc<Captured>);
+        impl FormatPlugin for Live {
+            fn name(&self) -> &'static str {
+                "html"
+            }
+            fn live_reload(&self) -> Option<&dyn LiveReload> {
+                Some(self)
+            }
+            fn compile(&self, ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
+                CapturingPlugin(self.0.clone()).compile(ctx, outputs)
+            }
+        }
+        impl LiveReload for Live {
+            fn rewrite_page(&self, _page: &ServedPage<'_>) -> Result<Option<String>> {
+                Ok(None)
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+        let b = |v: &str| {
+            format!(
+                "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+                 #rheo-ligament-attach(\"k\", [{v}])\n= B\n"
+            )
+        };
+        write_vertebra(
+            root,
+            "a",
+            "#import \"/typ/rheo.typ\": rheo-ligament-bind\n#rheo-ligament-bind(\"k\")\n= A\n",
+        );
+        write_vertebra(root, "b", &b("X"));
+        for filler in ["c", "d", "e", "f", "g", "h"] {
+            write_vertebra(root, filler, &format!("= {filler}\n"));
+        }
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(Live(captured.clone()));
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![plugin],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+        let b_attaches = |l: Ligaments| l.per_page[&Handle::new("b")].attaches.clone();
+        let harvested = b_attaches(build.ligaments());
+
+        write_vertebra(root, "b", &b("Y"));
+        build
+            .compile_for_watch()
+            .expect("compile_for_watch")
+            .expect("a live-reload format was selected");
+        assert!(
+            Build::diff_attach_keys(&harvested, &b_attaches(build.ligaments())).is_empty(),
+            "compile_for_watch overwrote run()'s ligaments"
+        );
+
+        build
+            .rebuild(&[root.join("content/b.typ")])
+            .expect("narrowed rebuild");
+        let count = |path: &str| {
+            captured
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(p, _, _)| p == path)
+                .count()
+        };
+        assert_eq!(count("a.html"), 2, "a must be recompiled as b's dependent");
     }
 
     struct WritingPlugin(Arc<Mutex<Option<PathBuf>>>);

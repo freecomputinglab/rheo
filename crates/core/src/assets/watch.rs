@@ -6,7 +6,7 @@ use crate::{
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
@@ -122,13 +122,99 @@ pub enum WatchEvent {
     ConfigChanged,
 }
 
+/// A registered filesystem watcher whose events queue on `rx` until
+/// [`watch_project`] drains them. Started before the initial build, so an edit
+/// made while that build runs is rebuilt like any other, not lost.
+pub struct ProjectWatcher {
+    watcher: RecommendedWatcher,
+    rx: Receiver<notify::Result<notify::Event>>,
+    watched_roots: Vec<PathBuf>,
+}
+
+impl ProjectWatcher {
+    /// Register watches for:
+    /// - All .typ files in the project
+    /// - Assets declared by the format plugins or imported packages (any filename,
+    ///   any subdirectory, any extension — see [`WatchAssetSpec`])
+    /// - Project configuration (rheo.toml)
+    pub fn start(project: &ProjectConfig, asset_spec: &WatchAssetSpec) -> Result<Self> {
+        let (tx, rx) = channel();
+
+        // Create watcher
+        let mut watcher = RecommendedWatcher::new(
+            tx,
+            notify::Config::default().with_poll_interval(Duration::from_millis(500)),
+        )
+        .map_err(|e| crate::RheoError::file_watcher(e, "creating file watcher"))?;
+
+        // Watch based on project mode
+        match project.mode {
+            ProjectMode::SingleFile => {
+                // Watch only the single file's parent directory (non-recursive)
+                let file_to_watch = &project.typ_files[0];
+                let watch_dir = file_to_watch.parent().ok_or_else(|| {
+                    crate::RheoError::project_config("file has no parent directory")
+                })?;
+
+                info!(file = %file_to_watch.display(), "watching single file");
+                watcher
+                    .watch(watch_dir, RecursiveMode::NonRecursive)
+                    .map_err(|e| crate::RheoError::file_watcher(e, "watching file directory"))?;
+            }
+            ProjectMode::Directory => {
+                // Existing behavior: recursive watch of project root
+                info!(path = %project.root.display(), "watching project directory");
+                watcher
+                    .watch(&project.root, RecursiveMode::Recursive)
+                    .map_err(|e| crate::RheoError::file_watcher(e, "watching project directory"))?;
+            }
+        }
+
+        // Watch each package source root (outside the project tree) so edits to
+        // package-declared assets also trigger rebuilds. A failure here is not fatal:
+        // the package cache may be read-only or large, and the rest of the watch
+        // should still work.
+        let mut watched_roots: Vec<PathBuf> = Vec::new();
+        for root in asset_spec.package_roots() {
+            match watcher.watch(root, RecursiveMode::Recursive) {
+                Ok(()) => {
+                    debug!(path = %root.display(), "watching package asset root");
+                    watched_roots.push(root.to_path_buf());
+                }
+                Err(e) => {
+                    warn!(error = %e, path = %root.display(), "failed to watch package asset root")
+                }
+            }
+        }
+
+        // The loaded config file may live outside the primary watched tree — in an
+        // ancestor directory (single-file walk-up) or at a custom `--config` path.
+        // Watch its parent directory (non-recursive) when it is not already covered,
+        // so config edits are detected regardless of mode or filename.
+        let primary_watch_dir = match project.mode {
+            ProjectMode::SingleFile => project.typ_files[0].parent(),
+            ProjectMode::Directory => Some(project.root.as_path()),
+        };
+        if let Some(config_parent) = project.config_path.as_deref().and_then(|p| p.parent())
+            && primary_watch_dir.is_none_or(|primary| !config_parent.starts_with(primary))
+        {
+            match watcher.watch(config_parent, RecursiveMode::NonRecursive) {
+                Ok(()) => debug!(path = %config_parent.display(), "watching config directory"),
+                Err(e) => {
+                    warn!(error = %e, path = %config_parent.display(), "failed to watch config directory")
+                }
+            }
+        }
+
+        Ok(Self {
+            watcher,
+            rx,
+            watched_roots,
+        })
+    }
+}
+
 /// Watch project files for changes and trigger recompilation
-///
-/// This function sets up file system watching for:
-/// - All .typ files in the project
-/// - Assets declared by the format plugins or imported packages (any filename,
-///   any subdirectory, any extension — see [`WatchAssetSpec`])
-/// - Project configuration (rheo.toml)
 ///
 /// Changes are debounced on TWO deadlines, and both are needed: a rebuild fires
 /// once the filesystem has been quiet for [`DEBOUNCE_QUIET`], or once
@@ -143,6 +229,7 @@ pub enum WatchEvent {
 /// `rheo.toml` mid-session is picked up without a restart.
 ///
 /// # Arguments
+/// * `watcher` - Started by [`ProjectWatcher::start`]; its queued events run first
 /// * `project` - Project configuration with source files
 /// * `build_dir` - Canonicalized build directory path to exclude from watching
 /// * `asset_spec` - Resolved asset sources / package roots to treat as relevant
@@ -151,8 +238,8 @@ pub enum WatchEvent {
 ///
 /// # Returns
 /// * `Ok(())` when watching stops gracefully (e.g., Ctrl+C)
-/// * `Err` if watcher setup fails
 pub fn watch_project<F>(
+    watcher: ProjectWatcher,
     project: &ProjectConfig,
     build_dir: &Path,
     mut asset_spec: WatchAssetSpec,
@@ -161,73 +248,11 @@ pub fn watch_project<F>(
 where
     F: FnMut(WatchEvent) -> Result<Option<WatchAssetSpec>>,
 {
-    let (tx, rx) = channel();
-
-    // Create watcher
-    let mut watcher = RecommendedWatcher::new(
-        tx.clone(),
-        notify::Config::default().with_poll_interval(Duration::from_millis(500)),
-    )
-    .map_err(|e| crate::RheoError::file_watcher(e, "creating file watcher"))?;
-
-    // Watch based on project mode
-    match project.mode {
-        ProjectMode::SingleFile => {
-            // Watch only the single file's parent directory (non-recursive)
-            let file_to_watch = &project.typ_files[0];
-            let watch_dir = file_to_watch
-                .parent()
-                .ok_or_else(|| crate::RheoError::project_config("file has no parent directory"))?;
-
-            info!(file = %file_to_watch.display(), "watching single file");
-            watcher
-                .watch(watch_dir, RecursiveMode::NonRecursive)
-                .map_err(|e| crate::RheoError::file_watcher(e, "watching file directory"))?;
-        }
-        ProjectMode::Directory => {
-            // Existing behavior: recursive watch of project root
-            info!(path = %project.root.display(), "watching project directory");
-            watcher
-                .watch(&project.root, RecursiveMode::Recursive)
-                .map_err(|e| crate::RheoError::file_watcher(e, "watching project directory"))?;
-        }
-    }
-
-    // Watch each package source root (outside the project tree) so edits to
-    // package-declared assets also trigger rebuilds. A failure here is not fatal:
-    // the package cache may be read-only or large, and the rest of the watch
-    // should still work.
-    let mut watched_roots: Vec<PathBuf> = Vec::new();
-    for root in asset_spec.package_roots() {
-        match watcher.watch(root, RecursiveMode::Recursive) {
-            Ok(()) => {
-                debug!(path = %root.display(), "watching package asset root");
-                watched_roots.push(root.to_path_buf());
-            }
-            Err(e) => {
-                warn!(error = %e, path = %root.display(), "failed to watch package asset root")
-            }
-        }
-    }
-
-    // The loaded config file may live outside the primary watched tree — in an
-    // ancestor directory (single-file walk-up) or at a custom `--config` path.
-    // Watch its parent directory (non-recursive) when it is not already covered,
-    // so config edits are detected regardless of mode or filename.
-    let primary_watch_dir = match project.mode {
-        ProjectMode::SingleFile => project.typ_files[0].parent(),
-        ProjectMode::Directory => Some(project.root.as_path()),
-    };
-    if let Some(config_parent) = project.config_path.as_deref().and_then(|p| p.parent())
-        && primary_watch_dir.is_none_or(|primary| !config_parent.starts_with(primary))
-    {
-        match watcher.watch(config_parent, RecursiveMode::NonRecursive) {
-            Ok(()) => debug!(path = %config_parent.display(), "watching config directory"),
-            Err(e) => {
-                warn!(error = %e, path = %config_parent.display(), "failed to watch config directory")
-            }
-        }
-    }
+    let ProjectWatcher {
+        mut watcher,
+        rx,
+        mut watched_roots,
+    } = watcher;
 
     // `first_event_time` below is set by ANY relevant change, so it is the
     // "anything pending?" gate; `batch` only picks WHICH event to send.
