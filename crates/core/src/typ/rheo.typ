@@ -80,15 +80,22 @@
 // page's handle to state("rheo-handle") for any PACKAGE that needs it (the link
 // rule above takes the handle as an argument instead, and reads no state),
 // and — for per-page output (html/epub, where rheo-context carries an `ext`) —
-// resets the footnote counter so each page numbers its footnotes from 1 —
-// unless the format's `reset_footnotes` toggle is set false. The combined PDF
-// has no `ext`, so its footnotes stay continuous across the book regardless.
+// resets the footnote counter, the three built-in figure kinds (table, image,
+// raw) and the equation counter so each page numbers them from 1 (a narrowed
+// rebuild then numbers exactly as a full build) — unless the format's
+// `reset_footnotes` toggle is set false. The combined PDF has no `ext`, so its
+// numbering stays continuous across the book regardless. Figures with a CUSTOM
+// `kind:` (string or function) are NOT reset: the kinds are not knowable here.
 #let rheo-page-init(handle) = {
   state("rheo-handle").update(handle)
   let per-page = sys.inputs.rheo-context.at("ext", default: none) != none
   let reset = sys.inputs.rheo-context.at("reset-footnotes", default: true)
   if per-page and reset {
     counter(footnote).update(0)
+    counter(figure.where(kind: table)).update(0)
+    counter(figure.where(kind: image)).update(0)
+    counter(figure.where(kind: raw)).update(0)
+    counter(math.equation).update(0)
   }
 }
 

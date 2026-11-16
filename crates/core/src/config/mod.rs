@@ -349,8 +349,9 @@ pub struct PluginSection {
     pub auto_detect_packages: Flag<true>,
 
     /// When true (default), per-page output for this format resets the footnote
-    /// counter to 1 on every page; false lets footnotes accumulate across the
-    /// bundle. Only meaningful for the per-page formats (HTML/EPUB); PDF combines
+    /// counter, the built-in figure counters (table, image, raw) and the
+    /// equation counter to 1 on every page; false lets them accumulate across
+    /// the bundle. Figures with a custom `kind:` are not reset. Only meaningful for the per-page formats (HTML/EPUB); PDF combines
     /// into a single document with no `ext`, so the reset gate in `typ/rheo.typ`
     /// never fires there regardless.
     #[serde(default)]
