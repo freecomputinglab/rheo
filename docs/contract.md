@@ -156,6 +156,9 @@ itself. Code inside the project has two convenience functions in
 | --- | --- | --- |
 | `rheo-ligament-attach` | `(key, value, page: none) => content` | `page` defaults to `state("rheo-handle").get()` (the calling vertebra's own handle); pass `page:` explicitly from marrow, which runs outside any vertebra's own context. |
 | `rheo-ligament-bind` | `(key, page: none) => content` | Same `page` default/override as `rheo-ligament-attach`. |
+| `rheo-metadata-bind` | `(handle, page: none) => content` | `rheo-ligament-bind("rheo-meta:" + handle, page: page)`. |
+
+A bind key ending in `*` is a prefix bind: it matches every changed key that starts with the text before the `*`, including keys that did not exist at the page's last compile (a new page, an entry moved to another file). Any other bind matches exactly. A page reading one handle's metadata (`metadata-of`, `rheo-metadata`) places `rheo-metadata-bind(h)`; a page reading every handle's places `rheo-ligament-bind("rheo-meta:*")`.
 
 An authored label on the `rheo-ligament:` prefix is a hard build error, the
 same as the `rheo-meta:` beacon namespace above — see "Reserved `rheo-meta:`

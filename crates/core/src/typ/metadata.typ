@@ -55,6 +55,9 @@
   out
 }
 
+// A page calling this (or `metadata-of`, `rheo-metadata`) for one handle should
+// also place `#rheo-metadata-bind(handle)`, or a narrowed rebuild won't
+// recompile it when that handle's metadata changes.
 #let rheo-metadata-impl(handle) = {
   let found = query(label("rheo-meta:" + handle))
   let out = if found.len() > 0 {
@@ -83,6 +86,8 @@
 // case of "every vertebra's metadata at once" (a feed, a sitemap, a search
 // index). Never imported into a vertebra's own prelude — a vertebra itself
 // has no need to enumerate every vertebra's metadata.
+// A page calling this should also place `#rheo-ligament-bind("rheo-meta:*")`
+// (a prefix bind), so any handle's metadata change recompiles it.
 #let rheo-metadata-all() = sys.inputs.rheo-context.spine-flat.map(e => (handle: e.handle, path: e.path, ..rheo-metadata-impl(e.handle)))
 
 // Live title lookup for a cross-vertebra handle anchor. rheo-metadata-impl

@@ -102,6 +102,10 @@
 // rheo-page-init above), read via #context, but takes an explicit `page:`
 // override for marrow code, which runs outside any vertebra's own context
 // and so has no state to read.
+//
+// A bind `key` ending in `*` is a prefix bind: it matches every changed key
+// starting with the text before the `*`, so it also catches keys that did not
+// exist at the page's last compile.
 #let rheo-ligament-attach(key, value, page: none) = context [
   #metadata((page: if page != none { page } else { state("rheo-handle").get() }, key: key, value: value)) <rheo-ligament:attach>
 ]
@@ -109,6 +113,10 @@
 #let rheo-ligament-bind(key, page: none) = context [
   #metadata((page: if page != none { page } else { state("rheo-handle").get() }, key: key)) <rheo-ligament:bind>
 ]
+
+// Binds the `rheo-meta:<handle>` attach that every page makes of its own
+// metadata; place it on any page reading that handle's metadata.
+#let rheo-metadata-bind(handle, page: none) = rheo-ligament-bind("rheo-meta:" + handle, page: page)
 
 // Reads a previous compile's harvested ligaments back from
 // `sys.inputs.rheo-ligaments` — the feed-back half of the protocol above,

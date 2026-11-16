@@ -2231,7 +2231,7 @@ impl Build {
                 .per_page
                 .iter()
                 .filter(|(h, _)| !round_handles.contains(*h))
-                .filter(|(_, lig)| lig.binds.iter().any(|k| changed_keys.contains(k)))
+                .filter(|(_, lig)| lig.binds.iter().any(|b| bind_matches(b, &changed_keys)))
                 .map(|(h, _)| h.clone())
                 .collect();
 
@@ -2583,6 +2583,16 @@ fn plugins_for_formats(
 /// Create `dir` if missing, naming `plugin_name` in any IO error.
 /// Delete pages in `previous` but not `current` from `output_dir`, then any
 /// parent directories that emptied. Paths that could leave `output_dir` are skipped.
+/// Whether a ligament bind is hit by this round's changed keys. A bind ending
+/// in `*` is a prefix bind matching any changed key that starts with the text
+/// before it (so a bare `*` matches every change); anything else is exact.
+fn bind_matches(bind: &str, changed_keys: &HashSet<String>) -> bool {
+    changed_keys.contains(bind)
+        || bind
+            .strip_suffix('*')
+            .is_some_and(|prefix| changed_keys.iter().any(|k| k.starts_with(prefix)))
+}
+
 fn prune_stale_pages(output_dir: &Path, previous: &HashSet<String>, current: &HashSet<String>) {
     for path in previous.difference(current) {
         let rel = Path::new(path);
@@ -4018,6 +4028,74 @@ mod tests {
                 .count()
         };
         assert_eq!(count("a.html"), 2, "a must be recompiled as b's dependent");
+    }
+
+    /// A `k:*` bind is hit by a changed `k:one` attach; a bind on another
+    /// prefix and the fillers stay at one compile.
+    #[test]
+    fn rebuild_prefix_bind_matches_by_prefix_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+        write_vertebra(
+            root,
+            "a",
+            "#import \"/typ/rheo.typ\": rheo-ligament-bind\n#rheo-ligament-bind(\"k:*\")\n= A\n",
+        );
+        write_vertebra(
+            root,
+            "b",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k:one\", [X])\n= B\n",
+        );
+        write_vertebra(
+            root,
+            "d",
+            "#import \"/typ/rheo.typ\": rheo-ligament-bind\n#rheo-ligament-bind(\"other:*\")\n= D\n",
+        );
+        for filler in ["c", "e", "f", "g", "h"] {
+            write_vertebra(root, filler, &format!("= {filler}\n"));
+        }
+
+        let captured = Arc::new(Captured::default());
+        let plugin: Box<dyn FormatPlugin> = Box::new(CapturingPlugin(captured.clone()));
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![plugin],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        write_vertebra(
+            root,
+            "b",
+            "#import \"/typ/rheo.typ\": rheo-ligament-attach\n\
+             #rheo-ligament-attach(\"k:one\", [Y])\n= B\n",
+        );
+        build
+            .rebuild(&[root.join("content/b.typ")])
+            .expect("narrowed rebuild");
+
+        let count = |path: &str| {
+            captured
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(p, _, _)| p == path)
+                .count()
+        };
+        assert_eq!(count("a.html"), 2, "k:* binder must be recompiled");
+        assert_eq!(count("b.html"), 2, "b itself must be recompiled");
+        for untouched in ["c", "d", "e", "f", "g", "h"] {
+            assert_eq!(
+                count(&format!("{untouched}.html")),
+                1,
+                "{untouched} must be untouched"
+            );
+        }
     }
 
     struct WritingPlugin(Arc<Mutex<Option<PathBuf>>>);
