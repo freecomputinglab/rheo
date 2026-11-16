@@ -27,6 +27,11 @@ pub const RESERVED_INPUT_KEY: &str = "rheo-context";
 /// [`RESERVED_INPUT_KEY`].
 pub const RESERVED_LIGAMENTS_INPUT_KEY: &str = "rheo-ligaments";
 
+/// The `sys.inputs` key carrying `spine`/`spine-flat` behind a constant-hash
+/// store, so a spine change does not invalidate every memoised result.
+/// Rejected the same way, and for the same reason, as [`RESERVED_INPUT_KEY`].
+pub const RESERVED_SPINE_INPUT_KEY: &str = "rheo-spine";
+
 /// A `bool` config key whose absence means `DEFAULT` — one type for every
 /// "unset means this" toggle, in place of an `Option<bool>` field paired with
 /// its own `unwrap_or` accessor.
@@ -542,6 +547,13 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
                  which carries the previous compile's harvested ligaments that every package \
                  reads. Choose another name, e.g. a package-prefixed one like \
                  `rookery-exclude`.",
+            )));
+        }
+        if inputs.contains_key(RESERVED_SPINE_INPUT_KEY) {
+            return Err(serde::de::Error::custom(format!(
+                "[inputs] may not set `{RESERVED_SPINE_INPUT_KEY}`: rheo owns that key, \
+                 which carries the spine that every package reads. Choose another name, \
+                 e.g. a package-prefixed one like `rookery-exclude`.",
             )));
         }
         // Pulled out before the plugin-section loop for the same reason `inputs`
@@ -1570,6 +1582,23 @@ mod tests {
         let err = RheoConfig::try_from(raw).expect_err("the reserved key must fail");
         assert!(
             err.to_string().contains("rheo-ligaments"),
+            "error should name the reserved key, got: {err}",
+        );
+    }
+
+    /// `rheo-spine` is reserved too, rejected the same way.
+    #[test]
+    fn test_inputs_rejects_reserved_spine_key() {
+        let raw: RheoConfigRaw = toml::from_str(&versioned_toml(
+            r#"
+        [inputs]
+        rheo-spine = "forged"
+    "#,
+        ))
+        .expect("raw parse should succeed");
+        let err = RheoConfig::try_from(raw).expect_err("the reserved key must fail");
+        assert!(
+            err.to_string().contains("rheo-spine"),
             "error should name the reserved key, got: {err}",
         );
     }

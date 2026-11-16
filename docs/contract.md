@@ -24,21 +24,23 @@ rheo is pre-1.0 (`0.6.1` at time of writing). Read stability against that:
 
 ## `rheo-context()` / `sys.inputs.rheo-context`
 
-`rheo-context()` is `(handle: <this file's handle>, metadata-of: rheo-metadata, ..sys.inputs.rheo-context)`
-(`crates/core/src/util/typst_source.rs:137-141`, `TypstStmt::ContextBinding`).
-The spread half — everything except `handle` and `metadata-of` — is exactly
-`sys.inputs.rheo-context`, built once per build by
-`VirtualSpine::global_context` (`crates/core/src/reticulate/spine.rs:1046-1086`)
-and detectable directly (no per-file call needed) via `"rheo-context" in
-sys.inputs`. It is the one key rheo itself owns; a project may seed others
-alongside it — see "Project-supplied `sys.inputs`" below — but not this one.
+`rheo-context()` is `(handle: <this file's handle>, metadata-of: rheo-metadata, ..sys.inputs.rheo-context, spine: sys.inputs.rheo-spine.get("spine"), spine-flat: sys.inputs.rheo-spine.get("spine-flat"))`
+(`crates/core/src/synth/typst_source.rs`, `TypstStmt::ContextBinding`).
+The spread half is exactly `sys.inputs.rheo-context`, built once per build by
+`VirtualSpine::global_context` (`crates/core/src/reticulate/spine.rs`) minus
+`spine`/`spine-flat`, and detectable directly (no per-file call needed) via
+`"rheo-context" in sys.inputs`. `spine` and `spine-flat` live on
+`sys.inputs.rheo-spine` instead (see below); the per-file `rheo-context()`
+still carries both. rheo owns `rheo-context`, `rheo-spine` and
+`rheo-ligaments`; a project may seed other keys alongside them — see
+"Project-supplied `sys.inputs`" below.
 
 | Key | On | Type | Always present? | Stability | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `handle` | `rheo-context()` only | `str` | yes | Stable | This file's own `:`-joined handle. The only per-file field; never on `sys.inputs.rheo-context`. |
 | `metadata-of` | `rheo-context()` only | function `(handle) => dict` | yes | Stable | `= rheo-metadata`. Dict field, not a method — call as `(rheo-context().metadata-of)(handle)`. Requires `#context`. |
-| `spine` | both | `array` (recursive node dicts: `title`/`handle`/`path`/`synthesized`/`children`) | yes | Stable | Titles are path-derived only, never a `#set document(title:)` value — see `docs/limitations.md`. `synthesized: true` means `path` is notional — `auto_index` minted the page and there is no such file on disk, so never `read()` it (a group node always carries `synthesized: false`). |
-| `spine-flat` | both | `array` (dicts: `handle`/`path`/`title`/`synthesized`) | yes | Stable | Pre-order, groups excluded. Same path-derived-title caveat. `synthesized: true` means `path` is notional — `auto_index` minted the page and there is no such file on disk, so never `read()` it. |
+| `spine` | `rheo-context()`; `sys.inputs.rheo-spine.get("spine")` | `array` (recursive node dicts: `title`/`handle`/`path`/`synthesized`/`children`) | yes | Stable | Titles are path-derived only, never a `#set document(title:)` value — see `docs/limitations.md`. `synthesized: true` means `path` is notional — `auto_index` minted the page and there is no such file on disk, so never `read()` it (a group node always carries `synthesized: false`). |
+| `spine-flat` | `rheo-context()`; `sys.inputs.rheo-spine.get("spine-flat")` | `array` (dicts: `handle`/`path`/`title`/`synthesized`) | yes | Stable | Pre-order, groups excluded. Same path-derived-title caveat. `synthesized: true` means `path` is notional — `auto_index` minted the page and there is no such file on disk, so never `read()` it. |
 | `rheo-version` | both | `str`, semver (`x.y.z`) | yes | Stable | This build's own rheo version (`env!("CARGO_PKG_VERSION")`); pairs with `[tool.rheo] min_version` below for version negotiation. Verified by `rheo-tests/cases/rheo_context_all_formats/a.typ`. |
 | `target` | both | `str` (`"html"` \| `"epub"`) | **no** — omitted for PDF | Stable | Present for per-page formats only. `target()` (the polyfill, see `CLAUDE.md`) is the per-file-friendly way to read it. |
 | `ext` | both | `str` (`"html"` \| `"xhtml"`) | **no** — omitted for PDF, gated identically to `target` | Stable | `target`/`ext` always appear together or not at all — asserted in `rheo-tests/cases/rheo_context_all_formats/a.typ`. |
@@ -46,8 +48,40 @@ alongside it — see "Project-supplied `sys.inputs`" below — but not this one.
 | `title-overrides` | both | `array` of `(handle: str, title: str)` dicts | yes (usually `()`) | **Internal** | Feeds `rheo-title-override`/the metadata beacon fallback for the gated `--metadata-two-pass` second compile (`crates/core/src/build.rs:355-401`). Empty on an ordinary build. Not a data source for packages — read `metadata-of`/`rheo-metadata` instead, which already fold this in. |
 
 Everything in this table not marked Internal is safe to read straight off
-`sys.inputs.rheo-context` with no `#context` — only `metadata-of`/`rheo-metadata`
+`sys.inputs` with no `#context` — only `metadata-of`/`rheo-metadata`
 need it (they call `query(...)`).
+
+### `sys.inputs.rheo-spine`
+
+`spine` and `spine-flat` are NOT on `sys.inputs.rheo-context`. They sit behind
+an opaque store on the reserved `sys.inputs.rheo-spine` key
+(`RESERVED_SPINE_INPUT_KEY`, `crates/core/src/config/mod.rs`;
+`crates/core/src/keyed_store.rs`, the same store type as `rheo-ligaments`),
+present on every compile, and are read with its one method:
+
+```typst
+sys.inputs.rheo-spine.get("spine")       // the tree
+sys.inputs.rheo-spine.get("spine-flat")  // the flat pre-order list
+```
+
+`get(key)` returns that key's value (an empty array for a key the store does
+not hold), or `none` when the compile has no `rheo-context` at all. The store
+hashes as a constant and `get` records a dependency on the one key it read, so
+a spine change (a page added, removed or renamed) re-runs only the Typst work
+that read the spine, rather than everything that captured `sys`. Rejected
+from `rheo.toml [inputs]` and `--input` like `rheo-context`. Stable.
+
+A package that must also run on an older rheo reads the store when present
+and falls back to `rheo-context`:
+
+```typst
+#let spine-flat() = {
+  let store = sys.inputs.at("rheo-spine", default: none)
+  if store != none { store.get("spine-flat") } else { sys.inputs.rheo-context.spine-flat }
+}
+```
+
+A reader taking `ctx: rheo-context()` needs no change.
 
 ## Directory-index helper — `rheo-index()` (`crates/core/src/typ/rheo.typ`)
 
@@ -83,7 +117,7 @@ Typst through `WorldSpec::user_inputs` → `build_inputs`
 | --- | --- | --- |
 | Value type | `str`, always. No coercion in either source: a non-string in `[inputs]` is a config error, and `--input` has nothing but strings to give. | Stable |
 | Key namespace | Flat and bundle-global, shared by every package in the project. | Stable |
-| Reserved keys | `rheo-context` only. Rejected by both sources, and ignored a third time in `build_inputs` so a library caller constructing `WorldSpec` directly cannot get past it either. | Stable |
+| Reserved keys | `rheo-context`, `rheo-spine`, `rheo-ligaments`. Rejected by both sources, and ignored a third time in `build_inputs` so a library caller constructing `WorldSpec` directly cannot get past it either. | Stable |
 | Absent key | Not present in the dict — read with `sys.inputs.at("key", default: ..)`. There is no empty-string stand-in. | Stable |
 
 PREFIX A PACKAGE-READ KEY WITH THE PACKAGE NAME — `rookery-exclude`, not
@@ -179,7 +213,7 @@ this time. The caller supplies a `crate::build::Ligaments` via
 `WorldSpec::ligaments` (`crates/core/src/world.rs`); `build_inputs` seeds it
 onto the reserved `sys.inputs.rheo-ligaments` key
 (`RESERVED_LIGAMENTS_INPUT_KEY`, `crates/core/src/config/mod.rs`) as an
-**opaque native `ligaments` value** (`crates/core/src/ligament_store.rs`) —
+**opaque native store value** (`crates/core/src/keyed_store.rs`) —
 never JSON, since `json.encode`/`json(bytes(..))` silently turn a `datetime`
 value into its `repr()` string form, which would corrupt any attached value of
 that type. The value is present on EVERY compile, so the library hashes the
@@ -223,7 +257,7 @@ full compile is unaffected either way, since the live query always succeeds
 there.
 
 `rheo-link-rule`'s cross-vertebra href resolution needs none of this: it
-already resolves purely from `_rheo-handles()` (`sys.inputs.rheo-context.spine-flat`,
+already resolves purely from `_rheo-handles()` (`sys.inputs.rheo-spine.get("spine-flat")`,
 a static list present even on a narrowed compile), so it builds the right
 href for a vertebra outside the current compile with no ligaments involved.
 
@@ -303,7 +337,7 @@ One-shot `rheo compile` never evicts.
 | Helper | Signature | Scope | Notes |
 | --- | --- | --- | --- |
 | `rheo-metadata` | `(handle) => dict` | every vertebra (its own prelude) **and** marrow root | Requires `#context`. Same beacon-reading logic in both places — the marrow-root copy re-imports the identical `MetadataHelper` statement (`crates/core/src/world.rs:447`), so the two sites cannot drift apart. |
-| `rheo-metadata-all` | `() => array` | marrow root **only** | `sys.inputs.rheo-context.spine-flat.map(e => (handle: e.handle, path: e.path, ..rheo-metadata(e.handle)))` — one entry per `spine-flat` vertebra, each `(handle, path, ..resolved fields)`. Never injected per-vertebra (`crates/core/src/world.rs:448`). |
+| `rheo-metadata-all` | `() => array` | marrow root **only** | `sys.inputs.rheo-spine.get("spine-flat").map(e => (handle: e.handle, path: e.path, ..rheo-metadata(e.handle)))` — one entry per `spine-flat` vertebra, each `(handle, path, ..resolved fields)`. Never injected per-vertebra (`crates/core/src/world.rs:448`). |
 | `rheo-handle-title` | `(handle, fallback) => content` | marrow root **only** | Live title lookup: the harvested title-override if `--metadata-two-pass` flagged one, else the beacon's current `document.title`, else `fallback`. This is what every `@handle` cross-reference anchor calls internally (`TypstStmt::HandleAnchor`); a package building its own nav/index over `spine-flat` can call it directly instead of re-deriving the same fallback logic. |
 
 `rheo-metadata`/`rheo-metadata-all`/`rheo-handle-title` are injected into the

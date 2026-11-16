@@ -38,12 +38,12 @@ pub enum TypstStmt {
     Let { name: String, value: TypstLiteral },
     /// The per-vertebra `rheo-context` binding, as a zero-arg function that
     /// composes this file's `handle` with the format-global values spread from
-    /// `sys.inputs.rheo-context`, plus a `metadata-of` closure (see
-    /// [`TypstStmt::MetadataHelper`]) any vertebra can call to read another
-    /// vertebra's beacon:
-    /// `#let rheo-context() = (handle: "<handle>", metadata-of: rheo-metadata, ..sys.inputs.rheo-context)`.
-    /// The function form lets authors mock it under vanilla Typst; the spread
-    /// keeps the (potentially large) `spine` stored once in `sys.inputs` rather
+    /// `sys.inputs.rheo-context`, the spine read from `sys.inputs.rheo-spine`,
+    /// and a `metadata-of` closure (see [`TypstStmt::MetadataHelper`]) any
+    /// vertebra can call to read another vertebra's beacon:
+    /// `#let rheo-context() = (handle: "<handle>", metadata-of: rheo-metadata, ..sys.inputs.rheo-context, spine: sys.inputs.rheo-spine.get("spine"), spine-flat: sys.inputs.rheo-spine.get("spine-flat"))`.
+    /// The function form lets authors mock it under vanilla Typst; reading
+    /// `sys.inputs` keeps the (potentially large) spine stored once rather
     /// than baked into every vertebra. `sys.inputs` reads need no `#context`, so
     /// authors still read `rheo-context().handle` directly. Since `metadata-of`
     /// is a dict field rather than a method, calling it needs the awkward but
@@ -66,7 +66,7 @@ pub enum TypstStmt {
     /// scope") only companion to [`TypstStmt::MetadataHelper`], for the
     /// common marrow case of "every vertebra's metadata at once" (an Atom
     /// feed, a sitemap, a search index). Maps
-    /// `sys.inputs.rheo-context.spine-flat` (each entry carrying only
+    /// `sys.inputs.rheo-spine.get("spine-flat")` (each entry carrying only
     /// `handle`/`path`/`title`) through `rheo-metadata`, overlaying its
     /// resolved fields (`title`/`author`/`description`/`keywords`/`date`,
     /// when present) onto each `(handle, path)` pair. Deliberately injected
@@ -208,7 +208,8 @@ impl fmt::Display for TypstStmt {
             }
             TypstStmt::ContextBinding { handle } => write!(
                 f,
-                "#let rheo-context() = (handle: {}, metadata-of: rheo-metadata, ..sys.inputs.rheo-context)",
+                "#let rheo-context() = (handle: {}, metadata-of: rheo-metadata, ..sys.inputs.rheo-context, \
+                 spine: sys.inputs.rheo-spine.get(\"spine\"), spine-flat: sys.inputs.rheo-spine.get(\"spine-flat\"))",
                 quote(handle)
             ),
             TypstStmt::MetadataHelper => write!(
@@ -299,7 +300,8 @@ mod tests {
         };
         assert_eq!(
             stmt.to_string(),
-            "#let rheo-context() = (handle: \"chapters:ch1\", metadata-of: rheo-metadata, ..sys.inputs.rheo-context)"
+            "#let rheo-context() = (handle: \"chapters:ch1\", metadata-of: rheo-metadata, ..sys.inputs.rheo-context, \
+             spine: sys.inputs.rheo-spine.get(\"spine\"), spine-flat: sys.inputs.rheo-spine.get(\"spine-flat\"))"
         );
     }
 

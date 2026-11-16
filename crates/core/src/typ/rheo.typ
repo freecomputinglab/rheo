@@ -29,9 +29,10 @@
 // membership answers what a `query` for that figure used to — read off
 // `sys.inputs`, which needs no `#context`.
 #let _rheo-handles() = {
-  let c = sys.inputs.at("rheo-context", default: none)
-  if c == none { return () }
-  c.at("spine-flat", default: ()).map(v => v.at("handle", default: ""))
+  let s = sys.inputs.at("rheo-spine", default: none)
+  let flat = if s == none { none } else { s.get("spine-flat") }
+  if flat == none { return () }
+  flat.map(v => v.at("handle", default: ""))
 }
 
 // Rewrites #link(<handle>) cross-vertebra links into per-format hrefs, as a
@@ -167,7 +168,7 @@
 // the call site — which also makes this work under a SingleCombined (PDF)
 // layout, where every vertebra shares one #document and state("rheo-handle")
 // is meaningless. Reads `spine` — the full tree, INCLUDING group nodes,
-// unlike spine-flat — off sys.inputs since this function is imported from
+// unlike spine-flat — off sys.inputs.rheo-spine since this function is imported from
 // this module (see IndexHelper) rather than defined per vertebra, so it
 // cannot capture a vertebra-local rheo-context() binding. A project
 // overrides the default by binding its own #let rheo-index() in [spine]
@@ -176,7 +177,7 @@
 #let rheo-index-at(handle) = {
   let ctx = sys.inputs.rheo-context
   let ext = ctx.at("ext", default: none)
-  let node = _rheo-index-find(ctx.spine, handle)
+  let node = _rheo-index-find(sys.inputs.rheo-spine.get("spine"), handle)
   let children = if node == none { () } else { node.children }
   list(..children.map(child => {
     if child.handle == none {

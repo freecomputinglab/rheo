@@ -88,7 +88,7 @@
 // has no need to enumerate every vertebra's metadata.
 // A page calling this should also place `#rheo-ligament-bind("rheo-meta:*")`
 // (a prefix bind), so any handle's metadata change recompiles it.
-#let rheo-metadata-all() = sys.inputs.rheo-context.spine-flat.map(e => (handle: e.handle, path: e.path, ..rheo-metadata-impl(e.handle)))
+#let rheo-metadata-all() = sys.inputs.rheo-spine.get("spine-flat").map(e => (handle: e.handle, path: e.path, ..rheo-metadata-impl(e.handle)))
 
 // Live title lookup for a cross-vertebra handle anchor. rheo-metadata-impl
 // already drops a `none` title and already lets an override win, so the

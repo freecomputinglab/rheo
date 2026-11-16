@@ -1035,8 +1035,9 @@ mod tests {
             assert!(p.contains("#let rheo-context() = "));
             assert!(p.contains("metadata-of: rheo-metadata"));
             assert!(p.contains("..sys.inputs.rheo-context"));
-            // ...so the large spine is NOT duplicated into the per-file prelude.
-            assert!(!p.contains("spine-flat"));
+            // ...and reads the spine off its store, so the large spine is NOT
+            // duplicated into the per-file prelude.
+            assert!(p.contains("spine-flat: sys.inputs.rheo-spine.get(\"spine-flat\")"));
             assert!(!p.contains("path:"));
             // ...and rheo-index-at (the default, overridable directory-index
             // renderer a synthesized landing page's body calls) is imported

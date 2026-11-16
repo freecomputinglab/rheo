@@ -340,7 +340,7 @@ impl Ligaments {
     /// attaching vertebra, since a key may be attached by several. Bound keys
     /// are NOT included; they stay Rust-side, read back from
     /// [`Build::ligaments`] to build the dependent set. Feeds
-    /// `crate::ligament_store::LigamentStore` (see `docs/contract.md`'s
+    /// `crate::keyed_store::KeyedStore` (see `docs/contract.md`'s
     /// "Ligaments" section).
     ///
     /// Values stay native, never routed through `TypstLiteral` or JSON: a

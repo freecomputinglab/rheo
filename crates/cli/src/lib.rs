@@ -261,6 +261,15 @@ fn parse_inputs(sub: &ArgMatches) -> Result<HashMap<String, String>> {
                 ),
             });
         }
+        if key == rheo_core::config::RESERVED_SPINE_INPUT_KEY {
+            return Err(RheoError::ProjectConfig {
+                message: format!(
+                    "--input {key}=... is reserved: rheo owns the `{key}` key, which \
+                     carries the spine that every package reads. Choose another name, \
+                     e.g. a package-prefixed one like `rookery-exclude`."
+                ),
+            });
+        }
         map.insert(key.to_string(), value.to_string());
     }
     Ok(map)
@@ -985,6 +994,20 @@ mod tests {
                 .value_name("KEY=VALUE")
                 .action(ArgAction::Append),
         )
+    }
+
+    /// `--input rheo-spine=...` is rejected too: rheo owns that key.
+    #[test]
+    fn test_parse_inputs_rejects_reserved_spine_key() {
+        let cmd = input_only_command();
+        let matches = cmd
+            .try_get_matches_from(["test", "--input", "rheo-spine=forged"])
+            .unwrap();
+        let err = parse_inputs(&matches).expect_err("the reserved key must fail");
+        assert!(
+            err.to_string().contains("rheo-spine"),
+            "error should name the reserved key, got: {err}",
+        );
     }
 
     /// `--input rheo-ligaments=...` is rejected the same way, and for the

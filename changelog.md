@@ -1,5 +1,19 @@
 # Unreleased — user-visible changes
 
+## Breaking: the spine moves from `sys.inputs.rheo-context` to `sys.inputs.rheo-spine`
+
+`spine` and `spine-flat` are no longer on `sys.inputs.rheo-context`. They sit
+on a new reserved key, `sys.inputs.rheo-spine`, read with
+`.get("spine")`/`.get("spine-flat")`, so adding, removing or renaming a page no
+longer invalidates every cached result in a compile: under `rheo watch`,
+adding a page to a 2,400-page site drops from about 40 s to 13.5 s. The
+per-file `rheo-context()` still carries both, so a reader taking
+`ctx: rheo-context()` needs no change. A package reading
+`sys.inputs.rheo-context.spine` or `.spine-flat` directly must read
+`sys.inputs.rheo-spine` when present and fall back to `rheo-context` on an
+older rheo; `docs/contract.md` has the helper. `rheo-spine` is rejected in
+`[inputs]` and `--input`.
+
 ## A narrowed round feeds the whole cached ligaments
 
 A narrowed round now feeds `sys.inputs.rheo-ligaments` the whole cached
@@ -10,7 +24,7 @@ compiling page's own stale fed entries itself.
 
 ## `sys.inputs.rheo-ligaments` is now an opaque value read through `.get(key)`
 
-`sys.inputs.rheo-ligaments` is now an opaque `ligaments` value, present on
+`sys.inputs.rheo-ligaments` is now an opaque store value, present on
 every compile, so a change to one key no longer invalidates Typst work that
 never read it. Packages reading `.at("attaches")` must switch to
 `.get(key)`, which returns the `(page, value)` array, or `none` on a full build.
