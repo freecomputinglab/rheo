@@ -9,6 +9,7 @@
 
 use crate::reticulate::VertebraInjection;
 use crate::synth::source_map::{AuthoredFile, SourceMap};
+use crate::synth::typst_literal::TypstLiteral;
 use crate::synth::typst_source::{TypstBlock, TypstStmt};
 use std::collections::HashMap;
 #[cfg(test)]
@@ -22,15 +23,22 @@ pub struct Synthesized {
 }
 
 /// Makes `target()` return rheo's output format, so an authored file detects
-/// the format the same way under every plugin. Opaque source, hence `Raw`.
-const TARGET_POLYFILL: &str = "// Polyfill target() to return rheo's output format from sys.inputs\n\
-     #let target() = if \"rheo-context\" in sys.inputs and \"target\" in sys.inputs.rheo-context { sys.inputs.rheo-context.target } else { std.target() }";
+/// the format the same way under every plugin. The format is written into the
+/// statement as a literal: a closure that mentioned `sys` would capture it by
+/// value and hash all of `sys.inputs`. Opaque source, hence `Raw`.
+fn target_polyfill(format: &str) -> String {
+    format!(
+        "// Polyfill target() to return rheo's output format\n#let target() = {}",
+        TypstLiteral::str(format).serialize()
+    )
+}
 
 /// The Typst rheo injects around one compile's files.
 pub struct SourceInjector<'a> {
-    /// Whether this compile targets a rheo output format. Only then is the
-    /// `target()` polyfill injected; native PDF keeps Typst's own `target()`.
-    polyfill_target: bool,
+    /// The rheo output format this compile targets. Only then is the
+    /// `target()` polyfill injected; native PDF (`None`) keeps Typst's own
+    /// `target()`.
+    polyfill_target: Option<&'a str>,
     /// The plugin's own Typst library, spliced into the main file.
     plugin_library: Option<&'a str>,
     /// Per-vertebra prelude/epilogue, keyed by the file's bundle-relative path.
@@ -39,7 +47,7 @@ pub struct SourceInjector<'a> {
 
 impl<'a> SourceInjector<'a> {
     pub fn new(
-        polyfill_target: bool,
+        polyfill_target: Option<&'a str>,
         plugin_library: Option<&'a str>,
         injections: &'a HashMap<String, VertebraInjection>,
     ) -> Self {
@@ -94,7 +102,7 @@ impl<'a> SourceInjector<'a> {
             name: rel_path.to_string(),
             text: body.into(),
         };
-        if injection.is_none() && !self.polyfill_target {
+        if injection.is_none() && self.polyfill_target.is_none() {
             let mut map = SourceMap::default();
             map.push_authored(file(), 0, body.len());
             return Synthesized {
@@ -137,10 +145,11 @@ impl<'a> SourceInjector<'a> {
     }
 
     fn polyfill(&self) -> TypstStmt {
-        TypstStmt::Raw(match self.polyfill_target {
-            true => TARGET_POLYFILL.to_string(),
-            false => String::new(),
-        })
+        TypstStmt::Raw(
+            self.polyfill_target
+                .map(target_polyfill)
+                .unwrap_or_default(),
+        )
     }
 }
 
@@ -158,7 +167,7 @@ mod tests {
     #[test]
     fn main_carries_template_helpers_and_plugin_library() {
         let none = injections(&[]);
-        let injector = SourceInjector::new(true, Some("#let plugin-lib = 1"), &none);
+        let injector = SourceInjector::new(Some("html"), Some("#let plugin-lib = 1"), &none);
         let out = injector
             .main("#document(\"a.html\")[]", &SourceMap::default())
             .text;
@@ -174,7 +183,7 @@ mod tests {
     #[test]
     fn main_without_polyfill_or_plugin_library_leaves_no_gap() {
         let none = injections(&[]);
-        let out = SourceInjector::new(false, None, &none)
+        let out = SourceInjector::new(None, None, &none)
             .main("body", &SourceMap::default())
             .text;
 
@@ -187,6 +196,22 @@ mod tests {
         assert!(out.ends_with("rheo-handle-title\n\n#show: rheo_template\n\nbody"));
     }
 
+    /// The polyfill is a literal: it names no `sys`, so it captures nothing,
+    /// and its text depends only on the format (the parse cache keys on it).
+    #[test]
+    fn polyfill_is_a_literal_without_sys_inputs() {
+        let none = injections(&[]);
+        let out = SourceInjector::new(Some("html"), None, &none)
+            .vertebra("content/a.typ", "= T")
+            .text;
+        assert!(out.contains("#let target() = \"html\""));
+        assert!(!out.contains("sys.inputs"));
+        let epub = SourceInjector::new(Some("epub"), None, &none)
+            .vertebra("content/b.typ", "= T")
+            .text;
+        assert!(epub.contains("#let target() = \"epub\""));
+    }
+
     #[test]
     fn vertebra_wraps_its_own_prelude_and_epilogue() {
         let map = injections(&[(
@@ -197,7 +222,7 @@ mod tests {
                 epilogue: "\n#beacon\n".to_string(),
             },
         )]);
-        let out = SourceInjector::new(true, None, &map)
+        let out = SourceInjector::new(Some("html"), None, &map)
             .vertebra("content/a.typ", "= Title")
             .text;
 
@@ -219,7 +244,7 @@ mod tests {
             },
         )]);
         let synthesized =
-            SourceInjector::new(true, None, &map).vertebra("content/a.typ", "= Title");
+            SourceInjector::new(Some("html"), None, &map).vertebra("content/a.typ", "= Title");
 
         let prelude_offset = synthesized.text.find("undefined-thing").unwrap();
         let (file, range) = synthesized
@@ -248,7 +273,7 @@ mod tests {
     #[test]
     fn untouched_file_is_returned_verbatim() {
         let none = injections(&[]);
-        let out = SourceInjector::new(false, None, &none)
+        let out = SourceInjector::new(None, None, &none)
             .vertebra("content/partial.typ", "= P")
             .text;
         assert_eq!(out, "= P");
@@ -267,7 +292,7 @@ mod tests {
             },
         )]);
         let synthesized =
-            SourceInjector::new(true, None, &map).vertebra("content/a.typ", "= Title");
+            SourceInjector::new(Some("html"), None, &map).vertebra("content/a.typ", "= Title");
 
         let offset = synthesized.text.find("Title").unwrap();
         let (file, range) = synthesized

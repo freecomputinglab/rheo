@@ -604,7 +604,7 @@ impl World for RheoWorld {
         };
 
         let injector = SourceInjector::new(
-            self.format_name.is_some(),
+            self.format_name.as_deref(),
             self.plugin_library.as_deref(),
             &self.rheo_context,
         );

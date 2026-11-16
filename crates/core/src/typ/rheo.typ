@@ -1,7 +1,7 @@
 // The rheo output format is surfaced through Typst's own `target()`: rheo
 // injects a `target()` polyfill (into every file) that returns
-// "epub"/"html"/"paged" from `sys.inputs.rheo-context.target`, falling back to
-// `std.target()` under vanilla Typst. Detect the format with `target() == "epub"`
+// the output format as a literal ("epub"/"html"; PDF keeps Typst's native
+// "paged"), falling back to `std.target()` under vanilla Typst. Detect the format with `target() == "epub"`
 // etc. There is no `rheo-target()` helper — use `target()` directly.
 
 #let rheo_template(doc) = context {

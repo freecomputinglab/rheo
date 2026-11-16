@@ -88,8 +88,8 @@ About 130 lines, scratch only:
   (they are imported modules and cannot see a vertebra's `rheo-context()`).
 
 Correctness. The closures that call `target()` or `rheo-context()` capture `sys`
-(the injected polyfill is `#let target() = if "rheo-context" in sys.inputs ...`,
-and `rheo-context()` spreads `sys.inputs.rheo-context`), so each of them hashes
+(at the time the injected polyfill was `#let target() = if "rheo-context" in sys.inputs ...`,
+since baked to a literal; `rheo-context()` spreads `sys.inputs.rheo-context`), so each of them hashes
 all of `sys.inputs`, spine included. With the spine off `sys.inputs` those
 closures stop depending on it too; that is part of the measured gain, not a
 separate effect. `rheo-context()` reads both spine keys eagerly, so a closure
