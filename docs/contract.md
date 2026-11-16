@@ -469,6 +469,8 @@ and the escape-collision hard error. Verified unchanged against
 `crates/core/src/reticulate/spine.rs` (canonical/escape assignment around
 line 910; escape-collision error around line 923).
 
+In HTML output every page carries an empty `<div id="<handle>">` (and one per `<handle.typ>` alias) at the top of `<body>`, so `page.html#<handle>` is a stable fragment.
+
 ## Reserved `rheo-meta:` label namespace
 
 `RESERVED_META_LABEL_PREFIX = "rheo-meta:"`

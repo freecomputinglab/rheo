@@ -14,8 +14,14 @@
 // Synthesized cross-vertebra handle anchors use labeled #figure elements.
 // #metadata and bare document labels are not referenceable in Typst 0.15 —
 // #figure is the only element that supports cross-document @handle resolution.
-// Hide them so they render nothing, and fix @ref display to the vertebra title.
-#show figure.where(kind: "rheo-handle"): none
+// HTML emits an empty div with a literal id: typst only anchors link targets,
+// so the id must exist and stay stable whichever links a compile contains.
+// Other formats render nothing; fix @ref display to the vertebra title.
+#show figure.where(kind: "rheo-handle"): it => {
+  if target() == "html" and it.has("label") {
+    html.elem("div", attrs: (id: str(it.label)))
+  }
+}
 #show ref: it => {
   if it.element != none and it.element.func() == figure and it.element.kind == "rheo-handle" {
     link(it.target, it.element.body)
