@@ -106,14 +106,14 @@ static PACKAGE_PATHS: LazyLock<ContentCache<Vec<String>>> =
     LazyLock::new(|| ContentCache::new(4096));
 static EXTRACTED: LazyLock<ContentCache<ExtractedNodes>> =
     LazyLock::new(|| ContentCache::new(4096));
-/// Smaller than its siblings: an entry here is a whole parsed syntax tree,
-/// and the working set is one project's vertebrae plus the package files a
-/// compile reaches, not every file on the search path.
-static SOURCES: LazyLock<ContentCache<Source>> = LazyLock::new(|| ContentCache::new(1024));
+/// Sized well above one project's working set (its vertebrae plus the package
+/// files a compile reaches): a file shed from [`LAST_SOURCES`] is next parsed
+/// from scratch, which renumbers its spans and misses every memo downstream.
+static SOURCES: LazyLock<ContentCache<Source>> = LazyLock::new(|| ContentCache::new(8192));
 /// The last [`Source`] served per file id, the starting point for reparsing
 /// an edit incrementally. Same bound as [`SOURCES`] and shed the same way, so
 /// a long watch session holds at most one tree per recently used file.
-static LAST_SOURCES: LazyLock<ContentCache<Source>> = LazyLock::new(|| ContentCache::new(1024));
+static LAST_SOURCES: LazyLock<ContentCache<Source>> = LazyLock::new(|| ContentCache::new(8192));
 
 /// The `@`-prefixed package import paths `text` names, in encounter order.
 ///
