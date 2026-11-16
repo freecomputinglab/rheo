@@ -26,7 +26,7 @@ use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 #[cfg(feature = "timings")]
 use std::num::NonZeroU64;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
@@ -149,6 +149,10 @@ pub struct Build {
     /// in-memory `VirtualFs` so it serves them from disk instead. `None`
     /// after a full build.
     narrowed_outputs: Mutex<Option<Vec<String>>>,
+    /// Per plugin name, the relative output paths its last successful full
+    /// [`Build::run`] wrote; the next full run prunes what drops out of it.
+    /// Narrowed rebuilds neither prune nor update it.
+    written_pages: Mutex<HashMap<String, HashSet<String>>>,
     /// Set once this `Build` has completed a successful [`Build::run`] —
     /// gates [`Build::rebuild`]'s narrowed-compile path: "no cached
     /// ligaments" and "first build of a session" are the same condition,
@@ -504,6 +508,7 @@ impl Build {
             ligaments: Mutex::new(Ligaments::default()),
             incoming_ligaments: Mutex::new(None),
             narrowed_outputs: Mutex::new(None),
+            written_pages: Mutex::new(HashMap::new()),
             has_built: std::sync::atomic::AtomicBool::new(false),
             spine_handles: Mutex::new(HashMap::new()),
             auto_narrow: Mutex::new(AutoNarrow::default()),
@@ -1785,6 +1790,18 @@ impl Build {
             });
             match written {
                 Ok(_) => {
+                    let current: HashSet<String> = prepared
+                        .outputs
+                        .iter()
+                        .map(|o| o.output_path.clone())
+                        .collect();
+                    let previous = self
+                        .written_pages
+                        .lock()
+                        .insert(plugin.name().to_string(), current.clone());
+                    if let Some(previous) = previous {
+                        prune_stale_pages(&prepared.output_dir, &previous, &current);
+                    }
                     // Apply copy globs after bundle output is written so that
                     // explicit copy patterns win over any colliding bundle output.
                     self.timed(phase::COPY_GLOBS, Some(plugin.name()), || {
@@ -2557,6 +2574,31 @@ fn plugins_for_formats(
 }
 
 /// Create `dir` if missing, naming `plugin_name` in any IO error.
+/// Delete pages in `previous` but not `current` from `output_dir`, then any
+/// parent directories that emptied. Paths that could leave `output_dir` are skipped.
+fn prune_stale_pages(output_dir: &Path, previous: &HashSet<String>, current: &HashSet<String>) {
+    for path in previous.difference(current) {
+        let rel = Path::new(path);
+        if !rel.is_relative() || !rel.components().all(|c| matches!(c, Component::Normal(_))) {
+            continue;
+        }
+        let file = output_dir.join(rel);
+        match std::fs::remove_file(&file) {
+            Ok(()) => debug!(path = %file.display(), "pruned page of a deleted vertebra"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                warn!(path = %file.display(), error = %e, "could not prune stale page");
+                continue;
+            }
+        }
+        for dir in file.ancestors().skip(1).take_while(|d| *d != output_dir) {
+            if std::fs::remove_dir(dir).is_err() {
+                break;
+            }
+        }
+    }
+}
+
 fn ensure_output_dir(dir: &Path, plugin_name: &str) -> Result<()> {
     std::fs::create_dir_all(dir)
         .map_err(|e| RheoError::io(e, format!("creating output directory for {plugin_name}")))
@@ -3886,6 +3928,55 @@ mod tests {
                 1,
                 "{filler} must be untouched by the narrowed rebuild"
             );
+        }
+    }
+
+    struct WritingPlugin(Arc<Mutex<Option<PathBuf>>>);
+
+    impl FormatPlugin for WritingPlugin {
+        fn name(&self) -> &'static str {
+            "html"
+        }
+        fn compile(&self, ctx: PluginContext<'_>, outputs: &[CastVertebra]) -> Result<()> {
+            *self.0.lock().unwrap() = Some(ctx.output_dir.to_path_buf());
+            for o in outputs {
+                let dest = ctx.output_dir.join(&o.output_path);
+                std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+                std::fs::write(dest, o.bytes.as_slice()).unwrap();
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn run_prunes_pages_of_a_deleted_vertebra() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        for name in ["a", "b", "c"] {
+            write_vertebra(root, name, &format!("= {name}\n"));
+        }
+        let out = Arc::new(Mutex::new(None));
+        let plugin: Box<dyn FormatPlugin> = Box::new(WritingPlugin(out.clone()));
+        let build = Build::prepare(
+            ligaments_project(root, &["a", "b", "c"]),
+            vec![plugin],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("first full build");
+
+        let out_dir = out.lock().unwrap().clone().expect("plugin ran");
+        for page in ["a.html", "b.html", "c.html"] {
+            assert!(out_dir.join(page).exists(), "{page} written");
+        }
+        std::fs::write(out_dir.join("extra.txt"), "keep").unwrap();
+
+        std::fs::remove_file(root.join("content/b.typ")).unwrap();
+        build.run().expect("second full build");
+
+        assert!(!out_dir.join("b.html").exists(), "b.html pruned");
+        for kept in ["a.html", "c.html", "extra.txt"] {
+            assert!(out_dir.join(kept).exists(), "{kept} survives");
         }
     }
 
