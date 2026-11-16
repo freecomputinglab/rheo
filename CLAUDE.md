@@ -38,6 +38,12 @@ See [TESTING.md](TESTING.md) for more test commands and options.
 cargo fmt && cargo clippy -- -D warnings
 ```
 
+**Browser testing is always in Chrome** (`chromium` on this machine), never
+Firefox or whatever the desktop default is. `--open` goes through the
+`webbrowser` crate, which honours `$BROWSER`, so run it as
+`BROWSER=chromium cargo run -- watch <path> --open`; any other check of
+served HTML (screenshots, devtools, headless runs) uses `chromium` too.
+
 ## rheo.toml
 
 ```toml
@@ -95,14 +101,15 @@ releases = "freecomputinglab/rookery"  # <owner>/<repo>, or a URL template
 
 [packages.rheo]                        # overrides the built-in @rheo
 repo = "https://github.com/freecomputinglab/rheo-packages"  # any URL git accepts
-branch = "feat-x"                      # or tag = "...", or rev = "<sha>"
+branch = "dev"                         # or tag = "...", or rev = "<sha>"
 subdir = ""                            # optional path prefix inside the repo
+packages = ["contents-panel"]          # only these; the rest of @rheo stays on releases
 
 [packages.demo]                        # resolves from a directory on disk
 path = "../pkgs"                       # a package's own working tree, read in place
 ```
 
-**`[packages.<namespace>]`** declares where one namespace comes from. Set exactly one of `repo`, `releases` or `path` — switching a project between a release, a branch and a local directory is an explicit edit, not a precedence rule.
+**`[packages.<namespace>]`** declares where one namespace comes from. Set exactly one of `repo`, `releases` or `path` — switching a project between a release, a branch and a local directory is an explicit edit, not a precedence rule. An optional `packages` list limits the table to those package names; every other package in the namespace resolves exactly as if the table were absent.
 
 - `releases` takes an `<owner>/<repo>` shorthand (detected by having no scheme), expanded to GitHub's download base, or a full URL template containing both `{name}` and `{version}` for any other forge. Assets are `<name>-<version>.tar.gz` under the tag `<name>-<version>`.
 - `repo` takes any URL the `git` binary accepts — https, ssh, or a local path. `branch` (default `main`), `tag` and `rev` select the ref; when more than one is set the precedence is `rev`, then `tag`, then `branch`, and the losing keys are warned about rather than silently dropped. `subdir` (default empty) is a path prefix inside the repository, so `@<ns>/<name>:<version>` lives at `<subdir>/<name>/<version>/`.
@@ -137,7 +144,7 @@ rheo assigns each vertebra a canonical label derived from its path relative to t
 
 ## rheo-context
 
-rheo injects a per-vertebra Typst binding `rheo-context()` into every spine file, exposing rheo's view of the project to authored Typst and to packages. It is a zero-arg **function** prepended to each file's source, returning a dictionary composed of this file's own `handle`, a `metadata-of` closure, and the format-global values spread from `sys.inputs.rheo-context`: `#let rheo-context() = (handle: <handle>, metadata-of: rheo-metadata, ..sys.inputs.rheo-context)`. Only the per-file `handle` is baked per vertebra; the shared (potentially large) `spine` is stored once on `sys.inputs`, not duplicated into every file. `sys.inputs` reads need no `#context`, so reading its fields (`rheo-context().handle`, `.spine`, `.spine-flat`, `.target`, `.ext`) does **not** require the `#context` keyword. The function form also lets an author mock it under vanilla Typst.
+rheo injects a per-vertebra Typst binding `rheo-context()` into every spine file, exposing rheo's view of the project to authored Typst and to packages. It is a zero-arg **function** prepended to each file's source, returning a dictionary composed of this file's own `handle`, a `metadata-of` closure, the format-global values spread from `sys.inputs.rheo-context`, and the spine read from `sys.inputs.rheo-spine`: `#let rheo-context() = (handle: <handle>, metadata-of: rheo-metadata, ..sys.inputs.rheo-context, spine: sys.inputs.rheo-spine.get("spine"), spine-flat: sys.inputs.rheo-spine.get("spine-flat"))`. Only the per-file `handle` is baked per vertebra; the shared (potentially large) spine is stored once on `sys.inputs`, not duplicated into every file. `sys.inputs` reads need no `#context`, so reading its fields (`rheo-context().handle`, `.spine`, `.spine-flat`, `.target`, `.ext`) does **not** require the `#context` keyword. The function form also lets an author mock it under vanilla Typst.
 
 Fields (the returned dictionary may gain fields later):
 - `handle` — this file's `:`-separated handle (its ID; the same handle used for the cross-file links above). The only per-file field.
@@ -147,7 +154,7 @@ Fields (the returned dictionary may gain fields later):
 - `target` — the rheo output-format name (`"epub"`/`"html"`/…). Present only for formats that set one; **absent for PDF**, where documents fall back to Typst's native `target()` == `"paged"`.
 - `ext` — the output file extension (`"html"`/`"xhtml"`), gated like `target` (present for html/epub, absent for PDF). The value core reads to build depth-relative cross-vertebra link hrefs.
 
-`spine`/`spine-flat`/`target`/`ext` are format-global (identical across vertebrae), stored once on `sys.inputs.rheo-context`; `rheo-context()` composes them with the per-file `handle` and `metadata-of`.
+`spine`/`spine-flat`/`target`/`ext` are format-global (identical across vertebrae): `target`/`ext` stored once on `sys.inputs.rheo-context`, `spine`/`spine-flat` behind the constant-hash store on `sys.inputs.rheo-spine` (`crates/core/src/keyed_store.rs`), so a spine change does not invalidate everything that captured `sys`; `rheo-context()` composes them with the per-file `handle` and `metadata-of`.
 
 ```typst
 This is #rheo-context().handle of #rheo-context().spine-flat.len() pages.
@@ -163,7 +170,7 @@ This is #rheo-context().handle of #rheo-context().spine-flat.len() pages.
 #show: template.with(ctx: rheo-context())
 ```
 
-**Detecting a rheo build (for a friendly native-Typst error).** rheo also seeds `sys.inputs` with a `rheo-context` key (a plain **data dict**, not a function) carrying the file-independent context (`spine`/`spine-flat`/`target`/`ext`). Because `sys.inputs` is global to the whole bundle compile, it does **not** carry the per-file `handle` — that comes from calling the per-vertebra `rheo-context()`. A package (or author) uses `sys.inputs` to detect a rheo build and turn native-Typst compilation into a friendly message:
+**Detecting a rheo build (for a friendly native-Typst error).** rheo also seeds `sys.inputs` with a `rheo-context` key (a plain **data dict**, not a function) carrying the file-independent context (`target`/`ext`; the spine is on `sys.inputs.rheo-spine`). Because `sys.inputs` is global to the whole bundle compile, it does **not** carry the per-file `handle` — that comes from calling the per-vertebra `rheo-context()`. A package (or author) uses `sys.inputs` to detect a rheo build and turn native-Typst compilation into a friendly message:
 
 ```typst
 #show: template.with(ctx: if "rheo-context" in sys.inputs { rheo-context() } else {
@@ -171,9 +178,9 @@ This is #rheo-context().handle of #rheo-context().spine-flat.len() pages.
 })
 ```
 
-A package needing only the shared spine can read `sys.inputs.rheo-context.spine` directly and never call the per-file `rheo-context()`. `rheo-context` is no longer the only key on `sys.inputs`: a project seeds its own via a `rheo.toml` `[inputs]` table and `--input KEY=VALUE` (values always strings, `rheo-context` itself reserved), which is how a build script parameterises a compile — see `docs/contract.md`'s "Project-supplied `sys.inputs`". (`rheo migrate` rewrites the old bare `rheo-context` binding to the `rheo-context()` call form.)
+A package needing only the shared spine can read `sys.inputs.rheo-spine.get("spine")` (or `"spine-flat"`) directly and never call the per-file `rheo-context()`; to also run on an older rheo it falls back to `sys.inputs.rheo-context.spine` when `rheo-spine` is absent. A project seeds its own `sys.inputs` keys via a `rheo.toml` `[inputs]` table and `--input KEY=VALUE` (values always strings; `rheo-context`, `rheo-spine` and `rheo-ligaments` reserved), which is how a build script parameterises a compile — see `docs/contract.md`'s "Project-supplied `sys.inputs`". (`rheo migrate` rewrites the old bare `rheo-context` binding to the `rheo-context()` call form.)
 
-**Output format.** rheo injects a `target()` polyfill into every file so Typst's own `target()` returns the output format (`"epub"`/`"html"`, or native `"paged"` for PDF), reading it from `sys.inputs.rheo-context.target`. Authored files should detect the format with `target()` (e.g. `target() == "epub"`); it is the only per-file API. The underlying `sys.inputs.rheo-context.target` is the same value for every vertebra but is not in scope where the polyfill isn't (it is global, so reachable via `sys.inputs`). The older `sys.inputs.rheo-target` key has been **removed**.
+**Output format.** rheo injects a `target()` polyfill into every file so Typst's own `target()` returns the output format (`"epub"`/`"html"`, or native `"paged"` for PDF), returning the format directly (the name is baked into the injected `#let target() = "<format>"`, so it captures nothing). Authored files should detect the format with `target()` (e.g. `target() == "epub"`); it is the only per-file API. The `sys.inputs.rheo-context.target` key stays for other readers and is the same value for every vertebra but is not in scope where the polyfill isn't (it is global, so reachable via `sys.inputs`). The older `sys.inputs.rheo-target` key has been **removed**.
 
 **Section-label namespacing is a package concern, not core.** rheo does not rewrite or prefix authored labels; label semantics stay exactly as Typst defines them (two vertebrae defining the same label collide as an ordinary Typst duplicate-label error). Packages such as `@rheo/notebox` use `rheo-context()` to *additively* synthesize globally-unique `<handle:label>` section anchors alongside the author's own labels.
 
@@ -211,7 +218,7 @@ The prelude's own text is inlined verbatim into every vertebra, so its cost is p
 
 The retired `vertebrae` glob-list key (pre-0.5.0) is no longer read; `rheo migrate` converts an old inclusion-filter `vertebrae` list into an equivalent `exclude`.
 
-PDF combines its spine into a single document by default; HTML and EPUB always produce per-page outputs. A `merge` key left in an old `rheo.toml` has no effect and warns on every build; `rheo migrate` reports and removes it.
+PDF combines its spine into a single document by default, named after the spine `title` (`[pdf.spine]`, else `[spine]`; any `/` or `\` becomes `-`) or, when unset, the project directory; HTML and EPUB always produce per-page outputs. A `merge` key left in an old `rheo.toml` has no effect and warns on every build; `rheo migrate` reports and removes it.
 
 ## Marrow-authored derived artifacts
 

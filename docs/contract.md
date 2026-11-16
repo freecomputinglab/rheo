@@ -24,30 +24,64 @@ rheo is pre-1.0 (`0.6.1` at time of writing). Read stability against that:
 
 ## `rheo-context()` / `sys.inputs.rheo-context`
 
-`rheo-context()` is `(handle: <this file's handle>, metadata-of: rheo-metadata, ..sys.inputs.rheo-context)`
-(`crates/core/src/util/typst_source.rs:137-141`, `TypstStmt::ContextBinding`).
-The spread half — everything except `handle` and `metadata-of` — is exactly
-`sys.inputs.rheo-context`, built once per build by
-`VirtualSpine::global_context` (`crates/core/src/reticulate/spine.rs:1046-1086`)
-and detectable directly (no per-file call needed) via `"rheo-context" in
-sys.inputs`. It is the one key rheo itself owns; a project may seed others
-alongside it — see "Project-supplied `sys.inputs`" below — but not this one.
+`rheo-context()` is `(handle: <this file's handle>, metadata-of: rheo-metadata, ..sys.inputs.rheo-context, spine: sys.inputs.rheo-spine.get("spine"), spine-flat: sys.inputs.rheo-spine.get("spine-flat"))`
+(`crates/core/src/synth/typst_source.rs`, `TypstStmt::ContextBinding`).
+The spread half is exactly `sys.inputs.rheo-context`, built once per build by
+`VirtualSpine::global_context` (`crates/core/src/reticulate/spine.rs`) minus
+`spine`/`spine-flat`, and detectable directly (no per-file call needed) via
+`"rheo-context" in sys.inputs`. `spine` and `spine-flat` live on
+`sys.inputs.rheo-spine` instead (see below); the per-file `rheo-context()`
+still carries both. rheo owns `rheo-context`, `rheo-spine` and
+`rheo-ligaments`; a project may seed other keys alongside them — see
+"Project-supplied `sys.inputs`" below.
 
 | Key | On | Type | Always present? | Stability | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `handle` | `rheo-context()` only | `str` | yes | Stable | This file's own `:`-joined handle. The only per-file field; never on `sys.inputs.rheo-context`. |
 | `metadata-of` | `rheo-context()` only | function `(handle) => dict` | yes | Stable | `= rheo-metadata`. Dict field, not a method — call as `(rheo-context().metadata-of)(handle)`. Requires `#context`. |
-| `spine` | both | `array` (recursive node dicts: `title`/`handle`/`path`/`synthesized`/`children`) | yes | Stable | Titles are path-derived only, never a `#set document(title:)` value — see `docs/limitations.md`. `synthesized: true` means `path` is notional — `auto_index` minted the page and there is no such file on disk, so never `read()` it (a group node always carries `synthesized: false`). |
-| `spine-flat` | both | `array` (dicts: `handle`/`path`/`title`/`synthesized`) | yes | Stable | Pre-order, groups excluded. Same path-derived-title caveat. `synthesized: true` means `path` is notional — `auto_index` minted the page and there is no such file on disk, so never `read()` it. |
+| `spine` | `rheo-context()`; `sys.inputs.rheo-spine.get("spine")` | `array` (recursive node dicts: `title`/`handle`/`path`/`synthesized`/`children`) | yes | Stable | Titles are path-derived only, never a `#set document(title:)` value — see `docs/limitations.md`. `synthesized: true` means `path` is notional — `auto_index` minted the page and there is no such file on disk, so never `read()` it (a group node always carries `synthesized: false`). |
+| `spine-flat` | `rheo-context()`; `sys.inputs.rheo-spine.get("spine-flat")` | `array` (dicts: `handle`/`path`/`title`/`synthesized`) | yes | Stable | Pre-order, groups excluded. Same path-derived-title caveat. `synthesized: true` means `path` is notional — `auto_index` minted the page and there is no such file on disk, so never `read()` it. |
 | `rheo-version` | both | `str`, semver (`x.y.z`) | yes | Stable | This build's own rheo version (`env!("CARGO_PKG_VERSION")`); pairs with `[tool.rheo] min_version` below for version negotiation. Verified by `rheo-tests/cases/rheo_context_all_formats/a.typ`. |
 | `target` | both | `str` (`"html"` \| `"epub"`) | **no** — omitted for PDF | Stable | Present for per-page formats only. `target()` (the polyfill, see `CLAUDE.md`) is the per-file-friendly way to read it. |
 | `ext` | both | `str` (`"html"` \| `"xhtml"`) | **no** — omitted for PDF, gated identically to `target` | Stable | `target`/`ext` always appear together or not at all — asserted in `rheo-tests/cases/rheo_context_all_formats/a.typ`. |
-| `reset-footnotes` | both | `bool` | yes | Stable | Per-format `reset_footnotes` toggle (`rheo.toml`, default `true`); read by `typ/rheo.typ`'s page-init, ANDed with the `ext` gate so it only takes effect for per-page formats regardless of its own value. |
+| `reset-footnotes` | both | `bool` | yes | Stable | Per-format `reset_footnotes` toggle (`rheo.toml`, default `true`); also governs per-page table/image/raw figure and equation numbering (custom-`kind` figures excepted); read by `typ/rheo.typ`'s page-init, ANDed with the `ext` gate so it only takes effect for per-page formats regardless of its own value. |
 | `title-overrides` | both | `array` of `(handle: str, title: str)` dicts | yes (usually `()`) | **Internal** | Feeds `rheo-title-override`/the metadata beacon fallback for the gated `--metadata-two-pass` second compile (`crates/core/src/build.rs:355-401`). Empty on an ordinary build. Not a data source for packages — read `metadata-of`/`rheo-metadata` instead, which already fold this in. |
 
 Everything in this table not marked Internal is safe to read straight off
-`sys.inputs.rheo-context` with no `#context` — only `metadata-of`/`rheo-metadata`
+`sys.inputs` with no `#context` — only `metadata-of`/`rheo-metadata`
 need it (they call `query(...)`).
+
+### `sys.inputs.rheo-spine`
+
+`spine` and `spine-flat` are NOT on `sys.inputs.rheo-context`. They sit behind
+an opaque store on the reserved `sys.inputs.rheo-spine` key
+(`RESERVED_SPINE_INPUT_KEY`, `crates/core/src/config/mod.rs`;
+`crates/core/src/keyed_store.rs`, the same store type as `rheo-ligaments`),
+present on every compile, and are read with its one method:
+
+```typst
+sys.inputs.rheo-spine.get("spine")       // the tree
+sys.inputs.rheo-spine.get("spine-flat")  // the flat pre-order list
+```
+
+`get(key)` returns that key's value (an empty array for a key the store does
+not hold), or `none` when the compile has no `rheo-context` at all. The store
+hashes as a constant and `get` records a dependency on the one key it read, so
+a spine change (a page added, removed or renamed) re-runs only the Typst work
+that read the spine, rather than everything that captured `sys`. Rejected
+from `rheo.toml [inputs]` and `--input` like `rheo-context`. Stable.
+
+A package that must also run on an older rheo reads the store when present
+and falls back to `rheo-context`:
+
+```typst
+#let spine-flat() = {
+  let store = sys.inputs.at("rheo-spine", default: none)
+  if store != none { store.get("spine-flat") } else { sys.inputs.rheo-context.spine-flat }
+}
+```
+
+A reader taking `ctx: rheo-context()` needs no change.
 
 ## Directory-index helper — `rheo-index()` (`crates/core/src/typ/rheo.typ`)
 
@@ -83,7 +117,7 @@ Typst through `WorldSpec::user_inputs` → `build_inputs`
 | --- | --- | --- |
 | Value type | `str`, always. No coercion in either source: a non-string in `[inputs]` is a config error, and `--input` has nothing but strings to give. | Stable |
 | Key namespace | Flat and bundle-global, shared by every package in the project. | Stable |
-| Reserved keys | `rheo-context` only. Rejected by both sources, and ignored a third time in `build_inputs` so a library caller constructing `WorldSpec` directly cannot get past it either. | Stable |
+| Reserved keys | `rheo-context`, `rheo-spine`, `rheo-ligaments`. Rejected by both sources, and ignored a third time in `build_inputs` so a library caller constructing `WorldSpec` directly cannot get past it either. | Stable |
 | Absent key | Not present in the dict — read with `sys.inputs.at("key", default: ..)`. There is no empty-string stand-in. | Stable |
 
 PREFIX A PACKAGE-READ KEY WITH THE PACKAGE NAME — `rookery-exclude`, not
@@ -123,12 +157,225 @@ the vertebra's own `#set document(...)` is *omitted* from the dict entirely
 is omitted too, not returned as `()`. Combined PDF emits no beacon at all —
 `rheo-metadata(handle)` returns `(:)` there, unconditionally.
 
+## Ligaments
+
+A package records, per vertebra, the keys it ATTACHES (each paired with an
+opaque Typst value) and the keys it BINDS to — the **ligaments**, harvested
+Rust-side after every bundle compile (`crates/core/src/build.rs`,
+`harvest_ligaments`). Joining one page's binds against another's attaches
+gives a dependency edge between them (A depends on B when A binds to a key B
+attaches). rheo never interprets a key — a package (rookery, say) decides
+that `"tag:post"` or `"backlinks:etal"` is meaningful; rheo only harvests the
+pairs. A key may be attached by more than one vertebra, which is how a
+package expresses a one-to-many relation (tags, backlinks).
+
+Two fixed-shape `#metadata` labels carry the protocol, under the reserved
+`rheo-ligament:` prefix (`RESERVED_LIGAMENT_LABEL_PREFIX`,
+`crates/core/src/util/constants.rs`):
+
+```typst
+#metadata((page: "<handle>", key: "<key>", value: <any>)) <rheo-ligament:attach>
+#metadata((page: "<handle>", key: "<key>")) <rheo-ligament:bind>
+```
+
+A package emits these two shapes directly: package code cannot import
+rheo's virtual `/typ/rheo.typ`, so it reads its page from
+`state("rheo-handle").get()` inside a `context` and writes the `#metadata`
+itself. Code inside the project has two convenience functions in
+`crates/core/src/typ/rheo.typ`, visible without an import at bundle root
+(marrow scope) and from a vertebra after
+`#import "/typ/rheo.typ": rheo-ligament-attach, rheo-ligament-bind`:
+
+| Helper | Signature | Notes |
+| --- | --- | --- |
+| `rheo-ligament-attach` | `(key, value, page: none) => content` | `page` defaults to `state("rheo-handle").get()` (the calling vertebra's own handle); pass `page:` explicitly from marrow, which runs outside any vertebra's own context. |
+| `rheo-ligament-bind` | `(key, page: none) => content` | Same `page` default/override as `rheo-ligament-attach`. |
+| `rheo-metadata-bind` | `(handle, page: none) => content` | `rheo-ligament-bind("rheo-meta:" + handle, page: page)`. |
+
+A bind key ending in `*` is a prefix bind: it matches every changed key that starts with the text before the `*`, including keys that did not exist at the page's last compile (a new page, an entry moved to another file). Any other bind matches exactly. A page reading one handle's metadata (`metadata-of`, `rheo-metadata`) places `rheo-metadata-bind(h)`; a page reading every handle's places `rheo-ligament-bind("rheo-meta:*")`.
+
+An authored label on the `rheo-ligament:` prefix is a hard build error, the
+same as the `rheo-meta:` beacon namespace above — see "Reserved `rheo-meta:`
+label namespace" below, which applies identically to this prefix.
+
+The harvest drops — never hard-errors on — a node whose `page`/`key` is
+missing or non-string, or whose `page` doesn't name a vertebra in the current
+spine; one warning covers a whole harvest run, not each dropped node. The
+harvested ligaments narrow which vertebrae recompile under `watch`
+(`Build::narrow_one_plugin`) and are fed back into that later compile, below.
+
+### Feeding ligaments back through `sys.inputs`
+
+A previous compile's harvest can be fed into a later, narrower one (one that
+skips re-evaluating every vertebra) so a cross-vertebra read can still be
+answered even when the vertebra that would normally answer it did not run
+this time. The caller supplies a `crate::build::Ligaments` via
+`WorldSpec::ligaments` (`crates/core/src/world.rs`); `build_inputs` seeds it
+onto the reserved `sys.inputs.rheo-ligaments` key
+(`RESERVED_LIGAMENTS_INPUT_KEY`, `crates/core/src/config/mod.rs`) as an
+**opaque native store value** (`crates/core/src/keyed_store.rs`) —
+never JSON, since `json.encode`/`json(bytes(..))` silently turn a `datetime`
+value into its `repr()` string form, which would corrupt any attached value of
+that type. The value is present on EVERY compile, so the library hashes the
+same across full and narrowed ones; a compile with no ligaments to feed (a
+full build) gets an inactive one. `rheo-ligaments` is rejected from
+`rheo.toml [inputs]` and `--input` the same way, and for the same reason, as
+`rheo-context`. A narrowed round feeds the whole cached harvest, the
+pages it compiles included, so the fed value does not depend on which pages
+compile. A reader must therefore treat a compiling page's own fed entries as
+possibly stale: prefer live data, and drop the compiling page's fed entries
+that it no longer produces.
+
+Its contents are reachable only through one method, `get(key)`, which returns
+the array of `(page, value)` pairs attached under `key` — possibly empty,
+when ligaments were supplied but nothing was attached — or `none` when the
+compile has no ligaments (a full build). That `none`-vs-empty distinction is
+load-bearing. Going through `get` is what limits invalidation: it records a
+dependency on that one key, so a change to another key reuses the Typst work
+that never read it. The value hashes as a constant for the same reason.
+
+```typst
+sys.inputs.at("rheo-ligaments", default: none).get("<key>")
+```
+
+**Project code** reads it with `rheo-ligament-get(key)`
+(`crates/core/src/typ/rheo.typ`, visible the same way
+`rheo-ligament-attach`/`rheo-ligament-bind` are), which wraps exactly that.
+**Package code** cannot import `rheo.typ`, so it calls `.get(key)` on the
+`sys.inputs` value directly. Bound keys are NOT part of the value; they stay
+Rust-side, read off `Build::ligaments()` by `Build::narrow_one_plugin`.
+
+rheo dogfoods this for its own metadata beacon: each vertebra's beacon is
+also emitted as a `rheo-meta:<handle>` ligament attach (alongside the beacon
+itself — see `TypstStmt::MetadataBeacon`,
+`crates/core/src/synth/typst_source.rs`), with the beacon's own dict as the
+value. `rheo-metadata(handle)`'s underlying `rheo-metadata-impl`
+(`crates/core/src/typ/metadata.typ`) falls back to this ligament when the
+live `query(label("rheo-meta:" + handle))` finds nothing — the vertebra
+absent from this narrower compile — instead of returning `(:)`. An ordinary
+full compile is unaffected either way, since the live query always succeeds
+there.
+
+`rheo-link-rule`'s cross-vertebra href resolution needs none of this: it
+already resolves purely from `_rheo-handles()` (`sys.inputs.rheo-spine.get("spine-flat")`,
+a static list present even on a narrowed compile), so it builds the right
+href for a vertebra outside the current compile with no ligaments involved.
+
+### `[watch] narrow` — narrowed recompiles under `rheo watch`
+
+`rheo.toml`'s `[watch] narrow` (`crates/core/src/config/mod.rs`, `WatchConfig`)
+opts a project into `Build::rebuild`'s narrowed-compile path: an edit to one
+spine vertebra under `rheo watch` recompiles only that vertebra, plus any
+other vertebra whose bound keys were invalidated by what changed, instead of
+the whole bundle — the cached ligaments from the last compile are fed back in
+(as above) so cross-vertebra reads still resolve. **`false` by default.**
+
+This is only safe for a project whose packages read cross-vertebra data
+*exclusively* through ligaments (`rheo-ligament-attach`/`rheo-ligament-bind`/
+`rheo-ligament-get`, or the raw `sys.inputs.rheo-ligaments` shape package code
+reads). A package that instead queries the live bundle directly — e.g. a
+Typst `query()` over every vertebra's own introspection state, rather than
+reading what another vertebra attached — sees only the narrowed subset on a
+narrowed compile, and silently produces a page missing cross-vertebra content
+it would otherwise have included. rheo cannot detect this from the outside,
+which is why narrowing is opt-in rather than on by default: turn it on only
+once every package the project uses is known to route its cross-vertebra
+reads through ligaments.
+
+```toml
+[watch]
+narrow = true
+```
+
+Disabled (absent, or `narrow = false`), every `rheo watch` rebuild compiles
+the whole bundle, exactly as before this mechanism existed.
+
+`narrow = "auto"` narrows only the edits a narrowed rebuild is likely to make
+faster. A narrowed round whose ligament feed changed misses Typst's memo
+cache and costs about as much as a full rebuild, and every page binding a
+changed key adds another such round. So under `"auto"`, an edited page whose
+attached keys no other page binds narrows (one round at worst); one whose
+attached keys some page binds narrows only once its previous edit is known
+to have left its attaches unchanged, and otherwise rebuilds in full, logging
+`full rebuild: auto: <handle> attaches keys <n> page(s) bind, and ...`. Each
+rebuild records, for every edited page, whether its attaches changed — a
+full rebuild harvests ligaments too, so a page sent to full still learns
+that its edits stopped changing them. That history lives for one watch
+session and resets when `rheo.toml` reloads. `"auto"` carries the same
+correctness caveat as `true`.
+
+Known limit: the rule assumes a changed ligament feed makes a round cold.
+Once feeding ligaments stops invalidating Typst's cache, attach-changing
+rounds become cheap and `"auto"` turns too conservative; it should be
+revisited then.
+
+Under `rheo watch --open`, a narrowed rebuild does not recompile the bundle
+for the dev server; the server serves the rewritten pages from the build
+directory.
+
+### Minted pages under narrowed rebuilds — `rheo-document(owner:)`
+
+A narrowed rebuild compiles only some vertebrae, so a page that marrow mints
+(`rheo-document`, `crates/core/src/typ/rheo.typ`) is emitted only when the
+data it is minted from is in that compile. A page missing from a narrowed
+compile's output therefore cannot be told apart from a page that belongs to a
+vertebra the rebuild did not compile, and rheo leaves it on disk. A page can
+close that gap by naming its owner:
+
+```typst
+#rheo-document("ideas/" + slug + ".html", owner: rec.origin)[...]
+```
+
+`owner` is a vertebra handle. It emits
+`#metadata((path: path, owner: owner)) <rheo-mint:owner>` inside the minted
+document, which renders nothing. rheo harvests it after every compile and keeps
+path → owner per plugin for the watch session. At the end of a narrowed
+rebuild, rheo deletes every page whose owner the rebuild recompiled and that
+no round of the rebuild emitted. An owner that is not a vertebra handle is
+ignored, which leaves the page unowned.
+
+**The contract:** `owner: h` promises that every compile which compiles `h`
+emits this page for as long as it should exist. It is right for a page minted
+from `h`'s own live data, such as rookery's note pages, which come from the
+notes of the vertebrae this compile saw. It is wrong for a page minted from fed
+(merged) data, such as an index over every vertebra's ligaments: that page
+can stay correct on a compile that does not mint it, and with an owner it
+would be deleted. Leave such a page unowned. An unowned page, or one owned
+by a vertebra the rebuild did not recompile, is never deleted by a narrowed
+rebuild, so a wrong or missing owner leaves a stale page behind rather than
+losing a live one.
+
+Pages a narrowed rebuild writes are also recorded for the next full build,
+which deletes any of them that it no longer emits, owned or not. Neither
+record outlives the watch session, and a one-shot `rheo compile` deletes
+nothing. Under `rheo watch --open`, the dev server forgets a deleted page so
+it stops serving it from memory.
+
+### `[watch] cache_size` — memo cache retention
+
+`rheo.toml`'s `[watch] cache_size` (`crates/core/src/config/mod.rs`, `WatchConfig`)
+controls how many generations of Typst's memo cache are kept between watch rebuilds.
+**Default 10**, which keeps cache entries hit within the last ten rebuilds to make warm
+rebuilds faster. Smaller values flatten memory usage at the cost of slower rebuilds.
+Measured on a 1,800-page project: a warm rebuild was ~9.5s against a ~31.5s cold one,
+while the kept cache grew RSS by ~2 GB per rebuild until it levelled off.
+
+Set `cache_size = 0` to empty the cache after every rebuild in a memory-constrained
+session:
+
+```toml
+[watch]
+cache_size = 0
+```
+
+One-shot `rheo compile` never evicts.
+
 ## Metadata helpers (`crates/core/src/typ/metadata.typ`)
 
 | Helper | Signature | Scope | Notes |
 | --- | --- | --- | --- |
 | `rheo-metadata` | `(handle) => dict` | every vertebra (its own prelude) **and** marrow root | Requires `#context`. Same beacon-reading logic in both places — the marrow-root copy re-imports the identical `MetadataHelper` statement (`crates/core/src/world.rs:447`), so the two sites cannot drift apart. |
-| `rheo-metadata-all` | `() => array` | marrow root **only** | `sys.inputs.rheo-context.spine-flat.map(e => (handle: e.handle, path: e.path, ..rheo-metadata(e.handle)))` — one entry per `spine-flat` vertebra, each `(handle, path, ..resolved fields)`. Never injected per-vertebra (`crates/core/src/world.rs:448`). |
+| `rheo-metadata-all` | `() => array` | marrow root **only** | `sys.inputs.rheo-spine.get("spine-flat").map(e => (handle: e.handle, path: e.path, ..rheo-metadata(e.handle)))` — one entry per `spine-flat` vertebra, each `(handle, path, ..resolved fields)`. Never injected per-vertebra (`crates/core/src/world.rs:448`). |
 | `rheo-handle-title` | `(handle, fallback) => content` | marrow root **only** | Live title lookup: the harvested title-override if `--metadata-two-pass` flagged one, else the beacon's current `document.title`, else `fallback`. This is what every `@handle` cross-reference anchor calls internally (`TypstStmt::HandleAnchor`); a package building its own nav/index over `spine-flat` can call it directly instead of re-deriving the same fallback logic. |
 
 `rheo-metadata`/`rheo-metadata-all`/`rheo-handle-title` are injected into the
@@ -259,6 +506,8 @@ Fully covered in `CLAUDE.md`'s `## Cross-file references` — canonical
 and the escape-collision hard error. Verified unchanged against
 `crates/core/src/reticulate/spine.rs` (canonical/escape assignment around
 line 910; escape-collision error around line 923).
+
+In HTML output every page carries an empty `<div id="<handle>">` (and one per `<handle.typ>` alias) at the top of `<body>`, so `page.html#<handle>` is a stable fragment.
 
 ## Reserved `rheo-meta:` label namespace
 

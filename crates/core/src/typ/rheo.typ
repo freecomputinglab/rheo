@@ -1,7 +1,7 @@
 // The rheo output format is surfaced through Typst's own `target()`: rheo
 // injects a `target()` polyfill (into every file) that returns
-// "epub"/"html"/"paged" from `sys.inputs.rheo-context.target`, falling back to
-// `std.target()` under vanilla Typst. Detect the format with `target() == "epub"`
+// the output format as a literal ("epub"/"html"; PDF keeps Typst's native
+// "paged"), falling back to `std.target()` under vanilla Typst. Detect the format with `target() == "epub"`
 // etc. There is no `rheo-target()` helper — use `target()` directly.
 
 #let rheo_template(doc) = context {
@@ -14,8 +14,14 @@
 // Synthesized cross-vertebra handle anchors use labeled #figure elements.
 // #metadata and bare document labels are not referenceable in Typst 0.15 —
 // #figure is the only element that supports cross-document @handle resolution.
-// Hide them so they render nothing, and fix @ref display to the vertebra title.
-#show figure.where(kind: "rheo-handle"): none
+// HTML emits an empty div with a literal id: typst only anchors link targets,
+// so the id must exist and stay stable whichever links a compile contains.
+// Other formats render nothing; fix @ref display to the vertebra title.
+#show figure.where(kind: "rheo-handle"): it => {
+  if target() == "html" and it.has("label") {
+    html.elem("div", attrs: (id: str(it.label)))
+  }
+}
 #show ref: it => {
   if it.element != none and it.element.func() == figure and it.element.kind == "rheo-handle" {
     link(it.target, it.element.body)
@@ -29,9 +35,10 @@
 // membership answers what a `query` for that figure used to — read off
 // `sys.inputs`, which needs no `#context`.
 #let _rheo-handles() = {
-  let c = sys.inputs.at("rheo-context", default: none)
-  if c == none { return () }
-  c.at("spine-flat", default: ()).map(v => v.at("handle", default: ""))
+  let s = sys.inputs.at("rheo-spine", default: none)
+  let flat = if s == none { none } else { s.get("spine-flat") }
+  if flat == none { return () }
+  flat.map(v => v.at("handle", default: ""))
 }
 
 // Rewrites #link(<handle>) cross-vertebra links into per-format hrefs, as a
@@ -79,16 +86,68 @@
 // page's handle to state("rheo-handle") for any PACKAGE that needs it (the link
 // rule above takes the handle as an argument instead, and reads no state),
 // and — for per-page output (html/epub, where rheo-context carries an `ext`) —
-// resets the footnote counter so each page numbers its footnotes from 1 —
-// unless the format's `reset_footnotes` toggle is set false. The combined PDF
-// has no `ext`, so its footnotes stay continuous across the book regardless.
+// resets the footnote counter, the three built-in figure kinds (table, image,
+// raw) and the equation counter so each page numbers them from 1 (a narrowed
+// rebuild then numbers exactly as a full build) — unless the format's
+// `reset_footnotes` toggle is set false. The combined PDF has no `ext`, so its
+// numbering stays continuous across the book regardless. Figures with a CUSTOM
+// `kind:` (string or function) are NOT reset: the kinds are not knowable here.
 #let rheo-page-init(handle) = {
   state("rheo-handle").update(handle)
   let per-page = sys.inputs.rheo-context.at("ext", default: none) != none
   let reset = sys.inputs.rheo-context.at("reset-footnotes", default: true)
   if per-page and reset {
     counter(footnote).update(0)
+    counter(figure.where(kind: table)).update(0)
+    counter(figure.where(kind: image)).update(0)
+    counter(figure.where(kind: raw)).update(0)
+    counter(math.equation).update(0)
   }
+}
+
+// Ligaments protocol: a package calls these to record the keys a page
+// attaches and the keys it binds to, under the reserved `rheo-ligament:`
+// label prefix (RESERVED_LIGAMENT_LABEL_PREFIX,
+// crates/core/src/util/constants.rs), harvested Rust-side after every
+// compile (crates/core/src/build.rs) into the dependency graph documented in
+// docs/contract.md's "Ligaments" section. rheo itself never interprets a
+// key — that's for whichever package minted it. `page` defaults to the
+// calling vertebra's own handle (state("rheo-handle"), set by
+// rheo-page-init above), read via #context, but takes an explicit `page:`
+// override for marrow code, which runs outside any vertebra's own context
+// and so has no state to read.
+//
+// A bind `key` ending in `*` is a prefix bind: it matches every changed key
+// starting with the text before the `*`, so it also catches keys that did not
+// exist at the page's last compile.
+#let rheo-ligament-attach(key, value, page: none) = context [
+  #metadata((page: if page != none { page } else { state("rheo-handle").get() }, key: key, value: value)) <rheo-ligament:attach>
+]
+
+#let rheo-ligament-bind(key, page: none) = context [
+  #metadata((page: if page != none { page } else { state("rheo-handle").get() }, key: key)) <rheo-ligament:bind>
+]
+
+// Binds the `rheo-meta:<handle>` attach that every page makes of its own
+// metadata; place it on any page reading that handle's metadata.
+#let rheo-metadata-bind(handle, page: none) = rheo-ligament-bind("rheo-meta:" + handle, page: page)
+
+// Reads a previous compile's harvested ligaments back from
+// `sys.inputs.rheo-ligaments` — the feed-back half of the protocol above,
+// fed by `crates/core/src/world.rs`'s `build_inputs` (see docs/contract.md's
+// "Ligaments" section). Project code only: package code cannot import this
+// file, so a package reads `sys.inputs.at("rheo-ligaments", default: none)`
+// itself and calls `.get(key)` on it — the value is opaque, and `.get` is what
+// records a dependency on that one key.
+//
+// Returns `none` when this compile carries no ligaments (a full build), vs.
+// an empty array when ligaments were supplied but `key` was never attached.
+// That distinction is load-bearing: `none` means "fall back to a live
+// query", an empty array means "ligaments answered and found nothing".
+#let rheo-ligament-get(key) = {
+  let ligaments = sys.inputs.at("rheo-ligaments", default: none)
+  if ligaments == none { return none }
+  ligaments.get(key)
 }
 
 // Wraps document() with the per-document init a spine vertebra gets for free,
@@ -96,11 +155,19 @@
 // rule per #document and knows nothing about a page minted here. The #show sits
 // at the top of the same markup block as #body, which is what scopes it to the
 // rest of that block. See docs/link-rule.md.
-#let rheo-document(path, handle: "", title: [], format: "html", body) = {
+//
+// `owner`, when not none, names the vertebra handle whose compile mints this
+// page. It emits a `<rheo-mint:owner>` metadata (rendering nothing) that lets a
+// narrowed `rheo watch` rebuild delete the page once that vertebra recompiles
+// without minting it. Setting it promises that every compile which compiles
+// `owner` emits this page for as long as it should exist — so never set it on a
+// page minted from fed (merged) data. See docs/contract.md.
+#let rheo-document(path, handle: "", title: [], format: "html", owner: none, body) = {
   document(path, format: format, title: title)[
     #rheo-page-init(handle)
     #show link: rheo-link-rule(handle)
     #body
+    #if owner != none [#metadata((path: path, owner: owner)) <rheo-mint:owner>]
   ]
 }
 
@@ -122,7 +189,7 @@
 // the call site — which also makes this work under a SingleCombined (PDF)
 // layout, where every vertebra shares one #document and state("rheo-handle")
 // is meaningless. Reads `spine` — the full tree, INCLUDING group nodes,
-// unlike spine-flat — off sys.inputs since this function is imported from
+// unlike spine-flat — off sys.inputs.rheo-spine since this function is imported from
 // this module (see IndexHelper) rather than defined per vertebra, so it
 // cannot capture a vertebra-local rheo-context() binding. A project
 // overrides the default by binding its own #let rheo-index() in [spine]
@@ -131,7 +198,7 @@
 #let rheo-index-at(handle) = {
   let ctx = sys.inputs.rheo-context
   let ext = ctx.at("ext", default: none)
-  let node = _rheo-index-find(ctx.spine, handle)
+  let node = _rheo-index-find(sys.inputs.rheo-spine.get("spine"), handle)
   let children = if node == none { () } else { node.children }
   list(..children.map(child => {
     if child.handle == none {

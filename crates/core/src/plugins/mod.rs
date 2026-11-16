@@ -30,6 +30,9 @@ pub trait ServerHandle: Send + Sync {
     fn reload(&self, kind: ReloadKind);
     /// Push a new in-memory file system to the server (no-op by default).
     fn update_virtual_fs(&self, _vfs: typst_bundle::VirtualFs) {}
+    /// Drop these relative paths from the in-memory file system so the
+    /// server serves them from disk instead (no-op by default).
+    fn forget_virtual_paths(&self, _paths: &[String]) {}
 }
 
 /// Handle returned by FormatPlugin::open() for managing the opened resource
@@ -393,6 +396,12 @@ pub trait FormatPlugin: Send + Sync {
         SpineLayoutKind::OnePerVertebra
     }
 
+    /// Whether this plugin assembles one artifact from every vertebra's output at
+    /// once, so it cannot be handed only the vertebrae a narrowed rebuild recompiled.
+    fn assembles_whole_spine(&self) -> bool {
+        false
+    }
+
     /// Typst export target emitted as the `format:` argument of `#document(…)`.
     ///
     /// Distinct from `extension()` (output filename / `@ref` anchor). Override when
@@ -497,11 +506,18 @@ pub(crate) fn open_all_files_in_folder(folder: PathBuf, ext: &str) -> crate::Res
     Ok(())
 }
 
+/// File stem of a combined output: the spine `title` (path separators
+/// replaced so it cannot leave the output dir), else the project name.
+fn combined_stem(title: Option<&str>, project_name: &str) -> String {
+    title.map_or_else(|| project_name.to_string(), |t| t.replace(['/', '\\'], "-"))
+}
+
 /// Build a [`SpineLayout`] from a [`SpineLayoutKind`] and project context.
 pub(crate) fn spine_layout_for(
     kind: SpineLayoutKind,
     plugin: &dyn FormatPlugin,
     project_name: &str,
+    title: Option<&str>,
 ) -> SpineLayout {
     let format = plugin.typst_format().as_str().to_string();
     match kind {
@@ -510,8 +526,32 @@ pub(crate) fn spine_layout_for(
             format,
         },
         SpineLayoutKind::SingleCombined => SpineLayout::SingleCombined {
-            output_name: format!("{}.{}", project_name, plugin.extension()),
+            output_name: format!(
+                "{}.{}",
+                combined_stem(title, project_name),
+                plugin.extension()
+            ),
             format,
         },
+    }
+}
+
+#[cfg(test)]
+mod combined_stem_tests {
+    use super::combined_stem;
+
+    #[test]
+    fn title_names_the_file() {
+        assert_eq!(combined_stem(Some("My_Book"), "proj"), "My_Book");
+    }
+
+    #[test]
+    fn unset_title_falls_back_to_project_name() {
+        assert_eq!(combined_stem(None, "proj"), "proj");
+    }
+
+    #[test]
+    fn separators_cannot_escape_the_output_dir() {
+        assert_eq!(combined_stem(Some("../a\\b/c"), "proj"), "..-a-b-c");
     }
 }

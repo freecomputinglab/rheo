@@ -6,7 +6,7 @@ use crate::{
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
@@ -114,18 +114,107 @@ const DEBOUNCE_POLL: Duration = Duration::from_millis(50);
 pub enum WatchEvent {
     /// Source files or assets changed, trigger recompilation. `assets` is true
     /// when a changed path was one the browser caches under an unchanged URL.
-    FilesChanged { assets: bool },
+    /// `paths` is every relevant path in this debounced batch (`Content` and
+    /// `Asset` alike) — a narrowed rebuild (`Build::rebuild`) reads it to
+    /// decide whether the batch is exactly spine vertebra sources.
+    FilesChanged { assets: bool, paths: Vec<PathBuf> },
     /// Config file changed, need to reload ProjectConfig
     ConfigChanged,
 }
 
+/// A registered filesystem watcher whose events queue on `rx` until
+/// [`watch_project`] drains them. Started before the initial build, so an edit
+/// made while that build runs is rebuilt like any other, not lost.
+pub struct ProjectWatcher {
+    watcher: RecommendedWatcher,
+    rx: Receiver<notify::Result<notify::Event>>,
+    watched_roots: Vec<PathBuf>,
+}
+
+impl ProjectWatcher {
+    /// Register watches for:
+    /// - All .typ files in the project
+    /// - Assets declared by the format plugins or imported packages (any filename,
+    ///   any subdirectory, any extension — see [`WatchAssetSpec`])
+    /// - Project configuration (rheo.toml)
+    pub fn start(project: &ProjectConfig, asset_spec: &WatchAssetSpec) -> Result<Self> {
+        let (tx, rx) = channel();
+
+        // Create watcher
+        let mut watcher = RecommendedWatcher::new(
+            tx,
+            notify::Config::default().with_poll_interval(Duration::from_millis(500)),
+        )
+        .map_err(|e| crate::RheoError::file_watcher(e, "creating file watcher"))?;
+
+        // Watch based on project mode
+        match project.mode {
+            ProjectMode::SingleFile => {
+                // Watch only the single file's parent directory (non-recursive)
+                let file_to_watch = &project.typ_files[0];
+                let watch_dir = file_to_watch.parent().ok_or_else(|| {
+                    crate::RheoError::project_config("file has no parent directory")
+                })?;
+
+                info!(file = %file_to_watch.display(), "watching single file");
+                watcher
+                    .watch(watch_dir, RecursiveMode::NonRecursive)
+                    .map_err(|e| crate::RheoError::file_watcher(e, "watching file directory"))?;
+            }
+            ProjectMode::Directory => {
+                // Existing behavior: recursive watch of project root
+                info!(path = %project.root.display(), "watching project directory");
+                watcher
+                    .watch(&project.root, RecursiveMode::Recursive)
+                    .map_err(|e| crate::RheoError::file_watcher(e, "watching project directory"))?;
+            }
+        }
+
+        // Watch each package source root (outside the project tree) so edits to
+        // package-declared assets also trigger rebuilds. A failure here is not fatal:
+        // the package cache may be read-only or large, and the rest of the watch
+        // should still work.
+        let mut watched_roots: Vec<PathBuf> = Vec::new();
+        for root in asset_spec.package_roots() {
+            match watcher.watch(root, RecursiveMode::Recursive) {
+                Ok(()) => {
+                    debug!(path = %root.display(), "watching package asset root");
+                    watched_roots.push(root.to_path_buf());
+                }
+                Err(e) => {
+                    warn!(error = %e, path = %root.display(), "failed to watch package asset root")
+                }
+            }
+        }
+
+        // The loaded config file may live outside the primary watched tree — in an
+        // ancestor directory (single-file walk-up) or at a custom `--config` path.
+        // Watch its parent directory (non-recursive) when it is not already covered,
+        // so config edits are detected regardless of mode or filename.
+        let primary_watch_dir = match project.mode {
+            ProjectMode::SingleFile => project.typ_files[0].parent(),
+            ProjectMode::Directory => Some(project.root.as_path()),
+        };
+        if let Some(config_parent) = project.config_path.as_deref().and_then(|p| p.parent())
+            && primary_watch_dir.is_none_or(|primary| !config_parent.starts_with(primary))
+        {
+            match watcher.watch(config_parent, RecursiveMode::NonRecursive) {
+                Ok(()) => debug!(path = %config_parent.display(), "watching config directory"),
+                Err(e) => {
+                    warn!(error = %e, path = %config_parent.display(), "failed to watch config directory")
+                }
+            }
+        }
+
+        Ok(Self {
+            watcher,
+            rx,
+            watched_roots,
+        })
+    }
+}
+
 /// Watch project files for changes and trigger recompilation
-///
-/// This function sets up file system watching for:
-/// - All .typ files in the project
-/// - Assets declared by the format plugins or imported packages (any filename,
-///   any subdirectory, any extension — see [`WatchAssetSpec`])
-/// - Project configuration (rheo.toml)
 ///
 /// Changes are debounced on TWO deadlines, and both are needed: a rebuild fires
 /// once the filesystem has been quiet for [`DEBOUNCE_QUIET`], or once
@@ -134,101 +223,40 @@ pub enum WatchEvent {
 /// produces; the ceiling keeps a steady stream of writes from postponing the
 /// rebuild forever.
 ///
-/// The asset spec is captured once at startup. A `rheo.toml` change triggers a
-/// full reload but does not re-derive the spec, so a project that adds a brand
-/// new asset or package mid-session may need the watch to be restarted before
-/// edits to those new files are picked up.
+/// The asset spec is replaced whenever the callback returns one, which
+/// `rheo watch` does on every config reload. The watcher then registers new
+/// package roots and drops stale ones, so an asset or package added to
+/// `rheo.toml` mid-session is picked up without a restart.
 ///
 /// # Arguments
+/// * `watcher` - Started by [`ProjectWatcher::start`]; its queued events run first
 /// * `project` - Project configuration with source files
 /// * `build_dir` - Canonicalized build directory path to exclude from watching
 /// * `asset_spec` - Resolved asset sources / package roots to treat as relevant
-/// * `callback` - Function called when files change, receives WatchEvent
+/// * `callback` - Function called when files change, receives WatchEvent.
+///   `Ok(Some(spec))` replaces the asset spec; `Ok(None)` leaves it unchanged
 ///
 /// # Returns
 /// * `Ok(())` when watching stops gracefully (e.g., Ctrl+C)
-/// * `Err` if watcher setup fails
 pub fn watch_project<F>(
+    watcher: ProjectWatcher,
     project: &ProjectConfig,
     build_dir: &Path,
-    asset_spec: &WatchAssetSpec,
+    mut asset_spec: WatchAssetSpec,
     mut callback: F,
 ) -> Result<()>
 where
-    F: FnMut(WatchEvent) -> Result<()>,
+    F: FnMut(WatchEvent) -> Result<Option<WatchAssetSpec>>,
 {
-    let (tx, rx) = channel();
+    let ProjectWatcher {
+        mut watcher,
+        rx,
+        mut watched_roots,
+    } = watcher;
 
-    // Create watcher
-    let mut watcher = RecommendedWatcher::new(
-        tx.clone(),
-        notify::Config::default().with_poll_interval(Duration::from_millis(500)),
-    )
-    .map_err(|e| crate::RheoError::file_watcher(e, "creating file watcher"))?;
-
-    // Watch based on project mode
-    match project.mode {
-        ProjectMode::SingleFile => {
-            // Watch only the single file's parent directory (non-recursive)
-            let file_to_watch = &project.typ_files[0];
-            let watch_dir = file_to_watch
-                .parent()
-                .ok_or_else(|| crate::RheoError::project_config("file has no parent directory"))?;
-
-            info!(file = %file_to_watch.display(), "watching single file");
-            watcher
-                .watch(watch_dir, RecursiveMode::NonRecursive)
-                .map_err(|e| crate::RheoError::file_watcher(e, "watching file directory"))?;
-        }
-        ProjectMode::Directory => {
-            // Existing behavior: recursive watch of project root
-            info!(path = %project.root.display(), "watching project directory");
-            watcher
-                .watch(&project.root, RecursiveMode::Recursive)
-                .map_err(|e| crate::RheoError::file_watcher(e, "watching project directory"))?;
-        }
-    }
-
-    // Watch each package source root (outside the project tree) so edits to
-    // package-declared assets also trigger rebuilds. A failure here is not fatal:
-    // the package cache may be read-only or large, and the rest of the watch
-    // should still work.
-    for root in asset_spec.package_roots() {
-        match watcher.watch(root, RecursiveMode::Recursive) {
-            Ok(()) => debug!(path = %root.display(), "watching package asset root"),
-            Err(e) => {
-                warn!(error = %e, path = %root.display(), "failed to watch package asset root")
-            }
-        }
-    }
-
-    // The loaded config file may live outside the primary watched tree — in an
-    // ancestor directory (single-file walk-up) or at a custom `--config` path.
-    // Watch its parent directory (non-recursive) when it is not already covered,
-    // so config edits are detected regardless of mode or filename.
-    let primary_watch_dir = match project.mode {
-        ProjectMode::SingleFile => project.typ_files[0].parent(),
-        ProjectMode::Directory => Some(project.root.as_path()),
-    };
-    if let Some(config_parent) = project.config_path.as_deref().and_then(|p| p.parent())
-        && primary_watch_dir.is_none_or(|primary| !config_parent.starts_with(primary))
-    {
-        match watcher.watch(config_parent, RecursiveMode::NonRecursive) {
-            Ok(()) => debug!(path = %config_parent.display(), "watching config directory"),
-            Err(e) => {
-                warn!(error = %e, path = %config_parent.display(), "failed to watch config directory")
-            }
-        }
-    }
-
-    // `config_changed`: `rheo.toml` changed, needs a full project reload rather
-    // than a recompile. `assets_changed`: a changed path was a `Relevance::Asset`
-    // (declared asset, copy glob, or font) — the browser holds its old bytes
-    // under an unchanged URL, so the callback must navigate rather than morph.
-    // `first_event_time` below is already set by ANY relevant change, so it is
-    // the "anything pending?" gate; these two only pick WHICH event to send.
-    let mut config_changed = false;
-    let mut assets_changed = false;
+    // `first_event_time` below is set by ANY relevant change, so it is the
+    // "anything pending?" gate; `batch` only picks WHICH event to send.
+    let mut batch = Batch::default();
     let mut last_event_time = std::time::Instant::now();
     // Set on the FIRST change of a batch and cleared when that batch fires, so
     // `DEBOUNCE_MAX` has something to measure from. `None` means nothing is
@@ -249,10 +277,8 @@ where
                         // Filter events to only relevant files (.typ files, rheo.toml, assets)
                         let mut relevant: Vec<&Path> = Vec::new();
                         for path in &event.paths {
-                            match classify(path, project, build_dir, asset_spec) {
-                                Some(Relevance::Config) => config_changed = true,
-                                Some(Relevance::Asset) => assets_changed = true,
-                                Some(Relevance::Content) => {}
+                            match classify(path, project, build_dir, &asset_spec) {
+                                Some(r) => batch.note(r, path.clone()),
                                 None => continue,
                             }
                             relevant.push(path);
@@ -286,29 +312,144 @@ where
         if let Some(first) = first_event_time
             && (last_event_time.elapsed() >= DEBOUNCE_QUIET || first.elapsed() >= DEBOUNCE_MAX)
         {
-            // A config change subsumes a file change — reloading the project
-            // recompiles it anyway — so one batch is one event whatever else
-            // changed alongside `rheo.toml`.
-            let event = if config_changed {
-                WatchEvent::ConfigChanged
-            } else {
-                WatchEvent::FilesChanged {
-                    assets: assets_changed,
-                }
-            };
+            let event = batch.event();
 
-            if let Err(e) = callback(event) {
-                warn!(error = %e, "compilation failed, continuing to watch");
+            match callback(event) {
+                Ok(Some(spec)) => {
+                    let wanted = spec.package_roots().to_vec();
+                    let (to_watch, to_unwatch) = package_root_changes(&watched_roots, &wanted);
+                    for root in to_unwatch {
+                        if let Err(e) = watcher.unwatch(&root) {
+                            debug!(error = %e, path = %root.display(), "failed to unwatch package asset root");
+                        }
+                        watched_roots.retain(|r| r != &root);
+                    }
+                    for root in to_watch {
+                        match watcher.watch(&root, RecursiveMode::Recursive) {
+                            Ok(()) => {
+                                debug!(path = %root.display(), "watching package asset root");
+                                watched_roots.push(root);
+                            }
+                            Err(e) => {
+                                warn!(error = %e, path = %root.display(), "failed to watch package asset root")
+                            }
+                        }
+                    }
+                    asset_spec = spec;
+                }
+                Ok(None) => {}
+                Err(e) => warn!(error = %e, "compilation failed, continuing to watch"),
             }
 
             // Reset for the next batch of changes.
-            config_changed = false;
-            assets_changed = false;
+            batch = Batch::default();
             first_event_time = None;
         }
     }
 
     Ok(())
+}
+
+/// Diff the package roots currently watched against the wanted set, returning
+/// `(to_watch, to_unwatch)`.
+fn package_root_changes(watched: &[PathBuf], wanted: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let to_watch = wanted
+        .iter()
+        .filter(|w| !watched.contains(w))
+        .cloned()
+        .collect();
+    let to_unwatch = watched
+        .iter()
+        .filter(|w| !wanted.contains(w))
+        .cloned()
+        .collect();
+    (to_watch, to_unwatch)
+}
+
+/// Rebuild once per `rebuild [<path>...]` line on stdin, with no filesystem
+/// watcher and no debounce. Ends when stdin does. See [`parse_request`].
+pub fn watch_stdin<F>(
+    project: &ProjectConfig,
+    build_dir: &Path,
+    mut asset_spec: WatchAssetSpec,
+    mut callback: F,
+) -> Result<()>
+where
+    F: FnMut(WatchEvent) -> Result<Option<WatchAssetSpec>>,
+{
+    use std::io::BufRead;
+
+    for line in std::io::stdin().lock().lines() {
+        let line = line.map_err(|e| crate::RheoError::file_watcher(e.into(), "reading stdin"))?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some(paths) = parse_request(line) else {
+            warn!(line, "unrecognised request, expected `rebuild [<path>...]`");
+            continue;
+        };
+
+        let mut batch = Batch::default();
+        for path in paths {
+            let path = project.root.join(path);
+            match classify(&path, project, build_dir, &asset_spec) {
+                Some(r) => batch.note(r, path),
+                None => warn!(path = %path.display(), "path is not relevant to the build"),
+            }
+        }
+
+        match callback(batch.event()) {
+            Ok(Some(spec)) => asset_spec = spec,
+            Ok(None) => {}
+            Err(e) => warn!(error = %e, "compilation failed, continuing to watch"),
+        }
+    }
+
+    info!("stdin closed");
+    Ok(())
+}
+
+/// The paths of a `rebuild [<path>...]` line, or `None` for any other line.
+fn parse_request(line: &str) -> Option<Vec<&str>> {
+    let mut words = line.split_whitespace();
+    (words.next()? == "rebuild").then(|| words.collect())
+}
+
+/// What one batch of changed paths amounts to.
+#[derive(Default)]
+struct Batch {
+    /// `rheo.toml` changed: needs a full project reload rather than a recompile.
+    config: bool,
+    /// A changed path was a declared asset, copy glob or font: the browser holds
+    /// its old bytes under an unchanged URL, so it must navigate rather than morph.
+    assets: bool,
+    /// Every relevant path in the batch, see [`WatchEvent::FilesChanged`].
+    paths: Vec<PathBuf>,
+}
+
+impl Batch {
+    fn note(&mut self, r: Relevance, path: PathBuf) {
+        self.paths.push(path);
+        match r {
+            Relevance::Config => self.config = true,
+            Relevance::Asset => self.assets = true,
+            Relevance::Content => {}
+        }
+    }
+
+    /// A config change subsumes a file change, since reloading the project
+    /// recompiles it anyway.
+    fn event(&mut self) -> WatchEvent {
+        if self.config {
+            WatchEvent::ConfigChanged
+        } else {
+            WatchEvent::FilesChanged {
+                assets: self.assets,
+                paths: std::mem::take(&mut self.paths),
+            }
+        }
+    }
 }
 
 /// Why a changed path matters to the build.
@@ -402,6 +543,15 @@ fn same_file(a: &Path, b: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_package_root_changes() {
+        let p = |s: &str| PathBuf::from(s);
+        let (w, u) = package_root_changes(&[p("a"), p("b")], &[p("b"), p("c")]);
+        assert_eq!((w, u), (vec![p("c")], vec![p("a")]));
+        let (w, u) = package_root_changes(&[p("a")], &[p("a")]);
+        assert!(w.is_empty() && u.is_empty());
+    }
+
     use super::*;
     use std::fs;
     use tempfile::TempDir;
@@ -410,6 +560,34 @@ mod tests {
     fn dir_project(temp: &TempDir) -> ProjectConfig {
         fs::write(temp.path().join("doc.typ"), "#heading[Test]").unwrap();
         ProjectConfig::from_path(temp.path(), None).unwrap()
+    }
+
+    #[test]
+    fn parse_request_lines() {
+        assert_eq!(parse_request("rebuild"), Some(vec![]));
+        assert_eq!(
+            parse_request("rebuild a.typ b.typ"),
+            Some(vec!["a.typ", "b.typ"])
+        );
+        assert_eq!(parse_request("  rebuild a.typ  "), Some(vec!["a.typ"]));
+        assert_eq!(parse_request(""), None);
+        assert_eq!(parse_request("nonsense"), None);
+    }
+
+    #[test]
+    fn batch_event_precedence() {
+        let mut b = Batch::default();
+        assert!(matches!(
+            b.event(),
+            WatchEvent::FilesChanged { assets: false, .. }
+        ));
+        b.note(Relevance::Asset, PathBuf::from("a.css"));
+        assert!(matches!(
+            b.event(),
+            WatchEvent::FilesChanged { assets: true, .. }
+        ));
+        b.note(Relevance::Config, PathBuf::from("rheo.toml"));
+        assert!(matches!(b.event(), WatchEvent::ConfigChanged));
     }
 
     fn empty_spec() -> WatchAssetSpec {

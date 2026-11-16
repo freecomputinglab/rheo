@@ -12,7 +12,7 @@ use typst_kit::packages::{FsPackages, SystemPackages};
 use typst_library::diag::{PackageError, PackageResult};
 use typst_syntax::package::PackageSpec;
 
-use crate::config::{NamespaceSource, ReleasesSource};
+use crate::config::{NamespaceEntry, NamespaceSource, ReleasesSource};
 
 mod git;
 mod manifest;
@@ -99,6 +99,24 @@ pub(super) fn slug(url: &str) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+/// One configured namespace's backend, plus the `packages` key limiting which
+/// package names it applies to (`None` means the whole namespace).
+struct ConfiguredSource {
+    backend: Box<dyn PackageSource>,
+    only: Option<Vec<String>>,
+}
+
+impl ConfiguredSource {
+    /// Whether `name` resolves through this source rather than falling through
+    /// to the namespace's default.
+    fn applies_to(&self, name: &str) -> bool {
+        match &self.only {
+            None => true,
+            Some(names) => names.iter().any(|n| n == name),
+        }
+    }
+}
+
 /// Resolves a package spec to a directory on disk, routing by namespace.
 ///
 /// Built once per build and shared, because the repository backends memoise
@@ -108,17 +126,17 @@ pub struct PackageResolver {
     /// Namespaces with a `[packages.<ns>]` table. Consulted FIRST, so
     /// `[packages.rheo]` overrides the built-in `@rheo` rather than losing to
     /// it — that override is how a project tests a branch of rheo-packages.
-    configured: HashMap<String, Box<dyn PackageSource>>,
+    configured: HashMap<String, ConfiguredSource>,
     rheo: RheoPackages,
     universe: SystemPackages,
 }
 
 impl PackageResolver {
-    pub fn new(sources: &HashMap<String, NamespaceSource>) -> Self {
+    pub fn new(sources: &HashMap<String, NamespaceEntry>) -> Self {
         let configured = sources
             .iter()
-            .map(|(namespace, source)| {
-                let backend: Box<dyn PackageSource> = match source {
+            .map(|(namespace, entry)| {
+                let backend: Box<dyn PackageSource> = match &entry.source {
                     NamespaceSource::Repo(repo) => {
                         Box::new(GitPackages::new(namespace, repo.clone()))
                     }
@@ -129,7 +147,8 @@ impl PackageResolver {
                         Box::new(PathPackages::new(namespace, path.clone()))
                     }
                 };
-                (namespace.clone(), backend)
+                let only = entry.only().cloned();
+                (namespace.clone(), ConfiguredSource { backend, only })
             })
             .collect();
 
@@ -142,9 +161,9 @@ impl PackageResolver {
 
     pub fn obtain(&self, spec: &PackageSpec) -> PackageResult<FsRoot> {
         match self.configured.get(spec.namespace.as_str()) {
-            Some(source) => source.obtain(spec),
-            None if spec.namespace == "rheo" => self.rheo.obtain(spec),
-            None => self.universe.obtain(spec),
+            Some(source) if source.applies_to(spec.name.as_str()) => source.backend.obtain(spec),
+            _ if spec.namespace == "rheo" => self.rheo.obtain(spec),
+            _ => self.universe.obtain(spec),
         }
     }
 
@@ -152,53 +171,60 @@ impl PackageResolver {
     /// namespaces, returning `(namespace, checkouts removed)` per namespace.
     ///
     /// Only the namespaces this project declares — another project's cache is
-    /// none of its business.
+    /// none of its business. Namespace-level regardless of `packages`: the
+    /// checkout cache is per repository, not per package.
     pub fn prune_checkouts(&self) -> Vec<(String, std::io::Result<usize>)> {
         let mut pruned: Vec<(String, std::io::Result<usize>)> = self
             .configured
             .iter()
-            .filter(|(_, source)| source.kind() == SourceKind::Repo)
-            .map(|(namespace, source)| (namespace.clone(), source.prune()))
+            .filter(|(_, source)| source.backend.kind() == SourceKind::Repo)
+            .map(|(namespace, source)| (namespace.clone(), source.backend.prune()))
             .collect();
         pruned.sort_by(|a, b| a.0.cmp(&b.0));
         pruned
     }
 
-    /// Whether this namespace has a `[packages.<ns>]` table.
-    pub fn is_configured(&self, namespace: &str) -> bool {
-        self.configured.contains_key(namespace)
-    }
-
-    /// Whether this namespace is served from a repository ref or a directory on
-    /// disk, rather than a releases host. Neither carries a build output, so
-    /// their packages use their source-mode asset block.
-    pub fn is_source_backed(&self, namespace: &str) -> bool {
+    /// Whether this `(namespace, name)` pair resolves through a
+    /// `[packages.<ns>]` table.
+    pub fn is_configured(&self, namespace: &str, name: &str) -> bool {
         self.configured
             .get(namespace)
-            .is_some_and(|source| matches!(source.kind(), SourceKind::Repo | SourceKind::Path))
+            .is_some_and(|source| source.applies_to(name))
     }
 
-    /// Whether this namespace is served from a directory on disk.
+    /// Whether this `(namespace, name)` pair is served from a repository ref or
+    /// a directory on disk, rather than a releases host. Neither carries a
+    /// build output, so their packages use their source-mode asset block.
+    pub fn is_source_backed(&self, namespace: &str, name: &str) -> bool {
+        self.configured.get(namespace).is_some_and(|source| {
+            source.applies_to(name)
+                && matches!(source.backend.kind(), SourceKind::Repo | SourceKind::Path)
+        })
+    }
+
+    /// Whether this `(namespace, name)` pair is served from a directory on
+    /// disk.
     ///
     /// Unlike a repository ref (a sha-keyed cache directory) or a release (an
     /// immutable, version-keyed cache directory), a `path` source's tree can
     /// change while a watch is running — editing it is the whole point — so a
     /// watch must cover it regardless of whether the package declares any
     /// `[tool.rheo.*]` assets. See `Build::watch_asset_spec`.
-    pub fn is_path_backed(&self, namespace: &str) -> bool {
-        self.configured
-            .get(namespace)
-            .is_some_and(|source| source.kind() == SourceKind::Path)
+    pub fn is_path_backed(&self, namespace: &str, name: &str) -> bool {
+        self.configured.get(namespace).is_some_and(|source| {
+            source.applies_to(name) && source.backend.kind() == SourceKind::Path
+        })
     }
 
-    /// Whether rheo knows how to fetch this namespace ahead of the asset scan.
+    /// Whether rheo knows how to fetch this `(namespace, name)` pair ahead of
+    /// the asset scan.
     ///
     /// A namespace rheo cannot fetch must stay skipped rather than attempting a
-    /// download, but a CONFIGURED one must not be skipped: pre-warming runs
+    /// download, but a CONFIGURED pair must not be skipped: pre-warming runs
     /// before asset detection, so a package missing from disk at that moment
     /// contributes no stylesheet and the build still succeeds.
-    pub fn is_prewarmable(&self, namespace: &str) -> bool {
-        self.is_configured(namespace) || matches!(namespace, "preview" | "rheo")
+    pub fn is_prewarmable(&self, namespace: &str, name: &str) -> bool {
+        self.is_configured(namespace, name) || matches!(namespace, "preview" | "rheo")
     }
 }
 
@@ -347,6 +373,7 @@ mod tests {
             .packages
             .remove("ns")
             .expect("namespace absent")
+            .source
     }
 
     /// Unwraps a `releases = ...` value straight to its `ReleasesSource`.

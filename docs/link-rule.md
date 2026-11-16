@@ -49,6 +49,33 @@ converged.
 Do not reach for this rule when chasing a convergence warning; find which
 `query` is being fed.
 
+## A native `#outline()` fails the build outright
+
+`std.outline()` over headings does not work in a rheo project that exports
+multi-page HTML. This is not a convergence warning to shrug off: compilation
+exits non-zero.
+
+```
+error: failed to determine link anchor
+```
+
+**The cause is upstream.** `std.outline()` links to a heading by its Typst
+`Location`, not a label or a string. `rheo-link-rule` in `typ/rheo.typ` handles
+`label`- and string-typed destinations only and returns anything else
+untouched — deliberate, not a bug. A `Location`-typed destination falls
+straight through to upstream `typst-bundle` 0.15.0's own page-and-anchor
+resolver, which never settles on a page path for it across Typst's five
+convergence attempts: `none` on every run but the last, by which point the
+anchor is already required.
+
+A heading outline is therefore not available in multi-page HTML output today.
+Anything built on explicit labels rather than generated heading links still
+works.
+
+The "find which `query` is being fed" advice above does not apply to this
+failure — there is no `query` involved; the outline's links come straight out
+of Typst's own outline machinery.
+
 ## The `rheo-page:` URL scheme
 
 A page minted from a `.marrow.typ` is addressed by handle through a reserved URL
@@ -98,3 +125,19 @@ not HTML-shaped would need that default revisited.
 `state("rheo-handle")` is still published by `rheo-page-init` even though the
 link rule no longer reads it: packages read it (`@rheo/rookery`'s `urls.typ`,
 `outline.typ`, `idea.typ`), so it is part of the contract.
+
+`owner`, a vertebra handle, defaults to `none`. When it is set, `rheo-document`
+emits `#metadata((path: path, owner: owner)) <rheo-mint:owner>` after `body`.
+That is the only way a narrowed `rheo watch` rebuild can delete the page once
+its owner recompiles without minting it. rheo cannot work the owner out for
+itself. `state("rheo-handle")` inside the page is the page's own handle, set by
+`rheo-page-init`, and marrow runs at the bundle root, outside every vertebra,
+so no ambient context names the vertebra whose data minted the page. And since
+a narrowed compile emits only the pages of the vertebrae it compiled, a page
+that is missing from its output may have been deleted or may belong to a
+vertebra outside the compile. Only a declaration tells the two apart. Making
+it in the same call that mints the page means the claim and the page cannot
+drift apart: a minted page always carries its claim, and no claim exists
+without its page. The metadata renders nothing, so full builds are unchanged.
+What `owner:` promises is in `docs/contract.md`, under "Minted pages under
+narrowed rebuilds".

@@ -9,7 +9,9 @@ pub mod packages;
 pub mod retired;
 
 pub use manifest_version::ManifestVersion;
-pub use packages::{GitRef, NamespaceSource, PathSource, ReleasesSource, RepoSource};
+pub use packages::{
+    GitRef, NamespaceEntry, NamespaceSource, PathSource, ReleasesSource, RepoSource,
+};
 use retired::warn_on_retired_keys;
 pub use retired::{RETIRED_BINDINGS, RETIRED_KEYS, RetiredBinding, RetiredKey};
 
@@ -17,6 +19,18 @@ pub use retired::{RETIRED_BINDINGS, RETIRED_KEYS, RetiredBinding, RetiredKey};
 /// `--input`/`[inputs]`: a forged spine or target would be indistinguishable
 /// from the real one to every package reading it.
 pub const RESERVED_INPUT_KEY: &str = "rheo-context";
+
+/// The other `sys.inputs` key rheo owns: the previous compile's harvested
+/// ligaments (see `crate::build::Ligaments`), fed back so a narrower compile
+/// that skips a vertebra can still answer a cross-vertebra read that vertebra
+/// would normally answer. Rejected the same way, and for the same reason, as
+/// [`RESERVED_INPUT_KEY`].
+pub const RESERVED_LIGAMENTS_INPUT_KEY: &str = "rheo-ligaments";
+
+/// The `sys.inputs` key carrying `spine`/`spine-flat` behind a constant-hash
+/// store, so a spine change does not invalidate every memoised result.
+/// Rejected the same way, and for the same reason, as [`RESERVED_INPUT_KEY`].
+pub const RESERVED_SPINE_INPUT_KEY: &str = "rheo-spine";
 
 /// A `bool` config key whose absence means `DEFAULT` — one type for every
 /// "unset means this" toggle, in place of an `Option<bool>` field paired with
@@ -67,6 +81,72 @@ pub struct MarrowConfig {
     pub file: Option<String>,
     #[serde(default)]
     pub position: MarrowPosition,
+}
+
+/// Default cache size: entries unused for this many rebuilds are dropped.
+pub const DEFAULT_WATCH_CACHE_SIZE: usize = 10;
+
+fn default_cache_size() -> usize {
+    DEFAULT_WATCH_CACHE_SIZE
+}
+
+/// `[watch] narrow`: whether `Build::rebuild` takes its narrowed-compile path.
+/// Written as `false`, `true`, or `"auto"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NarrowMode {
+    #[default]
+    Off,
+    On,
+    /// Narrow, except for an edit that could change a value other pages bind
+    /// and whose page's last edit did — see `crate::build::AutoNarrow`.
+    Auto,
+}
+
+impl<'de> Deserialize<'de> for NarrowMode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bool(bool),
+            Str(String),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Bool(false) => Ok(Self::Off),
+            Raw::Bool(true) => Ok(Self::On),
+            Raw::Str(s) if s == "auto" => Ok(Self::Auto),
+            Raw::Str(s) => Err(serde::de::Error::custom(format!(
+                "[watch] narrow must be true, false or \"auto\", not \"{s}\""
+            ))),
+        }
+    }
+}
+
+/// `[watch]` table: `rheo watch` behaviour knobs.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WatchConfig {
+    /// Opt in to `Build::rebuild`'s narrowed-compile path (recompiling only
+    /// the edited vertebra, plus any ligament-bound dependent, instead of
+    /// the whole bundle). `false` by default — rheo cannot know whether a
+    /// project's packages read cross-vertebra data *without* going through
+    /// ligaments, and narrowing by default would silently gut a page for any
+    /// project that doesn't. Only safe when every package reading across
+    /// vertebrae does so through `rheo-ligaments`/`rheo-ligament-get`. See
+    /// `docs/contract.md`'s "Ligaments" section.
+    #[serde(default)]
+    pub narrow: NarrowMode,
+    /// Rebuilds a Typst memo-cache entry survives unused in `rheo watch`
+    /// ([`DEFAULT_WATCH_CACHE_SIZE`] when unset); `0` empties it after every rebuild.
+    #[serde(default = "default_cache_size")]
+    pub cache_size: usize,
+}
+
+impl Default for WatchConfig {
+    fn default() -> Self {
+        Self {
+            narrow: NarrowMode::Off,
+            cache_size: DEFAULT_WATCH_CACHE_SIZE,
+        }
+    }
 }
 
 /// One format's resolved spine knobs: every field already merged over the
@@ -269,12 +349,19 @@ pub struct PluginSection {
     pub auto_detect_packages: Flag<true>,
 
     /// When true (default), per-page output for this format resets the footnote
-    /// counter to 1 on every page; false lets footnotes accumulate across the
-    /// bundle. Only meaningful for the per-page formats (HTML/EPUB); PDF combines
+    /// counter, the built-in figure counters (table, image, raw) and the
+    /// equation counter to 1 on every page; false lets them accumulate across
+    /// the bundle. Figures with a custom `kind:` are not reset. Only meaningful for the per-page formats (HTML/EPUB); PDF combines
     /// into a single document with no `ext`, so the reset gate in `typ/rheo.typ`
     /// never fires there regardless.
     #[serde(default)]
     pub reset_footnotes: Flag<true>,
+
+    /// Publish project images as files and link them instead of inlining
+    /// base64 (`[html]` only; ignored for other formats). Default on; set
+    /// `false` to restore full inlining.
+    #[serde(default)]
+    pub image_assets: Flag<true>,
 
     /// Plugin-specific extra fields from the TOML section (e.g. `stylesheets`,
     /// `fonts` for HTML; `identifier`, `date` for EPUB).
@@ -325,6 +412,10 @@ pub struct RheoConfig {
     /// package's contribution or vice versa — both are inlined.
     pub marrow: Option<MarrowConfig>,
 
+    /// `[watch]` — `rheo watch` behaviour knobs; `None` behaves exactly as
+    /// an empty table would (narrowed compiles off).
+    pub watch: Option<WatchConfig>,
+
     /// `[inputs]` — project-declared `sys.inputs` keys for the Typst compile.
     ///
     /// Typst has no environment access, so `sys.inputs` is the only channel by
@@ -350,7 +441,7 @@ pub struct RheoConfig {
     /// from its built-in releases host, everything else from Typst universe. An
     /// entry for `rheo` overrides the built-in, which is how a project tests a
     /// branch of rheo-packages.
-    pub packages: HashMap<String, NamespaceSource>,
+    pub packages: HashMap<String, NamespaceEntry>,
 
     /// Unrecognized top-level scalar keys (e.g. a retired `marrow_prologue`),
     /// captured so [`warn_on_retired_keys`] can warn on one still set in an
@@ -396,6 +487,7 @@ impl Default for RheoConfig {
             plugin_sections: HashMap::new(),
             spine: None,
             marrow: None,
+            watch: None,
             inputs: HashMap::new(),
             packages: HashMap::new(),
             extra: toml::Table::new(),
@@ -450,6 +542,21 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
                  another name, e.g. a package-prefixed one like `rookery-exclude`.",
             )));
         }
+        if inputs.contains_key(RESERVED_LIGAMENTS_INPUT_KEY) {
+            return Err(serde::de::Error::custom(format!(
+                "[inputs] may not set `{RESERVED_LIGAMENTS_INPUT_KEY}`: rheo owns that key, \
+                 which carries the previous compile's harvested ligaments that every package \
+                 reads. Choose another name, e.g. a package-prefixed one like \
+                 `rookery-exclude`.",
+            )));
+        }
+        if inputs.contains_key(RESERVED_SPINE_INPUT_KEY) {
+            return Err(serde::de::Error::custom(format!(
+                "[inputs] may not set `{RESERVED_SPINE_INPUT_KEY}`: rheo owns that key, \
+                 which carries the spine that every package reads. Choose another name, \
+                 e.g. a package-prefixed one like `rookery-exclude`.",
+            )));
+        }
         // Pulled out before the plugin-section loop for the same reason `inputs`
         // is: left in `extra` it becomes a plugin section named `packages` that
         // nothing reads, and no namespace ever resolves.
@@ -465,6 +572,17 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             Some(toml::Value::Table(_)) => Some(
                 raw.extra
                     .remove("marrow")
+                    .expect("just matched")
+                    .try_into()?,
+            ),
+            _ => None,
+        };
+        // Pulled out the same way as `marrow`, for the same reason: left in
+        // `extra` it becomes a phantom plugin section named `watch`.
+        let watch: Option<WatchConfig> = match raw.extra.get("watch") {
+            Some(toml::Value::Table(_)) => Some(
+                raw.extra
+                    .remove("watch")
                     .expect("just matched")
                     .try_into()?,
             ),
@@ -512,6 +630,7 @@ impl TryFrom<RheoConfigRaw> for RheoConfig {
             plugin_sections,
             spine,
             marrow,
+            watch,
             inputs,
             packages,
             extra,
@@ -601,6 +720,24 @@ impl RheoConfig {
             self.marrow.as_ref().map(|m| m.position),
             Some(MarrowPosition::Prologue)
         )
+    }
+
+    /// `[watch] narrow` — opt-in for `Build::rebuild`'s narrowed-compile
+    /// path. `false` when unset (no `[watch]` table at all).
+    pub fn narrowed_rebuilds_enabled(&self) -> bool {
+        self.narrow_mode() != NarrowMode::Off
+    }
+
+    /// `[watch] narrow`, or [`NarrowMode::Off`] when unset.
+    pub fn narrow_mode(&self) -> NarrowMode {
+        self.watch.as_ref().map(|w| w.narrow).unwrap_or_default()
+    }
+
+    /// `[watch] cache_size`, or [`DEFAULT_WATCH_CACHE_SIZE`] when unset.
+    pub fn watch_cache_size(&self) -> usize {
+        self.watch
+            .as_ref()
+            .map_or(DEFAULT_WATCH_CACHE_SIZE, |w| w.cache_size)
     }
 
     /// Resolve content_dir against the project root, if configured.
@@ -750,6 +887,19 @@ mod tests {
     }
 
     #[test]
+    fn test_image_assets_defaults_true_and_honors_false_per_format() {
+        // No [html] section at all -> default section, defaults to true.
+        let config = parse(&versioned_toml(r#"formats = ["html"]"#));
+        assert!(config.plugin_section("html").image_assets.get());
+
+        // Explicit false on [html] is honored, and is per-format: [epub] still
+        // defaults to true.
+        let config = parse(&versioned_toml("[html]\nimage_assets = false\n[epub]\n"));
+        assert!(!config.plugin_section("html").image_assets.get());
+        assert!(config.plugin_section("epub").image_assets.get());
+    }
+
+    #[test]
     fn test_merged_spine_falls_back_field_by_field() {
         let global = Spine {
             exclude: Some(vec!["drafts/**".to_string()]),
@@ -818,6 +968,59 @@ mod tests {
         let config = parse(&versioned_toml("[marrow]\nfile = \"bundle-root.typ\"\n"));
         assert_eq!(config.marrow_file(), "bundle-root.typ");
         assert!(config.marrow_is_epilogue());
+    }
+
+    /// `[watch] narrow` defaults to `false` (no `[watch]` table at all, or
+    /// one present without the key), and is only `true` when set explicitly.
+    #[test]
+    fn test_watch_narrow_defaults_false_and_honors_explicit_true() {
+        let config = parse(&versioned_toml(""));
+        assert!(!config.narrowed_rebuilds_enabled());
+
+        let config = parse(&versioned_toml("[watch]\n"));
+        assert!(!config.narrowed_rebuilds_enabled());
+
+        let config = parse(&versioned_toml("[watch]\nnarrow = true\n"));
+        assert!(config.narrowed_rebuilds_enabled());
+
+        let config = parse(&versioned_toml("[watch]\nnarrow = false\n"));
+        assert!(!config.narrowed_rebuilds_enabled());
+    }
+
+    #[test]
+    fn test_watch_narrow_parses_bool_or_auto() {
+        for (value, mode) in [
+            ("false", NarrowMode::Off),
+            ("true", NarrowMode::On),
+            ("\"auto\"", NarrowMode::Auto),
+        ] {
+            let config = parse(&versioned_toml(&format!("[watch]\nnarrow = {value}\n")));
+            assert_eq!(config.narrow_mode(), mode);
+        }
+        assert!(parse(&versioned_toml("[watch]\nnarrow = \"auto\"\n")).narrowed_rebuilds_enabled());
+
+        let err = toml::from_str::<WatchConfig>("narrow = \"sometimes\"\n").unwrap_err();
+        assert!(err.to_string().contains("true, false or \"auto\""), "{err}");
+    }
+
+    /// `[watch] cache_size` defaults to 10 (no `[watch]` table at all, or one
+    /// present without the key), and can be set to different values to control
+    /// memo cache retention.
+    #[test]
+    fn test_watch_cache_size_defaults_ten_and_honors_explicit_values() {
+        let config = parse(&versioned_toml(""));
+        assert_eq!(config.watch_cache_size(), 10);
+
+        let config = parse(&versioned_toml("[watch]\n"));
+        assert_eq!(config.watch_cache_size(), 10);
+
+        let config = parse(&versioned_toml("[watch]\ncache_size = 0\n"));
+        assert_eq!(config.watch_cache_size(), 0);
+
+        let config = parse(&versioned_toml("[watch]\ncache_size = 3\n"));
+        assert_eq!(config.watch_cache_size(), 3);
+
+        assert_eq!(WatchConfig::default().cache_size, DEFAULT_WATCH_CACHE_SIZE);
     }
 
     /// The retired top-level `marrow` filename override and
@@ -1366,6 +1569,41 @@ mod tests {
         );
     }
 
+    /// `rheo-ligaments` is rheo's other reserved key, rejected the same way and
+    /// for the same reason as `rheo-context`.
+    #[test]
+    fn test_inputs_rejects_reserved_ligaments_key() {
+        let raw: RheoConfigRaw = toml::from_str(&versioned_toml(
+            r#"
+        [inputs]
+        rheo-ligaments = "forged"
+    "#,
+        ))
+        .expect("raw parse should succeed");
+        let err = RheoConfig::try_from(raw).expect_err("the reserved key must fail");
+        assert!(
+            err.to_string().contains("rheo-ligaments"),
+            "error should name the reserved key, got: {err}",
+        );
+    }
+
+    /// `rheo-spine` is reserved too, rejected the same way.
+    #[test]
+    fn test_inputs_rejects_reserved_spine_key() {
+        let raw: RheoConfigRaw = toml::from_str(&versioned_toml(
+            r#"
+        [inputs]
+        rheo-spine = "forged"
+    "#,
+        ))
+        .expect("raw parse should succeed");
+        let err = RheoConfig::try_from(raw).expect_err("the reserved key must fail");
+        assert!(
+            err.to_string().contains("rheo-spine"),
+            "error should name the reserved key, got: {err}",
+        );
+    }
+
     #[test]
     fn test_spine_section_title_defaults_to_none() {
         let toml = r#"
@@ -1395,7 +1633,8 @@ mod tests {
         .unwrap();
 
         let config = RheoConfig::load_from_path(&config_path).expect("load failed");
-        let NamespaceSource::Path(source) = config.packages.get("ns").expect("namespace absent")
+        let NamespaceSource::Path(source) =
+            &config.packages.get("ns").expect("namespace absent").source
         else {
             panic!("expected a path source");
         };
@@ -1416,7 +1655,8 @@ mod tests {
         .unwrap();
 
         let config = RheoConfig::load_from_path(&config_path).expect("load failed");
-        let NamespaceSource::Path(source) = config.packages.get("ns").expect("namespace absent")
+        let NamespaceSource::Path(source) =
+            &config.packages.get("ns").expect("namespace absent").source
         else {
             panic!("expected a path source");
         };
