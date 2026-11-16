@@ -170,7 +170,7 @@ pub struct Build {
     /// since `self.ligaments` only ever holds a real harvest after a build
     /// has actually happened.
     has_built: std::sync::atomic::AtomicBool,
-    /// Vertebra handles each plugin's last full compile built, by plugin name;
+    /// Vertebra handles each plugin's last full compile built to disk, by plugin name;
     /// a rescanned spine with a different set stales every page's `rheo-context()`.
     spine_handles: Mutex<HashMap<String, HashSet<Handle>>>,
     /// `[watch] narrow = "auto"`'s per-session edit history.
@@ -1488,15 +1488,6 @@ impl Build {
         let ctx = self.plugin_asset_context(plugin, packages, default_section, true)?;
         let spine =
             self.compile_spine(plugin, ctx.section, content_dir, packages, package_resolver)?;
-        self.spine_handles.lock().insert(
-            plugin.name().to_string(),
-            spine
-                .spine
-                .vertebrae
-                .iter()
-                .map(|v| v.handle.clone())
-                .collect(),
-        );
         Ok(PluginCompile { ctx, spine })
     }
 
@@ -1695,6 +1686,17 @@ impl Build {
         // describe the build directory, or a later edit reads as unchanged.
         // Overwrites rather than merges, across plugins and rebuilds alike.
         *self.ligaments.lock() = ligaments;
+        // Likewise the spine a rebuild compares against: recorded here, not by
+        // `compile_for_watch`, whose pages never reach disk — a page added
+        // between the two would otherwise read as already built and narrow.
+        self.spine_handles.lock().insert(
+            plugin.name().to_string(),
+            virtual_spine
+                .vertebrae
+                .iter()
+                .map(|v| v.handle.clone())
+                .collect(),
+        );
 
         // Read-only debug artifact — never read back as an input. Written
         // under the plugin's build-dir output, which the watcher already
@@ -4646,6 +4648,63 @@ mod tests {
             "a new page must go full"
         );
         captured.title("z.html");
+    }
+
+    /// A page added between `run()` and the dev server's `compile_for_watch()`
+    /// (an edit landing in watch startup's window) is not on disk yet, so the
+    /// rebuild its event triggers must still see the spine as changed and go
+    /// full; `compile_for_watch` must not record its spine as the one built.
+    #[test]
+    fn rebuild_new_vertebra_after_compile_for_watch_forces_full_path() {
+        use crate::plugins::{LiveReload, ServedPage};
+
+        struct Live;
+        impl FormatPlugin for Live {
+            fn name(&self) -> &'static str {
+                "html"
+            }
+            fn live_reload(&self) -> Option<&dyn LiveReload> {
+                Some(self)
+            }
+            fn compile(&self, _ctx: PluginContext<'_>, _outputs: &[CastVertebra]) -> Result<()> {
+                Ok(())
+            }
+        }
+        impl LiveReload for Live {
+            fn rewrite_page(&self, _page: &ServedPage<'_>) -> Result<Option<String>> {
+                Ok(None)
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+        for n in names {
+            write_vertebra(root, n, &format!("= {n}\n"));
+        }
+
+        let build = Build::prepare(
+            ligaments_project(root, &names),
+            vec![Box::new(Live) as Box<dyn FormatPlugin>],
+            BuildOptions::default(),
+        )
+        .expect("prepare build");
+        build.run().expect("initial full build");
+
+        write_vertebra(root, "z", "= Z\n");
+        build
+            .compile_for_watch()
+            .expect("compile_for_watch")
+            .expect("a live-reload format was selected");
+        build
+            .rebuild(&[root.join("content/z.typ")])
+            .expect("rebuild");
+
+        assert_eq!(
+            build.take_narrowed_outputs(),
+            None,
+            "a page not yet built to disk must go full, whatever the dev server compiled"
+        );
     }
 
     /// A narrowed round feeds the whole cached ligaments, the pages it
