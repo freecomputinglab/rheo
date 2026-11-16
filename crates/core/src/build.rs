@@ -2228,39 +2228,28 @@ impl Build {
     /// page may attach the same key more than once). Decision 4's "a changed
     /// set means a key was added, removed, or its value changed."
     ///
-    /// Values compare by `==`, not by hash, on purpose: a page's source is
-    /// re-parsed from scratch on every edit, renumbering every span in it, and
-    /// spans are part of a content value's hash but not of its equality. By
-    /// hash, one sentence edited would mark every key the page attaches as
-    /// changed. The cost is that `==` ignores what a `context` body captured.
+    /// Values compare by `hash128`, not `==`: Typst's `==` on a `context`
+    /// element ignores its closure, while comemo (and so the ligament store's
+    /// per-key token) keys on the hash. This relies on an edit keeping the
+    /// spans of everything it did not touch (`crate::parser::cache::source`).
     fn diff_attach_keys(
         old: &[(String, typst::foundations::Value)],
         new: &[(String, typst::foundations::Value)],
     ) -> HashSet<String> {
-        fn group(
-            items: &[(String, typst::foundations::Value)],
-        ) -> HashMap<&str, Vec<&typst::foundations::Value>> {
-            let mut m: HashMap<&str, Vec<&typst::foundations::Value>> = HashMap::new();
+        fn group(items: &[(String, typst::foundations::Value)]) -> HashMap<&str, Vec<u128>> {
+            let mut m: HashMap<&str, Vec<u128>> = HashMap::new();
             for (k, v) in items {
-                m.entry(k.as_str()).or_default().push(v);
+                m.entry(k.as_str())
+                    .or_default()
+                    .push(typst::utils::hash128(v));
             }
             m
         }
-        fn multiset_eq(a: &[&typst::foundations::Value], b: &[&typst::foundations::Value]) -> bool {
-            if a.len() != b.len() {
-                return false;
-            }
-            let mut used = vec![false; b.len()];
-            'outer: for x in a {
-                for (i, y) in b.iter().enumerate() {
-                    if !used[i] && x == y {
-                        used[i] = true;
-                        continue 'outer;
-                    }
-                }
-                return false;
-            }
-            true
+        fn multiset_eq(a: &[u128], b: &[u128]) -> bool {
+            let (mut a, mut b) = (a.to_vec(), b.to_vec());
+            a.sort_unstable();
+            b.sort_unstable();
+            a == b
         }
 
         let old_g = group(old);
@@ -3454,6 +3443,44 @@ mod tests {
             })
             .collect();
         assert_eq!(pages_in_order, vec!["a", "b"]);
+    }
+
+    /// Typst's `==` on a `context` element ignores its closure, so two bodies
+    /// capturing different values compare equal while their hashes differ.
+    #[test]
+    fn diff_attach_keys_sees_changed_closure_capture() {
+        use crate::world::{RheoWorld, WorldSpec};
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let value_for = |captured: i64| {
+            let main = format!(
+                "#let captured = {captured}\n#document(\"a.html\", format: \"html\")[\n  \
+                 #rheo-ligament-attach(\"k\", [#context {{ captured }}], page: \"a\")\n]\n"
+            );
+            let world = RheoWorld::new_for_bundle(
+                tmp.path(),
+                main,
+                WorldSpec {
+                    format_name: Some("html".to_string()),
+                    ..Default::default()
+                },
+            )
+            .expect("world");
+            let bundle = world.compile_bundle().expect("compile");
+            let known: HashSet<Handle> = [Handle::new("a")].into();
+            let mut lig = Build::harvest_ligaments(&bundle, &known);
+            lig.per_page
+                .remove(&Handle::new("a"))
+                .expect("page a")
+                .attaches
+        };
+        let (old, new) = (value_for(1), value_for(2));
+        assert_eq!(old[0].1, new[0].1, "Typst == ignores the closure capture");
+        assert_eq!(
+            Build::diff_attach_keys(&old, &new),
+            HashSet::from(["k".to_string()])
+        );
+        assert!(Build::diff_attach_keys(&old, &old).is_empty());
     }
 
     /// A `context` body's closure captures `sys`, so its hash covers
