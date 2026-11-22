@@ -15,6 +15,19 @@ workspace = true
 name = "rheo"
 path = "src/main.rs"
 
+[features]
+default = ["timings"]
+# Typst's compile instrumentation and the flags that read it. Every internal
+# dependency is pulled without default features, so `--no-default-features`
+# here really does compile it out rather than being re-enabled through a
+# plugin crate.
+timings = [
+  "rheo-core/timings",
+  "rheo-html/timings",
+  "rheo-pdf/timings",
+  "rheo-epub/timings",
+]
+
 [dependencies]
 # Internal crates
 rheo-core = { workspace = true }

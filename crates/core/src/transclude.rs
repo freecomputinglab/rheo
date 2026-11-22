@@ -179,10 +179,21 @@ impl ContentTransclusion {
     /// Resolve this placeholder against the main compile path's already-cast
     /// per-vertebra outputs.
     pub fn resolve(&self, outputs: &[CastVertebra]) -> Result<String> {
+        self.resolve_with_fallback(outputs, |_| None)
+    }
+
+    /// Like [`Self::resolve`], but a page absent from `outputs` is looked up
+    /// through `fallback` before erroring.
+    pub fn resolve_with_fallback(
+        &self,
+        outputs: &[CastVertebra],
+        fallback: impl Fn(&str) -> Option<String>,
+    ) -> Result<String> {
         let html = outputs
             .iter()
             .find(|v| v.output_path == self.page)
-            .map(|v| String::from_utf8_lossy(v.bytes.as_slice()).into_owned());
+            .map(|v| String::from_utf8_lossy(v.bytes.as_slice()).into_owned())
+            .or_else(|| fallback(&self.page));
         let available: Vec<&str> = outputs.iter().map(|v| v.output_path.as_str()).collect();
         self.resolve_html(html.as_deref(), &available)
     }
@@ -271,11 +282,23 @@ impl ContentTransclusion {
         outputs: &[CastVertebra],
         asset_files: &mut [(String, Bytes)],
     ) -> Result<()> {
+        Self::rewrite_assets_with_fallback(outputs, asset_files, |_| None)
+    }
+
+    /// [`Self::rewrite_assets`], except a page missing from `outputs` is
+    /// resolved through `fallback` (e.g. a copy on disk) before erroring.
+    pub fn rewrite_assets_with_fallback(
+        outputs: &[CastVertebra],
+        asset_files: &mut [(String, Bytes)],
+        fallback: impl Fn(&str) -> Option<String>,
+    ) -> Result<()> {
         for (name, bytes) in asset_files.iter_mut() {
             let Ok(text) = std::str::from_utf8(bytes.as_slice()) else {
                 continue;
             };
-            if let Some(rewritten) = Self::rewrite_text(name, text, |t| t.resolve(outputs))? {
+            if let Some(rewritten) =
+                Self::rewrite_text(name, text, |t| t.resolve_with_fallback(outputs, &fallback))?
+            {
                 *bytes = Bytes::new(rewritten.into_bytes());
             }
         }
@@ -542,6 +565,28 @@ mod tests {
             result,
             "<content>before&lt;p&gt;Body&lt;/p&gt;after</content>"
         );
+    }
+
+    #[test]
+    fn test_fallback_resolves_page_absent_from_outputs() {
+        let text = r#"<f><rheo-content page="x.html"/></f>"#;
+        let mut asset_files = vec![("feed.xml".to_string(), Bytes::new(text.as_bytes().to_vec()))];
+        ContentTransclusion::rewrite_assets_with_fallback(&[], &mut asset_files, |p| {
+            (p == "x.html").then(|| "<html><body><main><p>X</p></main></body></html>".into())
+        })
+        .unwrap();
+        let result = std::str::from_utf8(asset_files[0].1.as_slice()).unwrap();
+        assert_eq!(result, "<f>&lt;p&gt;X&lt;/p&gt;</f>");
+    }
+
+    #[test]
+    fn test_page_absent_from_outputs_and_fallback_errors() {
+        let text = r#"<rheo-content page="x.html"/>"#;
+        let mut asset_files = vec![("feed.xml".to_string(), Bytes::new(text.as_bytes().to_vec()))];
+        let err =
+            ContentTransclusion::rewrite_assets_with_fallback(&[], &mut asset_files, |_| None)
+                .unwrap_err();
+        assert!(err.to_string().contains("unknown page 'x.html'"));
     }
 
     #[test]

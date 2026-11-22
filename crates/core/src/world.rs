@@ -5,9 +5,11 @@ use std::sync::Arc;
 
 use crate::config::RESERVED_INPUT_KEY;
 use crate::diagnostics::DiagnosticReport;
+use crate::keyed_store::KeyedStore;
 use crate::packages::PackageResolver;
 use crate::reticulate::VertebraInjection;
 use crate::synth::source_injector::SourceInjector;
+use crate::synth::source_map::SourceMap;
 use crate::synth::typst_literal::TypstLiteral;
 use crate::util::constants::{METADATA_MODULE_PATH, RHEO_TEMPLATE_MODULE_PATH};
 use crate::{Result, RheoError};
@@ -22,41 +24,79 @@ use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
 use typst_kit::fonts::FontStore;
 use typst_library::Feature;
-use typst_library::foundations::Duration;
+use typst_library::foundations::{Duration, Target};
+use typst_library::visualize::ImageElem;
 
 /// Build sys.inputs Dict for Typst compilation.
 ///
-/// Two sources. `rheo-context` is rheo's own, carrying the spine and the output
-/// format (which is surfaced ONLY via `rheo-context.target`, read by the
-/// injected `target()` polyfill and the `rheo.typ` helpers — there is no
-/// separate `rheo-target` key). `user_inputs` is whatever the project asked for
-/// via `rheo.toml [inputs]` and `--input KEY=VALUE`, which is how a build script
-/// parameterises a compile — Typst has no environment access, so `sys.inputs` is
-/// the only channel there is. `@rheo/rookery`'s `exclude-tags` is the first
-/// consumer.
+/// Three sources. `rheo-context` is rheo's own, carrying the output format
+/// (surfaced ONLY via `rheo-context.target`, read by the `rheo.typ` helpers —
+/// there is no separate `rheo-target` key). `stores` are opaque
+/// [`KeyedStore`]s, each under its own reserved key and present on EVERY
+/// compile, so the library hashes the same however their contents move:
+/// `rheo-spine` carries `spine`/`spine-flat`; `rheo-ligaments` the previous
+/// compile's harvested ligaments, fed back so a narrower compile that skips a
+/// vertebra can still answer a cross-vertebra read that vertebra would
+/// normally answer (inactive on a full build).
+/// `user_inputs` is whatever the project asked for via `rheo.toml [inputs]`
+/// and `--input KEY=VALUE`, which is how a build script parameterises a
+/// compile — Typst has no environment access, so `sys.inputs` is the only
+/// channel there is. `@rheo/rookery`'s `exclude-tags` is the first consumer.
 ///
 /// EVERY USER VALUE IS A STRING, with no coercion. `typst compile --input` hands
 /// Typst a string, so rheo must too, or a package written against one spelling
-/// misbehaves under the other.
+/// misbehaves under the other. `rheo-context` and the stores are the
+/// exception, carrying native Typst values rather than strings — a waterline
+/// spike found `json.encode`/`json(bytes(..))` silently turns a `datetime`
+/// into its `repr()` string form, so neither is ever JSON-encoded.
 ///
-/// `rheo-context` is inserted LAST, so it cannot be displaced by a user key even
-/// if a caller of this library bypasses the CLI's own rejection of
-/// [`RESERVED_INPUT_KEY`].
+/// `rheo-context` and the stores are inserted LAST, so none can be displaced
+/// by a user key even if a caller of this library bypasses the CLI's own
+/// rejection of rheo's reserved keys.
 fn build_inputs(
     rheo_context: Option<&TypstLiteral>,
     user_inputs: &HashMap<String, String>,
+    stores: &[&KeyedStore],
 ) -> Dict {
     let mut dict = Dict::new();
-    for (key, value) in user_inputs {
-        if key == RESERVED_INPUT_KEY {
-            continue;
-        }
+    let reserved =
+        |key: &str| key == RESERVED_INPUT_KEY || stores.iter().any(|s| s.kind().input_key == key);
+    for (key, value) in user_inputs.iter().filter(|(k, _)| !reserved(k)) {
         dict.insert(key.as_str().into(), Value::Str(value.as_str().into()));
     }
     if let Some(ctx) = rheo_context {
         dict.insert(RESERVED_INPUT_KEY.into(), ctx.to_value());
     }
+    for store in stores {
+        dict.insert(
+            store.kind().input_key.into(),
+            Value::dynamic((*store).clone()),
+        );
+    }
     dict
+}
+
+/// `ctx` without its `spine`/`spine-flat` fields, and those fields as the
+/// spine store's entries. `None` (no context) yields an inactive store.
+fn split_spine(ctx: Option<&TypstLiteral>) -> (Option<TypstLiteral>, KeyedStore) {
+    let Some(ctx) = ctx else {
+        return (None, KeyedStore::spine(None));
+    };
+    let TypstLiteral::Dict(pairs) = ctx else {
+        return (Some(ctx.clone()), KeyedStore::spine(Some(Vec::new())));
+    };
+    let (spine, rest): (Vec<_>, Vec<_>) = pairs
+        .iter()
+        .cloned()
+        .partition(|(k, _)| k == "spine" || k == "spine-flat");
+    let entries = spine
+        .into_iter()
+        .map(|(k, v)| (k.into(), v.to_value()))
+        .collect();
+    (
+        Some(TypstLiteral::Dict(rest)),
+        KeyedStore::spine(Some(entries)),
+    )
 }
 
 /// Scan the fonts a compile can use: Typst's embedded faces, the system's
@@ -93,6 +133,10 @@ pub struct WorldSpec {
     pub plugin_library: Option<String>,
     /// In-memory source served for the main file instead of reading from disk.
     pub virtual_main_source: Option<String>,
+    /// Where every byte of `virtual_main_source` came from — an authored
+    /// marrow file, or Typst rheo generated. Empty (resolves nothing) when
+    /// `virtual_main_source` is unset or carries no attributable marrow.
+    pub virtual_main_map: SourceMap,
     /// Per-vertebra rewritten sources from the Mould stage, keyed by
     /// project-relative include path. Shared rather than copied: one build
     /// compiles the same overlay once per format, and again on a second pass.
@@ -100,11 +144,17 @@ pub struct WorldSpec {
     /// Per-vertebra prelude/epilogue injections, keyed the same way and shared
     /// for the same reason.
     pub rheo_context: Arc<HashMap<String, VertebraInjection>>,
-    /// The file-independent context seeded onto `sys.inputs.rheo-context`.
+    /// The file-independent context seeded onto `sys.inputs.rheo-context`,
+    /// minus `spine`/`spine-flat`, which go to `sys.inputs.rheo-spine`.
     pub global_context: Option<TypstLiteral>,
+    /// A previous compile's harvested ligaments, seeded onto
+    /// `sys.inputs.rheo-ligaments` when present. `None` leaves the key
+    /// entirely absent — the ordinary case today, since nothing yet narrows
+    /// which vertebrae compile.
+    pub ligaments: Option<crate::build::Ligaments>,
     /// Project-supplied `sys.inputs` keys, from `rheo.toml [inputs]` and
     /// `--input KEY=VALUE`. Values are always strings. A key equal to
-    /// [`RESERVED_INPUT_KEY`] is ignored rather than honoured.
+    /// one of rheo's reserved keys is ignored rather than honoured.
     pub user_inputs: HashMap<String, String>,
     /// Extra font directories to scan. Ignored when `fonts` is set — that store
     /// was scanned with these directories already.
@@ -115,6 +165,9 @@ pub struct WorldSpec {
     /// The per-build package resolver. `None` builds a default one, which routes
     /// exactly as rheo did before namespaces were configurable.
     pub packages: Option<Arc<PackageResolver>>,
+    /// Swap Typst's HTML image rule for one that emits `rheo-asset:`
+    /// placeholders; the HTML plugin only.
+    pub image_assets: bool,
 }
 
 /// A simple World implementation for rheo compilation.
@@ -122,6 +175,9 @@ pub struct RheoWorld {
     root: PathBuf,
     main: FileId,
     library: LazyHash<Library>,
+    /// The stores on `sys.inputs`; `file` answers their token paths.
+    ligaments: KeyedStore,
+    spine: KeyedStore,
     /// Shared with every other world of the same build: scanning the system's
     /// fonts is the expensive part of building one, and the result is identical
     /// across a build's plugins and passes.
@@ -136,6 +192,9 @@ pub struct RheoWorld {
     /// In-memory source for the main file. When set, the world serves this
     /// content for the main FileId instead of reading from disk.
     virtual_main_source: Option<String>,
+    /// Where every byte of `virtual_main_source` came from. See
+    /// [`WorldSpec::virtual_main_map`].
+    virtual_main_map: SourceMap,
     /// Per-vertebra source overlay from the Mould stage, keyed by project-relative
     /// include path (e.g. `content/intro.typ`). When an included file matches, the
     /// world serves the rewritten source instead of reading it from disk.
@@ -155,24 +214,38 @@ pub struct RheoWorld {
 struct FileSlot {
     source: Option<Source>,
     file: Option<Bytes>,
+    /// Where every byte of `source`'s text came from, so a diagnostic can be
+    /// attributed to the authored file it carries. Empty (resolves nothing)
+    /// for a slot with no source, or one whose text is served verbatim.
+    map: SourceMap,
 }
 
 impl RheoWorld {
     /// Assemble a world once `root` and `main` are resolved — the part both
     /// constructors below share.
     fn assemble(root: PathBuf, main: FileId, spec: WorldSpec) -> Self {
-        let library = Library::builder()
+        let ligaments = KeyedStore::ligaments(spec.ligaments.as_ref());
+        let (context, spine) = split_spine(spec.global_context.as_ref());
+        let mut library = Library::builder()
             .with_features([Feature::Html, Feature::Bundle].into_iter().collect())
             .with_inputs(build_inputs(
-                spec.global_context.as_ref(),
+                context.as_ref(),
                 &spec.user_inputs,
+                &[&ligaments, &spine],
             ))
             .build();
+
+        if spec.image_assets {
+            let rules = &mut library.rules;
+            rules.replace::<ImageElem>(Target::Html, crate::image_assets::IMAGE_PLACEHOLDER_RULE);
+        }
 
         Self {
             root,
             main,
             library: LazyHash::new(library),
+            ligaments,
+            spine,
             // A build that compiles several formats scans once and passes the
             // store in; a lone world scans for itself.
             fonts: spec
@@ -187,6 +260,7 @@ impl RheoWorld {
             format_name: spec.format_name,
             plugin_library: spec.plugin_library,
             virtual_main_source: spec.virtual_main_source,
+            virtual_main_map: spec.virtual_main_map,
             source_overlay: spec.source_overlay,
             rheo_context: spec.rheo_context,
             diagnostics: Mutex::new(DiagnosticReport::default()),
@@ -269,15 +343,32 @@ impl RheoWorld {
         Ok(())
     }
 
-    /// Wrap `text` as a `Source` for `id` and cache it in `slots`, the shape
-    /// every in-memory-served file (main, overlay, the metadata module) needs.
-    fn cache_source(&self, id: FileId, text: String) -> Source {
-        let source = Source::new(id, text);
+    /// Wrap `text` as a `Source` for `id` and cache it, alongside the map
+    /// back to whatever authored file(s) `text` carries, in `slots` — the
+    /// shape every in-memory-served file (main, overlay, the metadata
+    /// module) needs.
+    fn cache_source(&self, id: FileId, text: String, map: SourceMap) -> Source {
+        // Through the content-addressed parse cache rather than `Source::new`:
+        // a world is built fresh per compile, so `slots` starts empty on every
+        // `watch` rebuild, and re-parsing a vertebra whose moulded text is
+        // byte-for-byte what it was is what that costs.
+        let source = crate::parser::cache::source(id, text);
         self.slots.lock().entry(id).or_insert_with(|| FileSlot {
             source: Some(source.clone()),
             file: None,
+            map,
         });
         source
+    }
+
+    /// The map back to the authored file(s) the source served for `id`
+    /// carries. Empty (resolves nothing) when `id` has no slot yet.
+    pub fn source_map(&self, id: FileId) -> SourceMap {
+        self.slots
+            .lock()
+            .get(&id)
+            .map(|slot| slot.map.clone())
+            .unwrap_or_default()
     }
 
     fn path_for_id(&self, id: FileId) -> FileResult<PathBuf> {
@@ -474,7 +565,10 @@ impl World for RheoWorld {
         // (see `typst_source.rs`) — served from memory, never from the
         // project's own filesystem.
         if id.vpath().get_with_slash().trim_start_matches('/') == METADATA_MODULE_PATH {
-            return Ok(self.cache_source(id, include_str!("typ/metadata.typ").to_string()));
+            let text = include_str!("typ/metadata.typ").to_string();
+            let mut map = SourceMap::default();
+            map.push_injected(text.len());
+            return Ok(self.cache_source(id, text, map));
         }
 
         // The same `typ/rheo.typ` `SourceInjector::main` splices wholesale
@@ -485,7 +579,10 @@ impl World for RheoWorld {
         // top-level `#show`/`#set` rules style only its own (empty) content,
         // never the importer's.
         if id.vpath().get_with_slash().trim_start_matches('/') == RHEO_TEMPLATE_MODULE_PATH {
-            return Ok(self.cache_source(id, include_str!("typ/rheo.typ").to_string()));
+            let text = include_str!("typ/rheo.typ").to_string();
+            let mut map = SourceMap::default();
+            map.push_injected(text.len());
+            return Ok(self.cache_source(id, text, map));
         }
 
         // Serve the synthesized virtual main, then any moulded vertebra overlay,
@@ -507,19 +604,22 @@ impl World for RheoWorld {
         };
 
         let injector = SourceInjector::new(
-            self.format_name.is_some(),
+            self.format_name.as_deref(),
             self.plugin_library.as_deref(),
             &self.rheo_context,
         );
-        let text = match id == self.main {
-            true => injector.main(&text),
+        let synthesized = match id == self.main {
+            true => injector.main(&text, &self.virtual_main_map),
             false => injector.vertebra(&rel, &text),
         };
 
-        Ok(self.cache_source(id, text))
+        Ok(self.cache_source(id, synthesized.text, synthesized.map))
     }
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {
+        if let Some(token) = self.ligaments.serve(id).or_else(|| self.spine.serve(id)) {
+            return Ok(token);
+        }
         if let Some(slot) = self.slots.lock().get(&id)
             && let Some(file) = &slot.file
         {
@@ -533,6 +633,7 @@ impl World for RheoWorld {
         self.slots.lock().entry(id).or_insert_with(|| FileSlot {
             source: None,
             file: Some(bytes.clone()),
+            map: SourceMap::default(),
         });
 
         Ok(bytes)
@@ -610,8 +711,38 @@ impl<'a> Files<'a> for RheoWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::build::{Ligaments, VertebraLigaments};
+    use crate::config::{RESERVED_LIGAMENTS_INPUT_KEY, RESERVED_SPINE_INPUT_KEY};
+    use crate::reticulate::handle::Handle;
     use crate::synth::typst_source::TypstStmt;
     use tempfile::TempDir;
+
+    /// A bundle world compiling `main` with `ligaments` fed back.
+    fn ligament_world(root: &Path, main: String, ligaments: Option<Ligaments>) -> RheoWorld {
+        RheoWorld::new_for_bundle(
+            root,
+            main,
+            WorldSpec {
+                format_name: Some("html".to_string()),
+                ligaments,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    }
+
+    /// One page attaching one key.
+    fn single_attach(page: &str, key: &str, value: Value) -> Ligaments {
+        let mut lig = Ligaments::default();
+        lig.per_page.insert(
+            Handle::new(page),
+            VertebraLigaments {
+                attaches: vec![(key.to_string(), value)],
+                binds: Default::default(),
+            },
+        );
+        lig
+    }
 
     #[test]
     fn serves_moulded_body_overlay_instead_of_disk() {
@@ -657,8 +788,9 @@ mod tests {
         rheo_context.insert(
             "content/intro.typ".to_string(),
             VertebraInjection {
-                prelude: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)\n\n"
+                generated: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)"
                     .to_string(),
+                project_prelude: None,
                 epilogue: String::new(),
             },
         );
@@ -696,8 +828,9 @@ mod tests {
         rheo_context.insert(
             "content/intro.typ".to_string(),
             VertebraInjection {
-                prelude: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)\n\n"
+                generated: "#let rheo-context() = (handle: \"intro\", ..sys.inputs.rheo-context)"
                     .to_string(),
+                project_prelude: None,
                 epilogue: "\n#metadata((handle: \"intro\")) <rheo-meta:intro>\n".to_string(),
             },
         );
@@ -729,18 +862,273 @@ mod tests {
 
     #[test]
     fn build_inputs_includes_rheo_context_and_no_rheo_target() {
-        let ctx = TypstLiteral::Dict(vec![
-            ("spine".to_string(), TypstLiteral::Array(vec![])),
-            ("target".to_string(), TypstLiteral::str("html")),
-        ]);
-        let dict = build_inputs(Some(&ctx), &HashMap::new());
+        let ctx = TypstLiteral::Dict(vec![("target".to_string(), TypstLiteral::str("html"))]);
+        let dict = build_inputs(Some(&ctx), &HashMap::new(), &[&KeyedStore::ligaments(None)]);
         assert!(dict.contains("rheo-context"));
         // The deprecated top-level key is gone; format lives in rheo-context.target.
         assert!(!dict.contains("rheo-target"));
+        // The store is present even with no ligaments (inactive).
+        assert!(dict.contains("rheo-ligaments"));
 
-        let empty = build_inputs(None, &HashMap::new());
+        let empty = build_inputs(None, &HashMap::new(), &[&KeyedStore::ligaments(None)]);
         assert!(!empty.contains("rheo-context"));
         assert!(!empty.contains("rheo-target"));
+    }
+
+    /// A `datetime` attach value stays a real `datetime` through the store —
+    /// the one correctness-critical property of feeding ligaments back as a
+    /// native Typst value instead of JSON (see `build_inputs`'s doc comment).
+    #[test]
+    fn build_inputs_round_trips_native_ligaments_value_including_datetime() {
+        use typst::foundations::Datetime;
+
+        let date = Datetime::from_ymd(2024, 1, 1).unwrap();
+        let ligaments = single_attach("chapters:intro", "tag:post", Value::Datetime(date));
+
+        let dict = build_inputs(
+            None,
+            &HashMap::new(),
+            &[&KeyedStore::ligaments(Some(&ligaments))],
+        );
+        assert!(matches!(
+            dict.at(RESERVED_LIGAMENTS_INPUT_KEY.into(), None).unwrap(),
+            Value::Dyn(_)
+        ));
+
+        let tmp = TempDir::new().unwrap();
+        let main = r#"
+#let pairs = rheo-ligament-get("tag:post")
+#assert(pairs.len() == 1)
+#assert(pairs.first().page == "chapters:intro")
+#assert(type(pairs.first().value) == datetime)
+#assert(pairs.first().value == datetime(year: 2024, month: 1, day: 1))
+"#
+        .to_string();
+        ligament_world(tmp.path(), main, Some(ligaments))
+            .compile_bundle()
+            .expect("datetime must survive the store as a datetime");
+    }
+
+    /// No ligaments supplied: the store is still on `sys.inputs`, inactive,
+    /// and `get` answers `none`.
+    #[test]
+    fn build_inputs_keeps_ligaments_key_when_none_supplied() {
+        let dict = build_inputs(None, &HashMap::new(), &[&KeyedStore::ligaments(None)]);
+        assert!(dict.contains(RESERVED_LIGAMENTS_INPUT_KEY));
+        let tmp = TempDir::new().unwrap();
+        let world = ligament_world(
+            tmp.path(),
+            r#"#assert(sys.inputs.at("rheo-ligaments").get("k") == none)"#.to_string(),
+            None,
+        );
+        world.compile_bundle().expect("inactive store answers none");
+    }
+
+    /// Two worlds whose ligaments differ in one key's value hash their
+    /// `library()` equally: the store's `Hash` is constant, so one key moving
+    /// cannot invalidate the whole compile.
+    #[test]
+    fn ligament_store_keeps_library_hash_stable() {
+        let tmp = TempDir::new().unwrap();
+        let world = |v: i64| {
+            ligament_world(
+                tmp.path(),
+                String::new(),
+                Some(single_attach("a", "k", Value::Int(v))),
+            )
+        };
+        assert_eq!(
+            typst::utils::hash128(World::library(&world(1))),
+            typst::utils::hash128(World::library(&world(2))),
+        );
+    }
+
+    /// The guard for the whole design: with comemo's cache shared across
+    /// worlds in one process, a changed key must still be seen. `f` is
+    /// memoised, so a stale answer would survive if `get` did not track its
+    /// token read.
+    /// The same guard from inside a `context` block, which compiles with no
+    /// module re-evaluation: a closure memoised in the first world captures
+    /// that world's store, so `get` must answer from the current library's.
+    #[test]
+    fn ligament_store_get_sees_a_changed_key_inside_context() {
+        let tmp = TempDir::new().unwrap();
+        let main = r#"#context { assert(rheo-ligament-get("k").first().value == 1) }"#;
+        let compile = |v: i64| {
+            let lig = single_attach("a", "k", Value::Int(v));
+            ligament_world(tmp.path(), main.to_string(), Some(lig)).compile_bundle()
+        };
+        compile(1).expect("value 1 satisfies the assertion");
+        compile(2).expect_err("stale store served the old value");
+    }
+
+    #[test]
+    fn ligament_store_get_sees_a_changed_key_across_worlds() {
+        use typst::model::Document;
+        use typst_bundle::BundleFile;
+
+        let tmp = TempDir::new().unwrap();
+        let main = r#"
+#let f() = rheo-ligament-get("k").first().value
+#document("o.html", format: "html", title: str(f()))[x]
+"#;
+        let title_for = |v: i64| {
+            let world = ligament_world(
+                tmp.path(),
+                main.to_string(),
+                Some(single_attach("a", "k", Value::Int(v))),
+            );
+            let bundle = world.compile_bundle().unwrap();
+            bundle
+                .files
+                .iter()
+                .find_map(|(_, file)| match file {
+                    BundleFile::Document(doc) => Some(format!("{:?}", doc.info().title)),
+                    _ => None,
+                })
+                .expect("one document")
+        };
+        assert!(title_for(1).contains('1'));
+        let second = title_for(2);
+        assert!(second.contains('2'), "stale cache served: {second}");
+    }
+
+    /// A bundle world whose global context lists `n` vertebrae in
+    /// `spine-flat` (and `spine`), next to a `target`.
+    fn spine_world(root: &Path, main: &str, n: usize) -> RheoWorld {
+        let entries: Vec<TypstLiteral> = (0..n)
+            .map(|i| {
+                TypstLiteral::Dict(vec![(
+                    "handle".to_string(),
+                    TypstLiteral::str(format!("p{i}")),
+                )])
+            })
+            .collect();
+        let global_context = TypstLiteral::Dict(vec![
+            ("target".to_string(), TypstLiteral::str("html")),
+            ("spine".to_string(), TypstLiteral::Array(entries.clone())),
+            ("spine-flat".to_string(), TypstLiteral::Array(entries)),
+        ]);
+        RheoWorld::new_for_bundle(
+            root,
+            main.to_string(),
+            WorldSpec {
+                format_name: Some("html".to_string()),
+                global_context: Some(global_context),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    }
+
+    /// The spine leaves `rheo-context` for `rheo-spine`; everything else stays.
+    #[test]
+    fn spine_moves_from_rheo_context_to_its_store() {
+        let tmp = TempDir::new().unwrap();
+        let main = r#"
+#assert("spine" not in sys.inputs.rheo-context)
+#assert("spine-flat" not in sys.inputs.rheo-context)
+#assert(sys.inputs.rheo-context.target == "html")
+#assert(sys.inputs.rheo-spine.get("spine-flat").len() == 2)
+#assert(sys.inputs.rheo-spine.get("spine").len() == 2)
+"#;
+        spine_world(tmp.path(), main, 2)
+            .compile_bundle()
+            .expect("the spine is read off rheo-spine");
+    }
+
+    /// With no `rheo-context` at all the spine store is still on `sys.inputs`,
+    /// inactive.
+    #[test]
+    fn spine_store_is_present_without_a_context() {
+        let tmp = TempDir::new().unwrap();
+        ligament_world(
+            tmp.path(),
+            r#"#assert(sys.inputs.rheo-spine.get("spine-flat") == none)"#.to_string(),
+            None,
+        )
+        .compile_bundle()
+        .expect("inactive spine store answers none");
+    }
+
+    /// Two worlds whose spines differ hash their `library()` equally, so a
+    /// page added or removed cannot invalidate the whole compile.
+    #[test]
+    fn spine_store_keeps_library_hash_stable() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(
+            typst::utils::hash128(World::library(&spine_world(tmp.path(), "", 1))),
+            typst::utils::hash128(World::library(&spine_world(tmp.path(), "", 2))),
+        );
+    }
+
+    /// The ligament store's staleness guard, for the spine: in one process a
+    /// `context` block must see the second world's spine, not a memoised
+    /// closure's captured store.
+    #[test]
+    fn spine_store_get_sees_a_changed_spine_inside_context() {
+        let tmp = TempDir::new().unwrap();
+        let main = r#"#context { assert(sys.inputs.rheo-spine.get("spine-flat").len() == 1) }"#;
+        spine_world(tmp.path(), main, 1)
+            .compile_bundle()
+            .expect("one entry satisfies the assertion");
+        spine_world(tmp.path(), main, 2)
+            .compile_bundle()
+            .expect_err("stale store served the old spine");
+    }
+
+    /// The injected `rheo-context()` still carries both spine fields, equal
+    /// to what `sys.inputs.rheo-context` held before they moved.
+    #[test]
+    fn rheo_context_binding_still_carries_the_spine() {
+        let tmp = TempDir::new().unwrap();
+        let binding = TypstStmt::ContextBinding {
+            handle: "p0".into(),
+        };
+        let main = format!(
+            r#"#let rheo-metadata(handle) = (:)
+{binding}
+#assert(rheo-context().spine-flat == ((handle: "p0"), (handle: "p1")))
+#assert(rheo-context().spine == rheo-context().spine-flat)
+#assert(rheo-context().target == "html")
+#assert(rheo-context().handle == "p0")
+"#
+        );
+        spine_world(tmp.path(), &main, 2)
+            .compile_bundle()
+            .expect("rheo-context() composes the spine from its store");
+    }
+
+    /// A user key named `rheo-spine` is ignored, not honoured.
+    #[test]
+    fn build_inputs_protects_rheo_spine_from_user_override() {
+        let mut hostile = HashMap::new();
+        hostile.insert(RESERVED_SPINE_INPUT_KEY.to_string(), "forged".to_string());
+        let dict = build_inputs(None, &hostile, &[&KeyedStore::spine(None)]);
+        assert!(matches!(
+            dict.at(RESERVED_SPINE_INPUT_KEY.into(), None).unwrap(),
+            Value::Dyn(_)
+        ));
+    }
+
+    /// A user key named `rheo-ligaments` is ignored, not honoured — the same
+    /// protection `rheo-context` already gets.
+    #[test]
+    fn build_inputs_protects_rheo_ligaments_from_user_override() {
+        let mut hostile = HashMap::new();
+        hostile.insert(
+            RESERVED_LIGAMENTS_INPUT_KEY.to_string(),
+            "forged".to_string(),
+        );
+        let dict = build_inputs(
+            None,
+            &hostile,
+            &[&KeyedStore::ligaments(Some(&Ligaments::default()))],
+        );
+        assert_ne!(
+            dict.at(RESERVED_LIGAMENTS_INPUT_KEY.into(), None).unwrap(),
+            Value::Str("forged".into()),
+        );
     }
 
     /// Project-supplied inputs reach `sys.inputs` as STRINGS, and cannot displace
@@ -750,7 +1138,7 @@ mod tests {
     /// hand every package a forged spine.
     #[test]
     fn build_inputs_carries_user_inputs_and_protects_rheo_context() {
-        let ctx = TypstLiteral::Dict(vec![("spine".to_string(), TypstLiteral::Array(vec![]))]);
+        let ctx = TypstLiteral::Dict(vec![("target".to_string(), TypstLiteral::str("html"))]);
         let mut user = HashMap::new();
         user.insert(
             "rookery-exclude".to_string(),
@@ -758,7 +1146,7 @@ mod tests {
         );
         user.insert("empty-is-fine".to_string(), String::new());
 
-        let dict = build_inputs(Some(&ctx), &user);
+        let dict = build_inputs(Some(&ctx), &user, &[&KeyedStore::ligaments(None)]);
         assert_eq!(
             dict.at("rookery-exclude".into(), None).unwrap(),
             Value::Str("private,protected".into()),
@@ -773,7 +1161,7 @@ mod tests {
         // that key must still be rheo's own dict, never the user's string.
         let mut hostile = HashMap::new();
         hostile.insert(RESERVED_INPUT_KEY.to_string(), "forged".to_string());
-        let dict = build_inputs(Some(&ctx), &hostile);
+        let dict = build_inputs(Some(&ctx), &hostile, &[&KeyedStore::ligaments(None)]);
         assert_ne!(
             dict.at(RESERVED_INPUT_KEY.into(), None).unwrap(),
             Value::Str("forged".into()),
@@ -781,7 +1169,7 @@ mod tests {
 
         // With no rheo context at all it is simply absent — a user key cannot
         // conjure one into being either.
-        let dict = build_inputs(None, &hostile);
+        let dict = build_inputs(None, &hostile, &[&KeyedStore::ligaments(None)]);
         assert!(!dict.contains(RESERVED_INPUT_KEY));
     }
 
@@ -873,13 +1261,14 @@ mod tests {
         rheo_context.insert(
             "content/intro.typ".to_string(),
             VertebraInjection {
-                prelude: format!(
-                    "{}\n\n{}\n\n",
+                generated: format!(
+                    "{}\n\n{}",
                     TypstStmt::MetadataHelper,
                     TypstStmt::ContextBinding {
                         handle: "intro".into()
                     }
                 ),
+                project_prelude: None,
                 epilogue: format!(
                     "\n{}\n",
                     TypstStmt::MetadataBeacon {
@@ -915,6 +1304,198 @@ mod tests {
         world
             .compile_bundle()
             .expect("rheo-metadata must be callable from marrow scope");
+    }
+
+    /// `rheo-metadata-impl` falls back to the ligament-harvested beacon dict
+    /// when the live `query(label("rheo-meta:" + handle))` finds nothing —
+    /// the shape of a narrower compile that skipped the queried vertebra
+    /// entirely. Only `second` compiles here; `intro` has no `#document` at
+    /// all, so its beacon dict comes purely from `WorldSpec::ligaments`.
+    #[test]
+    fn rheo_metadata_falls_back_to_ligaments_when_live_beacon_absent() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let mut source_overlay = HashMap::new();
+        source_overlay.insert("content/second.typ".to_string(), "= Second\n".to_string());
+
+        let mut rheo_context = HashMap::new();
+        rheo_context.insert(
+            "content/second.typ".to_string(),
+            VertebraInjection {
+                generated: format!(
+                    "{}\n\n{}",
+                    TypstStmt::MetadataHelper,
+                    TypstStmt::ContextBinding {
+                        handle: "second".into()
+                    }
+                ),
+                project_prelude: None,
+                epilogue: String::new(),
+            },
+        );
+
+        let mut beacon_value = Dict::new();
+        beacon_value.insert("handle".into(), Value::Str("intro".into()));
+        beacon_value.insert("title".into(), Value::Str("Intro Title".into()));
+        let mut per_page = HashMap::new();
+        per_page.insert(
+            Handle::new("intro"),
+            VertebraLigaments {
+                attaches: vec![("rheo-meta:intro".to_string(), Value::Dict(beacon_value))],
+                binds: Default::default(),
+            },
+        );
+        let ligaments = Ligaments { per_page };
+
+        let main = r#"
+#document("second.html", format: "html")[
+  #include "content/second.typ"
+]
+
+#context { assert(rheo-metadata("intro").title == "Intro Title") }
+"#
+        .to_string();
+
+        let world = RheoWorld::new_for_bundle(
+            root,
+            main,
+            WorldSpec {
+                source_overlay: Arc::new(source_overlay),
+                rheo_context: Arc::new(rheo_context),
+                format_name: Some("html".to_string()),
+                ligaments: Some(ligaments),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        world.compile_bundle().expect(
+            "rheo-metadata must fall back to the ligament-harvested beacon dict \
+             when the live query finds nothing",
+        );
+    }
+
+    /// `rheo-ligament-get` returns `none` when `rheo-ligaments` is absent
+    /// from `sys.inputs` entirely — the ordinary compile today, since
+    /// nothing yet supplies `WorldSpec::ligaments`.
+    #[test]
+    fn rheo_ligament_get_returns_none_without_ligaments_input() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let main = r#"#assert(rheo-ligament-get("tag:post") == none)"#.to_string();
+        let world = RheoWorld::new_for_bundle(
+            root,
+            main,
+            WorldSpec {
+                format_name: Some("html".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        world
+            .compile_bundle()
+            .expect("rheo-ligament-get must return none with no ligaments supplied");
+    }
+
+    /// With ligaments supplied, `rheo-ligament-get` tells "nothing attached
+    /// this key" (an empty array) from "the key was attached" (the right
+    /// `(page, value)` pairs) — the `none`-vs-empty-array distinction is
+    /// load-bearing.
+    #[test]
+    fn rheo_ligament_get_distinguishes_unknown_key_from_known_key() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let mut per_page = HashMap::new();
+        per_page.insert(
+            Handle::new("a"),
+            VertebraLigaments {
+                attaches: vec![("tag:post".to_string(), Value::Str("A".into()))],
+                binds: Default::default(),
+            },
+        );
+        let ligaments = Ligaments { per_page };
+
+        let main = r#"
+#assert(rheo-ligament-get("unknown-key") == ())
+#let pairs = rheo-ligament-get("tag:post")
+#assert(pairs.len() == 1)
+#assert(pairs.first().page == "a")
+#assert(pairs.first().value == "A")
+"#
+        .to_string();
+        let world = RheoWorld::new_for_bundle(
+            root,
+            main,
+            WorldSpec {
+                format_name: Some("html".to_string()),
+                ligaments: Some(ligaments),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        world.compile_bundle().expect(
+            "rheo-ligament-get must return an empty array for an unknown key and the right \
+             pairs for a known one",
+        );
+    }
+
+    /// `rheo-link-rule` resolves a cross-vertebra href purely from
+    /// `_rheo-handles()` (`sys.inputs.rheo-spine.get("spine-flat")`), which lists
+    /// the WHOLE spine regardless of which vertebrae actually compiled this
+    /// time — so it needs no ligaments to build the right href for a handle
+    /// that is not otherwise part of this compile. No ligaments are supplied
+    /// here at all, and link resolution does not consult them: the handle
+    /// list alone is enough.
+    #[test]
+    fn rheo_link_rule_resolves_handle_absent_from_this_compile() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let global_context = TypstLiteral::Dict(vec![
+            ("ext".to_string(), TypstLiteral::str("html")),
+            (
+                "spine-flat".to_string(),
+                TypstLiteral::Array(vec![
+                    TypstLiteral::Dict(vec![
+                        ("handle".to_string(), TypstLiteral::str("a")),
+                        ("path".to_string(), TypstLiteral::str("content/a.typ")),
+                    ]),
+                    TypstLiteral::Dict(vec![
+                        ("handle".to_string(), TypstLiteral::str("b")),
+                        ("path".to_string(), TypstLiteral::str("content/b.typ")),
+                    ]),
+                ]),
+            ),
+        ]);
+
+        // "a" is listed in spine-flat but never compiled in this bundle at
+        // all (no #document for it anywhere in `main`) — the shape of a
+        // narrower compile that skipped it.
+        let main = r#"
+#assert(rheo-link-rule("b")(link(<a>)[A]) == link("./a.html")[A])
+"#
+        .to_string();
+
+        let world = RheoWorld::new_for_bundle(
+            root,
+            main,
+            WorldSpec {
+                global_context: Some(global_context),
+                format_name: Some("html".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        world.compile_bundle().expect(
+            "rheo-link-rule must resolve a handle absent from this compile using spine-flat \
+             alone, with no ligaments involved",
+        );
     }
 
     /// The companion `rheo-metadata-all()` — marrow-scope only (never in the

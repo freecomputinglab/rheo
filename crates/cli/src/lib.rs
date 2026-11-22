@@ -1,6 +1,7 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use events::{BuildKind, EventSink, WatchReport};
 use rheo_core::OpenHandle;
-use rheo_core::assets::watch::{WatchEvent, watch_project};
+use rheo_core::assets::watch::{ProjectWatcher, WatchEvent, watch_project, watch_stdin};
 use rheo_core::build::{Build, BuildOptions, evict_compile_cache, resolve_build_dir};
 use rheo_core::config::manifest_version;
 use rheo_core::output::OutputConfig;
@@ -15,6 +16,7 @@ use tracing::{debug, info, warn};
 pub mod logging;
 
 mod diagnostics;
+mod events;
 mod migrate;
 mod reporter;
 
@@ -35,7 +37,13 @@ mod arg {
     pub const INPUT: &str = "input";
     pub const EMIT_BUNDLE_SOURCE: &str = "emit-bundle-source";
     pub const METADATA_TWO_PASS: &str = "metadata-two-pass";
+    #[cfg(feature = "timings")]
+    pub const TIMINGS: &str = "timings";
+    #[cfg(feature = "timings")]
+    pub const ITERATIONS: &str = "iterations";
     pub const OPEN: &str = "open";
+    pub const EVENTS: &str = "events";
+    pub const TRIGGER: &str = "trigger";
     pub const PACKAGES: &str = "packages";
     pub const QUIET: &str = "quiet";
     pub const VERBOSE: &str = "verbose";
@@ -135,7 +143,8 @@ fn add_common_flags(cmd: Command) -> Command {
 
 /// The build flags both `compile` and `watch` declare last.
 fn add_build_flags(cmd: Command) -> Command {
-    cmd.arg(
+    let cmd = cmd
+        .arg(
         Arg::new(arg::FONT_DIR)
             .long(arg::FONT_DIR)
             .value_name("DIR")
@@ -153,17 +162,50 @@ fn add_build_flags(cmd: Command) -> Command {
             .long(arg::METADATA_TWO_PASS)
             .action(ArgAction::SetTrue)
             .help("Recompile once more (only if needed) to resolve a #set document(title:) set inside a bounded code block for cross-vertebra metadata-of/@handle reads"),
-    )
+    );
+    // Split out so the pair can be compiled out with the `timings` feature,
+    // leaving the flags around them where they were.
+    let cmd = add_instrumentation_flags(cmd);
     // Declared HERE rather than on either subcommand, so `compile` and `watch`
     // get it from one definition and cannot drift. Repeatable, like `--font-dir`
     // just above.
-    .arg(
+    cmd.arg(
         Arg::new(arg::INPUT)
             .long(arg::INPUT)
             .value_name("KEY=VALUE")
             .action(ArgAction::Append)
             .help("Set a sys.inputs key for the Typst compile (repeatable; values are always strings)"),
     )
+}
+
+/// `--timings` and `--iterations`, the two flags that turn Typst's own
+/// instrumentation on.
+///
+/// Both are compiled out with the `timings` feature, and then a build that
+/// only publishes carries neither the flags nor `typst-timing` — see
+/// `docs/observability.md`. Absent rather than accepted-and-ignored, so a
+/// script passing one gets clap's unknown-argument error rather than silence.
+#[cfg(feature = "timings")]
+fn add_instrumentation_flags(cmd: Command) -> Command {
+    cmd.arg(
+        Arg::new(arg::TIMINGS)
+            .long(arg::TIMINGS)
+            .value_name("OUTPUT_JSON")
+            .help("Write Typst's own compilation timings to a JSON trace file (experimental; large trace, slows the compile)"),
+    )
+    .arg(
+        Arg::new(arg::ITERATIONS)
+            .long(arg::ITERATIONS)
+            .action(ArgAction::SetTrue)
+            .help(
+                "Enables Typst instrumentation; slows the compile and adds post-compile overhead proportional to project size. Do not use when timing builds.",
+            ),
+    )
+}
+
+#[cfg(not(feature = "timings"))]
+fn add_instrumentation_flags(cmd: Command) -> Command {
+    cmd
 }
 
 /// Parse repeated `--input KEY=VALUE` into a map.
@@ -209,6 +251,25 @@ fn parse_inputs(sub: &ArgMatches) -> Result<HashMap<String, String>> {
                 ),
             });
         }
+        if key == rheo_core::config::RESERVED_LIGAMENTS_INPUT_KEY {
+            return Err(RheoError::ProjectConfig {
+                message: format!(
+                    "--input {key}=... is reserved: rheo owns the `{key}` key, which \
+                     carries the previous compile's harvested ligaments that every package \
+                     reads. Choose another name, e.g. a package-prefixed one like \
+                     `rookery-exclude`."
+                ),
+            });
+        }
+        if key == rheo_core::config::RESERVED_SPINE_INPUT_KEY {
+            return Err(RheoError::ProjectConfig {
+                message: format!(
+                    "--input {key}=... is reserved: rheo owns the `{key}` key, which \
+                     carries the spine that every package reads. Choose another name, \
+                     e.g. a package-prefixed one like `rookery-exclude`."
+                ),
+            });
+        }
         map.insert(key.to_string(), value.to_string());
     }
     Ok(map)
@@ -230,8 +291,44 @@ fn build_watch_command(plugins: &[Box<dyn FormatPlugin>]) -> Command {
             .long(arg::OPEN)
             .action(ArgAction::SetTrue)
             .help("Open output in appropriate viewer (HTML opens in browser with live reload)"),
+    )
+    .arg(
+        Arg::new(arg::EVENTS)
+            .long(arg::EVENTS)
+            .value_name("FILE")
+            .value_parser(clap::value_parser!(PathBuf))
+            .help("Append one JSON line per watch event (server ready, build finished) to FILE"),
+    )
+    .arg(
+        Arg::new(arg::TRIGGER)
+            .long(arg::TRIGGER)
+            .value_name("MODE")
+            .value_parser(["fs", "stdin"])
+            .default_value("fs")
+            .help("What triggers a rebuild: filesystem changes, or `rebuild` lines on stdin"),
     );
-    add_format_flags(add_build_flags(cmd), plugins)
+    let cmd = add_format_flags(add_build_flags(cmd), plugins);
+    watch_timings_help(cmd)
+}
+
+/// `--timings` is declared once in `add_build_flags` so `compile` and `watch`
+/// cannot drift on the flag itself, but a rebuild is not a single compile the
+/// way `compile` is: `watch` writes one numbered trace per rebuild into a
+/// directory rather than one file, so its own value name and help text say
+/// so. `mut_arg` panics on an argument that was never declared, hence the
+/// pair — with the `timings` feature off there is no such argument.
+#[cfg(feature = "timings")]
+fn watch_timings_help(cmd: Command) -> Command {
+    cmd.mut_arg(arg::TIMINGS, |a| {
+        a.value_name("OUTPUT_DIR").help(
+            "Write Typst's own compilation timings to one JSON trace per rebuild in this directory (experimental)",
+        )
+    })
+}
+
+#[cfg(not(feature = "timings"))]
+fn watch_timings_help(cmd: Command) -> Command {
+    cmd
 }
 
 fn build_clean_command() -> Command {
@@ -505,6 +602,8 @@ struct BuildArgs {
     inputs: HashMap<String, String>,
     emit_bundle_source: bool,
     metadata_two_pass: bool,
+    timings: Option<PathBuf>,
+    iterations: bool,
 }
 
 impl BuildArgs {
@@ -524,6 +623,14 @@ impl BuildArgs {
             inputs: parse_inputs(sub)?,
             emit_bundle_source: sub.get_flag(arg::EMIT_BUNDLE_SOURCE),
             metadata_two_pass: sub.get_flag(arg::METADATA_TWO_PASS),
+            #[cfg(feature = "timings")]
+            timings: sub.get_one::<String>(arg::TIMINGS).map(PathBuf::from),
+            #[cfg(not(feature = "timings"))]
+            timings: None,
+            #[cfg(feature = "timings")]
+            iterations: sub.get_flag(arg::ITERATIONS),
+            #[cfg(not(feature = "timings"))]
+            iterations: false,
         })
     }
 
@@ -535,6 +642,19 @@ impl BuildArgs {
             inputs: self.inputs.clone(),
             emit_bundle_source: self.emit_bundle_source,
             metadata_two_pass: self.metadata_two_pass,
+            timings: self.timings.clone(),
+            timings_per_rebuild: false,
+            iterations: self.iterations,
+        }
+    }
+
+    /// [`Self::build_options`], but for a `watch` session: `--timings` names a
+    /// directory that gets one numbered trace per rebuild rather than the
+    /// single file a one-shot `rheo compile` writes.
+    fn watch_build_options(&self) -> BuildOptions {
+        BuildOptions {
+            timings_per_rebuild: true,
+            ..self.build_options()
         }
     }
 }
@@ -577,6 +697,20 @@ fn compile_and_report(build: &Build) -> Result<rheo_core::CompilationResults> {
     results
 }
 
+/// `Build::rebuild` and render whatever it reported — the `watch` loop's
+/// `compile_and_report`, narrowed. `changed_paths` is the watcher's relevant
+/// changed-file set for this debounced batch; `on_round` is called with each
+/// narrowed round's written paths as soon as they are on disk.
+fn rebuild_and_report(
+    build: &Build,
+    changed_paths: &[PathBuf],
+    on_round: &mut dyn FnMut(&[String]),
+) -> Result<rheo_core::CompilationResults> {
+    let results = build.rebuild_observed(changed_paths, on_round);
+    diagnostics::render(&build.take_diagnostics());
+    results
+}
+
 /// Compile a fresh VirtualFs for the dev server and push it, then optionally
 /// reload connected browsers with the given `kind`. The initial `--open` push
 /// has nothing to reload yet (the browser is only just being launched), so it
@@ -602,21 +736,48 @@ fn update_dev_server(build: &mut Build, server: &dyn ServerHandle, reload: Optio
     }
 }
 
+fn build_finished(initial: bool, kind: BuildKind, ms: u128, result: Result<()>) -> WatchReport {
+    WatchReport::BuildFinished {
+        initial,
+        ok: result.is_ok(),
+        kind,
+        ms,
+        error: result.err().map(|e| e.to_string()),
+    }
+}
+
 fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()> {
     let args = BuildArgs::from_matches(sub, &plugins)?;
     let open = sub.get_flag(arg::OPEN);
+    let stdin_trigger = sub.get_one::<String>(arg::TRIGGER).map(String::as_str) == Some("stdin");
+    let mut events = EventSink::open(sub.get_one::<PathBuf>(arg::EVENTS).map(PathBuf::as_path))?;
 
     let mut build = prepare_build(
         &args.path,
         args.config.as_deref(),
-        args.build_options(),
+        args.watch_build_options(),
         plugins,
     )?;
 
+    let watch_project_cfg = build.project().clone();
+    // Capture the asset sources to watch (declared assets, copy globs, package
+    // roots) before `build` is moved into the change callback; a config reload
+    // hands the watcher a fresh spec.
+    let asset_spec = build.watch_asset_spec();
+    // Before the initial build, so an edit made during it is queued, not lost.
+    let watcher = if stdin_trigger {
+        None
+    } else {
+        Some(ProjectWatcher::start(&watch_project_cfg, &asset_spec)?)
+    };
+
     // Initial compilation (best-effort; watch continues on failure)
-    if let Err(e) = compile_and_report(&build) {
+    let initial_start = std::time::Instant::now();
+    let initial_result = compile_and_report(&build).map(|_| ());
+    if let Err(e) = &initial_result {
         warn!(error = %e, "initial compilation failed");
     }
+    let mut initial_ms = initial_start.elapsed().as_millis();
 
     // Open outputs if --open requested; resolve at most one server handle for
     // live reload (only the HTML plugin ever returns OpenHandle::Server).
@@ -625,7 +786,12 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
         for plugin in build.plugins() {
             let out_dir = build.output_config().dir_for_plugin(plugin.name());
             match plugin.open(&out_dir, plugin.name()) {
-                Ok(OpenHandle::Server(handle)) if server.is_none() => server = Some(handle),
+                Ok(OpenHandle::Server(handle)) if server.is_none() => {
+                    events.emit(&WatchReport::ServerReady {
+                        url: handle.url().to_string(),
+                    });
+                    server = Some(handle);
+                }
                 Ok(_) => {}
                 Err(e) => warn!(error = %e, plugin = plugin.name(), "failed to open"),
             }
@@ -635,72 +801,140 @@ fn run_watch(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()
         // compile_for_watch() reuses comemo-cached Typst state from build.run(),
         // so this second compile is near-instant.
         if let Some(server) = &server {
+            let t = std::time::Instant::now();
             update_dev_server(&mut build, server.as_ref(), None);
+            initial_ms += t.elapsed().as_millis();
         }
     }
+    events.emit(&build_finished(
+        true,
+        BuildKind::Full,
+        initial_ms,
+        initial_result,
+    ));
 
-    let watch_project_cfg = build.project().clone();
     let build_dir_canonical = build
         .output_config()
         .base
         .canonicalize()
         .unwrap_or_else(|_| build.output_config().base.clone());
-    // Capture the asset sources to watch (declared assets, copy globs, package
-    // roots) once, before `build` is moved into the change callback.
-    let asset_spec = build.watch_asset_spec();
 
-    watch_project(
-        &watch_project_cfg,
-        &build_dir_canonical,
-        &asset_spec,
-        move |event| {
-            match event {
-                WatchEvent::FilesChanged { assets } => {
-                    info!("files changed, recompiling");
-                    if compile_and_report(&build).is_ok()
-                        && let Some(server) = &server
-                    {
-                        update_dev_server(
-                            &mut build,
-                            server.as_ref(),
-                            Some(ReloadKind::for_assets_changed(assets)),
-                        );
+    let on_event = move |event| {
+        let mut refreshed = None;
+        match event {
+            WatchEvent::FilesChanged { assets, paths } => {
+                info!("files changed, recompiling");
+                let start = std::time::Instant::now();
+                // Reload after every narrowed round, not once at the end: the
+                // edited page is always in round 1.
+                let result = rebuild_and_report(&build, &paths, &mut |round| {
+                    if let Some(server) = &server {
+                        server.forget_virtual_paths(round);
+                        server.reload(ReloadKind::for_assets_changed(assets));
                     }
-                }
-                WatchEvent::ConfigChanged => {
-                    info!("config changed, reloading");
-                    match prepare_build(
-                        &args.path,
-                        args.config.as_deref(),
-                        args.build_options(),
-                        all_plugins(),
-                    ) {
-                        Ok(new_build) => {
-                            build = new_build;
-                            if compile_and_report(&build).is_ok()
-                                && let Some(server) = &server
-                            {
-                                update_dev_server(
-                                    &mut build,
-                                    server.as_ref(),
-                                    Some(ReloadKind::Reload),
-                                );
+                })
+                .map(|_| ());
+                let narrowed = build.take_narrowed_outputs();
+                let pruned = build.take_narrowed_pruned();
+                let kind = if narrowed.is_some() {
+                    BuildKind::Narrowed
+                } else {
+                    BuildKind::Full
+                };
+                if result.is_ok()
+                    && let Some(server) = &server
+                {
+                    match narrowed {
+                        // Every round already forgot its paths and reloaded;
+                        // pages the rebuild pruned at its fixpoint have to be
+                        // forgotten too, or the server keeps serving them.
+                        Some(_) => {
+                            if !pruned.is_empty() {
+                                server.forget_virtual_paths(&pruned);
+                                server.reload(ReloadKind::for_assets_changed(assets));
                             }
                         }
-                        Err(e) => warn!(error = %e, "failed to reload config"),
+                        None => {
+                            update_dev_server(
+                                &mut build,
+                                server.as_ref(),
+                                Some(ReloadKind::for_assets_changed(assets)),
+                            );
+                        }
                     }
                 }
+                events.emit(&build_finished(
+                    false,
+                    kind,
+                    start.elapsed().as_millis(),
+                    result,
+                ));
             }
-            // AFTER the rebuild, not before, and for both arms — this is the
-            // only thing that bounds a watch session's memory. Typst's memo
-            // cache is global and never shrinks by itself, so without this a
-            // long session grows until the machine gives out; see
-            // `evict_compile_cache`, which carries the measurements and the
-            // reason a one-shot `rheo compile` must NOT call it.
-            evict_compile_cache();
-            Ok(())
-        },
-    )
+            WatchEvent::ConfigChanged => {
+                info!("config changed, reloading");
+                let start = std::time::Instant::now();
+                let result = match prepare_build(
+                    &args.path,
+                    args.config.as_deref(),
+                    args.watch_build_options(),
+                    all_plugins(),
+                ) {
+                    Ok(new_build) => {
+                        build = new_build;
+                        refreshed = Some(build.watch_asset_spec());
+                        let result = compile_and_report(&build).map(|_| ());
+                        if result.is_ok()
+                            && let Some(server) = &server
+                        {
+                            update_dev_server(
+                                &mut build,
+                                server.as_ref(),
+                                Some(ReloadKind::Reload),
+                            );
+                        }
+                        result
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "failed to reload config");
+                        Err(e)
+                    }
+                };
+                events.emit(&build_finished(
+                    false,
+                    BuildKind::Full,
+                    start.elapsed().as_millis(),
+                    result,
+                ));
+            }
+        }
+        // AFTER the rebuild, not before, and for both arms — this is the
+        // only thing that bounds a watch session's memory. Typst's memo
+        // cache is global and never shrinks by itself, so without this a
+        // long session grows until the machine gives out; see
+        // `evict_compile_cache`, which carries the measurements and the
+        // reason a one-shot `rheo compile` must NOT call it.
+        evict_compile_cache(build.project().config.watch_cache_size());
+        Ok(refreshed)
+    };
+
+    match watcher {
+        Some(watcher) => watch_project(
+            watcher,
+            &watch_project_cfg,
+            &build_dir_canonical,
+            asset_spec,
+            on_event,
+        ),
+        None => {
+            info!("reading rebuild requests from stdin");
+            watch_stdin(
+                &watch_project_cfg,
+                &build_dir_canonical,
+                asset_spec,
+                on_event,
+            )
+        }
+    }
 }
 
 fn run_compile(sub: &ArgMatches, plugins: Vec<Box<dyn FormatPlugin>>) -> Result<()> {
@@ -758,6 +992,46 @@ fn run_migrate(sub: &ArgMatches) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Builds just enough of a `Command` to exercise `parse_inputs` without
+    /// the rest of `compile`/`watch`'s flag set.
+    fn input_only_command() -> Command {
+        Command::new("test").arg(
+            Arg::new(arg::INPUT)
+                .long(arg::INPUT)
+                .value_name("KEY=VALUE")
+                .action(ArgAction::Append),
+        )
+    }
+
+    /// `--input rheo-spine=...` is rejected too: rheo owns that key.
+    #[test]
+    fn test_parse_inputs_rejects_reserved_spine_key() {
+        let cmd = input_only_command();
+        let matches = cmd
+            .try_get_matches_from(["test", "--input", "rheo-spine=forged"])
+            .unwrap();
+        let err = parse_inputs(&matches).expect_err("the reserved key must fail");
+        assert!(
+            err.to_string().contains("rheo-spine"),
+            "error should name the reserved key, got: {err}",
+        );
+    }
+
+    /// `--input rheo-ligaments=...` is rejected the same way, and for the
+    /// same reason, as `--input rheo-context=...` — rheo owns both keys.
+    #[test]
+    fn test_parse_inputs_rejects_reserved_ligaments_key() {
+        let cmd = input_only_command();
+        let matches = cmd
+            .try_get_matches_from(["test", "--input", "rheo-ligaments=forged"])
+            .unwrap();
+        let err = parse_inputs(&matches).expect_err("the reserved key must fail");
+        assert!(
+            err.to_string().contains("rheo-ligaments"),
+            "error should name the reserved key, got: {err}",
+        );
+    }
 
     #[test]
     fn test_all_plugins_contains_three_formats() {

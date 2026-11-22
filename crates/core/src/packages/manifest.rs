@@ -1,14 +1,12 @@
 use crate::config::PluginAssets;
 use crate::packages::PackageResolver;
-use crate::parser::ImportInfo;
 use crate::plugins::{PackageAssets, ResolvedPackage, parse_package_spec};
-use crate::reticulate::SpineScan;
+use crate::reticulate::{MarrowSource, SpineScan};
 use crate::{Result, RheoError};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tracing::{debug, warn};
-use typst::syntax::Source;
 use typst::syntax::package::PackageSpec;
 
 /// Build the standard Typst package search directories:
@@ -31,6 +29,13 @@ pub fn typst_package_search_dirs(extra: Option<&Path>) -> Vec<PathBuf> {
 /// Scans project .typ files for package imports (those starting with '@').
 /// Returns deduplicated import path strings in encounter order.
 /// Unreadable files are logged via `tracing::warn!` and skipped.
+///
+/// Every file is still read, because a file's imports are a function of its
+/// bytes and nothing cheaper proves those bytes unchanged; only the parse and
+/// the walk go through [`crate::parser::cache`]. A `watch` rebuild scans this
+/// project's files *and* every `.typ` of every package it imports, so on
+/// waterline's rookery that is ~650 files whose answer differs for at most
+/// the one the author just saved.
 pub fn scan_project_package_imports(typ_files: &[PathBuf]) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
@@ -42,8 +47,7 @@ pub fn scan_project_package_imports(typ_files: &[PathBuf]) -> Vec<String> {
                 continue;
             }
         };
-        let source = Source::detached(content);
-        for path in ImportInfo::package_paths(&source) {
+        for path in crate::parser::cache::package_paths(&content) {
             if seen.insert(path.clone()) {
                 result.push(path);
             }
@@ -142,7 +146,7 @@ fn resolve_package(
     search_dirs: &[PathBuf],
 ) -> Option<ResolvedPackage> {
     let (namespace, name, version) = parse_package_spec(spec)?;
-    if !resolver.is_configured(namespace) {
+    if !resolver.is_configured(namespace, name) {
         return find_package_in_dirs(spec, search_dirs);
     }
     let parsed = PackageSpec::from_str(spec).ok()?;
@@ -416,7 +420,7 @@ impl PackageIndex {
                 let source_mode = pkg
                     .namespace
                     .as_deref()
-                    .is_some_and(|ns| resolver.is_source_backed(ns));
+                    .is_some_and(|ns| resolver.is_source_backed(ns, &pkg.name));
                 Some(IndexEntry {
                     spec: spec.clone(),
                     pkg,
@@ -442,16 +446,18 @@ impl PackageIndex {
             .collect()
     }
 
-    /// Every resolved package's namespace and source directory, independent of
-    /// whether it declares any `[tool.rheo.*]` assets — unlike
+    /// Every resolved package's namespace, name and source directory,
+    /// independent of whether it declares any `[tool.rheo.*]` assets — unlike
     /// [`manifest_assets`](Self::manifest_assets), which only ever sees a
     /// package that declares one. The watcher needs this wider view: a
     /// `path`-backed package's tree must be watched whether or not it ships an
-    /// asset block.
-    pub fn source_roots(&self) -> impl Iterator<Item = (&str, &Path)> {
+    /// asset block. The name rides along because a `packages` key limits a
+    /// table to some names in its namespace, not the whole namespace.
+    pub fn source_roots(&self) -> impl Iterator<Item = (&str, &str, &Path)> {
         self.resolved.iter().filter_map(|entry| {
             Some((
                 entry.pkg.namespace.as_deref()?,
+                entry.pkg.name.as_str(),
                 entry.pkg.source_root.as_path(),
             ))
         })
@@ -511,29 +517,29 @@ impl PackageIndex {
     }
 
     /// Every package's epilogue marrow, in import order.
-    pub fn marrow(&self) -> Vec<String> {
+    pub fn marrow(&self) -> Vec<MarrowSource> {
         self.read_marrow(crate::MARROW_EPILOGUE_FILE, true)
     }
 
     /// Every package's prologue marrow, in import order.
-    pub fn marrow_prologue(&self) -> Vec<String> {
+    pub fn marrow_prologue(&self) -> Vec<MarrowSource> {
         self.read_marrow(crate::MARROW_PROLOGUE_FILE, false)
     }
 
     /// A package's bare `.marrow.typ` is the epilogue's fallback, and only when
     /// the package ships neither explicit name — `[marrow] position` is the
     /// project's own knob and does not reach a dependency.
-    fn read_marrow(&self, explicit: &str, bare_falls_back: bool) -> Vec<String> {
+    fn read_marrow(&self, explicit: &str, bare_falls_back: bool) -> Vec<MarrowSource> {
         self.resolved
             .iter()
             .filter_map(|entry| {
-                package_marrow_file(&entry.pkg, explicit).or_else(|| {
+                package_marrow_file(&entry.spec, &entry.pkg, explicit).or_else(|| {
                     let bare_is_free = bare_falls_back
                         && crate::MARROW_RESERVED_FILES
                             .iter()
                             .all(|f| !entry.pkg.source_root.join(f).is_file());
                     bare_is_free
-                        .then(|| package_marrow_file(&entry.pkg, crate::MARROW_FILE))
+                        .then(|| package_marrow_file(&entry.spec, &entry.pkg, crate::MARROW_FILE))
                         .flatten()
                 })
             })
@@ -555,14 +561,19 @@ impl PackageIndex {
 /// against the project root, not the package directory: a package's marrow must
 /// reach its own code through its package spec (`@ns/name:version`), never a
 /// relative import. Files the package imports that way may use relative paths
-/// among themselves as usual.
-fn package_marrow_file(pkg: &ResolvedPackage, filename: &str) -> Option<String> {
+/// among themselves as usual. `spec` (the `@ns/name:version` the package was
+/// imported under) names the resulting [`MarrowSource::origin`], matching how
+/// `RheoWorld`'s `Files::name` names a package file.
+fn package_marrow_file(spec: &str, pkg: &ResolvedPackage, filename: &str) -> Option<MarrowSource> {
     let marrow_path = pkg.source_root.join(filename);
     if !marrow_path.is_file() {
         return None;
     }
     match std::fs::read_to_string(&marrow_path) {
-        Ok(text) => Some(text),
+        Ok(text) => Some(MarrowSource {
+            origin: format!("{spec}/{filename}"),
+            text,
+        }),
         Err(e) => {
             warn!(path = %marrow_path.display(), error = %e, "could not read package marrow file");
             None
@@ -596,7 +607,7 @@ pub fn prewarm_packages(import_paths: &[String], resolver: &PackageResolver) {
         // `[packages.rheo]` overrides the built-in `@rheo` in both places. A
         // divergence between them is a package that compiles from one source and
         // prewarms from another.
-        if !resolver.is_prewarmable(&spec.namespace) {
+        if !resolver.is_prewarmable(spec.namespace.as_str(), spec.name.as_str()) {
             continue;
         }
         if let Err(e) = resolver.obtain(&spec) {
@@ -1160,27 +1171,30 @@ css_stylesheet = "style.css"
     /// compile-time fetch.
     #[test]
     fn prewarm_does_not_skip_a_configured_namespace() {
-        use crate::config::{GitRef, NamespaceSource, RepoSource};
+        use crate::config::{GitRef, NamespaceEntry, NamespaceSource, RepoSource};
 
         let mut sources = std::collections::HashMap::new();
         sources.insert(
             "rookery".to_string(),
-            NamespaceSource::Repo(RepoSource {
-                url: "https://example.invalid/rookery".to_string(),
-                git_ref: GitRef::Branch("main".to_string()),
-                subdir: String::new(),
-            }),
+            NamespaceEntry::new(
+                NamespaceSource::Repo(RepoSource {
+                    url: "https://example.invalid/rookery".to_string(),
+                    git_ref: GitRef::Branch("main".to_string()),
+                    subdir: String::new(),
+                }),
+                None,
+            ),
         );
         let resolver = PackageResolver::new(&sources);
 
         assert!(
-            resolver.is_prewarmable("rookery"),
+            resolver.is_prewarmable("rookery", "anything"),
             "a configured namespace must be warmed"
         );
-        assert!(resolver.is_prewarmable("preview"));
-        assert!(resolver.is_prewarmable("rheo"));
+        assert!(resolver.is_prewarmable("preview", "anything"));
+        assert!(resolver.is_prewarmable("rheo", "anything"));
         assert!(
-            !resolver.is_prewarmable("local"),
+            !resolver.is_prewarmable("local", "anything"),
             "an unconfigured namespace is still skipped"
         );
     }
@@ -1189,16 +1203,51 @@ css_stylesheet = "style.css"
     /// it — the ordering `path_for_id` and pre-warm must agree on.
     #[test]
     fn a_configured_rheo_namespace_overrides_the_built_in() {
-        use crate::config::{NamespaceSource, ReleasesSource};
+        use crate::config::{NamespaceEntry, NamespaceSource, ReleasesSource};
 
         let mut sources = std::collections::HashMap::new();
         sources.insert(
             "rheo".to_string(),
-            NamespaceSource::Releases(ReleasesSource::Base("https://example.invalid".to_string())),
+            NamespaceEntry::new(
+                NamespaceSource::Releases(ReleasesSource::Base(
+                    "https://example.invalid".to_string(),
+                )),
+                None,
+            ),
         );
         let resolver = PackageResolver::new(&sources);
-        assert!(resolver.is_configured("rheo"));
-        assert!(resolver.is_prewarmable("rheo"));
+        assert!(resolver.is_configured("rheo", "anything"));
+        assert!(resolver.is_prewarmable("rheo", "anything"));
+    }
+
+    /// A `packages` key limits a table to the names it lists: the rest of the
+    /// namespace resolves as if the table were absent, so a source-backed
+    /// package cannot drag its whole namespace's other packages along with it.
+    #[test]
+    fn packages_key_limits_source_backing_to_named_packages() {
+        use crate::config::{GitRef, NamespaceEntry, NamespaceSource, RepoSource};
+
+        let mut sources = std::collections::HashMap::new();
+        sources.insert(
+            "rheo".to_string(),
+            NamespaceEntry::new(
+                NamespaceSource::Repo(RepoSource {
+                    url: "https://example.invalid/rheo-packages".to_string(),
+                    git_ref: GitRef::Branch("dev".to_string()),
+                    subdir: String::new(),
+                }),
+                Some(vec!["contents-panel".to_string()]),
+            ),
+        );
+        let resolver = PackageResolver::new(&sources);
+
+        assert!(resolver.is_source_backed("rheo", "contents-panel"));
+        assert!(!resolver.is_source_backed("rheo", "justify"));
+        assert!(!resolver.is_configured("rheo", "justify"));
+        assert!(
+            resolver.is_prewarmable("rheo", "justify"),
+            "the built-in @rheo default still applies to an unnamed package"
+        );
     }
 
     /// An index over one package living at `<base>/testns/testpkg/0.1.0`.
@@ -1220,9 +1269,12 @@ css_stylesheet = "style.css"
         .unwrap();
 
         let index = index_for(tmp.path());
+        let prologue = index.marrow_prologue();
+        assert_eq!(prologue.len(), 1);
+        assert_eq!(prologue[0].text, "#show strong: it => it");
         assert_eq!(
-            index.marrow_prologue(),
-            vec!["#show strong: it => it".to_string()]
+            prologue[0].origin,
+            "@testns/testpkg:0.1.0/.marrow.prologue.typ"
         );
         assert!(index.marrow().is_empty(), "no .marrow.typ shipped");
     }
@@ -1235,8 +1287,8 @@ css_stylesheet = "style.css"
         std::fs::write(pkg_dir.join(crate::MARROW_PROLOGUE_FILE), "prologue").unwrap();
 
         let index = index_for(tmp.path());
-        assert_eq!(index.marrow(), vec!["epilogue".to_string()]);
-        assert_eq!(index.marrow_prologue(), vec!["prologue".to_string()]);
+        assert_eq!(index.marrow()[0].text, "epilogue");
+        assert_eq!(index.marrow_prologue()[0].text, "prologue");
     }
 
     /// A bare `.marrow.typ` is the epilogue's fallback, and either explicit
@@ -1257,14 +1309,14 @@ css_stylesheet = "style.css"
 
         // A bare marrow alone is the epilogue.
         let (_t, index) = pkg(&[(crate::MARROW_FILE, "bare")]);
-        assert_eq!(index.marrow(), vec!["bare".to_string()]);
+        assert_eq!(index.marrow()[0].text, "bare");
 
         // The explicit epilogue name replaces it.
         let (_t, index) = pkg(&[
             (crate::MARROW_FILE, "bare"),
             (crate::MARROW_EPILOGUE_FILE, "explicit"),
         ]);
-        assert_eq!(index.marrow(), vec!["explicit".to_string()]);
+        assert_eq!(index.marrow()[0].text, "explicit");
 
         // So does the prologue one, which leaves no epilogue at all.
         let (_t, index) = pkg(&[
@@ -1272,7 +1324,7 @@ css_stylesheet = "style.css"
             (crate::MARROW_PROLOGUE_FILE, "explicit"),
         ]);
         assert!(index.marrow().is_empty());
-        assert_eq!(index.marrow_prologue(), vec!["explicit".to_string()]);
+        assert_eq!(index.marrow_prologue()[0].text, "explicit");
     }
 
     #[test]
@@ -1288,9 +1340,7 @@ css_stylesheet = "style.css"
             &[dir.path().to_path_buf()],
         )
         .marrow_prologue();
-        assert_eq!(
-            result,
-            vec!["a-prologue".to_string(), "b-prologue".to_string()]
-        );
+        let texts: Vec<&str> = result.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(texts, vec!["a-prologue", "b-prologue"]);
     }
 }

@@ -1,3 +1,113 @@
+# Unreleased — user-visible changes
+
+## Breaking: the spine moves from `sys.inputs.rheo-context` to `sys.inputs.rheo-spine`
+
+`spine` and `spine-flat` are no longer on `sys.inputs.rheo-context`. They sit
+on a new reserved key, `sys.inputs.rheo-spine`, read with
+`.get("spine")`/`.get("spine-flat")`, so adding, removing or renaming a page no
+longer invalidates every cached result in a compile: under `rheo watch`,
+adding a page to a 2,400-page site drops from about 40 s to 13.5 s. The
+per-file `rheo-context()` still carries both, so a reader taking
+`ctx: rheo-context()` needs no change. A package reading
+`sys.inputs.rheo-context.spine` or `.spine-flat` directly must read
+`sys.inputs.rheo-spine` when present and fall back to `rheo-context` on an
+older rheo; `docs/contract.md` has the helper. `rheo-spine` is rejected in
+`[inputs]` and `--input`.
+
+## A narrowed round feeds the whole cached ligaments
+
+A narrowed round now feeds `sys.inputs.rheo-ligaments` the whole cached
+harvest, including the entries of the pages it recompiles, instead of omitting
+them. The fed value no longer depends on which pages compile, so alternating
+edits between pages stop missing the compile cache. A package must drop the
+compiling page's own stale fed entries itself.
+
+## `sys.inputs.rheo-ligaments` is now an opaque value read through `.get(key)`
+
+`sys.inputs.rheo-ligaments` is now an opaque store value, present on
+every compile, so a change to one key no longer invalidates Typst work that
+never read it. Packages reading `.at("attaches")` must switch to
+`.get(key)`, which returns the `(page, value)` array, or `none` on a full build.
+
+## A combined PDF is now named after its spine title
+
+A combined PDF is now named after its spine title (`[pdf.spine] title`, else
+`[spine] title`) instead of always the project directory, so `title =
+"Kermode_Dissertation_C0"` builds `Kermode_Dissertation_C0.pdf`. A `/` or `\`
+in the title becomes `-`. With no title set, the project name still names it.
+
+## HTML output now publishes project images as files
+
+HTML output now publishes project images as files and links them relative to
+each page instead of inlining base64. PDF images, images from packages, and
+images made from bytes are still inlined. `[html] image_assets = false`
+restores full inlining.
+
+## A package can now attach ligaments, harvested after every compile
+
+A package can now record, per vertebra, the keys it attaches and the keys it
+binds to — the **ligaments** — by emitting `#metadata((page:, key:, value:))`
+under `<rheo-ligament:attach>` and `#metadata((page:, key:))` under
+`<rheo-ligament:bind>`. Project code can use the `rheo-ligament-attach(key,
+value)` and `rheo-ligament-bind(key)` helpers instead. rheo harvests the
+ligaments after every bundle compile and never interprets what a key means;
+joining one page's binds against another's attaches is left to whoever minted
+the keys. The `rheo-ligament:` label prefix is newly reserved: a label on it
+written in a vertebra's own source is now a hard build error, the same way
+`rheo-meta:` already is. See `docs/contract.md`'s "Ligaments" section for the
+full protocol.
+
+## Ligaments can now be fed back into a compile, and rheo dogfoods them for its own metadata
+
+A previous compile's harvested ligaments can now be fed back onto
+`sys.inputs.rheo-ligaments` as a native Typst dictionary, so a cross-vertebra
+read can still be answered even when the vertebra that would normally answer
+it did not run this compile. Project code reads it with the new
+`rheo-ligament-get(key)`, which returns `none` when no ligaments were
+supplied at all, or the array of `(page, value)` pairs attached under `key`
+(possibly empty) when they were. Package code reads the same value directly
+off `sys.inputs.at("rheo-ligaments", default: none)`, since package code
+cannot import rheo's own `rheo.typ`. rheo now dogfoods this for its own
+metadata beacon: each vertebra's beacon is also attached as a
+`rheo-meta:<handle>` ligament, and `rheo-metadata(handle)` falls back to it
+when the live beacon query finds nothing. `rheo-ligaments` is newly reserved
+alongside `rheo-context`, rejected the same way from both `rheo.toml
+[inputs]` and `--input`. See `docs/contract.md`'s "Ligaments" section.
+
+## `rheo watch` can now recompile a single vertebra instead of the whole bundle (opt-in)
+
+Set `[watch] narrow = true` in `rheo.toml` and editing one spine vertebra
+under `rheo watch` recompiles only that vertebra, plus any other vertebra
+whose bound keys were invalidated by what changed — the cached ligaments
+from the last compile are fed back in so cross-vertebra reads still
+resolve. A changed attach propagates to its binders in further narrowed
+rounds until nothing new changes (a fixpoint); a bind-only edit propagates
+nothing. Any other change — a prelude, marrow, `rheo.toml`, package code, a
+non-vertebra file, or the first build of a session with no cached ligaments
+yet — still does a full rebuild, as does a narrowed round whose dependent
+set grows past a quarter of the spine. Each rebuild logs which path it took.
+
+**`false` by default, and only safe once every package the project uses
+reads cross-vertebra data through ligaments** (`rheo-ligament-attach`/
+`rheo-ligament-bind`/`rheo-ligament-get`) rather than querying the live
+bundle directly — a package that does the latter would silently see only
+the narrowed subset and produce a page missing cross-vertebra content. See
+`docs/contract.md`'s "`[watch] narrow`" section.
+
+`[watch] narrow = "auto"` narrows only where narrowing is likely to be
+faster: an edit to a page whose attached keys other pages bind rebuilds in
+full until an edit to that page has been seen to leave its attaches
+unchanged, since a round with a changed ligament feed runs cold. The history
+is per watch session.
+
+## `[watch] cache_size` makes the memo cache size configurable
+
+Set `[watch] cache_size = 0` in `rheo.toml` and `rheo watch` clears Typst's
+memo cache after every rebuild. The default is 10 (keep entries unused for the
+last ten rebuilds), which makes a warm rebuild three times faster than a cold
+one at the cost of RSS growing ~2 GB per rebuild until it levels off. Smaller
+values flatten memory footprint at the cost of rebuild speed.
+
 # 0.6.4 — user-visible changes
 
 ## `rheo watch` patches the page on a content edit, and a package must opt in
